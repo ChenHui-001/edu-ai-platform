@@ -1,0 +1,27 @@
+# Windows 批处理与 PowerShell 脚本必须用 CRLF，否则双击/执行会解析异常
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Shell 脚本与前端源码用 LF
+*.sh    text eol=lf
+*.js    text eol=lf
+*.vue   text eol=lf
+*.css   text eol=lf
+*.json  text eol=lf
+*.html  text eol=lf
+
+# Python 保持 LF（容器内运行）
+*.py    text eol=lf
+
+# 二进制资源不做行尾转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.xlsx  binary
+*.docx  binary
+*.db    binary
+*.whl   binary
