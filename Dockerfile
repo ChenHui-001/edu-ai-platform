@@ -7,7 +7,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai
 
 # PyMuPDF / numpy 等需要系统库；中文字体用于附件与验证码渲染
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 国内网络下 deb.debian.org 常不可达，优先使用清华镜像源
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; \
+            s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+        /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends --fix-missing \
         gcc g++ curl libgl1 libglib2.0-0 fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
@@ -28,18 +33,19 @@ RUN npm run build
 
 
 # ==================== 前后端一体镜像（默认产出）=================
-FROM nginx:1.27-alpine AS unified
+# 以 python:3.11-slim 为基底（与 backend-base 同源，site-packages 可直接复用），
+# 再叠加 nginx + supervisord 实现前后端同端口提供服务。
+FROM backend-base AS unified
 
-RUN apk add --no-cache python3 py3-pip curl tzdata supervisor \
-    && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
-    && echo "Asia/Shanghai" > /etc/timezone \
-    && rm -rf /var/cache/apk/*
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; \
+            s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+        /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends --fix-missing nginx supervisor \
+    && rm -f /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# 复用后端依赖层，避免重复编译
-COPY --from=backend-base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=backend-base /usr/local/bin /usr/local/bin
 
 COPY backend/app ./app
 
@@ -48,7 +54,8 @@ COPY --from=frontend-builder /app/dist /usr/share/nginx/html
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma
+RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma \
+    && nginx -t 2>/dev/null || true
 
 EXPOSE 80
 
