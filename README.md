@@ -50,6 +50,10 @@
 
 ## 快速开始
 
+> **本地体验？直接双击 `start.bat`**（macOS/Linux 用 `./start.sh`）
+> 脚本会自动检查环境、生成配置、构建并启动，最后自动打开浏览器。
+> 完整说明见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
+
 ### 方式一（最快）：直接拉取已发布镜像
 
 ```bash
