@@ -1,0 +1,52 @@
+# 九年义务教育学习管理系统 —— 生产部署编排
+# 轻量化单机部署：应用服务 + Nginx，数据库/向量库/存储全部内置
+#
+# 启动：docker compose up -d
+# 访问：http://localhost
+# 文档：http://localhost/docs
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: unified
+      args:
+        DOCKERHUB_REPO: ${DOCKERHUB_REPO:-edu-ai-platform}
+    image: ${DOCKERHUB_REPO:-edu-ai-platform}:${IMAGE_TAG:-latest}
+    container_name: edu-platform
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8080}:80"
+    environment:
+      # 数据库
+      DATABASE_URL: sqlite:////app/data/edu_platform.db
+      # 安全（生产务必修改）
+      SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_IN_PRODUCTION_please_use_a_long_random_string}
+      # 大模型（留空则使用规则引擎降级）
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_ENABLED: ${LLM_ENABLED:-true}
+      # 业务
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-50}
+      TZ: Asia/Shanghai
+    volumes:
+      # 数据持久化
+      - ./data:/app/data
+      # 日志
+      - ./logs:/app/data/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
