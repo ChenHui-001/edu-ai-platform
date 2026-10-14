@@ -50,11 +50,29 @@
 
 ## 快速开始
 
-### 方式一：Docker 一键部署（推荐）
+### 方式一（最快）：直接拉取已发布镜像
+
+```bash
+docker pull nanpo/edu-ai-platform:1.0.0
+docker run -d --name edu-platform -p 8080:80 \
+  -v $(pwd)/data:/app/data \
+  --restart unless-stopped \
+  nanpo/edu-ai-platform:1.0.0
+
+# 访问 http://localhost:8080
+# 默认账号 admin / Admin@123456
+```
+
+镜像内含 nginx + FastAPI + Vue3 静态资源，单容器提供全部服务。
+健康检查：`curl http://localhost:8080/api/v1/health`
+
+**最低配置**：2 核 4G / 40GB 磁盘 | 镜像体积 ≤ 2GB | 启动 ≤ 30 秒
+
+### 方式二：Docker Compose 部署
 
 ```bash
 # 1. 克隆项目
-git clone <your-repo-url> edu-ai-platform
+git clone https://github.com/ChenHui-001/edu-ai-platform.git
 cd edu-ai-platform
 
 # 2. 配置环境（可选：不填 LLM_API_KEY 也能跑，功能自动降级）
@@ -69,9 +87,7 @@ docker compose up -d --build
 # 接口文档：http://localhost:8080/docs
 ```
 
-**最低配置**：2 核 4G / 40GB 磁盘 | 镜像体积 ≤ 2GB | 启动 ≤ 30 秒
-
-### 方式二：本地开发
+### 方式三：本地开发
 
 ```bash
 # 后端
