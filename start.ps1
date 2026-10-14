@@ -282,20 +282,14 @@ function Invoke-Status {
     Write-Host ''
     Write-Host '════════════════ 服务状态 ════════════════' -ForegroundColor Cyan
     Write-Host ''
-    docker compose ps
+    docker ps --filter "name=edu-platform" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
     Write-Host ''
     Write-Host '════════════════ 健康检查 ════════════════' -ForegroundColor Cyan
     Write-Host ''
 
-    # 用 compose 判断服务是否在运行，不依赖容器名硬编码
-    $ps = docker compose ps --format json 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue
-    $isUp = $false
-    if ($ps) {
-        foreach ($s in @($ps)) {
-            if ($s.State -eq 'running' -or $s.Status -match 'Up') { $isUp = $true; break }
-        }
-    }
-    if (-not $isUp) {
+    # 用 docker ps 直接判断，避免 compose ps --format json 在含中文路径下解析失败
+    $names = docker ps --format '{{.Names}}' 2>$null
+    if (-not ($names -contains 'edu-platform')) {
         Write-Warn '服务未运行'
         Write-Host ''
         Write-Host '    启动服务：.\start.ps1'
