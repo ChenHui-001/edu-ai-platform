@@ -122,6 +122,33 @@ class MyAgent(BaseAgent):
 
 ## 四、新增业务接口
 
+### 路由文件分布
+
+`api/v1/` 下按业务域拆分，新增接口请放进对应文件，不要往已有大文件里堆：
+
+| 文件 | 负责范围 | 前缀 |
+|------|---------|------|
+| `grading.py` | 智能批改中心 | `/grading` |
+| `learning/notes.py` | 学习笔记 | `/learning` |
+| `learning/wrongbook.py` | 错题本 | `/learning` |
+| `learning/review.py` | 智能复习 + 随机练习 | `/learning` |
+| `learning/tools.py` | 收藏 / 自主组卷 / 学习目标 / 路径 / 闪卡 | `/learning` |
+| `question.py` | 题库与试卷 | `/question` |
+| `task.py` | 作业与考试 | `/task` |
+| `system.py` | 用户 / 角色 / 通知 / 配置 | `/system` |
+| `edu.py` | 学科 / 年级 / 班级 / 知识点 | `/edu` |
+| `report.py` | 各类统计报表 | `/report` |
+| `agent.py` | AI Agent 对话与生成 | `/agent` |
+
+`learning/` 是子包，各子模块导出 `router = APIRouter()`（不带前缀），
+由 `learning/__init__.py` 统一 `include_router` 到 `learning_router`。
+
+> **include 顺序敏感**：`/learning/__init__.py` 中的 include 顺序不可随意调整。
+> 静态路由必须早于同前缀参数路由注册，否则被抢先匹配返回 422
+> （例：`/practice/history` 需在 `/practice/{task_id}` 之前）。
+
+### 开发步骤
+
 1. 在 `models/` 定义 ORM 模型（继承 `Base`）
 2. 在 `api/v1/` 对应文件加路由
 3. 权限控制在路由依赖上声明：

@@ -2,6 +2,18 @@
 
 本文档面向学校信息中心 / 系统运维人员，覆盖从裸机到生产环境的完整部署流程。
 
+> **版本号说明**：项目版本号的唯一真源是仓库根目录的 `VERSION` 文件。
+> 容器 `/api/v1/health` 返回的 `version`、OpenAPI 标题、前端 `package.json`
+> 均由它派生。发版时改这一个文件即可：
+>
+> ```bash
+> echo "1.0.9" > VERSION
+> docker build --target unified -t nanpo/edu-ai-platform:1.0.9 .
+> ./push_dockerhub.sh nanpo          # 标签默认读 VERSION 文件
+> ```
+>
+> 如需覆盖（如 CI 用 `ci-<sha>`），用 `--build-arg APP_VERSION=x.y.z`。
+
 ---
 
 ## 一、环境要求

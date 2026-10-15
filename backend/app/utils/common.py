@@ -1,4 +1,5 @@
 """分页、CRUD 基类、响应封装等通用工具。"""
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
 
@@ -73,6 +74,21 @@ def ok(data: Any = None, message: str = "操作成功", **extra) -> Dict[str, An
         payload["data"] = data
     payload.update(extra)
     return payload
+
+
+def load_json(v: Optional[str]) -> Any:
+    """把 SQLite Text 列中的 JSON 字符串还原为对象；非法 JSON 原样返回。
+
+    SQLAlchemy 的 Text 列不能直接绑定 Python list，必须先JSON 序列化再
+    存储，读取时统一走本函数还原。原先各路由模块各自定义 `_load`，
+    现收敛到 utils 层共用。
+    """
+    if not v:
+        return None
+    try:
+        return json.loads(v)
+    except json.JSONDecodeError:
+        return v
 
 
 def dictify(obj: Any) -> Any:

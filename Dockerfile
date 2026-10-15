@@ -62,6 +62,10 @@ FROM backend-base AS backend
 
 WORKDIR /app
 COPY backend/app ./app
+# 版本号单一真源：根目录 VERSION 文件；缺失时回退到 APP_VERSION build-arg
+COPY VERSION ./VERSION
+ARG APP_VERSION=""
+ENV APP_VERSION=${APP_VERSION}
 COPY backend/.env.example ./.env.example
 RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma
 
@@ -89,6 +93,10 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; \
 WORKDIR /app
 
 COPY backend/app ./app
+# 版本号单一真源：根目录 VERSION 文件；缺失时回退到 APP_VERSION build-arg
+COPY VERSION ./VERSION
+ARG APP_VERSION=""
+ENV APP_VERSION=${APP_VERSION}
 
 # 前端静态资源
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html

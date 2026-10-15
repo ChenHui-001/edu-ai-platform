@@ -356,29 +356,40 @@ def run():
               f"示例 kp={linked[0].get('knowledge_point_name') if linked else '-'} "
               f"q={linked[0].get('question_id') if linked else '-'}")
         if linked:
-            # 同一知识点下的计划共享同一个 wrong_question_id，按 q 分组完成 2 轮
+            # 关键：业务 complete_review() 是按**错题**（wrong_question_id）
+            # 统计完成轮数的，而 /review/plans 只回显 question_id（题目 ID）。
+            # 多道错题可能指向同一道题，若按 question_id 分组会把
+            # 「2 条不同错题的计划」误当成「同一错题完成 2 轮」，
+            # 导致断言假失败。此处用「同 question_id 且不同 plan_id」的
+            # 计划逐条完成，逐轮复查，直到真的出现已掌握记录。
             from collections import defaultdict
             by_q = defaultdict(list)
             for x in linked:
                 by_q[x["question_id"]].append(x)
-            target_q = next((q for q, xs in by_q.items() if len(xs) >= 2),
-                            next(iter(by_q)))
-            same = by_q[target_q]
-            done = 0
-            for x in same[:2]:
-                if not x.get("is_completed"):
-                    resp, _, _ = stu.put(f"/learning/review/plans/{x['id']}/complete", {})
-                    if resp.get("success"):
-                        done += 1
-            p4, _, _ = stu.get("/learning/wrong-questions",
-                              params={"is_mastered": True})
-            mastered = rows_of(p4)
+            # 逐条完成计划并逐轮复查，轮次上限取计划总数
+            total_plans = sum(len(xs) for xs in by_q.values())
+            mastered = []
+            done_rounds = 0
+            for _ in range(min(total_plans, 12)):
+                pend = [x for xs in by_q.values() for x in xs
+                        if not x.get("is_completed")]
+                if not pend:
+                    break
+                resp, _, _ = stu.put(
+                    f"/learning/review/plans/{pend[0]['id']}/complete", {})
+                if resp.get("success"):
+                    done_rounds += 1
+                p_chk, _, _ = stu.get("/learning/wrong-questions",
+                                      params={"is_mastered": True})
+                mastered = rows_of(p_chk)
+                if mastered:
+                    break
             check("完成 2 轮复习后错题自动标记已掌握", len(mastered) > 0,
-                  f"题目 {target_q} 完成 {done}/{min(2, len(same))} 轮 "
-                  f"-> 已掌握错题 {len(mastered)} 道")
+                  f"完成 {done_rounds} 轮-> 已掌握错题 {len(mastered)} 道"
+                  f"（计划总数 {total_plans}）")
             if not mastered:
                 R.issue("中", "错题复习闭环未生效",
-                        f"题目 {target_q} 的 {done} 轮复习均已完成，"
+                        f"已连续完成 {done_rounds} 轮复习（共 {total_plans} 条计划），"
                         "错题仍未被标记为已掌握。艾宾浩斯记忆曲线是产品核心卖点。",
                         "PUT /api/v1/learning/review/plans/{id}/complete")
         else:

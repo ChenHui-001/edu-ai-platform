@@ -1,8 +1,37 @@
 """应用配置管理：所有配置通过环境变量注入，无需修改代码。"""
+import os
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 版本号候选路径。开发态为<仓库根>/VERSION，容器内为 /app/VERSION。
+_VERSION_CANDIDATES = (
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "VERSION")),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "VERSION")),
+    "/app/VERSION",
+    os.path.abspath("VERSION"),
+    os.path.abspath(os.path.join(".", "VERSION")),
+)
+
+
+def _read_version_file() -> Optional[str]:
+    """读取 VERSION 文件，作为版本号的唯一真源。
+
+    本地开发时文件位于仓库根（backend/app/core 上溯三级）；容器内镜像把
+    VERSION 放在 /app。逐个候选探测，均不存在则返回 None，交由
+    APP_VERSION / IMAGE_TAG 环境变量兜底。
+    """
+    for path in _VERSION_CANDIDATES:
+        try:
+            with open(path, encoding="utf-8") as fp:
+                value = fp.read().strip()
+            if value:
+                return value
+        except OSError:
+            continue
+    return None
 
 
 class Settings(BaseSettings):
@@ -14,7 +43,9 @@ class Settings(BaseSettings):
 
     # ---------------- 基础 ----------------
     APP_NAME: str = "九年义务教育学习管理系统"
-    APP_VERSION: str = "1.0.0"
+    # 留空则自动推导：环境变量 APP_VERSION > 根目录 VERSION 文件 > IMAGE_TAG > "dev"
+    APP_VERSION: str = ""
+    IMAGE_TAG: str = ""
     DEBUG: bool = True
     HOST: str = "0.0.0.0"
     PORT: int = 8000
@@ -51,6 +82,8 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     RAG_TOP_K: int = 5
     RAG_SCORE_THRESHOLD: float = 0.3
+    # 向量重建耗时告警阈值（ms），超过则接口提示分批执行
+    REINDEX_WARN_MS: int = 60_000
 
     # ---------------- 大模型 ----------------
     # 兼容 OpenAI 协议：通义千问 / DeepSeek / 本地 vLLM 均可
@@ -81,6 +114,20 @@ class Settings(BaseSettings):
     PASS_SCORE: float = 60.0
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 200
+
+    @model_validator(mode="after")
+    def _resolve_version(self) -> "Settings":
+        """版本号单一真源：根目录 VERSION 文件。
+
+        优先级：显式 APP_VERSION 环境变量 > VERSION 文件 > IMAGE_TAG > "dev"。
+        这样打包时只需 `docker build --build-arg APP_VERSION=x.y.z` 或直接改
+        VERSION 文件一处即可，容器 /health、OpenAPI、前端均会同步显示。
+        """
+        if not self.APP_VERSION:
+            self.APP_VERSION = (
+                _read_version_file() or self.IMAGE_TAG or "dev"
+            )
+        return self
 
 
 @lru_cache()

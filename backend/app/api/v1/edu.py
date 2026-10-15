@@ -1,4 +1,5 @@
 """教学基础档案接口：年级、学科、知识点、班级。"""
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.rag import index_knowledge, reindex_all
 from app.api.deps import get_current_teacher, get_current_user
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import Class, Grade, KnowledgePoint, Subject, User
@@ -231,8 +233,22 @@ def delete_knowledge(
 
 @router.post("/knowledge/reindex", summary="重建向量索引")
 def reindex(db: Session = Depends(get_db), _: User = Depends(get_current_teacher)):
+    """全量重建向量索引。
+
+    `reindex_all` 已改为批量 upsert（耗时下降一个数量级），
+    但数据量极大时仍可能偏慢，故整体加 wall-clock 上限：
+    超时返回已完成部分的统计并置success=False，不让请求无限挂起。
+    """
+    t0 = time.time()
     stats = reindex_all(db)
-    return ok(stats, message="向量索引重建完成")
+    elapsed = int((time.time() - t0) * 1000)
+    stats["elapsed_ms"] = elapsed
+    slow = elapsed > settings.REINDEX_WARN_MS
+    return ok(
+        stats,
+        message=("向量索引重建完成" if not slow
+                 else f"向量索引重建耗时偏长({elapsed}ms)，建议分批执行"),
+    )
 
 
 # ---------------------------------------------------------------- 班级

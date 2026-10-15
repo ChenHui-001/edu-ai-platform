@@ -57,11 +57,11 @@
 ### 方式一（最快）：直接拉取已发布镜像
 
 ```bash
-docker pull nanpo/edu-ai-platform:1.0.0
+docker pull nanpo/edu-ai-platform:1.0.8
 docker run -d --name edu-platform -p 8080:80 \
   -v $(pwd)/data:/app/data \
   --restart unless-stopped \
-  nanpo/edu-ai-platform:1.0.0
+  nanpo/edu-ai-platform:1.0.8
 
 # 访问 http://localhost:8080
 # 默认账号 admin / Admin@123456

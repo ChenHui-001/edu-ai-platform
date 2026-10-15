@@ -105,15 +105,92 @@ def index_note(note: Note) -> bool:
         return False
 
 
-def reindex_all(db: Session) -> Dict[str, int]:
-    """全量重建向量索引。"""
-    stats = {"knowledge": 0, "question": 0, "note": 0}
-    for kp in db.scalars(select(KnowledgePoint)).all():
-        stats["knowledge"] += int(index_knowledge(kp))
-    for q in db.scalars(select(Question).limit(2000)).all():
-        stats["question"] += int(index_question(q))
-    for n in db.scalars(select(Note).limit(1000)).all():
-        stats["note"] += int(index_note(n))
+def reindex_all(db: Session, batch_size: int = 64) -> Dict[str, int]:
+    """全量重建向量索引（批量 upsert）。
+
+    历史实现逐条 `col.upsert`，每条都要单独走一次 embedding 计算，
+    2000 道题需数分钟，HTTP 接口必然超时（实测 >120s）。
+    现改为按batch_size 批量提交，embedding 计算由 ChromaDB 内部批处理，
+    耗时下降一个数量级。
+
+    单批失败不影响其余批次，仅计入 failed 统计。
+    """
+    stats = {"knowledge": 0, "question": 0, "note": 0, "failed": 0}
+
+    def _upsert_batch(col, ids, documents, metadatas) -> int:
+        """批量写入，返回成功条数。单批异常时降级为逐条重试。"""
+        if not ids:
+            return 0
+        try:
+            col.upsert(ids=ids, documents=documents, metadatas=metadatas)
+            return len(ids)
+        except Exception as exc:
+            logger.warning(f"批量向量化失败({len(ids)} 条)，降级逐条: {exc}")
+            ok_n = 0
+            for i, doc_id in enumerate(ids):
+                try:
+                    col.upsert(ids=[doc_id], documents=[documents[i]],
+                               metadatas=[metadatas[i]])
+                    ok_n += 1
+                except Exception:
+                    stats["failed"] += 1
+            return ok_n
+
+    col = get_collection()
+    if not col:
+        # ChromaDB 不可用时不算失败，属预期降级
+        logger.info("ChromaDB 不可用，跳过向量重建")
+        return stats
+
+    # 1) 知识点
+    kps = db.scalars(select(KnowledgePoint)).all()
+    for i in range(0, len(kps), batch_size):
+        chunk = kps[i:i + batch_size]
+        stats["knowledge"] += _upsert_batch(
+            col,
+            [f"kp_{k.id}" for k in chunk],
+            [f"{k.name}。{(k.description or '')[:800]}" for k in chunk],
+            [{
+                "type": "knowledge", "id": k.id, "name": k.name,
+                "grade_id": k.grade_id, "subject_id": k.subject_id,
+                "knowledge_point_id": k.id,
+            } for k in chunk],
+        )
+
+    # 2) 题目（上限 2000 条，与原行为一致）
+    qs = db.scalars(select(Question).limit(2000)).all()
+    for i in range(0, len(qs), batch_size):
+        chunk = qs[i:i + batch_size]
+        stats["question"] += _upsert_batch(
+            col,
+            [f"q_{q.id}" for q in chunk],
+            [q.stem[:1500] for q in chunk],
+            [{
+                "type": "question", "id": q.id, "type_name": q.type,
+                "difficulty": q.difficulty, "score": q.score,
+                "grade_id": q.grade_id, "subject_id": q.subject_id,
+                "knowledge_point_id": q.knowledge_point_id or 0,
+            } for q in chunk],
+        )
+
+    # 3) 笔记（上限 1000 条）
+    ns = db.scalars(select(Note).limit(1000)).all()
+    for i in range(0, len(ns), batch_size):
+        chunk = ns[i:i + batch_size]
+        stats["note"] += _upsert_batch(
+            col,
+            [f"note_{n.id}" for n in chunk],
+            [f"{n.title}。{(n.content or '')[:2000]}" for n in chunk],
+            [{
+                "type": "note", "id": n.id, "title": n.title,
+                "student_id": n.student_id, "subject_id": n.subject_id or 0,
+            } for n in chunk],
+        )
+
+    logger.info(
+        f"向量重建完成: 知识点 {stats['knowledge']} / 题目 {stats['question']} / "
+        f"笔记 {stats['note']} / 失败 {stats['failed']}"
+    )
     return stats
 
 

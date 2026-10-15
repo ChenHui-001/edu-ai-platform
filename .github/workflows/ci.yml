@@ -79,3 +79,78 @@ jobs:
           tags: edu-ai-platform:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  e2e:
+    name: 端到端回归（210项）
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建被测镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: unified
+          push: false
+          load: true
+          tags: edu-ai-platform:e2e
+          build-args: |
+            APP_VERSION=ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 启动服务
+        run: |
+          docker run -d --name edu-e2e \
+            -p 8080:80 \
+            -e LLM_ENABLED=false \
+            -e SCHEDULER_ENABLED=false \
+            -e SECRET_KEY=ci_secret_key_for_e2e_only_not_for_prod \
+            -v "${{ github.workspace }}/data:/app/data" \
+            edu-ai-platform:e2e
+
+      - name: 等待健康检查
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/api/v1/health; then
+              echo ""
+              echo "服务就绪"
+              exit 0
+            fi
+            echo "等待中... ($i/60)"
+            sleep 2
+          done
+          echo "服务启动超时"
+          docker logs edu-e2e
+          exit 1
+
+      - name: 配置测试端口
+        run: |
+          # e2e_framework 优先读 .env 的 HOST_PORT，CI 中固定为 8080
+          echo "HOST_PORT=8080" >> .env
+          echo "E2E_BASE=http://localhost:8080" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 运行端到端测试（三阶段：admin → teacher → student）
+        run: python tests/run_all.py
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: tests/E2E_REPORT.md
+          retention-days: 30
+
+      - name: 打印失败用例与服务日志
+        if: failure()
+        run: |
+          echo "===== 服务日志 ====="
+          docker logs edu-e2e --tail 200
+          echo "===== 用例失败明细见上方输出与报告附件 ====="

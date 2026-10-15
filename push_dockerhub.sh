@@ -9,22 +9,25 @@
 # 前置条件：
 #   1. 已执行 docker login（Docker Hub 现已强制要求 PAT，密码登录会报 insufficient_scope）
 #      docker login --username <用户名> --password-stdin <<< '<你的PAT>'
-#   2. 本地已有镜像 edu-ai-platform:1.0.0
-#      docker build --target unified -t edu-ai-platform:1.0.0 .
+#   2. 本地已有镜像（标签默认读根目录 VERSION 文件，为版本号唯一真源）
+#      docker build --target unified -t edu-ai-platform:$(cat VERSION) .
 # ================================================================
 
 set -euo pipefail
 
+cd "$(dirname "$0")"
+
 NAMESPACE="${1:-}"
-TAG="${2:-1.0.0}"
+# 标签默认取根目录 VERSION（唯一真源），其次取环境变量 IMAGE_TAG
+TAG="${2:-$(cat VERSION 2>/dev/null || echo "${IMAGE_TAG:-latest}")}"
 IMAGE="edu-ai-platform:${TAG}"
 
 if [ -z "$NAMESPACE" ]; then
-  echo "用法: $0 <DockerHub用户名> [标签，默认 1.0.0]"
+  echo "用法: $0 <DockerHub用户名> [标签，默认读 VERSION 文件]"
   exit 1
 fi
 
-cd "$(dirname "$0")"
+echo ">>> 版本号真源 VERSION = ${TAG}"
 
 echo ">>> 检查本地镜像 ${IMAGE}"
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then

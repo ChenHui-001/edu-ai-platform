@@ -147,7 +147,7 @@ LLM_MODEL=deepseek-chat
 或手动：
 ```bat
 docker compose down
-docker pull nanpo/edu-ai-platform:1.0.0
+docker pull nanpo/edu-ai-platform:1.0.8
 docker compose up -d
 ```
 
