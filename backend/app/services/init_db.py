@@ -283,7 +283,14 @@ def init_roles(db: Session) -> None:
         role.sort = rdef["sort"]
         db.flush()
 
-        if "*" not in rdef["perms"]:
+        if "*" in rdef["perms"]:
+            # 超级管理员：关联全部权限，使 role.permissions 直接可用，
+            # 避免 build_permission_context 取不到菜单。
+            current = {p.id for p in role.permissions}
+            for p in db.scalars(select(Permission)).all():
+                if p.id not in current:
+                    db.add(RolePermission(role_id=role.id, permission_id=p.id))
+        else:
             codes = set(rdef["perms"])
             current = {p.code for p in role.permissions}
             for p in db.scalars(select(Permission)).all():

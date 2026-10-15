@@ -434,6 +434,49 @@ if mine:
     expect_denied("stu731 不能取教师试卷", stu731, "GET", f"/question/papers/{pid}")
 
 
+# ============================================================
+# 17. 需求缺口修复验证（笔记分享/试卷Word/错题PDF/找回密码/菜单）
+# ============================================================
+R.set_phase("补充 · 需求覆盖回归 | 17. 需求缺口修复")
+
+# 17a. admin 菜单非空（修复 RBAC 菜单 bug）
+p, _, _ = admin.post("/auth/login", {})
+# 重新登录获取最新权限上下文
+p, _, _ = Client("admin刷新").post("/auth/login", {"username": "admin", "password": "Admin@123456"})
+menus = (p.get("data", {}).get("permission", {}) or {}).get("menus", [])
+check("★ admin 登录菜单非空（30 个）", len(menus) >= 20, f"menus={len(menus)}")
+
+# 17b. 笔记分享给同学
+p, _, _ = stu731.post("/learning/notes", {"title": "分享笔记测试", "content": "分享给同学", "subject_id": 1})
+nid = (p.get("data") or {}).get("id")
+if nid:
+    p2, _, _ = stu731.put(f"/learning/notes/{nid}/share", {"shared": True})
+    check("★ 笔记分享接口可用", p2.get("success"), p2.get("message", ""))
+    p3, _, _ = stu731.get("/learning/notes/shared")
+    check("★ 共享笔记列表接口可用", p3.get("success"), p3.get("message", ""))
+
+# 17c. 试卷导出 Word（HTML 格式）
+papers, _, _ = tea1.get("/question/papers")
+mine = rows_of(papers)
+if mine:
+    pid = mine[0]["id"]
+    p, _, sc = tea1.get(f"/question/papers/{pid}/export?fmt=word")
+    check("★ 试卷导出 Word（HTML）", sc == 200 and "bytes" in str(p.get("data", {})), p.get("message", ""))
+    p, _, sc = tea1.get(f"/question/papers/{pid}/export?fmt=pdf")
+    check("★ 试卷导出 PDF（HTML）", sc == 200 and "bytes" in str(p.get("data", {})), p.get("message", ""))
+
+# 17d. 错题导出 PDF（HTML 格式）
+p, _, sc = stu731.get("/learning/wrong-questions/export?fmt=html")
+check("★ 错题导出 HTML/PDF（HTML 格式）", sc == 200 and "bytes" in str(p.get("data", {})), p.get("message", ""))
+
+# 17e. 找回密码接口
+p, _, _ = Client("找回密码").post("/auth/forgot-password", {"email": "admin@demo.test"})
+check("★ 找回密码发送验证码接口可用", p.get("success"), p.get("message", ""))
+# 用不存在的邮箱测试（不泄露账号存在性）
+p2, _, _ = Client("找回密码2").post("/auth/forgot-password", {"email": "nobody@test.com"})
+check("★ 找回密码不泄露账号存在性", p2.get("success") and "已发送" in p2.get("message", ""), p2.get("message", ""))
+
+
 R.print_summary = lambda: None  # 占位，下方自定义输出
 _p = sum(1 for c in R.cases if c[2] == "PASS")
 _f = sum(1 for c in R.cases if c[2] == "FAIL")

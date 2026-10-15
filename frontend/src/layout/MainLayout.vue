@@ -134,18 +134,19 @@ const aiStatus = ref({ llm_enabled: false })
 
 const activeMenu = computed(() => route.path)
 
-// 菜单分组（按角色过滤）
+// 菜单分组（按角色/权限点过滤）
+// allRoutes 是 router.getRoutes().filter() 返回的普通数组，不是 ref，
+// 渲染时直接用 allRoutes，不能用 allRoutes.value（会得到 undefined）。
 const allRoutes = router.getRoutes().filter(r => r.meta?.title && !r.meta.hidden && r.path.startsWith('/'))
 
 const menuGroups = computed(() => {
   const roles = userStore.permissions.roles || []
   const perms = userStore.permissions.permissions || []
-  const userPerms = userStore.userInfo.permissions || {}
-  const allowed = allRoutes.value.filter(r => {
+  const allowed = allRoutes.filter(r => {
     if (r.meta.roles && !r.meta.roles.some(x => roles.includes(x))) return false
     if (r.meta.perm && !perms.includes('*') && !perms.includes(r.meta.perm)) return false
     return true
-  }).filter(r => r.path !== '/dashboard')
+  }).filter(r => r.path !== '/dashboard' && r.path !== '/')
 
   const groups = [
     { title: '教学资源', icon: 'Collection', match: ['/admin/grades', '/admin/subjects', '/admin/knowledge', '/admin/classes'] },

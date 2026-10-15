@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import StreamingResponse
+import io
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -277,6 +278,37 @@ def list_notes(
     return ok({"items": items, "total": total, "page": params.page})
 
 
+@learning_router.get("/notes/shared", summary="同学共享的笔记")
+def shared_notes(
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    subject_id: Optional[int] = None, db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """查看同班同学共享的笔记（不含本人，按班级隔离）。"""
+    from app.models import User as U
+    classmates = db.scalars(
+        select(U.id).where(U.class_id == user.class_id, U.id != user.id)
+    ).all() if user.class_id else []
+    if not classmates:
+        return ok({"items": [], "total": 0})
+    stmt = select(Note).where(
+        Note.student_id.in_(classmates), Note.is_shared.is_(True)
+    )
+    if subject_id:
+        stmt = stmt.where(Note.subject_id == subject_id)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(
+        stmt.order_by(Note.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    items = []
+    for n in rows:
+        d = dictify(n)
+        author = db.get(U, n.student_id)
+        d["author_name"] = author.real_name if author else ""
+        items.append(d)
+    return ok({"items": items, "total": total, "page": page, "page_size": page_size})
+
+
 @learning_router.get("/notes/{note_id}", summary="笔记详情")
 def get_note(
     note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
@@ -347,6 +379,21 @@ def delete_note(
     db.delete(note)
     db.commit()
     return ok(message="笔记已删除")
+
+
+@learning_router.put("/notes/{note_id}/share", summary="分享笔记给同学")
+def share_note(
+    note_id: int, data: Dict[str, Any] = Body(default={}),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """设置笔记为共享/取消共享，共享后同班同学可在「共享笔记」列表查看。"""
+    note = db.get(Note, note_id)
+    if not note or note.student_id != user.id:
+        raise NotFoundException("笔记不存在")
+    note.is_shared = bool(data.get("shared", True))
+    db.commit()
+    return ok({"is_shared": note.is_shared},
+              message="已分享给同班同学" if note.is_shared else "已取消分享")
 
 
 @learning_router.post("/notes/{note_id}/organize", summary="AI 整理笔记")
@@ -498,27 +545,60 @@ def redo_wrong(
 @learning_router.get("/wrong-questions/export", summary="导出错题")
 def export_wrong(
     subject_id: Optional[int] = None, with_answer: bool = True,
+    fmt: str = Query("markdown", regex="^(markdown|html|pdf)$"),
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
+    """导出错题本：
+    - markdown：返回 markdown 文本（默认）
+    - html/pdf：返回 HTML 文档（浏览器打印为 PDF）
+    """
     stmt = select(WrongQuestion).where(
         WrongQuestion.student_id == user.id, WrongQuestion.is_mastered.is_(False)
     )
     if subject_id:
         stmt = stmt.where(WrongQuestion.subject_id == subject_id)
 
-    lines = ["# 我的错题本", ""]
-    for i, w in enumerate(db.scalars(stmt.limit(200)).all(), start=1):
+    wrongs = db.scalars(stmt.limit(200)).all()
+    if fmt == "markdown":
+        lines = ["# 我的错题本", ""]
+        for i, w in enumerate(wrongs, start=1):
+            q = db.get(Question, w.question_id)
+            if not q:
+                continue
+            opts = _load(q.options) or []
+            lines.append(f"## {i}. {q.stem}")
+            for o in opts:
+                lines.append(f"- {o.get('key')}. {o.get('text')}")
+            if with_answer:
+                lines.append(f"\n**答案**：{q.answer}")
+                lines.append(f"**解析**：{q.analysis or '暂无'}\n")
+        return ok({"content": "\n".join(lines), "format": "markdown"})
+
+    # html / pdf → HTML 文档
+    rows = ["<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<title>我的错题本</title></head><body>"]
+    rows.append("<h1 style='text-align:center'>我的错题本</h1><hr/>")
+    for i, w in enumerate(wrongs, start=1):
         q = db.get(Question, w.question_id)
         if not q:
             continue
         opts = _load(q.options) or []
-        lines.append(f"## {i}. {q.stem}")
-        for o in opts:
-            lines.append(f"- {o.get('key')}. {o.get('text')}")
+        rows.append(f"<p><b>{i}.</b> {q.stem}</p>")
+        if opts:
+            rows.append("<ol type='A'>" + "".join(
+                f"<li>{o.get('text', '')}</li>" for o in opts) + "</ol>")
         if with_answer:
-            lines.append(f"\n**答案**：{q.answer}")
-            lines.append(f"**解析**：{q.analysis or '暂无'}\n")
-    return ok({"content": "\n".join(lines), "format": "markdown"})
+            rows.append(f"<p><i>答案：{q.answer or ''}</i></p>")
+            rows.append(f"<p><i>解析：{q.analysis or '暂无'}</i></p>")
+        rows.append("<hr/>")
+    rows.append("</body></html>")
+    html = "\n".join(rows)
+    ext = "pdf" if fmt == "pdf" else "html"
+    mt = "text/html"
+    return StreamingResponse(
+        io.BytesIO(html.encode("utf-8")), media_type=mt,
+        headers={"Content-Disposition": f"attachment; filename=wrong_questions.{ext}"},
+    )
 
 
 # ================================================================ 智能复习

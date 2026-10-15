@@ -12,7 +12,8 @@ from app.core.security import (
 )
 from app.core.logger import get_logger
 from app.models import (
-    LoginLog, Notification, Registration, Role, User, UserRole, UserStatus,
+    LoginLog, Notification, Permission, Registration, Role, User, UserRole,
+    UserStatus,
 )
 from app.utils.common import utcnow
 
@@ -256,8 +257,21 @@ def build_permission_context(user: User) -> Dict[str, Any]:
             if p.type == "menu":
                 menus.append({"code": p.code, "name": p.name, "path": p.path, "icon": p.icon})
             perms.append(p.code)
-    if "sys_admin" in user.role_codes:
+    is_super = "sys_admin" in user.role_codes
+    if is_super:
+        # 超级管理员拥有全部权限：perms 通配，menus 取全部菜单权限点，
+        # 否则因 perms=["*"] 跳过角色-权限关联，管理员登录后菜单为空。
         perms = ["*"]
+        if not menus:
+            from app.core.database import SessionLocal
+            _db = SessionLocal()
+            try:
+                for p in _db.scalars(
+                    select(Permission).where(Permission.type == "menu").order_by(Permission.sort)
+                ).all():
+                    menus.append({"code": p.code, "name": p.name, "path": p.path, "icon": p.icon})
+            finally:
+                _db.close()
     return {
         "roles": user.role_codes,
         "permissions": sorted(set(perms)),

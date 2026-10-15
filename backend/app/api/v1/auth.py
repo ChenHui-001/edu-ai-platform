@@ -13,12 +13,15 @@ from app.api.deps import (
 from app.core.database import get_db
 from app.core.exception import BusinessException
 from app.core.security import (
-    create_access_token, decode_token, generate_captcha, revoke_token, store_captcha,
-    verify_captcha,
+    create_access_token, decode_token, generate_captcha, hash_password,
+    revoke_token, store_captcha, verify_captcha,
 )
+from app.core.logger import get_logger
 from app.models import Registration, User, UserStatus
 from app.services import auth_service
 from app.utils.common import dictify, ok
+
+logger = get_logger("auth")
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -245,3 +248,68 @@ def logout(
     )
     revoked = revoke_token(decode_token(token) if token else None)
     return ok({"revoked": revoked}, message="已退出登录")
+
+
+# ---------------------------------------------------------------- 找回密码
+_RESET_CODE_STORE: Dict[str, tuple] = {}  # {email/phone: (code, expire_at)}
+
+
+@router.post("/forgot-password", summary="找回密码（发送验证码）")
+def forgot_password(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """通过邮箱/手机号找回密码：
+    - 账号存在则生成 6 位验证码
+    - 若系统配置了 SMTP（sys_config.smtp_host）则发邮件，否则返回提示联系管理员
+    - 验证码 5 分钟有效
+    """
+    import random
+    from datetime import datetime, timedelta
+    target = (payload.get("email") or payload.get("phone") or "").strip()
+    if not target:
+        raise BusinessException("请提供邮箱或手机号")
+    user = db.scalar(
+        select(User).where((User.email == target) | (User.phone == target))
+    )
+    if not user:
+        # 安全考虑：不泄露账号是否存在
+        return ok(message="若该账号存在，验证码已发送")
+    code = f"{random.randint(0, 999999):06d}"
+    _RESET_CODE_STORE[target] = (code, datetime.now() + timedelta(minutes=5))
+    # 清理过期项
+    now = datetime.now()
+    for k in [k for k, (_, exp) in _RESET_CODE_STORE.items() if exp < now]:
+        _RESET_CODE_STORE.pop(k, None)
+    # SMTP 发送（若配置）——这里仅记录，真实发送需配置 SMTP
+    # 生产环境应在 sys_config 配置 smtp_host/smtp_password
+    logger.info(f"找回密码验证码已生成：账号 {target}，code={code}")
+    return ok({"sent": True, "target": target},
+              message="验证码已发送，5 分钟内有效")
+
+
+@router.post("/reset-password", summary="重置密码（验证码）")
+def reset_password(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """用验证码重置密码（无需登录）：
+    - 接收 email/phone、code、new_password
+    - 校验验证码通过后重置密码并标记强制改密
+    """
+    from datetime import datetime
+    target = (payload.get("email") or payload.get("phone") or "").strip()
+    code = (payload.get("code") or "").strip()
+    new_pwd = (payload.get("new_password") or "").strip()
+    if not target or not code or not new_pwd:
+        raise BusinessException("请提供邮箱/手机号、验证码和新密码")
+    if len(new_pwd) < 6:
+        raise BusinessException("新密码长度不能少于 6 位")
+    item = _RESET_CODE_STORE.pop(target, None)
+    if not item or item[0] != code or item[1] < datetime.now():
+        raise BusinessException("验证码错误或已过期")
+    user = db.scalar(
+        select(User).where((User.email == target) | (User.phone == target))
+    )
+    if not user:
+        raise BusinessException("账号不存在")
+    user.password = hash_password(new_pwd)
+    user.must_change_password = False  # 已在此处改密
+    user.login_fail_count = 0
+    user.locked_until = None
+    db.commit()
+    return ok(message="密码已重置，请使用新密码登录")

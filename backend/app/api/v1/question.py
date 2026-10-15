@@ -523,48 +523,87 @@ def share_paper(
     return ok(message=f"已共享给 {len(to_ids)} 名教师")
 
 
-@router.get("/papers/{paper_id}/export", summary="导出试卷（Excel）")
+@router.get("/papers/{paper_id}/export", summary="导出试卷（Excel/Word/PDF）")
 def export_paper(
-    paper_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    paper_id: int, fmt: str = Query("excel", regex="^(excel|word|pdf|html)$"),
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
+    """导出试卷：
+    - excel：xlsx 文件（默认）
+    - word/pdf/html：HTML 文档（浏览器打印为 PDF，Word 可直接打开为 .doc）
+    轻量化方案：HTML 兼容 Word 与 PDF 打印，无需额外依赖。
+    """
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
     _assert_paper_readable(db, paper, user)
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "试卷"
+    if fmt == "excel":
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "试卷"
+        sub = db.get(Subject, paper.subject_id)
+        gr = db.get(Grade, paper.grade_id)
+        ws.append([paper.name])
+        ws.append([f"{gr.name if gr else ''} {sub.name if sub else ''}",
+                   f"总分：{paper.total_score}", f"时间：{paper.duration} 分钟"])
+        ws.append([])
+        current_section = None
+        idx = 1
+        for it in sorted(paper.items, key=lambda x: x.sort_order):
+            if it.section_name and it.section_name != current_section:
+                current_section = it.section_name
+                ws.append([current_section])
+            q = it.question
+            opts = _load(q.options) or []
+            opt_text = "  ".join(f"{o['key']}. {o['text']}" for o in opts)
+            ws.append([f"{idx}. （{it.score}分）{q.stem}"])
+            if opt_text:
+                ws.append([f"    {opt_text}"])
+            ws.append([f"    答案：{q.answer or ''}"])
+            if q.analysis:
+                ws.append([f"    解析：{q.analysis}"])
+            ws.append([])
+            idx += 1
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}.xlsx"},
+        )
+
+    # word / pdf / html → HTML 文档
     sub = db.get(Subject, paper.subject_id)
     gr = db.get(Grade, paper.grade_id)
-    ws.append([paper.name])
-    ws.append([f"{gr.name if gr else ''} {sub.name if sub else ''}",
-               f"总分：{paper.total_score}", f"时间：{paper.duration} 分钟"])
-    ws.append([])
+    rows = ["<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<title>{paper.name}</title></head><body>"]
+    rows.append(f"<h1 style='text-align:center'>{paper.name}</h1>")
+    rows.append(f"<p style='text-align:center'>{gr.name if gr else ''} {sub.name if sub else ''}"
+                f"　总分：{paper.total_score}　时间：{paper.duration} 分钟</p><hr/>")
     current_section = None
     idx = 1
     for it in sorted(paper.items, key=lambda x: x.sort_order):
         if it.section_name and it.section_name != current_section:
             current_section = it.section_name
-            ws.append([current_section])
+            rows.append(f"<h3>{current_section}</h3>")
         q = it.question
         opts = _load(q.options) or []
-        opt_text = "  ".join(f"{o['key']}. {o['text']}" for o in opts)
-        ws.append([f"{idx}. （{it.score}分）{q.stem}"])
-        if opt_text:
-            ws.append([f"    {opt_text}"])
-        ws.append([f"    答案：{q.answer or ''}"])
+        rows.append(f"<p><b>{idx}.</b>（{it.score}分）{q.stem}</p>")
+        if opts:
+            rows.append("<ol type='A'>" + "".join(
+                f"<li>{o.get('text', '')}</li>" for o in opts) + "</ol>")
+        rows.append(f"<p><i>答案：{q.answer or ''}</i></p>")
         if q.analysis:
-            ws.append([f"    解析：{q.analysis}"])
-        ws.append([])
+            rows.append(f"<p><i>解析：{q.analysis}</i></p><hr/>")
         idx += 1
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+    rows.append("</body></html>")
+    html = "\n".join(rows)
+    ext = "doc" if fmt == "word" else "html"
+    mt = "application/msword" if fmt == "word" else "text/html"
     return StreamingResponse(
-        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}.xlsx"},
+        io.BytesIO(html.encode("utf-8")), media_type=mt,
+        headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}.{ext}"},
     )
 
 
