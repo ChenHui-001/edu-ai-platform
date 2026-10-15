@@ -141,15 +141,17 @@ def delete_subject(
 # ---------------------------------------------------------------- 知识点
 @router.get("/knowledge", summary="知识点树")
 def knowledge_tree(
-    grade_id: int, subject_id: int, term: Optional[int] = None,
+    grade_id: Optional[int] = None, subject_id: Optional[int] = None,
+    term: Optional[int] = None,
     keyword: Optional[str] = None, db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    stmt = select(KnowledgePoint).where(
-        KnowledgePoint.grade_id == grade_id,
-        KnowledgePoint.subject_id == subject_id,
-        KnowledgePoint.is_active.is_(True),
-    )
+    """知识点树。grade_id/subject_id 不传时返回全部（供前端初始化加载）。"""
+    stmt = select(KnowledgePoint).where(KnowledgePoint.is_active.is_(True))
+    if grade_id:
+        stmt = stmt.where(KnowledgePoint.grade_id == grade_id)
+    if subject_id:
+        stmt = stmt.where(KnowledgePoint.subject_id == subject_id)
     if term:
         stmt = stmt.where(KnowledgePoint.term == term)
     if keyword:
