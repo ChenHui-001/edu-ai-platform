@@ -174,6 +174,25 @@ function Initialize-Env {
     }
 }
 
+function Remove-StaleContainer {
+    # 移除名为 edu-platform 且不带 compose 标签的残留容器。
+    # compose 只管理带 com.docker.compose.* 标签的容器；
+    # 之前用 `docker run` 起的同名容器会让 compose up 报
+    # "container name is already in use" 而启动失败。
+    $ids = @(docker ps -aq --filter 'name=^edu-platform$' 2>$null)
+    if ($ids.Count -eq 0) { return }
+
+    foreach ($cid in $ids) {
+        if (-not $cid) { continue }
+        $label = docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' $cid 2>$null
+        # 标签非空 = 由 compose 管理，compose down 已处理，不动它
+        if ($label) { continue }
+        Write-Warn "清理非 compose 管理的同名容器 $($cid.Substring(0,12))..."
+        docker rm -f $cid 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { Write-Ok '已移除残留容器' }
+    }
+}
+
 # ---------- 各命令实现 ----------
 function Invoke-Start {
     Write-Banner
@@ -193,11 +212,13 @@ function Invoke-Start {
     Write-Host '    构建过程较长，完成后会自动打开浏览器。'
     Write-Host ''
     docker compose down --remove-orphans 2>&1 | Out-Null
+    Remove-StaleContainer
     docker compose up -d --build
     if ($LASTEXITCODE -ne 0) {
         Write-Err '启动失败'
         Write-Host ''
         Write-Host '    常见原因：'
+        Write-Host '      - 容器名被占用：运行 .\start.ps1 -Action reset 或 docker rm -f edu-platform'
         Write-Host '      - 镜像源拉取失败：检查 Docker Desktop 的 Registry Mirrors 设置'
         Write-Host '      - 端口冲突：换端口重试 .\start.ps1 -Port 8081'
         Write-Host '      - 磁盘不足：镜像约需 3GB 空间'
@@ -266,6 +287,7 @@ function Invoke-Stop {
     Write-Host ''
     Write-Host '正在停止服务...' -ForegroundColor Cyan
     docker compose down
+    Remove-StaleContainer
     Write-Host ''
     Write-Ok '已停止'
     Wait-Enter
@@ -351,6 +373,7 @@ function Invoke-Reset {
     Write-Host ''
     Write-Step '停止服务并删除数据卷...'
     docker compose down -v 2>&1 | Out-Null
+    Remove-StaleContainer
     foreach ($dir in @('data', 'logs')) {
         if (Test-Path $dir) {
             Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
@@ -365,6 +388,7 @@ function Invoke-Rebuild {
     Write-Host ''
     Write-Step '清除缓存重新构建镜像（耗时较长）...'
     docker compose down
+    Remove-StaleContainer
     docker compose build --no-cache
     if ($LASTEXITCODE -ne 0) {
         Write-Err '构建失败'

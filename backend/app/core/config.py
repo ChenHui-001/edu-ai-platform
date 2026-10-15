@@ -1,5 +1,6 @@
 """应用配置管理：所有配置通过环境变量注入，无需修改代码。"""
 import os
+import re
 from functools import lru_cache
 from typing import List, Optional
 
@@ -119,14 +120,23 @@ class Settings(BaseSettings):
     def _resolve_version(self) -> "Settings":
         """版本号单一真源：根目录 VERSION 文件。
 
-        优先级：显式 APP_VERSION 环境变量 > VERSION 文件 > IMAGE_TAG > "dev"。
-        这样打包时只需 `docker build --build-arg APP_VERSION=x.y.z` 或直接改
-        VERSION 文件一处即可，容器 /health、OpenAPI、前端均会同步显示。
+        优先级：
+          1. 显式 APP_VERSION **且形如版本号**（x.y[.z]）—— 允许 CI 注入 ci-<sha> 之类
+          2. VERSION 文件（镜像内 /app/VERSION）
+          3. 其余情况退化为 "dev"
+
+        刻意不使用 IMAGE_TAG：它是镜像命名标签，常为 `latest` 这类浮动值，
+        拿去当 version 会让 /health 返回无意义的结果。
         """
-        if not self.APP_VERSION:
-            self.APP_VERSION = (
-                _read_version_file() or self.IMAGE_TAG or "dev"
-            )
+        raw = (self.APP_VERSION or "").strip()
+        if re.match(r"^v?\d+\.\d+", raw):
+            return self
+        # 非法/空的 APP_VERSION（含 Docker 缓存残留的 "latest"）→ 回落到 VERSION 文件
+        file_ver = _read_version_file()
+        if raw or file_ver != self.APP_VERSION:
+            print(f"[config] APP_VERSION={raw!r} 非版本号，回落为 "
+                  f"{file_ver or 'dev'}")
+        self.APP_VERSION = file_ver or "dev"
         return self
 
 

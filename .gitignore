@@ -38,6 +38,9 @@ pnpm-debug.log*
 *.swo
 .DS_Store
 
+# 工具本地数据（AI 助手记忆/自动化状态等，不应进仓库）
+.workbuddy/
+
 # 测试与缓存
 .pytest_cache/
 .mypy_cache/

@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 REM ================================================================
 REM 九年义务教育 AI 学习管理系统 —— 自动交付（Windows 入口）
 REM 双击或在 Git Bash / cmd 中运行，等价于 tools/auto_ship.sh

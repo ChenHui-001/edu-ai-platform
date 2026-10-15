@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul 2>&1
 title 九年义务教育 AI 学习管理系统 - 服务管理
 

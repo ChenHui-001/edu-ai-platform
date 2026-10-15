@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 title 九年义务教育 AI 学习管理系统 - 本地一键启动
@@ -38,6 +38,34 @@ if errorlevel 1 (
 )
 
 echo       [OK] Docker 引擎就绪
+
+REM ---------- 1.5 磁盘空间预检 ----------
+REM 构建镜像需约 4GB。空间不足时 Docker 会大量重试/超时，
+REM 表现为构建极慢甚至假性失败。
+REM 查 Docker 数据所在盘（迁到数据盘后系统盘紧张也不影响构建）。
+set "FREE_GB="
+for /f "usebackq delims=" %%d in (`docker info --format "{{.DockerRootDir}}" 2^>nul`) do (
+    echo %%d | findstr /r "^[A-Za-z]:" >nul && (
+        for /f "usebackq tokens=1 delims=:" %%l in ("%%d") do set "DISK=%%l"
+    )
+)
+if not defined DISK set "DISK=C"
+for /f "usebackq delims=" %%f in (`powershell -NoProfile -Command "$d=Get-PSDrive '!DISK!' -ErrorAction SilentlyContinue; if($d){[math]::Round($d.Free/1GB,0)}"`) do set "FREE_GB=%%f"
+
+if defined FREE_GB (
+    if !FREE_GB! lss 4 (
+        echo.
+        echo   [!] Docker 所在盘(!DISK:)可用仅 !FREE_GB!GB，构建镜像需约 4GB
+        echo.
+        echo       清理命令：docker image prune -a ^& docker builder prune -a
+        echo       或在 Docker Desktop 把 Disk image location 迁到数据盘
+        echo.
+    ) else (
+        echo       [OK] Docker 所在盘(!DISK:)可用 !FREE_GB!GB
+    )
+) else (
+    echo       [OK] 磁盘空间检测跳过
+)
 
 REM ---------- 2. 端口检查 ----------
 echo.
@@ -104,12 +132,20 @@ echo.
 echo [4/5] 启动服务（首次运行需要构建镜像，约 5-15 分钟）...
 echo.
 docker compose down --remove-orphans >nul 2>&1
+
+REM 清理「同名但非 compose 管理」的残留容器。
+REM 常见场景：之前用 `docker run` 或本脚本旧版本起过 edu-platform，
+REM 这些容器没有 com.docker.compose.* 标签，`docker compose down` 清不掉，
+REM 会导致 compose up 报 "container name is already in use" 而启动失败。
+call :CleanupStaleContainer
+
 docker compose up -d --build
 if errorlevel 1 (
     echo.
     echo   [X] 启动失败
     echo.
     echo   请查看上方错误信息。常见原因：
+    echo     - 容器名被占用：运行 start.bat reset 或 docker rm -f edu-platform
     echo     - 镜像源拉取失败：检查 Docker Desktop 的 Registry Mirrors 设置
     echo     - 端口冲突：运行 start.bat 8081 换端口
     echo     - 磁盘不足：镜像约需 3GB 空间
@@ -194,6 +230,23 @@ REM 端口被监听时返回 errorlevel 1，否则返回 0
 REM 注意：findstr 不支持星号量词，改用 Get-NetTCPConnection 判断
 powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort %~1 -State Listen -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }" >nul 2>&1
 exit /b %errorlevel%
+
+:CleanupStaleContainer
+REM 移除名为 edu-platform 且不带 compose 标签的残留容器。
+REM 判定依据：容器存在，且其 com.docker.compose.project 标签为空。
+REM 仅当容器确实存在才执行，避免每次启动都打一行 docker rm 噪音。
+set "STALE_ID="
+for /f "usebackq delims=" %%i in (`docker ps -aq --filter "name=^edu-platform$"`) do set "STALE_ID=%%i"
+if not defined STALE_ID exit /b 0
+
+REM 该容器已被 compose 管理 -> compose down 已经处理过了，不动它
+for /f "usebackq delims=" %%l in (`docker inspect -f "{{index .Config.Labels \"com.docker.compose.project\"}}" !STALE_ID! 2^>nul`) do set "STALE_LABEL=%%l"
+if defined STALE_LABEL exit /b 0
+
+echo       [i] 清理非 compose 管理的同名容器 !STALE_ID! ...
+docker rm -f !STALE_ID! >nul 2>&1
+if not errorlevel 1 echo       [OK] 已移除残留容器
+exit /b 0
 
 :SyncEnvPort
 REM 用法：call :SyncEnvPort 8081

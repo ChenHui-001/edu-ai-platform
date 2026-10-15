@@ -1,7 +1,12 @@
 # Windows 批处理与 PowerShell 脚本必须用 CRLF，否则双击/执行会解析异常
-*.bat   text eol=crlf
-*.cmd   text eol=crlf
-*.ps1   text eol=crlf
+#
+# 注意：批处理脚本含中文，必须以 **UTF-8 with BOM** 保存才能被 cmd 正确解析
+# （无 BOM 时 chcp 65001 下的中文会被拆成乱码字节，进而被当成命令执行，
+#  典型报错：'xx' is not recognized as an internal or external command）。
+# `-text` 禁止 git 对这些文件做任何行尾/编码转换，字节原样入库出库。
+*.bat   -text
+*.cmd   -text
+*.ps1   -text
 
 # Shell 脚本与前端源码用 LF
 *.sh    text eol=lf

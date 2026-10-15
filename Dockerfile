@@ -62,11 +62,15 @@ FROM backend-base AS backend
 
 WORKDIR /app
 COPY backend/app ./app
-# 版本号单一真源：根目录 VERSION 文件；缺失时回退到 APP_VERSION build-arg
+COPY backend/.env.example ./.env.example
+# 版本号单一真源：根目录 VERSION 文件。
+# 不注入 APP_VERSION 覆盖，让容器内直接读 /app/VERSION；
+# 仅当确实要覆盖（如 CI 用 ci-<sha>）时才传 --build-arg APP_VERSION=x.y.z。
+# 注意：不要 `ENV APP_VERSION=""` —— buildx 缓存可能让上一轮的值
+# （如 latest）残留到新镜像，导致 /health 返回错误版本号。
 COPY VERSION ./VERSION
 ARG APP_VERSION=""
 ENV APP_VERSION=${APP_VERSION}
-COPY backend/.env.example ./.env.example
 RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma
 
 EXPOSE 8000
@@ -93,7 +97,7 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; \
 WORKDIR /app
 
 COPY backend/app ./app
-# 版本号单一真源：根目录 VERSION 文件；缺失时回退到 APP_VERSION build-arg
+# 版本号单一真源：根目录 VERSION 文件；缺失时才回退到 APP_VERSION build-arg
 COPY VERSION ./VERSION
 ARG APP_VERSION=""
 ENV APP_VERSION=${APP_VERSION}
