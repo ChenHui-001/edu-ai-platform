@@ -163,6 +163,10 @@ PERMISSIONS: List[Tuple[str, str, str, str, str, int]] = [
     ("student:score", "成绩中心", "menu", "/student/scores", "Medal", 460),
     ("student:favorites", "题目收藏", "menu", "/student/favorites", "Star", 465),
     ("student:mastery", "掌握图谱", "menu", "/student/mastery", "Histogram", 468),
+    ("student:custom", "自主组卷", "menu", "/student/custom", "Tickets", 470),
+    ("student:goals", "学习打卡", "menu", "/student/goals", "Calendar", 472),
+    ("student:path", "学习路径", "menu", "/student/path", "Guide", 474),
+    ("student:flashcard", "闪卡速记", "menu", "/student/flashcard", "Box", 476),
 
     # AI 中心
     ("agent:chat", "AI 智能助手", "menu", "/agent/chat", "MagicStick", 500),
@@ -216,6 +220,7 @@ ROLES: List[Dict] = [
             "student:practice", "student:exam", "student:wrong", "student:note",
             "student:review", "student:report", "student:score",
             "student:favorites", "student:mastery",
+            "student:custom", "student:goals", "student:path", "student:flashcard",
             "agent:chat", "agent:plan",
         ],
     },

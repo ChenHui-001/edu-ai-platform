@@ -107,3 +107,38 @@ class QuestionFavorite(Base):
     tag: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True, comment="自定义标签：考前必看/易错/经典")
     note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="收藏备注")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class StudyGoal(Base):
+    """学习目标：学生自定义的日/周/长期目标。"""
+
+    __tablename__ = "edu_study_goal"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(128), comment="目标标题")
+    target_type: Mapped[str] = mapped_column(String(32), default="daily",
+                                             comment="daily每日/weekly每周/longterm长期")
+    target_value: Mapped[int] = mapped_column(Integer, default=10, comment="目标值（题数/分钟数）")
+    unit: Mapped[str] = mapped_column(String(16), default="questions", comment="questions题数/minutes分钟")
+    subject_id: Mapped[Optional[int]] = mapped_column(ForeignKey("edu_subject.id", ondelete="SET NULL"), nullable=True, index=True)
+    start_date: Mapped[str] = mapped_column(String(10), default="", comment="开始日期 YYYY-MM-DD")
+    end_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, comment="结束日期")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class StudyCheckin(Base):
+    """学习打卡：每日完成情况记录。"""
+
+    __tablename__ = "edu_study_checkin"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id", ondelete="CASCADE"), index=True)
+    goal_id: Mapped[Optional[int]] = mapped_column(ForeignKey("edu_study_goal.id", ondelete="CASCADE"), nullable=True, index=True)
+    checkin_date: Mapped[str] = mapped_column(String(10), index=True, comment="打卡日期 YYYY-MM-DD")
+    actual_value: Mapped[int] = mapped_column(Integer, default=0, comment="实际完成量")
+    streak: Mapped[int] = mapped_column(Integer, default=1, comment="当前连续打卡天数")
+    note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

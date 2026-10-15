@@ -91,6 +91,8 @@
       <div class="wrong-actions">
         <el-button size="small" :icon="MagicStick" @click="analyze(w)">AI 分析错因</el-button>
         <el-button size="small" :icon="RefreshRight" @click="redo(w)">重做同类题</el-button>
+        <el-button size="small" type="warning" :icon="MagicStick" :loading="variantLoading===w.id"
+                   @click="variant(w)">变式练习</el-button>
         <el-dropdown @command="(c) => markReason(w, c)" trigger="click">
           <el-button size="small">标注错因<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
@@ -113,6 +115,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, MagicStick, RefreshRight, ArrowDown, Download } from '@element-plus/icons-vue'
 import { learningApi, eduApi } from '@/api'
@@ -123,11 +126,13 @@ const TYPES = {
 }
 const DIFF = { easy: '简单', medium: '中等', hard: '困难' }
 const REASONS = ['概念不清', '审题错误', '计算失误', '公式记错', '知识遗忘', '方法不会', '粗心大意']
+const router = useRouter()
 
 const list = ref([])
 const subjects = ref([])
 const total = ref(0)
 const loading = ref(false)
+const variantLoading = ref(null)
 const query = reactive({ page: 1, page_size: 20, subject_id: null, error_reason: '', is_mastered: null, keyword: '' })
 
 const cards = computed(() => [
@@ -187,6 +192,19 @@ async function redo(w) {
   const res = await learningApi.redoWrong(w.id)
   const d = res.data.data
   ElMessage.success(`已生成 ${d.count || d.items?.length || 0} 道同类练习题`)
+}
+
+async function variant(w) {
+  variantLoading.value = w.id
+  try {
+    const res = await learningApi.wrongVariant(w.id)
+    ElMessage.success(res.message)
+    router.push(`/student/exam/${res.data.task_id}`)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || '变式练习生成失败')
+  } finally {
+    variantLoading.value = null
+  }
 }
 
 async function markReason(w, reason) {

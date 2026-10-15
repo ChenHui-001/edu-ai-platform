@@ -88,6 +88,14 @@ const routes = [
         meta: { title: '题目收藏', icon: 'Star', perm: 'student:favorites' } },
       { path: 'student/mastery', name: 'MasteryMap', component: () => import('@/views/student/MasteryMap.vue'),
         meta: { title: '掌握图谱', icon: 'Histogram', perm: 'student:mastery' } },
+      { path: 'student/custom', name: 'CustomPaper', component: () => import('@/views/student/CustomPaper.vue'),
+        meta: { title: '自主组卷', icon: 'Tickets', perm: 'student:custom' } },
+      { path: 'student/goals', name: 'StudyGoals', component: () => import('@/views/student/StudyGoals.vue'),
+        meta: { title: '学习打卡', icon: 'Calendar', perm: 'student:goals' } },
+      { path: 'student/path', name: 'LearningPath', component: () => import('@/views/student/LearningPath.vue'),
+        meta: { title: '学习路径', icon: 'Guide', perm: 'student:path' } },
+      { path: 'student/flashcard', name: 'Flashcards', component: () => import('@/views/student/Flashcards.vue'),
+        meta: { title: '闪卡速记', icon: 'Box', perm: 'student:flashcard' } },
 
       // AI
       { path: 'agent/chat', name: 'AgentChat', component: () => import('@/views/agent/AgentChat.vue'),

@@ -133,7 +133,21 @@ export const learningApi = {
   removeFavorite: (id) => request.delete(`/learning/favorites/${id}`),
   removeFavoriteByQid: (qid) => request.delete(`/learning/favorites/by-question/${qid}`),
   checkFavorite: (qid) => request.get(`/learning/favorites/check/${qid}`),
-  favoritesPractice: (data) => request.post('/learning/favorites/practice', data)
+  favoritesPractice: (data) => request.post('/learning/favorites/practice', data),
+  // 错题变式练习
+  wrongVariant: (wid) => request.post(`/learning/wrong-questions/${wid}/variant`),
+  // 自主组卷
+  customPaper: (data) => request.post('/learning/custom-paper', data),
+  // 学习目标
+  goals: () => request.get('/learning/goals'),
+  createGoal: (data) => request.post('/learning/goals', data),
+  updateGoal: (id, data) => request.put(`/learning/goals/${id}`, data),
+  deleteGoal: (id) => request.delete(`/learning/goals/${id}`),
+  checkin: (id, data) => request.post(`/learning/goals/${id}/checkin`, data),
+  // 学习路径
+  learningPath: (params) => request.get('/learning/path/recommend', { params }),
+  // 闪卡
+  flashcards: (params) => request.get('/learning/flashcards', { params })
 }
 
 // ---------------- AI Agent ----------------
