@@ -102,12 +102,18 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { gradingApi } from '@/api'
 
+const route = useRoute()
+const router = useRouter()
 const list = ref([])
 const detail = ref(null)
+// 当前选中的列表项。模板里用 current?.id 判断高亮，
+// 但此前脚本中并未定义该变量 —— 选中态高亮因此从未生效。
+const current = ref(null)
 const scores = reactive({})
 const comments = reactive({})
 const filter = ref('')
@@ -146,8 +152,12 @@ async function load() {
 }
 
 async function select(item) {
+  if (!item) return
+  current.value = item
   detailLoading.value = true
   detail.value = null
+  // 同步到地址栏，保证刷新/分享后仍停留在同一条
+  router.replace({ query: { ...route.query, submission: String(item.id) } })
   try {
     const res = await gradingApi.detail(item.id)
     const d = res.data.data
@@ -158,6 +168,35 @@ async function select(item) {
     })
   } finally {
     detailLoading.value = false
+  }
+}
+
+/** 支持从首页带 submission 参数直达（如 /teacher/grading?submission=33）。 */
+async function focusFromQuery() {
+  const sid = Number(route.query.submission)
+  if (!sid) return
+  // 待批队列最多取 100 条，定位目标可能不在其中（如已批改/ 已发布）
+  const hit = list.value.find(i => i.id === sid)
+  if (hit) {
+    await select(hit)
+  } else {
+    try {
+      const res = await gradingApi.detail(sid)
+      const d = res.data.data
+      detail.value = d
+      current.value = {
+        id: sid,
+        student_name: d.student?.name || '-',
+        task_title: d.task_title || '-',
+      }
+      ;(d.items || []).forEach(it => {
+        scores[it.id] = it.score ?? 0
+        comments[it.id] = it.teacher_comment || ''
+      })
+    } catch (e) {
+      ElMessage.warning('未找到该提交记录，可能已完成批改')
+      router.replace({ query: {} })
+    }
   }
 }
 
@@ -185,6 +224,8 @@ async function reject() {
   await gradingApi.reject(detail.value.submission_id, { reason: value })
   ElMessage.success('已打回，学生可重新提交')
   detail.value = null
+  current.value = null
+  router.replace({ query: {} })
   load()
 }
 
@@ -193,10 +234,15 @@ async function publish() {
   await gradingApi.publish(detail.value.submission_id)
   ElMessage.success('成绩已发布')
   detail.value = null
+  current.value = null
+  router.replace({ query: {} })
   load()
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await focusFromQuery()
+})
 </script>
 
 <style scoped>

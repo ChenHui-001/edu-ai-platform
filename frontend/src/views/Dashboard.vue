@@ -39,7 +39,7 @@
               :key="p.id" :timestamp="p.knowledge_point_name" placement="top"
             >
               {{ p.stage > 1 ? `第 ${p.stage} 轮复习` : '首次复习' }}
-              <el-button link type="primary" @click="$router.push('/student/review')">去复习</el-button>
+              <el-button link type="primary" @click="openReview(p)">去复习</el-button>
             </el-timeline-item>
           </el-timeline>
         </el-card>
@@ -100,19 +100,43 @@
           <template #header>
             <div class="card-header">
               <span>待批改</span>
-              <el-link type="primary" :underline="false" @click="$router.push('/teacher/grading')">批改中心</el-link>
+              <el-link type="primary" :underline="false" @click="$router.push('/teacher/grading')">
+                全部 {{ pendingTotal }} 份
+              </el-link>
             </div>
           </template>
-          <el-table :data="pending" size="small" empty-text="暂无待批改">
-            <el-table-column prop="student_name" label="学生" width="100" />
+          <el-table
+            :data="pending" size="small" empty-text="暂无待批改"
+            row-class-name="clickable-row"
+            @row-click="openGrading"
+          >
+            <el-table-column prop="student_name" label="学生" width="92" />
             <el-table-column prop="task_title" label="任务" show-overflow-tooltip />
-            <el-table-column prop="score" label="得分" width="80" />
-            <el-table-column label="操作" width="80">
+            <el-table-column label="提交时间" width="140">
               <template #default="{ row }">
-                <el-button link type="primary" size="small" @click="$router.push('/teacher/grading')">批改</el-button>
+                <span class="muted">{{ formatTime(row.submit_time) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="得分" width="92">
+              <template #default="{ row }">
+                <span :style="{ color: row.is_passed ? '#67c23a' : '#f56c6c', fontWeight: 600 }">
+                  {{ row.score ?? '-' }}
+                </span>
+                <span class="muted"> / {{ row.total_score ?? '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="70" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click.stop="openGrading(row)">批改</el-button>
               </template>
             </el-table-column>
           </el-table>
+          <div v-if="pending.length >= 8" class="table-more">
+            仅显示最近 8 份，
+            <el-link type="primary" :underline="false" @click="$router.push('/teacher/grading')">
+              查看全部 {{ pendingTotal }} 份
+            </el-link>
+          </div>
         </el-card>
 
         <el-card shadow="never">
@@ -122,8 +146,13 @@
               <el-link type="primary" :underline="false" @click="$router.push('/teacher/tasks')">任务管理</el-link>
             </div>
           </template>
-          <el-table :data="tasks" size="small" empty-text="暂无任务">
+          <el-table
+            :data="tasks" size="small" empty-text="暂无任务"
+            row-class-name="clickable-row"
+            @row-click="openTask"
+          >
             <el-table-column prop="title" label="名称" show-overflow-tooltip />
+            <el-table-column prop="type_label" label="类型" width="80" />
             <el-table-column prop="submission_count" label="提交" width="70" />
             <el-table-column label="完成率" width="100">
               <template #default="{ row }">{{ row.completion_rate }}%</template>
@@ -177,14 +206,17 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import ReactECharts from 'echarts-for-react'
 import { gradingApi, reportApi, taskApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
+const router = useRouter()
 const userStore = useUserStore()
 
 const tasks = ref([])
 const pending = ref([])
+const pendingTotal = ref(0)
 const reviewData = ref({ today_count: 0, items: [] })
 const trend = ref([])
 const radar = ref([])
@@ -268,6 +300,32 @@ function formatRemain(sec) {
   return `${m} 分钟`
 }
 
+/** 后端返回 ISO 时间（可能带 T 与微秒），格式化成易读形式。 */
+function formatTime(t) {
+  if (!t) return '-'
+  const s = String(t).replace('T', ' ')
+  return s.slice(0, 16)
+}
+
+/** 跳转到批改中心并**定位到具体提交**（此前只跳列表，等于没定位）。 */
+function openGrading(row) {
+  const id = row?.submission_id ?? row?.id
+  if (!id) return
+  router.push({ path: '/teacher/grading', query: { submission: String(id) } })
+}
+
+/** 跳转到任务管理并定位具体任务。 */
+function openTask(row) {
+  if (!row?.id) return
+  router.push({ path: '/teacher/tasks', query: { task: String(row.id) } })
+}
+
+/** 跳转到复习计划并定位具体条目。 */
+function openReview(plan) {
+  if (!plan?.id) return
+  router.push({ path: '/student/review', query: { plan: String(plan.id) } })
+}
+
 onMounted(async () => {
   try {
     if (userStore.isStudent) {
@@ -285,6 +343,7 @@ onMounted(async () => {
       tasks.value = t.data.items || []
       const p = await gradingApi.pending({ page: 1, page_size: 8 })
       pending.value = p.data.items || []
+      pendingTotal.value = p.data.total ?? pending.value.length
     }
     if (userStore.isAdmin) {
       const s = await reportApi.adminOverview()
@@ -345,4 +404,24 @@ onMounted(async () => {
 }
 
 .ai-name { margin-top: 8px; font-size: 13px; color: #606266; }
+
+/* ---- 表格可点击行：提示用户整行都能点 ---- */
+:deep(.clickable-row) {
+  cursor: pointer;
+}
+:deep(.clickable-row:hover > td.el-table__cell) {
+  background: #ecf5ff !important;
+}
+
+.muted {
+  color: #909399;
+  font-size: 12px;
+}
+
+.table-more {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 12px;
+  color: #909399;
+}
 </style>
