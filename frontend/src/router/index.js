@@ -84,6 +84,10 @@ const routes = [
         meta: { title: '学习报表', icon: 'DataLine', perm: 'student:report' } },
       { path: 'student/scores', name: 'ScoreCenter', component: () => import('@/views/student/ScoreCenter.vue'),
         meta: { title: '成绩中心', icon: 'Medal', perm: 'student:score' } },
+      { path: 'student/favorites', name: 'MyFavorites', component: () => import('@/views/student/MyFavorites.vue'),
+        meta: { title: '题目收藏', icon: 'Star', perm: 'student:favorites' } },
+      { path: 'student/mastery', name: 'MasteryMap', component: () => import('@/views/student/MasteryMap.vue'),
+        meta: { title: '掌握图谱', icon: 'Histogram', perm: 'student:mastery' } },
 
       // AI
       { path: 'agent/chat', name: 'AgentChat', component: () => import('@/views/agent/AgentChat.vue'),

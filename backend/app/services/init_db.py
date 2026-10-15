@@ -161,6 +161,8 @@ PERMISSIONS: List[Tuple[str, str, str, str, str, int]] = [
     ("student:review", "智能复习", "menu", "/student/review", "Refresh", 440),
     ("student:report", "个人报表", "menu", "/student/report", "DataLine", 450),
     ("student:score", "成绩中心", "menu", "/student/scores", "Medal", 460),
+    ("student:favorites", "题目收藏", "menu", "/student/favorites", "Star", 465),
+    ("student:mastery", "掌握图谱", "menu", "/student/mastery", "Histogram", 468),
 
     # AI 中心
     ("agent:chat", "AI 智能助手", "menu", "/agent/chat", "MagicStick", 500),
@@ -213,6 +215,7 @@ ROLES: List[Dict] = [
         "perms": [
             "student:practice", "student:exam", "student:wrong", "student:note",
             "student:review", "student:report", "student:score",
+            "student:favorites", "student:mastery",
             "agent:chat", "agent:plan",
         ],
     },

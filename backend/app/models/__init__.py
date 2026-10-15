@@ -4,7 +4,7 @@ from app.models.edu import (  # noqa: F401
     Class, Grade, KnowledgePoint, Subject, TeachingAssignment,
 )
 from app.models.learning import (  # noqa: F401
-    KnowledgeMastery, Note, ReviewPlan, StudyRecord,
+    KnowledgeMastery, Note, QuestionFavorite, ReviewPlan, StudyRecord,
 )
 from app.models.ops import (  # noqa: F401
     AgentCallLog, Attachment, ErrorLog, JobExecutionLog, LoginLog,
@@ -38,7 +38,7 @@ __all__ = [
     "Task", "TaskAssignment", "Submission", "Answer", "WrongQuestion",
     "TaskType", "TaskStatus", "GradeStatus",
     # learning
-    "Note", "KnowledgeMastery", "ReviewPlan", "StudyRecord",
+    "Note", "KnowledgeMastery", "ReviewPlan", "StudyRecord", "QuestionFavorite",
     # ops
     "LoginLog", "OperationLog", "ErrorLog", "ScheduledJob", "JobExecutionLog",
     "Attachment", "AgentCallLog", "Notification",

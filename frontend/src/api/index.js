@@ -126,7 +126,14 @@ export const learningApi = {
   reviewPlans: (params) => request.get('/learning/review/plans', { params }),
   completeReview: (id, data) => request.put(`/learning/review/plans/${id}/complete`, data),
   masteryMap: (params) => request.get('/learning/review/mastery', { params }),
-  generatePlan: (data) => request.post('/learning/review/plan', data)
+  generatePlan: (data) => request.post('/learning/review/plan', data),
+  // 题目收藏
+  favorites: (params) => request.get('/learning/favorites', { params }),
+  addFavorite: (data) => request.post('/learning/favorites', data),
+  removeFavorite: (id) => request.delete(`/learning/favorites/${id}`),
+  removeFavoriteByQid: (qid) => request.delete(`/learning/favorites/by-question/${qid}`),
+  checkFavorite: (qid) => request.get(`/learning/favorites/check/${qid}`),
+  favoritesPractice: (data) => request.post('/learning/favorites/practice', data)
 }
 
 // ---------------- AI Agent ----------------

@@ -94,3 +94,16 @@ class StudyRecord(Base):
     correct_count: Mapped[int] = mapped_column(Integer, default=0)
     note_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class QuestionFavorite(Base):
+    """题目收藏：学生收藏的题目，可自定义标签和备注，用于考前速刷。"""
+
+    __tablename__ = "edu_question_favorite"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id", ondelete="CASCADE"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("edu_question.id", ondelete="CASCADE"), index=True)
+    tag: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True, comment="自定义标签：考前必看/易错/经典")
+    note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="收藏备注")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

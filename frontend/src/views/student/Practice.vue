@@ -86,6 +86,9 @@
           <el-tag size="small" class="ml4">{{ TYPES[q.type] || q.type }}</el-tag>
           <span class="score-tag ml8">{{ q.score }} 分</span>
           <span class="tip ml8">{{ idx < answeredCount ? `已完成 ${answeredCount} 题` : '未作答' }}</span>
+          <el-button class="fav-btn" :icon="favoritedSet.has(q.question_id) ? StarFilled : Star"
+                     :type="favoritedSet.has(q.question_id) ? 'warning' : 'default'"
+                     size="small" circle @click="toggleFavorite(q)" />
         </div>
 
         <p class="stem" v-html="q.stem"></p>
@@ -166,14 +169,18 @@
         </el-table-column>
       </el-table>
     </el-drawer>
+
+    <!-- 番茄钟（练习时显示） -->
+    <PomodoroTimer v-if="paper" @focus-complete="onFocusComplete" />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { MagicStick, Refresh, Clock, Close } from '@element-plus/icons-vue'
+import { MagicStick, Refresh, Clock, Close, Star, StarFilled } from '@element-plus/icons-vue'
 import { taskApi, learningApi, eduApi } from '@/api'
+import PomodoroTimer from '@/components/PomodoroTimer.vue'
 
 const TYPES = {
   single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题',
@@ -196,6 +203,8 @@ const multiAnswers = ref({})
 const fillAnswers = ref({})
 const textAnswers = ref({})
 const result = ref(false)
+
+const favoritedSet = ref(new Set()) // 已收藏的 question_id 集合
 
 const form = reactive({
   subject_id: null, grade_id: null, count: 10,
@@ -278,9 +287,39 @@ async function createPractice() {
     results.value = {}
     result.value = false
     ElMessage.success(res.data.message || `已生成 ${p.data.data.items.length} 道练习题`)
+    loadFavoriteStatus()
   } finally {
     generating.value = false
   }
+}
+
+async function loadFavoriteStatus() {
+  if (!paper.value?.items?.length) return
+  favoritedSet.value = new Set()
+  for (const q of paper.value.items) {
+    try {
+      const res = await learningApi.checkFavorite(q.question_id)
+      if (res.data?.favorited) favoritedSet.value.add(q.question_id)
+    } catch { /* ignore */ }
+  }
+}
+
+async function toggleFavorite(q) {
+  if (favoritedSet.value.has(q.question_id)) {
+    await learningApi.removeFavoriteByQid(q.question_id)
+    favoritedSet.value.delete(q.question_id)
+    favoritedSet.value = new Set(favoritedSet.value)
+    ElMessage.info('已取消收藏')
+  } else {
+    await learningApi.addFavorite({ question_id: q.question_id })
+    favoritedSet.value.add(q.question_id)
+    favoritedSet.value = new Set(favoritedSet.value)
+    ElMessage.success('已收藏')
+  }
+}
+
+function onFocusComplete(info) {
+  ElMessage.success(`专注完成！已累计完成 ${info.pomodoros} 个番茄钟`)
 }
 
 async function submitPractice() {
@@ -351,6 +390,7 @@ onMounted(loadSubjects)
 .practice-title { margin: 0 0 4px; font-size: 17px; }
 .q-card { margin-bottom: 14px; }
 .q-head { display: flex; align-items: center; margin-bottom: 10px; }
+.fav-btn { margin-left: auto; }
 .score-tag { color: var(--el-color-primary); font-weight: 600; }
 .stem { line-height: 1.9; font-size: 15px; margin: 10px 0; }
 .opt-group { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }

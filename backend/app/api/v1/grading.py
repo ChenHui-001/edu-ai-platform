@@ -15,8 +15,9 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Answer, Grade, KnowledgeMastery, KnowledgePoint, Note, Paper, Question, ReviewPlan,
-    Subject, Submission, Task, User, WrongQuestion,
+    Answer, Grade, KnowledgeMastery, KnowledgePoint, Note, Paper, PaperItem,
+    Question, QuestionFavorite, ReviewPlan, Subject, Submission, Task,
+    User, WrongQuestion,
 )
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, ok, utcnow
@@ -797,3 +798,161 @@ def _load(v: Optional[str]) -> Any:
         return json.loads(v)
     except json.JSONDecodeError:
         return v
+
+
+# ================================================================ 题目收藏
+@learning_router.get("/favorites", summary="我的收藏夹")
+def list_favorites(
+    params: PageParams = Depends(), tag: Optional[str] = None,
+    subject_id: Optional[int] = None, keyword: Optional[str] = None,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    stmt = select(QuestionFavorite).where(QuestionFavorite.user_id == user.id)
+    if tag:
+        stmt = stmt.where(QuestionFavorite.tag == tag)
+    if keyword:
+        stmt = stmt.where(QuestionFavorite.question_id.in_(
+            select(Question.id).where(Question.stem.like(f"%{keyword}%"))
+        ))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(
+        stmt.order_by(QuestionFavorite.created_at.desc())
+        .offset(params.offset).limit(params.page_size)
+    ).all()
+
+    items = []
+    for f in rows:
+        q = db.get(Question, f.question_id)
+        if not q:
+            continue
+        kp = db.get(KnowledgePoint, q.knowledge_point_id) if q.knowledge_point_id else None
+        sub = db.get(Subject, q.subject_id) if q.subject_id else None
+        items.append({
+            "id": f.id, "question_id": f.question_id, "tag": f.tag,
+            "note": f.note, "created_at": dictify(f.created_at),
+            "stem": q.stem, "type": q.type, "difficulty": q.difficulty,
+            "options": _load(q.options), "answer": _load(q.answer),
+            "analysis": q.analysis, "score": q.score,
+            "subject_name": sub.name if sub else None,
+            "knowledge_point_name": kp.name if kp else None,
+        })
+
+    # 收集所有标签供前端筛选
+    all_tags = list(set(
+        f.tag for f in db.scalars(
+            select(QuestionFavorite).where(
+                QuestionFavorite.user_id == user.id, QuestionFavorite.tag.isnot(None)
+            )
+        ).all()
+    )) if total > 0 else []
+
+    return ok({"items": items, "total": total, "tags": all_tags, "page": params.page})
+
+
+@learning_router.post("/favorites", summary="收藏题目")
+def add_favorite(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    qid = data.get("question_id")
+    if not qid:
+        raise BusinessException("缺少题目 ID")
+    if not db.get(Question, qid):
+        raise NotFoundException("题目不存在")
+    # 幂等：同用户同题不重复收藏
+    existing = db.scalar(select(QuestionFavorite).where(
+        QuestionFavorite.user_id == user.id, QuestionFavorite.question_id == qid
+    ))
+    if existing:
+        if data.get("tag"):
+            existing.tag = data["tag"]
+        if data.get("note"):
+            existing.note = data["note"]
+        db.commit()
+        return ok({"id": existing.id}, message="已更新收藏标签")
+    fav = QuestionFavorite(
+        user_id=user.id, question_id=qid,
+        tag=data.get("tag"), note=data.get("note"),
+    )
+    db.add(fav)
+    db.commit()
+    db.refresh(fav)
+    return ok({"id": fav.id}, message="已收藏")
+
+
+@learning_router.delete("/favorites/{fav_id}", summary="取消收藏")
+def remove_favorite(
+    fav_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    fav = db.get(QuestionFavorite, fav_id)
+    if not fav or fav.user_id != user.id:
+        raise NotFoundException("收藏记录不存在")
+    db.delete(fav)
+    db.commit()
+    return ok(message="已取消收藏")
+
+
+@learning_router.delete("/favorites/by-question/{question_id}", summary="按题目取消收藏")
+def remove_favorite_by_question(
+    question_id: int, db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    fav = db.scalar(select(QuestionFavorite).where(
+        QuestionFavorite.user_id == user.id, QuestionFavorite.question_id == question_id
+    ))
+    if fav:
+        db.delete(fav)
+        db.commit()
+    return ok(message="已取消收藏")
+
+
+@learning_router.get("/favorites/check/{question_id}", summary="检查是否已收藏")
+def check_favorite(
+    question_id: int, db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    fav = db.scalar(select(QuestionFavorite).where(
+        QuestionFavorite.user_id == user.id, QuestionFavorite.question_id == question_id
+    ))
+    return ok({"favorited": fav is not None, "fav_id": fav.id if fav else None,
+               "tag": fav.tag if fav else None})
+
+
+@learning_router.post("/favorites/practice", summary="收藏题目生成专项练习")
+def favorites_practice(
+    data: Dict[str, Any] = Body(default={}), db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """从收藏的题目中选取，生成一份专项练习卷。"""
+    question_ids = data.get("question_ids", [])
+    if not question_ids:
+        # 不指定则取全部收藏的题目
+        question_ids = [
+            f.question_id for f in db.scalars(
+                select(QuestionFavorite).where(QuestionFavorite.user_id == user.id)
+                .order_by(QuestionFavorite.created_at.desc()).limit(30)
+            ).all()
+        ]
+    if not question_ids:
+        raise BusinessException("收藏夹为空")
+
+    # 过滤掉已下架的题目
+    valid = db.scalars(select(Question).where(
+        Question.id.in_(question_ids), Question.status == "published"
+    )).all()
+    if not valid:
+        raise BusinessException("收藏的题目均已下架")
+
+    paper = Paper(name=f"收藏专项练习 {utcnow():%m-%d}", creator_id=user.id,
+                  subject_id=valid[0].subject_id, grade_id=valid[0].grade_id,
+                  total_score=sum(q.score for q in valid))
+    db.add(paper)
+    db.flush()
+    for i, q in enumerate(valid, 1):
+        db.add(PaperItem(paper_id=paper.id, question_id=q.id, sort_order=i, score=q.score))
+    task = Task(title=paper.name, type="practice", paper_id=paper.id,
+                creator_id=user.id, total_score=paper.total_score, status="published")
+    db.add(task)
+    db.commit()
+    return ok({"task_id": task.id, "paper_id": paper.id, "total": len(valid)},
+              message=f"已从 {len(valid)} 道收藏题生成练习")
