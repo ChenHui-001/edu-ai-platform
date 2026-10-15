@@ -135,11 +135,21 @@ class LLMClient:
         """调用大模型，返回 {success, content, is_fallback, reason, usage}。"""
         client = self.get_client()
         if client is None:
+            # 客户端不可用（未配置 key / 初始化失败）时同样要写日志，
+            # 否则「AI 调用日志」页面在降级期间完全空白，
+            # 运维无法区分「没调用过」与「调用了但降级了」。
+            reason = self._fallback_reason or "LLM 不可用"
+            log_agent_call(
+                agent_name=agent_name, user_id=user_id,
+                input_text=user_prompt[:2000], duration_ms=0,
+                status="skipped", is_fallback=True,
+                error_msg=reason[:1000], biz_type=biz_type, biz_id=biz_id,
+            )
             return {
                 "success": False,
                 "content": "",
                 "is_fallback": True,
-                "reason": self._fallback_reason or "LLM 不可用",
+                "reason": reason,
                 "usage": {},
             }
 
@@ -173,8 +183,8 @@ class LLMClient:
             logger.error(f"LLM 调用失败 [{agent_name}]: {exc}")
             log_agent_call(
                 agent_name=agent_name, user_id=user_id, input_text=user_prompt[:2000],
-                duration_ms=duration, status="failed", error_msg=str(exc)[:1000],
-                biz_type=biz_type, biz_id=biz_id,
+                duration_ms=duration, status="failed", is_fallback=True,
+                error_msg=str(exc)[:1000], biz_type=biz_type, biz_id=biz_id,
             )
             return {
                 "success": False,

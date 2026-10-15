@@ -105,7 +105,11 @@ def index_note(note: Note) -> bool:
         return False
 
 
-def reindex_all(db: Session, batch_size: int = 64) -> Dict[str, int]:
+def reindex_all(
+    db: Session,
+    batch_size: int = 64,
+    deadline: Optional[float] = None,
+) -> Dict[str, int]:
     """全量重建向量索引（批量 upsert）。
 
     历史实现逐条 `col.upsert`，每条都要单独走一次 embedding 计算，
@@ -113,9 +117,16 @@ def reindex_all(db: Session, batch_size: int = 64) -> Dict[str, int]:
     现改为按batch_size 批量提交，embedding 计算由 ChromaDB 内部批处理，
     耗时下降一个数量级。
 
+    `deadline` 为 time.monotonic() 时间戳；每批之间检查，超时即提前收尾
+    并在返回值里带 timed_out 标记（已完成的部分照常保留）。
     单批失败不影响其余批次，仅计入 failed 统计。
     """
-    stats = {"knowledge": 0, "question": 0, "note": 0, "failed": 0}
+    import time as _time
+
+    stats = {"knowledge": 0, "question": 0, "note": 0, "failed": 0, "timed_out": False}
+
+    def _expired() -> bool:
+        return deadline is not None and _time.monotonic() > deadline
 
     def _upsert_batch(col, ids, documents, metadatas) -> int:
         """批量写入，返回成功条数。单批异常时降级为逐条重试。"""
@@ -136,59 +147,62 @@ def reindex_all(db: Session, batch_size: int = 64) -> Dict[str, int]:
                     stats["failed"] += 1
             return ok_n
 
+    def _run(rows, id_fn, doc_fn, meta_fn):
+        """按批处理一组记录，deadline 到点即停。"""
+        for i in range(0, len(rows), batch_size):
+            if _expired():
+                stats["timed_out"] = True
+                logger.warning(
+                    f"向量重建超时提前收尾：已完成 {i}/{len(rows)}")
+                return
+            chunk = rows[i:i + batch_size]
+            stats["_tmp"] = stats.get("_tmp", 0) + _upsert_batch(
+                col, [id_fn(x) for x in chunk],
+                [doc_fn(x) for x in chunk],
+                [meta_fn(x) for x in chunk],
+            )
+
     col = get_collection()
     if not col:
         # ChromaDB 不可用时不算失败，属预期降级
         logger.info("ChromaDB 不可用，跳过向量重建")
+        stats.pop("_tmp", None)
         return stats
 
-    # 1) 知识点
-    kps = db.scalars(select(KnowledgePoint)).all()
-    for i in range(0, len(kps), batch_size):
-        chunk = kps[i:i + batch_size]
-        stats["knowledge"] += _upsert_batch(
-            col,
-            [f"kp_{k.id}" for k in chunk],
-            [f"{k.name}。{(k.description or '')[:800]}" for k in chunk],
-            [{
-                "type": "knowledge", "id": k.id, "name": k.name,
-                "grade_id": k.grade_id, "subject_id": k.subject_id,
-                "knowledge_point_id": k.id,
-            } for k in chunk],
-        )
+    _run(
+        db.scalars(select(KnowledgePoint)).all(),
+        lambda k: f"kp_{k.id}",
+        lambda k: f"{k.name}。{(k.description or '')[:800]}",
+        lambda k: {"type": "knowledge", "id": k.id, "name": k.name,
+                   "grade_id": k.grade_id, "subject_id": k.subject_id,
+                   "knowledge_point_id": k.id},
+    )
+    stats["knowledge"] += stats.pop("_tmp", 0)
 
-    # 2) 题目（上限 2000 条，与原行为一致）
-    qs = db.scalars(select(Question).limit(2000)).all()
-    for i in range(0, len(qs), batch_size):
-        chunk = qs[i:i + batch_size]
-        stats["question"] += _upsert_batch(
-            col,
-            [f"q_{q.id}" for q in chunk],
-            [q.stem[:1500] for q in chunk],
-            [{
-                "type": "question", "id": q.id, "type_name": q.type,
-                "difficulty": q.difficulty, "score": q.score,
-                "grade_id": q.grade_id, "subject_id": q.subject_id,
-                "knowledge_point_id": q.knowledge_point_id or 0,
-            } for q in chunk],
-        )
+    # 题目上限 2000 条、笔记上限 1000 条，与原行为一致
+    _run(
+        db.scalars(select(Question).limit(2000)).all(),
+        lambda q: f"q_{q.id}",
+        lambda q: q.stem[:1500],
+        lambda q: {"type": "question", "id": q.id, "type_name": q.type,
+                   "difficulty": q.difficulty, "score": q.score,
+                   "grade_id": q.grade_id, "subject_id": q.subject_id,
+                   "knowledge_point_id": q.knowledge_point_id or 0},
+    )
+    stats["question"] += stats.pop("_tmp", 0)
 
-    # 3) 笔记（上限 1000 条）
-    ns = db.scalars(select(Note).limit(1000)).all()
-    for i in range(0, len(ns), batch_size):
-        chunk = ns[i:i + batch_size]
-        stats["note"] += _upsert_batch(
-            col,
-            [f"note_{n.id}" for n in chunk],
-            [f"{n.title}。{(n.content or '')[:2000]}" for n in chunk],
-            [{
-                "type": "note", "id": n.id, "title": n.title,
-                "student_id": n.student_id, "subject_id": n.subject_id or 0,
-            } for n in chunk],
-        )
+    _run(
+        db.scalars(select(Note).limit(1000)).all(),
+        lambda n: f"note_{n.id}",
+        lambda n: f"{n.title}。{(n.content or '')[:2000]}",
+        lambda n: {"type": "note", "id": n.id, "title": n.title,
+                   "student_id": n.student_id, "subject_id": n.subject_id or 0},
+    )
+    stats["note"] += stats.pop("_tmp", 0)
 
     logger.info(
-        f"向量重建完成: 知识点 {stats['knowledge']} / 题目 {stats['question']} / "
+        f"向量重建{'超时中断' if stats['timed_out'] else '完成'}: "
+        f"知识点 {stats['knowledge']} / 题目 {stats['question']} / "
         f"笔记 {stats['note']} / 失败 {stats['failed']}"
     )
     return stats
@@ -210,15 +224,27 @@ def search(
     col = get_collection()
     if col:
         try:
-            where: Dict[str, Any] = {}
+            # ChromaDB 的 where 只接受「单个操作符」：
+            #   传扁平 dict 且有多个 key 会抛
+            #   "Expected where to have exactly one operator"
+            # 因此多条件必须用 $and 显式包裹。
+            conds: List[Dict[str, Any]] = []
             if grade_id:
-                where["grade_id"] = grade_id
+                conds.append({"grade_id": int(grade_id)})
             if subject_id:
-                where["subject_id"] = subject_id
+                conds.append({"subject_id": int(subject_id)})
             if types:
-                where["type"] = {"$in": types}
+                conds.append({"type": {"$in": list(types)}})
+
+            if not conds:
+                where = None
+            elif len(conds) == 1:
+                where = conds[0]
+            else:
+                where = {"$and": conds}
+
             res = col.query(
-                query_texts=[query], n_results=top_k, where=where or None,
+                query_texts=[query], n_results=top_k, where=where,
             )
             docs = (res.get("documents") or [[]])[0]
             metas = (res.get("metadatas") or [[]])[0]

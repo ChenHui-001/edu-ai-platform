@@ -102,6 +102,34 @@ COPY VERSION ./VERSION
 ARG APP_VERSION=""
 ENV APP_VERSION=${APP_VERSION}
 
+# ---- 预热 ChromaDB 的默认 embedding 模型（约 79MB）----
+# 不预置的话，**每个全新容器首次做向量检索时都要现场下载**，
+# 内网/弱网下必然超时，进而拖垮 /edu/knowledge/reindex 等接口。
+# 在构建阶段拉一次，运行时直接命中缓存。
+#
+# 注意：两个源都可能因网络抖动失败（实测官方 S3 偶发 TLS EOF，
+# hf-mirror 返回 308 重定向）。任一成功即可；
+# 都失败时只告警不中断构建 —— 运行时 ChromaDB 仍会自行下载，
+# 配合 REINDEX_TIMEOUT_SEC 硬超时不会拖死调用方。
+ARG ONNX_URL="https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/onnx.tar.gz"
+ENV CHROMA_CACHE_DIR=/root/.cache/chroma
+RUN mkdir -p "$CHROMA_CACHE_DIR/onnx_models/all-MiniLM-L6-v2" \
+    && ONNX_DIR="$CHROMA_CACHE_DIR/onnx_models/all-MiniLM-L6-v2" \
+    && for u in "$ONNX_URL" \
+              "https://hf-mirror.com/chroma/all-MiniLM-L6-v2/resolve/main/onnx.tar.gz"; do \
+         echo "尝试下载 embedding 模型: $u"; \
+         if curl -fsSL --retry 3 --retry-all-errors --max-time 600 \
+                 -o /tmp/onnx.tar.gz "$u" \
+            && tar -xzf /tmp/onnx.tar.gz -C "$ONNX_DIR" 2>/dev/null \
+            && [ -n "$(ls -A "$ONNX_DIR" 2>/dev/null)" ]; then \
+             rm -f /tmp/onnx.tar.gz; \
+             echo "embedding 模型预置完成（来源: $u）"; \
+             break; \
+         fi; \
+         echo "  来源不可用，尝试下一个"; \
+       done \
+    && ls -la "$ONNX_DIR" || true
+
 # 前端静态资源
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf

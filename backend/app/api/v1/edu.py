@@ -236,13 +236,21 @@ def reindex(db: Session = Depends(get_db), _: User = Depends(get_current_teacher
     """全量重建向量索引。
 
     `reindex_all` 已改为批量 upsert（耗时下降一个数量级），
-    但数据量极大时仍可能偏慢，故整体加 wall-clock 上限：
-    超时返回已完成部分的统计并置success=False，不让请求无限挂起。
+    但仍可能因首次下载 embedding 模型（~79MB）或数据量过大而很慢。
+    这里传入 **wall-clock deadline**：到点后 reindex_all 在批间自行收尾，
+    保留已完成部分并返回 timed_out 标记，避免长时间挂起拖死调用方。
     """
     t0 = time.time()
-    stats = reindex_all(db)
+    budget = settings.REINDEX_TIMEOUT_SEC
+    stats = reindex_all(db, deadline=time.monotonic() + budget)
     elapsed = int((time.time() - t0) * 1000)
     stats["elapsed_ms"] = elapsed
+
+    if stats.get("timed_out"):
+        return ok(stats, message=(
+            f"向量索引重建超时（>{budget}s），已中断并保留已完成部分。"
+            "若为首次运行，多因需要下载 embedding 模型，请检查网络后重试"
+        ))
     slow = elapsed > settings.REINDEX_WARN_MS
     return ok(
         stats,

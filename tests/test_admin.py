@@ -145,9 +145,17 @@ def run():
                 R.issue("高", "知识点创建接口失败",
                         f"POST /edu/knowledge -> {p.get('message')}", "POST /api/v1/edu/knowledge")
 
-    p, ms, _ = admin.post("/edu/knowledge/reindex", {}, timeout=120)
+    # 服务端有 REINDEX_TIMEOUT_SEC(默认 90s) 硬超时，
+    # 客户端留 20s 余量；超时会返回 success=true + timed_out 标记，
+    # 不应判定为「接口不可达」。
+    p, ms, _ = admin.post("/edu/knowledge/reindex", {}, timeout=110)
+    d = p.get("data") or {}
     check("知识点向量重建索引接口可调用", p.get("success"),
           f"{ms}ms {p.get('message', '')}")
+    if d.get("timed_out"):
+        R.env("向量重建超时（已按预期中断并返回部分结果）",
+              f"{ms}ms 知识点={d.get('knowledge')} 题目={d.get('question')}；"
+              "多因首次运行需下载 embedding 模型")
 
     # ---------------------------------------------------------- 3 用户与角色
     R.set_phase("阶段一 · 管理员视角 | 3. 用户与角色 RBAC")

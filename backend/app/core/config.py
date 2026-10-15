@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     RAG_SCORE_THRESHOLD: float = 0.3
     # 向量重建耗时告警阈值（ms），超过则接口提示分批执行
     REINDEX_WARN_MS: int = 60_000
+    # 向量重建硬超时（秒），到点中断并返回部分结果，避免拖死调用方
+    REINDEX_TIMEOUT_SEC: int = 90
 
     # ---------------- 大模型 ----------------
     # 兼容 OpenAI 协议：通义千问 / DeepSeek / 本地 vLLM 均可
