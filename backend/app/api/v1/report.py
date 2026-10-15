@@ -359,7 +359,11 @@ def knowledge_effect(
 
 # ================================================================ 管理员端
 @router.get("/admin/overview", summary="系统总览")
-def admin_overview(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+def admin_overview(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_admin),
+):
+    # 参数名必须为 user：export_excel 会以 admin_overview(db, user=...) 复用本函数
     def _count(model, *where):
         stmt = select(func.count()).select_from(model)
         for w in where:

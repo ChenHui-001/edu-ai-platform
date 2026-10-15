@@ -1,0 +1,320 @@
+"""
+端到端自动化测试框架 —— 九年义务教育 AI 学习管理系统
+
+设计要点：
+1. 绕过本机代理（127.0.0.1:10064 会劫持 localhost 请求），用 ProxyHandler({}) 禁用
+2. 统一断言封装，失败不中断整体流程，最后汇总报告
+3. 每个测试用例独立记录（名称/状态/耗时/错误信息）
+"""
+import json
+import os
+import ssl
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+BASE_HOST = os.environ.get("E2E_BASE", "http://localhost")
+
+
+def _detect_base():
+    """自动探测实际服务端口：读 .env 的 HOST_PORT，再回退到逐个探测。
+
+    启动脚本在 8080 被占用时会自动顺延并写回 .env，硬编码端口会导致
+    整批用例全部连接失败，必须在运行时探测。
+    """
+    raw = BASE_HOST.strip().rstrip("/")
+    if raw.startswith("http://"):
+        raw = raw[len("http://"):]
+    if raw.startswith("https://"):
+        raw = raw[len("https://"):]
+    scheme = "https" if BASE_HOST.strip().startswith("https://") else "http"
+    host, port = "localhost", None
+    if ":" in raw:
+        maybe_host, maybe_port = raw.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host, port = maybe_host, int(maybe_port)
+        else:
+            host = raw
+    # 1) 显式端口直接用
+    if port:
+        return f"{scheme}://{host}:{port}/api/v1"
+    # 2) 读项目 .env 的 HOST_PORT
+    env_file = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    ports = []
+    if os.path.exists(env_file):
+        for line in open(env_file, encoding="utf-8", errors="ignore"):
+            line = line.strip()
+            if line.upper().startswith("HOST_PORT="):
+                v = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if v.isdigit():
+                    ports.append(int(v))
+    # 3) 默认候选
+    ports += [8080, 8081, 8082, 8083, 8000]
+    seen = set()
+    for p in ports:
+        if p in seen:
+            continue
+        seen.add(p)
+        try:
+            req = urllib.request.Request(f"http://{host}:{p}/api/v1/health", method="GET")
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=3) as r:
+                if json.loads(r.read().decode("utf-8")).get("data", {}).get("status") == "healthy":
+                    return f"http://{host}:{p}/api/v1"
+        except Exception:
+            continue
+    return f"http://{host}:8080/api/v1"
+
+
+BASE = _detect_base()
+
+
+class ServiceDown(Exception):
+    """服务不可达——属于测试环境故障，不能算作功能通过或失败。"""
+
+
+def _filename(disposition):
+    """从 Content-Disposition 解析文件名，解析失败返回空串。"""
+    if not disposition:
+        return ""
+    for part in disposition.split(";"):
+        part = part.strip()
+        if part.lower().startswith("filename="):
+            return part.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
+# ================================================================
+#  测试结果收集
+# ================================================================
+class Result:
+    def __init__(self):
+        self.cases = []          # [(阶段, 名称, 状态, 耗时ms, 详情)]
+        self.issues = []         # 发现的问题
+        self.phase = "初始化"
+        self.context = {}        # 跨用例共享的数据（用户ID、试卷ID 等）
+
+    def add(self, name, ok, detail="", elapsed=0):
+        status = "PASS" if ok else "FAIL"
+        self.cases.append((self.phase, name, status, elapsed, detail))
+        icon = "\033[92m[PASS]\033[0m" if ok else "\033[91m[FAIL]\033[0m"
+        print(f"  {icon} {name}" + (f"  -> {detail}" if detail else ""))
+        return ok
+
+    def env(self, name, detail=""):
+        """环境故障：单列标记，既不算 PASS 也不算业务 FAIL。"""
+        self.cases.append((self.phase, name, "ENV", 0, detail))
+        print(f"  \033[93m[ENV ] {name}\033[0m  -> {detail}")
+        return False
+
+    def issue(self, severity, title, detail, repro=None):
+        self.issues.append({
+            "severity": severity, "title": title, "detail": detail, "repro": repro
+        })
+        color = {"高": "\033[91m", "中": "\033[93m", "低": "\033[90m"}.get(severity, "")
+        print(f"  \033[95m[ISSUE:{severity}]\033[0m {title}")
+
+    def set_phase(self, phase):
+        self.phase = phase
+        print(f"\n\033[96m{'=' * 66}\033[0m")
+        print(f"\033[1;96m  {phase}\033[0m")
+        print(f"\033[96m{'=' * 66}\033[0m")
+
+    @property
+    def passed(self):
+        return sum(1 for c in self.cases if c[2] == "PASS")
+
+    @property
+    def failed(self):
+        return sum(1 for c in self.cases if c[2] == "FAIL")
+
+    @property
+    def env_failed(self):
+        return sum(1 for c in self.cases if c[2] == "ENV")
+
+
+R = Result()
+
+
+# ================================================================
+#  HTTP 客户端
+# ================================================================
+class Client:
+    """单用户会话客户端，自动携带 Bearer Token。"""
+
+    def __init__(self, label):
+        self.label = label
+        self.token = None
+        self.refresh_token = None
+        self.user = None
+        self.permission = None
+        self.unreachable = False
+        # 关键：清空代理，否则 localhost 请求会被 127.0.0.1:10064 劫持
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        self.opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            urllib.request.HTTPSHandler(context=ctx),
+        )
+
+    def request(self, method, path, body=None, params=None, raw_body=None,
+                headers=None, timeout=30):
+        url = BASE + path
+        if params:
+            url += "?" + urllib.parse.urlencode(
+                {k: v for k, v in params.items() if v is not None and v != ""}
+            )
+        data = None
+        hdrs = {"Accept": "application/json"}
+        if raw_body is not None:
+            data = raw_body
+        elif body is not None:
+            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            hdrs["Content-Type"] = "application/json; charset=utf-8"
+        if self.token:
+            hdrs["Authorization"] = f"Bearer {self.token}"
+        if headers:
+            hdrs.update(headers)
+
+        req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+        t0 = time.time()
+        try:
+            resp = self.opener.open(req, timeout=timeout)
+            elapsed = int((time.time() - t0) * 1000)
+            raw = resp.read()
+            ctype = resp.headers.get("Content-Type", "")
+            # 文件下载类接口（Excel 导出、附件）返回二进制，不能按 JSON 解析
+            if "application/json" not in ctype:
+                return ({"code": resp.status, "success": True,
+                         "data": {"bytes": len(raw), "content_type": ctype,
+                                  "filename": _filename(resp.headers.get("Content-Disposition"))}},
+                        elapsed, resp.status)
+            payload = json.loads(raw.decode("utf-8"))
+            return payload, elapsed, resp.status
+        except urllib.error.HTTPError as e:
+            elapsed = int((time.time() - t0) * 1000)
+            try:
+                payload = json.loads(e.read().decode("utf-8"))
+            except Exception:
+                payload = {"code": e.code, "message": str(e), "success": False}
+            return payload, elapsed, e.code
+        except (urllib.error.URLError, ConnectionError, OSError) as e:
+            elapsed = int((time.time() - t0) * 1000)
+            # 服务不可达属于环境故障，必须显式标记，不能混入业务判定
+            return {"code": -1, "message": f"[不可达] {e}", "success": False,
+                    "_unreachable": True}, elapsed, -1
+
+    def reachable(self):
+        """探活，避免把环境故障当成业务通过。"""
+        p, _, _ = self.request("GET", "/health")
+        return p.get("data", {}).get("status") == "healthy"
+
+    def get(self, path, **kw):
+        return self.request("GET", path, **kw)
+
+    def post(self, path, body=None, **kw):
+        return self.request("POST", path, body=body, **kw)
+
+    def put(self, path, body=None, **kw):
+        return self.request("PUT", path, body=body, **kw)
+
+    def delete(self, path, **kw):
+        return self.request("DELETE", path, **kw)
+
+    def login(self, username, password):
+        payload, ms, _ = self.post("/auth/login",
+                                   {"username": username, "password": password})
+        if payload.get("_unreachable"):
+            self.unreachable = True
+            return False, f"[服务不可达] {payload.get('message')}"
+        if payload.get("success") and "access_token" in payload.get("data", {}):
+            d = payload["data"]
+            self.token = d["access_token"]
+            self.refresh_token = d.get("refresh_token")
+            self.user = d.get("user")
+            self.permission = d.get("permission")
+            return True, f"{self.user.get('real_name')}（{','.join(self.permission.get('roles', []))}）"
+        return False, payload.get("message", "登录失败")
+
+
+def is_down(payload):
+    return bool(payload.get("_unreachable"))
+
+
+def data_of(payload):
+    """兼容 data 可能是 dict / list 的情况。"""
+    return payload.get("data")
+
+
+def rows_of(payload):
+    """统一取出列表型数据：兼容 {items:[...]} / {...} / [ ... ] 三种返回形态。"""
+    d = data_of(payload)
+    if isinstance(d, list):
+        return d
+    if isinstance(d, dict):
+        for k in ("items", "list", "rows", "records", "data"):
+            if isinstance(d.get(k), list):
+                return d[k]
+    return []
+
+
+def total_of(payload):
+    """取 total，缺失时退化为列表长度。"""
+    d = data_of(payload)
+    if isinstance(d, dict):
+        for k in ("total", "count", "total_count"):
+            if k in d:
+                return d[k]
+        for k in ("items", "list", "rows", "records"):
+            if isinstance(d.get(k), list):
+                return len(d[k])
+    if isinstance(d, list):
+        return len(d)
+    return 0
+
+
+# ================================================================
+#  断言辅助
+# ================================================================
+def check(name, condition, detail=""):
+    return R.add(name, bool(condition), detail)
+
+
+def expect_denied(name, client, method, path, body=None, params=None):
+    """断言「应当被拒绝」。服务不可达不算通过——那是环境问题不是安全生效。"""
+    fn = {"GET": client.get, "POST": client.post,
+          "PUT": client.put, "DELETE": client.delete}[method]
+    payload, ms, _ = fn(path, body=body, params=params)
+    if is_down(payload):
+        return R.env(name, payload.get("message", "服务不可达"))
+    denied = payload.get("success") is not True
+    msg = payload.get("message", "")
+    if not denied:
+        R.issue("高", f"越权未拦截：{name}",
+                f"{method} {path} 在无权限情况下返回成功，响应={str(payload)[:150]}",
+                f"{method} {path}")
+    return R.add(name, denied, msg or f"{ms}ms")
+
+
+def api_ok(name, client, method, path, body=None, params=None, expect_keys=None):
+    """调用接口并断言 success=True。"""
+    fn = {"GET": client.get, "POST": client.post,
+          "PUT": client.put, "DELETE": client.delete}[method]
+    payload, ms, status = fn(path, body=body, params=params)
+    if is_down(payload):
+        return R.env(name, payload.get("message", "服务不可达")), payload
+    ok = payload.get("success") is True
+    detail = payload.get("message") if not ok else f"{ms}ms"
+    if ok and expect_keys:
+        d = data_of(payload)
+        missing = [k for k in expect_keys
+                   if not (isinstance(d, dict) and k in d)]
+        if missing:
+            ok = False
+            detail = f"响应缺少字段 {missing}"
+    if ok and not detail:
+        detail = f"{ms}ms"
+    return R.add(name, ok, detail), payload

@@ -192,7 +192,8 @@ class Orchestrator:
                     state["result"] = {"agent": "router", "message": "暂不支持该需求，请换个说法"}
                     return state
                 r = agent.run(db, user_id=user_id, request=state["request"], **state["params"].get("args", {}))
-                state["result"] = {"agent": r["agent"], "data": r["data"], "is_fallback": r["is_fallback"]}
+                state["result"] = {"agent": r["agent"], "data": r["data"],
+                                   "is_fallback": r.get("is_fallback", False)}
                 state["trace"].append({"step": state["intent"], "ok": r["success"]})
                 return state
 
@@ -256,7 +257,9 @@ class Orchestrator:
             "agent": r["agent"],
             "data": r["data"],
             "message": r.get("message"),
-            "is_fallback": r["is_fallback"],
+            # AgentResult 是 total=False 的 TypedDict，Agent.run() 成功分支
+            # 不会写入 is_fallback，必须用 .get 兜底，否则 /agent/chat 直接 500。
+            "is_fallback": r.get("is_fallback", False),
             "trace": trace,
             "mode": "sequential",
             "duration_ms": int((time.perf_counter() - start) * 1000),
@@ -280,8 +283,10 @@ def load_agents() -> Dict[str, BaseAgent]:
     from app.agents.study_agent import StudyPlannerAgent
     from app.agents.tutor_agent import TutorAgent
 
+    # RouterAgent 必须一并注册：/agent/list 用 name=="router" 标识兜底模式，
+    # 缺失会导致前端 Agent 中心少显示一个，且 is_fallback 永远为 false。
     for cls in (
-        QuestionGeneratorAgent, PaperComposerAgent, GradingAgent,
+        RouterAgent, QuestionGeneratorAgent, PaperComposerAgent, GradingAgent,
         StudyPlannerAgent, TutorAgent, NoteOrganizerAgent,
     ):
         register_agent(cls())

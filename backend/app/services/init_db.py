@@ -8,10 +8,96 @@ from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.security import hash_password
 from app.models import (
-    Grade, Permission, Role, RolePermission, ScheduledJob, Subject, User, UserRole,
+    Grade, KnowledgePoint, Permission, Role, RolePermission, ScheduledJob, Subject,
+    User, UserRole,
 )
 
 logger = get_logger("init")
+
+
+# ---------------------------------------------------------------- 知识点种子
+# 知识点是 AI 组卷（按考点抽题）、错题归因、知识掌握地图的共同基础。
+# 缺失会导致这三个核心功能全部退化为"无考点"模式，因此必须随种子数据一起初始化。
+# 结构：{年级: {学科: [(知识点名, 层级, 难度), ...]}}
+KNOWLEDGE_POINTS: Dict[int, Dict[str, List[Tuple[str, int, str]]]] = {
+    1: {"数学": [
+        ("20以内加减法", 1, "easy"), ("100以内加减法", 1, "easy"),
+        ("认识立体图形", 1, "easy"), ("认识钟表", 1, "medium"),
+        ("简单统计", 2, "easy"),
+    ]},
+    3: {"数学": [
+        ("万以内加减法", 1, "easy"), ("多位数乘一位数", 1, "medium"),
+        ("分数初步认识", 1, "medium"), ("长方形正方形面积", 2, "medium"),
+    ],
+         "语文": [
+        ("生字书写", 1, "easy"), ("句子练习", 1, "easy"),
+        ("阅读短文", 2, "medium"), ("看图写话", 2, "medium"),
+    ]},
+    5: {"数学": [
+        ("小数乘除法", 1, "medium"), ("简易方程", 1, "hard"),
+        ("多边形面积", 2, "medium"), ("分数加减法", 1, "medium"),
+    ],
+         "语文": [
+        ("说明文阅读", 2, "medium"), ("习作：写事", 2, "medium"),
+        ("文言文两则", 1, "hard"),
+    ]},
+    7: {"数学": [
+        ("有理数", 1, "easy"), ("整式的加减", 1, "easy"),
+        ("一元一次方程", 1, "medium"), ("平行线的性质", 2, "medium"),
+        ("三角形", 2, "medium"), ("二元一次方程组", 1, "hard"),
+    ],
+         "语文": [
+        ("记叙文阅读", 2, "medium"), ("说明文阅读", 2, "medium"),
+        ("文言文阅读", 1, "hard"), ("写作：记叙文", 2, "medium"),
+    ],
+         "英语": [
+        ("一般现在时", 1, "easy"), ("一般过去时", 1, "medium"),
+        ("there be 句型", 1, "easy"), ("阅读理解", 2, "medium"),
+    ],
+         "物理": [
+        ("机械运动", 1, "easy"), ("声现象", 1, "easy"), ("物态变化", 2, "medium"),
+        ("光现象", 2, "medium"), ("质量与密度", 1, "medium"),
+    ]},
+    8: {"数学": [
+        ("全等三角形", 1, "medium"), ("轴对称", 1, "easy"),
+        ("一次函数", 1, "hard"), ("二次根式", 1, "medium"),
+        ("勾股定理", 2, "medium"), ("数据的分析", 2, "easy"),
+    ],
+         "语文": [
+        ("文言文词类活用", 1, "hard"), ("现代文阅读理解", 2, "medium"),
+        ("议论文阅读", 2, "hard"), ("写作：说明文", 2, "medium"),
+    ],
+         "英语": [
+        ("现在完成时", 1, "medium"), ("过去完成时", 1, "hard"),
+        ("宾语从句", 1, "hard"), ("完形填空", 2, "medium"),
+    ],
+         "物理": [
+        ("机械能", 1, "medium"), ("电与电路", 1, "medium"),
+        ("欧姆定律", 1, "hard"), ("电功率", 2, "medium"),
+    ]},
+    9: {"数学": [
+        ("一元二次方程", 1, "medium"), ("二次函数", 1, "hard"),
+        ("旋转", 1, "medium"), ("圆", 2, "medium"),
+        ("相似三角形", 2, "hard"), ("锐角三角函数", 2, "medium"),
+    ],
+         "语文": [
+        ("古诗文默写", 1, "medium"), ("说明文阅读方法", 2, "medium"),
+        ("小说阅读", 2, "medium"), ("写作：议论文", 2, "hard"),
+    ],
+         "英语": [
+        ("被动语态", 1, "hard"), ("定语从句", 1, "hard"),
+        ("状语从句", 1, "medium"), ("书面表达", 2, "medium"),
+    ],
+         "物理": [
+        ("压强", 1, "medium"), ("浮力", 1, "hard"),
+        ("功与机械能", 1, "medium"), ("电磁感应", 2, "hard"),
+    ],
+         "化学": [
+        ("走进化学实验室", 1, "easy"), ("我们周围的空气", 1, "easy"),
+        ("物质构成的奥秘", 1, "medium"), ("化学方程式", 1, "medium"),
+        ("溶液", 2, "medium"),
+    ]},
+}
 
 
 # ---------------------------------------------------------------- 权限点定义
@@ -333,11 +419,57 @@ def init_demo_data(db: Session) -> None:
     logger.info("演示数据初始化完成（4 个班级 / 4 名教师 / 12 名学生）")
 
 
+def init_knowledge_points(db: Session) -> None:
+    """初始化各年级各学科的核心知识点。
+
+    知识点是 AI 组卷按考点抽题、错题归因、知识掌握地图三处功能的共同基础，
+    缺失会让这些功能全部退化为「无考点」模式。
+
+    幂等策略：按 (grade_id, subject_id, name) 去重，已存在的跳过，
+    这样既能补齐历史库缺失的知识点，又不会重复播种或覆盖教师自建内容。
+    """
+    grades = {g.grade_num: g for g in db.scalars(select(Grade)).all()}
+    subjects = db.scalars(select(Subject)).all()
+    # (grade_id, subject_name) -> Subject
+    sub_map = {(s.grade_id, s.name): s for s in subjects}
+    existing = {
+        (k.grade_id, k.subject_id, k.name)
+        for k in db.scalars(select(KnowledgePoint)).all()
+    }
+
+    count = 0
+    for grade_num, subj_map in KNOWLEDGE_POINTS.items():
+        g = grades.get(grade_num)
+        if not g:
+            continue
+        for subj_name, items in subj_map.items():
+            s = sub_map.get((g.id, subj_name))
+            if not s:
+                continue
+            for i, (name, level, difficulty) in enumerate(items):
+                if (g.id, s.id, name) in existing:
+                    continue
+                db.add(
+                    KnowledgePoint(
+                        name=name, grade_id=g.id, subject_id=s.id, level=level,
+                        term=1, difficulty=difficulty, sort=i,
+                        path=f"{g.name}/{subj_name}/{name}",
+                        description=f"{g.name}{subj_name}「{name}」知识点",
+                    )
+                )
+                existing.add((g.id, s.id, name))
+                count += 1
+    if count:
+        db.commit()
+        logger.info(f"知识点初始化完成（新增 {count} 条）")
+
+
 def init_all(db: Session) -> None:
     """按依赖顺序执行全部初始化。"""
     init_permissions(db)
     init_roles(db)
     init_grades_subjects(db)
+    init_knowledge_points(db)
     init_admin(db)
     init_jobs(db)
     init_demo_data(db)

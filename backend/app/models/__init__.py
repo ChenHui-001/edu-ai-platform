@@ -16,7 +16,7 @@ from app.models.question import (  # noqa: F401
 )
 from app.models.system import (  # noqa: F401
     IdentityType, Permission, PermissionType, Registration, Role,
-    RolePermission, User, UserRole, UserStatus,
+    RolePermission, SysConfig, User, UserRole, UserStatus,
 )
 from app.models.task import (  # noqa: F401
     Answer, GradeStatus, Submission, Task, TaskAssignment, TaskStatus, TaskType,
@@ -27,6 +27,7 @@ __all__ = [
     "Base",
     # system
     "User", "Role", "Permission", "UserRole", "RolePermission", "Registration",
+    "SysConfig",
     "UserStatus", "IdentityType", "PermissionType",
     # edu
     "Grade", "Subject", "Class", "KnowledgePoint", "TeachingAssignment",

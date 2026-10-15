@@ -54,7 +54,7 @@ class GradingAgent(BaseAgent):
                                 "score": 0.0, "comment": "题目不存在"})
                 continue
             if q.type in OBJECTIVE_TYPES:
-                res = self._grade_objective(q, it.get("student_answer") or "")
+                res = self._grade_objective(q, it.get("student_answer"))
                 results.append({
                     "question_id": q.id, "grader_type": "auto",
                     "full_score": it.get("full_score", q.score),
@@ -66,7 +66,12 @@ class GradingAgent(BaseAgent):
         # 2. 主观题 AI 批改
         ai_used = False
         for it, q in subjective_queue:
-            if not (it.get("student_answer") or "").strip():
+            raw_answer = it.get("student_answer")
+            # 主观题作答可能是 list（异常提交），统一转字符串再判空
+            if isinstance(raw_answer, (list, tuple, set)):
+                raw_answer = " ".join(str(x) for x in raw_answer)
+            raw_answer = (raw_answer or "").strip()
+            if not raw_answer:
                 results.append({
                     "question_id": q.id, "grader_type": "auto", "is_correct": False,
                     "score": 0.0, "full_score": it.get("full_score", q.score),
@@ -74,7 +79,7 @@ class GradingAgent(BaseAgent):
                 })
                 continue
             ai_res = self._grade_subjective(
-                db, q, it["student_answer"], it.get("full_score", q.score), user_id
+                db, q, raw_answer, it.get("full_score", q.score), user_id
             )
             if ai_res:
                 ai_used = True
@@ -115,11 +120,30 @@ class GradingAgent(BaseAgent):
 
     # ---------------- 客观题 ----------------
     @staticmethod
-    def _grade_objective(q: Question, student_answer: str) -> Dict[str, Any]:
+    def _norm_answer_set(value: Any) -> set:
+        """把学生/标准答案统一成无标点的选项集合。
+
+        多选题的作答在前端是数组（["A","C"]），但历史数据、导入题库或
+        手动调用时也可能是 "A,C" 这类字符串，必须双向归一化后再比较，
+        否则 list 没有 .strip() 会直接抛 AttributeError 导致整场交卷判分为空。
+        """
+        def norm(v: Any) -> str:
+            s = str(v if v is not None else "").strip().upper()
+            return re.sub(r"[、,，\s]", "", s)
+
+        if value is None:
+            return set()
+        if isinstance(value, (list, tuple, set)):
+            raw = list(value)
+        else:
+            raw = re.split(r"[、,，\s]+", str(value))
+        return {norm(x) for x in raw if norm(x)}
+
+    @classmethod
+    def _grade_objective(cls, q: Question, student_answer: Any) -> Dict[str, Any]:
         """客观题本地判分（不依赖 LLM，保证性能与准确）。"""
         import json
 
-        sa = (student_answer or "").strip()
         try:
             std = json.loads(q.answer) if q.answer else None
         except json.JSONDecodeError:
@@ -132,8 +156,8 @@ class GradingAgent(BaseAgent):
             return s
 
         if isinstance(std, list):
-            std_set = {norm(x) for x in std}
-            stu_set = {norm(x) for x in re.split(r"[、,，\s]+", sa) if x.strip()}
+            std_set = cls._norm_answer_set(std)
+            stu_set = cls._norm_answer_set(student_answer)
             is_correct = std_set == stu_set and bool(stu_set)
             score = float(q.score) if is_correct else 0.0
             return {
@@ -141,7 +165,11 @@ class GradingAgent(BaseAgent):
                 "comment": "回答正确" if is_correct else f"正确答案：{'/'.join(sorted(std_set))}",
             }
 
-        if norm(sa) == norm(std) and sa:
+        # 填空/单选/判断等标量答案：学生答案可能是 list（异常提交），
+        # 统一用 _norm_answer_set 归一化后比较，避免 list 无 .strip() 报错。
+        sa_norm = cls._norm_answer_set(student_answer)
+        stu_scalar = next(iter(sa_norm), "")
+        if stu_scalar and stu_scalar == norm(std):
             return {"is_correct": True, "score": float(q.score), "comment": "回答正确"}
         return {
             "is_correct": False, "score": 0.0,

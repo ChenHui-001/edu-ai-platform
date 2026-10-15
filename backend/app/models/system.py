@@ -148,5 +148,27 @@ class Registration(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class SysConfig(Base):
+    """系统配置：管理员可在线调整的参数（覆盖 settings 中的同名项）。"""
+
+    __tablename__ = "sys_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    value_type: Mapped[str] = mapped_column(String(16), default="string",
+                                            comment="string/int/float/bool/json")
+    category: Mapped[str] = mapped_column(String(32), default="basic", index=True)
+    label: Mapped[Optional[str]] = mapped_column(String(64))
+    description: Mapped[Optional[str]] = mapped_column(String(255))
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False,
+                                            comment="是否允许教师/学生端读取")
+
+    updated_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 # 避免循环引用
 from app.models.edu import Grade, Class  # noqa: E402,F401

@@ -243,9 +243,24 @@ class StudyPlannerAgent(BaseAgent):
     @staticmethod
     def _persist_review_plan(db: Session, student_id: int, plan: Dict[str, Any]) -> int:
         """将复习计划写入数据库。"""
-        from app.models import ReviewPlan, Subject
+        from app.models import ReviewPlan, Subject, WrongQuestion
+
+        # 关键：把复习节点关联到具体错题。
+        # 否则 /learning/review/plans/{id}/complete 里「连续完成 2 轮 → 标记错题已掌握」
+        # 的逻辑因 wrong_question_id 恒为 None 而永不生效，错题本无法闭环。
+        wrong_by_kp: Dict[int, int] = {}
+        for w in db.scalars(
+            select(WrongQuestion).where(
+                WrongQuestion.student_id == student_id,
+                WrongQuestion.is_mastered.is_(False),
+                WrongQuestion.knowledge_point_id.isnot(None),
+            )
+        ).all():
+            # 同一知识点只挂最早的一道未掌握错题，避免计划条目重复指向同一题
+            wrong_by_kp.setdefault(w.knowledge_point_id, w.id)
 
         count = 0
+        relinked = 0
         for item in plan.get("review_dates", []):
             kp_id = item.get("knowledge_point_id") or 0
             if not kp_id:
@@ -262,15 +277,22 @@ class StudyPlannerAgent(BaseAgent):
                     )
                 )
                 if exists:
+                    # 已存在的计划补挂错题，保证历史数据也能闭环
+                    if exists.wrong_question_id is None:
+                        exists.wrong_question_id = wrong_by_kp.get(kp_id)
+                        relinked += 1
                     continue
                 db.add(
                     ReviewPlan(
                         student_id=student_id, knowledge_point_id=kp_id,
                         subject_id=kp.subject_id, scheduled_date=date,
                         stage=item.get("stage", 1),
+                        wrong_question_id=wrong_by_kp.get(kp_id),
                     )
                 )
                 count += 1
-        if count:
+        # 注意：即使没有新增（count==0），补挂错题的改动也必须提交，
+        # 否则「完成 2 轮 → 错题标掌握」的闭环在存量计划上永远不生效。
+        if count or relinked:
             db.commit()
         return count

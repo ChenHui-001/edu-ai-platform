@@ -5,6 +5,7 @@ import io
 import random
 import secrets
 import string
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -66,11 +67,52 @@ def create_refresh_token(subject: str | int) -> str:
 
 
 def decode_token(token: str) -> Optional[Dict[str, Any]]:
-    """解析令牌，失败返回 None。"""
+    """解析令牌，失败返回 None。已登出（吊销）的令牌同样返回 None。"""
     try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
         return None
+    if payload.get("jti") and payload["jti"] in _REVOKED_JTIS:
+        return None
+    return payload
+
+
+# ---------------------------------------------------------------- 令牌吊销
+# JWT 本身无状态，登出后若不记录就仍可被冒用。
+# 这里用进程内集合保存被吊销的 jti，配合 ACCESS_TOKEN_EXPIRE_MINUTES
+# 自动过期清理；多副本部署时应替换为 Redis。
+_REVOKED_JTIS: "OrderedDict[str, datetime]" = OrderedDict()
+
+
+def revoke_token(payload: Optional[Dict[str, Any]]) -> bool:
+    """把令牌加入吊销名单。payload 为 None 时静默返回 False。"""
+    if not payload:
+        return False
+    jti = payload.get("jti")
+    if not jti:
+        return False
+    exp = payload.get("exp")
+    # 统一换算成 naive UTC 便于比较
+    if isinstance(exp, datetime):
+        ttl = exp - datetime.now(timezone.utc)
+    else:
+        ttl = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    _REVOKED_JTIS[jti] = ttl
+    _purge_revoked()
+    return True
+
+
+def is_revoked(payload: Optional[Dict[str, Any]]) -> bool:
+    return bool(payload) and payload.get("jti") in _REVOKED_JTIS
+
+
+def _purge_revoked() -> None:
+    """清理已过期（TTL<=0）的吊销记录，避免集合无限增长。"""
+    if not _REVOKED_JTIS:
+        return
+    dead = [j for j, ttl in _REVOKED_JTIS.items() if ttl.total_seconds() <= 0]
+    for j in dead:
+        _REVOKED_JTIS.pop(j, None)
 
 
 # ---------------------------------------------------------------- 图形验证码

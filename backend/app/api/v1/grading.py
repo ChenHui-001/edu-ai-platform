@@ -569,9 +569,19 @@ def complete_review(
     p.is_completed = True
     p.completed_at = utcnow()
     p.correct_rate = data.get("correct_rate")
-    # 连续完成 2 轮标记错题已掌握
-    if p.stage >= 2:
-        if p.wrong_question_id:
+
+    # 艾宾浩斯闭环：同一错题累计完成 2 轮即视为掌握。
+    # 原实现判断单条计划的 stage >= 2，但计划生成时 stage 恒为 1，
+    # 该条件永不成立，错题永远无法被标记为已掌握。
+    if p.wrong_question_id:
+        finished = db.scalar(
+            select(func.count()).select_from(ReviewPlan).where(
+                ReviewPlan.student_id == user.id,
+                ReviewPlan.wrong_question_id == p.wrong_question_id,
+                ReviewPlan.is_completed.is_(True),
+            )
+        ) or 0
+        if finished >= 2:
             w = db.get(WrongQuestion, p.wrong_question_id)
             if w:
                 w.is_mastered = True
@@ -647,29 +657,6 @@ def create_practice(
               message="练习已生成")
 
 
-@learning_router.get("/practice/{task_id}", summary="获取练习题目")
-def get_practice(
-    task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
-):
-    task = db.get(Task, task_id)
-    if not task:
-        raise NotFoundException("练习不存在")
-    paper = db.get(Paper, task.paper_id)
-    items = [
-        {
-            "paper_item_id": it.id, "question_id": it.question_id,
-            "sort_order": it.sort_order, "score": it.score, "section_name": it.section_name,
-            "type": it.question.type, "stem": it.question.stem,
-            "options": _load(it.question.options),
-        }
-        for it in sorted(paper.items, key=lambda x: x.sort_order)
-    ]
-    return ok({
-        "task_id": task.id, "name": paper.name, "duration": task.duration,
-        "total_score": task.total_score, "items": items,
-    })
-
-
 @learning_router.get("/practice/history", summary="练习历史")
 def practice_history(
     params: PageParams = Depends(), db: Session = Depends(get_db),
@@ -696,6 +683,31 @@ def practice_history(
             "accuracy": round((sub.score / t.total_score) * 100, 2) if sub and t.total_score else 0,
         })
     return ok({"items": items, "total": total, "page": params.page})
+
+
+# 注意：/practice/history 必须注册在 /practice/{task_id} 之前，
+# 否则 FastAPI 会把 "history" 当作 task_id 解析并返回 422。
+@learning_router.get("/practice/{task_id}", summary="获取练习题目")
+def get_practice(
+    task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    task = db.get(Task, task_id)
+    if not task:
+        raise NotFoundException("练习不存在")
+    paper = db.get(Paper, task.paper_id)
+    items = [
+        {
+            "paper_item_id": it.id, "question_id": it.question_id,
+            "sort_order": it.sort_order, "score": it.score, "section_name": it.section_name,
+            "type": it.question.type, "stem": it.question.stem,
+            "options": _load(it.question.options),
+        }
+        for it in sorted(paper.items, key=lambda x: x.sort_order)
+    ]
+    return ok({
+        "task_id": task.id, "name": paper.name, "duration": task.duration,
+        "total_score": task.total_score, "items": items,
+    })
 
 
 def _load(v: Optional[str]) -> Any:

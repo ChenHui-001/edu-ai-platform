@@ -10,7 +10,8 @@ from app.api.deps import get_current_admin, get_current_user
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import (
-    Notification, Permission, Role, RolePermission, TeachingAssignment, User, UserRole,
+    Notification, Permission, Role, RolePermission, SysConfig, TeachingAssignment,
+    User, UserRole,
 )
 from app.utils.common import PageParams, dictify, ok, utcnow
 
@@ -210,13 +211,28 @@ def update_role(
 
 @router.post("/roles/{role_id}/copy", summary="复制角色")
 def copy_role(
-    role_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_admin),
+    role_id: int, db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin), data: Dict[str, Any] = Body(default={}),
 ):
     src = db.get(Role, role_id)
     if not src:
         raise NotFoundException("角色不存在")
+
+    # code/name 都有唯一约束，固定加 "_copy" 后缀会导致第二次复制必然冲突。
+    # 这里按序号自动去重，保证可以反复复制。
+    base_code = (data.get("code") or f"{src.code}_copy").strip()[:48]
+    base_name = (data.get("name") or f"{src.name}副本").strip()[:48]
+    code, name = base_code, base_name
+    n = 1
+    while db.scalar(select(Role.id).where(
+        (Role.code == code) | (Role.name == name)
+    )):
+        n += 1
+        code = f"{base_code}{n}"
+        name = f"{base_name}{n}"
+
     new = Role(
-        code=f"{src.code}_copy", name=f"{src.name}副本",
+        code=code, name=name,
         description=src.description, data_scope=src.data_scope,
         is_builtin=False, sort=src.sort + 1,
     )
@@ -310,11 +326,22 @@ def read_all(db: Session = Depends(get_db), user: User = Depends(get_current_use
 
 
 # ---------------------------------------------------------------- 配置
-@router.get("/config", summary="系统配置（脱敏）")
-def get_config(_: User = Depends(get_current_admin)):
+@router.get("/config", summary="系统配置（可编辑项 + 运行态只读项）")
+def get_config(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
     from app.core.config import settings
 
+    # 可在线编辑项：来自 sys_config 表，由管理员通过 PUT /config 维护
+    editable = []
+    for c in db.scalars(select(SysConfig).order_by(SysConfig.category, SysConfig.id)).all():
+        editable.append({
+            "key": c.key, "value": c.value, "value_type": c.value_type,
+            "category": c.category, "label": c.label or c.key,
+            "description": c.description, "is_public": c.is_public,
+            "updated_at": dictify(c.updated_at),
+        })
+
     return ok({
+        # 运行态只读项（来自环境变量 / settings）
         "app_name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "debug": settings.DEBUG,
@@ -326,4 +353,66 @@ def get_config(_: User = Depends(get_current_admin)):
         "scheduler_enabled": settings.SCHEDULER_ENABLED,
         "log_retention_days": settings.LOG_RETENTION_DAYS,
         "review_intervals": settings.REVIEW_INTERVALS,
+        # 可编辑配置项
+        "editable": editable,
     })
+
+
+class ConfigUpdateIn(BaseModel):
+    key: str
+    value: Optional[str] = None
+    value_type: str = "string"
+    label: Optional[str] = None
+    description: Optional[str] = None
+    category: str = "basic"
+    is_public: bool = False
+
+
+@router.put("/config", summary="更新系统配置（管理员）")
+def update_config(
+    payload: ConfigUpdateIn, db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """新增或更新一项可在线调整的系统配置。
+
+    这些配置保存在 sys_config 表中，业务侧通过 config_service.get(key) 读取，
+    优先级高于 settings 默认值，因此修改后无需重启容器。
+    """
+    row = db.scalar(select(SysConfig).where(SysConfig.key == payload.key))
+    if row:
+        row.value = payload.value
+        row.value_type = payload.value_type
+        if payload.label:
+            row.label = payload.label
+        if payload.description:
+            row.description = payload.description
+        row.category = payload.category
+        row.is_public = payload.is_public
+        row.updated_by = admin.id
+    else:
+        row = SysConfig(
+            key=payload.key, value=payload.value, value_type=payload.value_type,
+            label=payload.label, description=payload.description,
+            category=payload.category, is_public=payload.is_public,
+            updated_by=admin.id,
+        )
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return ok({
+        "key": row.key, "value": row.value, "value_type": row.value_type,
+        "category": row.category, "updated_at": dictify(row.updated_at),
+    }, message="配置已保存")
+
+
+@router.delete("/config/{key}", summary="删除系统配置")
+def delete_config(
+    key: str, db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    row = db.scalar(select(SysConfig).where(SysConfig.key == key))
+    if not row:
+        raise NotFoundException("配置项不存在")
+    db.delete(row)
+    db.commit()
+    return ok(message="配置已删除")

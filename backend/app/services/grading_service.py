@@ -11,9 +11,36 @@ from app.core.config import settings
 from app.core.exception import BusinessException
 from app.models import (
     Answer, KnowledgeMastery, KnowledgePoint, Paper, PaperItem, Question, ReviewPlan,
-    StudyRecord, Submission, Task, TaskStatus, WrongQuestion,
+    StudyRecord, Submission, Task, TaskAssignment, TaskStatus, WrongQuestion,
 )
 from app.utils.common import utcnow
+
+
+def _content_to_db(content: Any) -> Optional[str]:
+    """把学生答案统一落库为字符串。
+
+    Answer.content 是 Text 列，而多选题的作答是 list（如 ["A","C"]），
+    直接绑定会触发 sqlite3.ProgrammingError: type 'list' is not supported，
+    导致整场考试交卷失败。此处统一 JSON 序列化，读出侧用 _content_from_db 还原。
+    """
+    if content is None:
+        return None
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False)
+
+
+def _content_from_db(raw: Optional[str]) -> Any:
+    """还原落库的学生答案：JSON 数组还原为 list，其余原样返回。"""
+    if raw is None:
+        return None
+    txt = raw.strip()
+    if txt.startswith("[") and txt.endswith("]"):
+        try:
+            return json.loads(txt)
+        except json.JSONDecodeError:
+            return raw
+    return raw
 
 
 def get_student_submission(db: Session, task_id: int, student_id: int, attempt: int = 1) -> Submission:
@@ -61,7 +88,7 @@ def save_answers(
                 full_score=item.score,
             )
             db.add(ans)
-        ans.content = content
+        ans.content = _content_to_db(content)
 
     db.flush()
 
@@ -112,7 +139,15 @@ def save_answers(
 
         # 错题收录 + 知识点掌握度更新
         for r in results:
-            if r.get("is_correct") is False and r.get("grader_type") != "ai":
+            # 只有「已判定为错」的客观题才收录错题。
+            # 待教师人工批改的主观题虽然 is_correct 也是 False，但那是「尚未判定」
+            # 而不是「做错」，若一并收录会导致学生答对却出现在错题本里。
+            pending_manual = (
+                r.get("question_type") not in OBJECTIVE_TYPES
+                and r.get("grader_type") != "ai"
+            )
+            if r.get("is_correct") is False and r.get("grader_type") != "ai" \
+                    and not pending_manual:
                 _collect_wrong_question(db, submission, r)
             elif r.get("is_correct"):
                 _update_mastery(db, submission.student_id, r["question_id"], True)

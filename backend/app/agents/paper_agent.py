@@ -279,20 +279,71 @@ class PaperComposerAgent(BaseAgent):
         preview = [
             {
                 "sort_order": i + 1, "stem": q["stem"], "type": q["type"],
-                "difficulty": q["difficulty"], "score": round(total_score / len(questions), 1),
-                "knowledge_point": "AI 生成", "section_name": "一、选择题",
-                "question_id": None,
+                "difficulty": q["difficulty"],
+                "score": q.get("score") or round(total_score / len(questions), 1),
+                "knowledge_point": "题库复用", "section_name": None,
+                "question_id": q.get("id") or q.get("question_id"),
             }
             for i, q in enumerate(questions)
         ]
+
+        # 关键：AI 补题分支同样必须落库。
+        # 原实现无论 save 与否都返回 id=None、question_id=None 的纯预览，
+        # 前端点「保存」后拿不到任何可用试卷，智能组卷功能形同虚设。
+        coverage = {
+            "points": [{"name": "题库复用", "count": len(preview)}],
+            "total_points": 1,
+            "balance": "题库按学科补足，知识点未精确匹配",
+        }
+        report = {
+            "distribution": {"medium": len(preview)},
+            "ratio": {"medium": 100.0}, "target_ratio": difficulty_ratio,
+        }
+        paper = None
+        if save:
+            paper = Paper(
+                name=paper_name
+                or f"{self._grade_name(db, grade_id)}智能组卷-{utcnow():%Y%m%d%H%M}",
+                grade_id=grade_id, subject_id=subject_id,
+                total_score=total_score, duration=60,
+                difficulty_ratio=__import__("json").dumps(difficulty_ratio, ensure_ascii=False),
+                knowledge_coverage=__import__("json").dumps(coverage, ensure_ascii=False),
+                difficulty_report=__import__("json").dumps(report, ensure_ascii=False),
+                creator_id=user_id or 1, source="ai",
+            )
+            db.add(paper)
+            db.flush()
+        for i, q in enumerate(questions):
+            qid = q.get("id") or q.get("question_id")
+            preview[i]["section_name"] = (
+                f"一、{TYPE_LABEL.get(preview[i]['type'], '综合')}题"
+            )
+            if not qid:
+                continue
+            db.add(
+                PaperItem(
+                    paper_id=paper.id, question_id=qid,
+                    sort_order=i + 1, score=preview[i]["score"],
+                    section_name=preview[i]["section_name"],
+                )
+            )
+            qq = db.get(Question, qid)
+            if qq:
+                qq.usage_count += 1
+            db.commit()
+            db.refresh(paper)
+
         return {
             "paper": {
-                "id": None, "name": paper_name or "AI 生成试卷（待入库）",
-                "total_score": total_score, "item_count": len(preview), "items": preview,
+                "id": paper.id if paper else None,
+                "name": paper.name if paper else (paper_name or "AI 生成试卷（待入库）"),
+                "total_score": total_score,
+                "item_count": len(preview),
+                "items": preview,
             },
-            "difficulty_report": {"distribution": {"medium": len(preview)},
-                                   "ratio": {"medium": 100.0}, "target_ratio": difficulty_ratio},
-            "knowledge_coverage": {"points": [{"name": "AI 生成", "count": len(preview)}],
-                                   "total_points": 1, "balance": "题目由 AI 生成，知识点未精确匹配"},
-            "tip": "题库题目不足，已由 AI 生成题目补足（进入待审核库）",
+            "difficulty_report": report,
+            "knowledge_coverage": coverage,
+            "saved": bool(paper),
+            "tip": "题库题目不足，已按学科补足并生成试卷"
+                  if paper else "题库题目不足，已补足预览题目（未保存）",
         }

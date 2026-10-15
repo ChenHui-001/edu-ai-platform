@@ -359,11 +359,13 @@ def list_papers(
 
 @router.get("/papers/{paper_id}", summary="试卷详情（含题目）")
 def get_paper(
-    paper_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
+    paper_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
+    _assert_paper_readable(db, paper, user)
+
     d = dictify(paper)
     items = []
     for it in sorted(paper.items, key=lambda x: x.sort_order):
@@ -468,6 +470,7 @@ def copy_paper(
     src = db.get(Paper, paper_id)
     if not src:
         raise NotFoundException("试卷不存在")
+    _assert_paper_readable(db, src, user)
     new = Paper(
         name=data.get("name", f"{src.name}副本"), grade_id=src.grade_id,
         subject_id=src.subject_id, total_score=src.total_score,
@@ -522,11 +525,12 @@ def share_paper(
 
 @router.get("/papers/{paper_id}/export", summary="导出试卷（Excel）")
 def export_paper(
-    paper_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
+    paper_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
+    _assert_paper_readable(db, paper, user)
 
     wb = Workbook()
     ws = wb.active
@@ -565,6 +569,26 @@ def export_paper(
 
 
 # ---------------------------------------------------------------- 工具
+def _assert_paper_readable(db: Session, paper: Paper, user: User) -> None:
+    """试卷读取归属校验：仅创建者、被共享者、公开卷或管理员可读。
+
+    试卷详情含标准答案，缺少校验会导致任意教师遍历 paper_id
+    读取他人试卷答案。复制与导出同样受此保护。
+    """
+    if paper.creator_id == user.id or "sys_admin" in user.role_codes:
+        return
+    if paper.is_shared:
+        return
+    shared = db.scalar(
+        select(PaperShare.id).where(
+            PaperShare.paper_id == paper.id,
+            PaperShare.to_user_id == user.id,
+        )
+    )
+    if not shared:
+        raise PermissionException("无权查看该试卷")
+
+
 def _dump(v: Any) -> Optional[str]:
     if v is None:
         return None

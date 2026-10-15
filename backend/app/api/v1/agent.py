@@ -184,8 +184,16 @@ def tutor(
 ):
     from app.agents.tutor_agent import TutorAgent
 
+    # 兼容 message / question / question_text 三种入参：
+    # 前端 AgentChat 与文档示例用 question，历史调用用 message，
+    # 只认 message 会把问题整体丢弃，Agent 直接返回「请描述你的问题」。
+    question = (
+        data.get("message") or data.get("question")
+        or data.get("question_text") or data.get("content") or ""
+    ).strip()
+
     res = TutorAgent().run(
-        db, user_id=user.id, request=data.get("message", ""),
+        db, user_id=user.id, request=question,
         grade_id=data.get("grade_id"), subject_id=data.get("subject_id"),
         student_id=user.id,
     )

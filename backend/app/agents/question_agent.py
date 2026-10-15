@@ -140,9 +140,21 @@ difficulty 取值：easy / medium / hard"""
 
         if save:
             db.commit()
-            for q in db.scalars(select(Question).order_by(Question.id.desc()).limit(saved)).all():
-                from app.agents.rag import index_question
-                index_question(q)
+            # 关键：把落库后的主键回填到返回值。
+            # 下游（智能组卷）依赖 question_id 建立 PaperItem，
+            # 不回填的话生成的题目无法被任何试卷引用。
+            ids = [
+                r[0] for r in db.execute(
+                    select(Question.id).order_by(Question.id.desc()).limit(saved)
+                ).all()
+            ][::-1]
+            for q, qid in zip(questions, ids):
+                q["id"] = qid
+            for qid in ids:
+                qobj = db.get(Question, qid)
+                if qobj:
+                    from app.agents.rag import index_question
+                    index_question(qobj)
 
         return {
             "questions": questions,
@@ -167,14 +179,18 @@ difficulty 取值：easy / medium / hard"""
         rows = db.scalars(stmt.limit(count)).all()
 
         items = [
-            {"stem": q.stem, "type": q.type, "difficulty": q.difficulty,
-             "score": q.score, "answer": q.answer, "analysis": q.analysis, "options": q.options}
+            # 必须带上 id：下游智能组卷依赖 question_id 建立 PaperItem，
+            # 缺失时 AI 组卷会生成 0 道题的空卷。
+            {"id": q.id, "question_id": q.id, "stem": q.stem, "type": q.type,
+             "difficulty": q.difficulty, "score": q.score, "answer": q.answer,
+             "analysis": q.analysis, "options": q.options}
             for q in rows
         ]
         return {
             "questions": items,
             "total": len(items),
             "saved": 0,
+            "reused": len(items),
             "tip": "模型不可用，已从公共题库匹配相似题目。请配置 LLM_API_KEY 启用 AI 生成。",
         }
 

@@ -2,15 +2,19 @@
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_client_ip, get_current_admin, get_current_user, get_user_agent
+from app.api.deps import (
+    bearer_scheme, get_client_ip, get_current_admin, get_current_user, get_user_agent,
+)
 from app.core.database import get_db
 from app.core.exception import BusinessException
 from app.core.security import (
-    create_access_token, decode_token, generate_captcha, store_captcha, verify_captcha,
+    create_access_token, decode_token, generate_captcha, revoke_token, store_captcha,
+    verify_captcha,
 )
 from app.models import Registration, User, UserStatus
 from app.services import auth_service
@@ -220,5 +224,19 @@ def change_password(
 
 
 @router.post("/logout", summary="退出登录")
-def logout():
-    return ok(message="已退出登录")
+def logout(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+):
+    """退出登录并吊销当前访问令牌。
+
+    只改前端状态的话，原 access_token 在过期前仍可访问任意接口，
+    一旦泄露即可被冒用，因此这里必须服务端登记吊销。
+    """
+    token = (
+        credentials.credentials
+        if credentials
+        else request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    )
+    revoked = revoke_token(decode_token(token) if token else None)
+    return ok({"revoked": revoked}, message="已退出登录")
