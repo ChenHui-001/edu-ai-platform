@@ -54,7 +54,26 @@ COPY frontend/ ./
 RUN npm run build
 
 
-# ==================== 前后端一体镜像（默认产出）=================
+# ==================== 可选：纯后端镜像（无前端/nginx）====================
+# 说明：本阶段必须排在 unified 之前。Docker 默认构建最后一个阶段，
+# 若把 backend 放在末尾，`docker build .` 会产出只有 API 的残缺镜像。
+# 纯后端镜像需显式指定：docker build --target backend -t <name> .
+FROM backend-base AS backend
+
+WORKDIR /app
+COPY backend/app ./app
+COPY backend/.env.example ./.env.example
+RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+
+
+# ==================== 前后端一体镜像（默认产出，必须是最后一个阶段）====================
 # 以 backend-base 为基底（解释器与 site-packages 路径已对齐），
 # 再叠加 nginx + supervisord 实现前后端同端口提供服务。
 FROM backend-base AS unified
@@ -84,19 +103,3 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost/api/v1/health || exit 1
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
-
-
-# ==================== 可选：纯后端镜像 ====================
-FROM backend-base AS backend
-
-WORKDIR /app
-COPY backend/app ./app
-COPY backend/.env.example ./.env.example
-RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma
-
-EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
