@@ -46,6 +46,8 @@ const routes = [
         meta: { title: '系统报表', icon: 'DataAnalysis', roles: ['sys_admin', 'grade_admin'] } },
       { path: 'admin/settings', name: 'SystemSetting', component: () => import('@/views/admin/SystemSetting.vue'),
         meta: { title: '系统配置', icon: 'Setting', roles: ['sys_admin'] } },
+      { path: 'admin/ai-config', name: 'AiConfig', component: () => import('@/views/admin/AiConfig.vue'),
+        meta: { title: 'AI 大模型配置', icon: 'Cpu', roles: ['sys_admin'] } },
       { path: 'admin/agent-logs', name: 'AgentLogs', component: () => import('@/views/admin/AgentLogs.vue'),
         meta: { title: 'AI 调用日志', icon: 'Cpu', roles: ['sys_admin', 'grade_admin'] } },
 

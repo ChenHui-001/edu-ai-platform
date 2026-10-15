@@ -416,3 +416,51 @@ def delete_config(
     db.delete(row)
     db.commit()
     return ok(message="配置已删除")
+
+
+# ---------------------------------------------------------------- AI 大模型配置
+@router.get("/ai-config", summary="AI 大模型配置")
+def get_ai_config_route(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+    """获取当前 AI 大模型配置（sys_config 表 > .env 环境变量）。"""
+    from app.services.ai_config_service import get_ai_config
+    return ok(get_ai_config(db))
+
+
+class AiConfigIn(BaseModel):
+    llm_enabled: Optional[bool] = None
+    llm_provider: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+    llm_temperature: Optional[float] = None
+    llm_max_tokens: Optional[int] = None
+    llm_timeout: Optional[int] = None
+
+
+@router.put("/ai-config", summary="保存 AI 大模型配置")
+def save_ai_config_route(
+    payload: AiConfigIn, db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """保存 AI 大模型配置到 sys_config 表，保存后自动重载 LLM 客户端。"""
+    from app.services.ai_config_service import save_ai_config
+    data = {k: v for k, v in payload.model_dump().items() if v is not None}
+    result = save_ai_config(db, data, admin.id)
+    return ok(result, message="AI 配置已保存并重载")
+
+
+class AiTestIn(BaseModel):
+    llm_provider: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+
+
+@router.post("/ai-config/test", summary="测试 AI 大模型连接")
+def test_ai_config_route(
+    payload: AiTestIn, _: User = Depends(get_current_admin),
+):
+    """用给定配置临时测试 LLM 连接（不写入数据库）。"""
+    from app.services.ai_config_service import test_ai_connection
+    result = test_ai_connection(payload.model_dump())
+    return ok(result)

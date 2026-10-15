@@ -155,7 +155,7 @@ const menuGroups = computed(() => {
     { title: '学情分析', icon: 'TrendCharts', match: ['/teacher/analysis', '/teacher/students', '/teacher/reports'] },
     { title: '学习中心', icon: 'Reading', match: ['/student/practice', '/student/exams', '/student/wrong', '/student/notes', '/student/review', '/student/report', '/student/scores'] },
     { title: 'AI 智能', icon: 'MagicStick', match: ['/agent/chat', '/agent/generate', '/admin/agent-logs'] },
-    { title: '系统管理', icon: 'Setting', match: ['/admin/users', '/admin/roles', '/admin/registrations', '/admin/logs', '/admin/jobs', '/admin/attachments', '/admin/reports', '/admin/settings'] }
+    { title: '系统管理', icon: 'Setting', match: ['/admin/users', '/admin/roles', '/admin/registrations', '/admin/logs', '/admin/jobs', '/admin/attachments', '/admin/reports', '/admin/settings', '/admin/ai-config'] }
   ]
 
   return groups.map(g => ({

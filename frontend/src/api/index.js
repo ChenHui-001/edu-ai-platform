@@ -29,7 +29,10 @@ export const systemApi = {
   notifications: (params) => request.get('/system/notifications', { params }),
   readNotification: (id) => request.put(`/system/notifications/${id}/read`),
   readAllNotifications: () => request.put('/system/notifications/read-all'),
-  config: () => request.get('/system/config')
+  config: () => request.get('/system/config'),
+  aiConfig: () => request.get('/system/ai-config'),
+  saveAiConfig: (data) => request.put('/system/ai-config', data),
+  testAiConfig: (data) => request.post('/system/ai-config/test', data)
 }
 
 // ---------------- 教学资源 ----------------

@@ -122,7 +122,7 @@ _CAPTCHA_STORE: Dict[str, tuple[str, datetime]] = {}
 def generate_captcha() -> tuple[str, str]:
     """生成图形验证码，返回 (base64图片, 验证码文本)。"""
     chars = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
-    width, height = 120, 40
+    width, height = 180, 56
     img = Image.new("RGB", (width, height), (246, 248, 252))
     draw = ImageDraw.Draw(img)
 
@@ -142,7 +142,7 @@ def generate_captcha() -> tuple[str, str]:
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     ]:
         try:
-            font = ImageFont.truetype(candidate, 28)
+            font = ImageFont.truetype(candidate, 38)
             break
         except OSError:
             continue
@@ -153,7 +153,7 @@ def generate_captcha() -> tuple[str, str]:
     palette = [(46, 89, 132), (176, 58, 46), (35, 118, 84), (122, 74, 165)]
     for i, ch in enumerate(chars):
         draw.text(
-            (12 + i * 26, random.randint(4, 10)),
+            (16 + i * 38, random.randint(6, 14)),
             ch,
             font=font,
             fill=random.choice(palette),

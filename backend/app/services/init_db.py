@@ -116,6 +116,7 @@ PERMISSIONS: List[Tuple[str, str, str, str, str, int]] = [
     ("system:job:list", "定时任务", "menu", "/admin/jobs", "Clock", 140),
     ("system:job:write", "任务管理", "button", None, None, 141),
     ("system:config:list", "系统配置", "menu", "/admin/settings", "Setting", 150),
+    ("system:ai:config", "AI 大模型配置", "menu", "/admin/ai-config", "Cpu", 155),
     ("system:attachment:list", "附件管理", "menu", "/admin/attachments", "Paperclip", 160),
 
     # 教学资源

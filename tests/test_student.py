@@ -367,7 +367,7 @@ def run():
             done = 0
             for x in same[:2]:
                 if not x.get("is_completed"):
-                    resp = stu.put(f"/learning/review/plans/{x['id']}/complete", {})
+                    resp, _, _ = stu.put(f"/learning/review/plans/{x['id']}/complete", {})
                     if resp.get("success"):
                         done += 1
             p4, _, _ = stu.get("/learning/wrong-questions",

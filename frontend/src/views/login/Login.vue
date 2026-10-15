@@ -241,8 +241,8 @@ onMounted(loadCaptcha)
 }
 
 .captcha-img {
-  height: 40px;
-  width: 120px;
+  height: 48px;
+  width: 170px;
   border-radius: 4px;
   cursor: pointer;
   border: 1px solid #dcdfe6;
