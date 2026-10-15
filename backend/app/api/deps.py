@@ -1,5 +1,5 @@
 """依赖注入：认证、当前用户、权限校验、数据权限范围。"""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import Depends, Request
@@ -54,7 +54,17 @@ def get_current_user(
     payload = decode_token(token)
     if not payload or payload.get("type") != "access":
         raise AuthException("令牌无效或已过期")
-    if datetime.fromtimestamp(payload["exp"]).replace(tzinfo=None) < utcnow():
+
+    # 过期判断必须用**显式 UTC** 解释时间戳。
+    # 原写法 datetime.fromtimestamp(ts) 会按服务器本地时区解析，
+    # 容器 TZ=Asia/Shanghai 时比 UTC 快 8 小时，
+    # 导致 token 实际过期后近 8 小时才被判过期（且刷新时机错位）。
+    #
+    # 注意：utcnow() 返回的是 naive UTC，这里用 .replace(tzinfo=None)
+    # 去掉 tzinfo，保证两者类型一致可比较
+    # （直接用 tz=timezone.utc 会得到 aware 对象，与 naive 比较抛
+    #  TypeError: can't compare offset-naive and offset-aware datetimes）。
+    if datetime.fromtimestamp(payload["exp"], timezone.utc).replace(tzinfo=None) < utcnow():
         raise AuthException("令牌已过期，请重新登录")
 
     user = db.scalar(select(User).where(User.id == int(payload["sub"])))

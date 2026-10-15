@@ -119,7 +119,13 @@ router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('access_token')
 
   if (to.meta.public) {
-    return token ? next('/dashboard') : next()
+    // 仅登录页在已登录时强制回首页；
+    // 注册页必须始终可访问 —— 否则已登录用户点「注册账号」会被弹回
+    // dashboard，表现为「点击无反应/无法跳转」（issue #3）。
+    if (token && to.path === '/login') {
+      return next('/dashboard')
+    }
+    return next()
   }
 
   if (!token) {

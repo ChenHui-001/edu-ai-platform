@@ -13,6 +13,9 @@ import jwt
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from app.core.config import settings
+from app.core.logger import get_logger
+
+logger = get_logger("security")
 
 ALGORITHM = settings.ALGORITHM
 
@@ -118,42 +121,105 @@ def _purge_revoked() -> None:
 # ---------------------------------------------------------------- 图形验证码
 _CAPTCHA_STORE: Dict[str, tuple[str, datetime]] = {}
 
+# 图片容器尺寸（前端 .captcha-img 的 CSS 尺寸，改这里需同步改 CSS）
+_CAPTCHA_W, _CAPTCHA_H = 180, 56
+# 验证码字符数
+_CAPTCHA_LEN = 4
 
-def generate_captcha() -> tuple[str, str]:
-    """生成图形验证码，返回 (base64图片, 验证码文本)。"""
-    chars = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
-    width, height = 180, 56
-    img = Image.new("RGB", (width, height), (246, 248, 252))
-    draw = ImageDraw.Draw(img)
+# 字体候选。**容器镜像里只有 Noto CJK 字体**（fonts-noto-cjk），
+# 原先只列了 Windows arialbd 与 Linux DejaVu，在容器里两个都不存在，
+# 会退化到 ImageFont.load_default() —— 那是位图默认字体，
+# 墨迹仅 8px 高（图片高 56px），表现为「字符极小几乎看不清」。
+# 这里把容器内真实存在的 Noto 放首位，并保留本地开发时的 Windows 字体。
+_CAPTCHA_FONTS = (
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+)
+# 字号：实测 Noto 在 44px 时墨迹高 35px，占图片高度 62%，可读性最佳
+_CAPTCHA_FONT_SIZE = 44
 
-    # 干扰线
-    for _ in range(5):
-        x1, y1 = random.randint(0, width), random.randint(0, height)
-        x2, y2 = random.randint(0, width), random.randint(0, height)
-        draw.line([x1, y1, x2, y2], fill=(190, 200, 220), width=1)
 
-    # 噪点
-    for _ in range(180):
-        draw.point((random.randint(0, width), random.randint(0, height)), fill=(215, 220, 230))
-
-    font = None
-    for candidate in [
-        "C:/Windows/Fonts/arialbd.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]:
+def _load_captcha_font(size: int = _CAPTCHA_FONT_SIZE):
+    """加载验证码字体；全部候选缺失时回退默认字体（并记录告警）。"""
+    for path in _CAPTCHA_FONTS:
         try:
-            font = ImageFont.truetype(candidate, 38)
-            break
+            return ImageFont.truetype(path, size)
         except OSError:
             continue
-    if font is None:
-        font = ImageFont.load_default()
+    logger.warning(
+        "验证码字体全部候选不可用，回退 PIL 默认字体（字符会很小）。"
+        "容器构建需包含 fonts-noto-cjk；本地可安装任意 ttf。"
+    )
+    return ImageFont.load_default()
 
-    # 每个字符随机偏移与颜色
-    palette = [(46, 89, 132), (176, 58, 46), (35, 118, 84), (122, 74, 165)]
+
+def generate_captcha() -> tuple[str, str]:
+    """生成图形验证码，返回 (base64图片, 验证码文本)。
+
+    可读性要点（保持 180x56 容器尺寸不变）：
+    - 字号 44px：墨迹高约 35px，占图片高度 62%
+    - 4 字符等分布局，左右留边距，字符不挤边
+    - 干扰线 3 条（从 5 条减少）且绘制在**字符下方**，不再压字
+    - 噪点 60 个（从 180 个大幅减少），颜色更浅
+    - 深色高对比配色，字符颜色明显暗于干扰线
+    """
+    chars = "".join(random.choices(string.ascii_uppercase + string.digits, k=_CAPTCHA_LEN))
+    width, height = _CAPTCHA_W, _CAPTCHA_H
+    img = Image.new("RGB", (width, height), (250, 251, 253))
+    draw = ImageDraw.Draw(img)
+
+    # ---- 干扰层（先画，保证被字符压住，不影响辨认）----
+    # 浅色干扰线：3 条，颜色很淡
+    for _ in range(3):
+        x1, y1 = random.randint(0, width), random.randint(0, height)
+        x2, y2 = random.randint(0, width), random.randint(0, height)
+        draw.line([x1, y1, x2, y2], fill=(214, 222, 236), width=1)
+
+    # 浅色噪点：60 个（原 180 个，过多会淹没字符）
+    for _ in range(60):
+        draw.point(
+            (random.randint(0, width), random.randint(0, height)),
+            fill=(226, 232, 242),
+        )
+
+    font = _load_captcha_font()
+
+    # 按字形实测宽度做等分布局：左右各留 margin，字符间均匀分布
+    try:
+        char_w = max(draw.textlength(ch, font=font) for ch in chars)
+    except Exception:
+        char_w = _CAPTCHA_FONT_SIZE * 0.6
+    if char_w <= 0:
+        char_w = _CAPTCHA_FONT_SIZE * 0.6
+    margin = 10
+    span = width - margin * 2
+    step = span / max(_CAPTCHA_LEN, 1)
+
+    # 深色高对比配色：明显暗于干扰线/噪点
+    palette = [
+        (24, 58, 108), (168, 40, 32), (20, 106, 74),
+        (108, 58, 152), (176, 96, 12),
+    ]
+
     for i, ch in enumerate(chars):
+        # 按每字符实际墨迹高度做垂直居中，视觉更整齐
+        try:
+            bbox = draw.textbbox((0, 0), ch, font=font)
+            ink_h = bbox[3] - bbox[1]
+            top_off = bbox[1]
+        except Exception:
+            ink_h = int(_CAPTCHA_FONT_SIZE * 0.75)
+            top_off = 0
+        base_y = (height - ink_h) // 2 - top_off
+        # 轻微上下随机偏移，避免字符过于规整
+        base_y += random.randint(-3, 3)
+        x = margin + int(i * step + (step - char_w) / 2)
         draw.text(
-            (16 + i * 38, random.randint(6, 14)),
+            (x, base_y),
             ch,
             font=font,
             fill=random.choice(palette),
