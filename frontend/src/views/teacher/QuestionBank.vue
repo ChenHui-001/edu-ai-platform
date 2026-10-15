@@ -88,7 +88,9 @@
             <span v-html="stripHtml(row.stem).slice(0, 60)"></span>
           </template>
         </el-table-column>
-        <el-table-column prop="type_label" label="题型" width="90" />
+        <el-table-column label="题型" width="110">
+          <template #default="{ row }">{{ typeLabel(row.type) }}</template>
+        </el-table-column>
         <el-table-column label="难度" width="80" align="center">
           <template #default="{ row }">
             <el-tag :type="diffType(row.difficulty)" size="small">{{ row.difficulty_label }}</el-tag>
@@ -285,9 +287,28 @@ import { useUserStore } from '@/store/user'
 const userStore = useUserStore()
 const can = (p) => userStore.hasPerm(p)
 
+// 须与后端 QUESTION_TYPE_LABEL 保持一致（backend/app/api/v1/question.py）
 const TYPE_LABEL = {
   single: '单选题', multiple: '多选题', judge: '判断题', blank: '填空题',
   short: '简答题', calc: '计算题', material: '材料分析题', composition: '作文题'
+}
+
+// 历史别名：早期后端未校验题型，库中可能存在 subjective 等非法值。
+// 这里做一次归一化，避免下拉框匹配不到当前值而显示空白/原始英文。
+const TYPE_ALIAS = { subjective: 'short', essay: 'composition' }
+
+function normalizeType(t) {
+  const v = String(t || 'single').toLowerCase()
+  const fixed = TYPE_ALIAS[v] || v
+  return TYPE_LABEL[fixed] ? fixed : 'single'
+}
+
+// 列表列渲染：未知值兜底显示「其他题型(x)」而不是裸英文
+function typeLabel(t) {
+  const v = String(t || '')
+  if (TYPE_LABEL[v]) return TYPE_LABEL[v]
+  if (TYPE_ALIAS[v]) return TYPE_LABEL[TYPE_ALIAS[v]]
+  return v ? `其他题型(${v})` : '-'
 }
 
 const list = ref([])
@@ -374,7 +395,10 @@ function addOption() {
 
 function openDialog(row) {
   Object.assign(form, {
-    id: row?.id ?? null, type: row?.type ?? 'single', stem: row?.stem ?? '',
+    // 归一化题型：库里可能存在历史非法值（如 subjective），
+    // 直接赋给 el-select 会匹配不到选项，导致「题型显示空白」
+    id: row?.id ?? null, type: normalizeType(row?.type),
+    stem: row?.stem ?? '',
     analysis: row?.analysis ?? '', score: row?.score ?? 5,
     difficulty: row?.difficulty ?? 'medium', grade_id: row?.grade_id ?? query.grade_id,
     subject_id: row?.subject_id ?? query.subject_id,

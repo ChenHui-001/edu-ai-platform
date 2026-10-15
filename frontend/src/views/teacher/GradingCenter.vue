@@ -20,8 +20,8 @@
           <el-input v-model="filter" placeholder="搜索学生 / 任务" clearable
                     :prefix-icon="Search" class="mb12" />
           <el-list v-loading="loading" class="sub-list">
-            <el-list-item v-for="item in filtered" :key="item.id" class="sub-item"
-                          :class="{ active: current?.id === item.id }"
+            <el-list-item v-for="item in filtered" :key="item.submission_id ?? item.id" class="sub-item"
+                          :class="{ active: (item.submission_id ?? item.id) === current?.id }"
                           @click="select(item)">
               <div class="row-between">
                 <span class="name">{{ item.student_name }}</span>
@@ -49,9 +49,9 @@
               <div>
                 <el-tag size="small" class="mr8">客观 {{ detail.objective_score ?? 0 }} 分</el-tag>
                 <el-tag size="small" type="warning">主观 {{ detail.subjective_score ?? 0 }} 分</el-tag>
-                <el-button size="small" type="primary" class="ml8" @click="publish"
+                <el-button v-if="can('grading:publish')" size="small" type="primary" class="ml8" @click="publish"
                            :disabled="detail.status !== 'graded'">发布成绩</el-button>
-                <el-button size="small" type="danger" plain @click="reject">打回重做</el-button>
+                <el-button v-if="can('grading:do')" size="small" type="danger" plain @click="reject">打回重做</el-button>
               </div>
             </div>
           </template>
@@ -91,7 +91,7 @@
 
             <div class="footer-bar">
               <span>总分：<b class="total">{{ totalScore }}</b> / {{ detail.total_score }}</span>
-              <el-button type="primary" :loading="saving" @click="saveGrade">保存批改结果</el-button>
+              <el-button v-if="can('grading:do')" type="primary" :loading="saving" @click="saveGrade">保存批改结果</el-button>
             </div>
           </template>
         </el-card>
@@ -106,7 +106,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { gradingApi } from '@/api'
+import { useUserStore } from '@/store/user'
 
+const userStore = useUserStore()
+const can = (p) => userStore.hasPerm(p)
 const route = useRoute()
 const router = useRouter()
 const list = ref([])
@@ -153,13 +156,21 @@ async function load() {
 
 async function select(item) {
   if (!item) return
-  current.value = item
+  // 后端权威字段是 submission_id；早期 /grading/pending 只返回该字段，
+  // 而这里原先一律读 item.id，取到 undefined 导致详情接口 422，
+  // 前端提示「未找到该提交记录，可能已完成批改」。这里做兼容取值。
+  const sid = item.submission_id ?? item.id
+  if (!sid) {
+    ElMessage.error('该记录缺少提交 ID，请刷新列表')
+    return
+  }
+  current.value = { ...item, id: sid, submission_id: sid }
   detailLoading.value = true
   detail.value = null
   // 同步到地址栏，保证刷新/分享后仍停留在同一条
-  router.replace({ query: { ...route.query, submission: String(item.id) } })
+  router.replace({ query: { ...route.query, submission: String(sid) } })
   try {
-    const res = await gradingApi.detail(item.id)
+    const res = await gradingApi.detail(sid)
     const d = res.data.data
     detail.value = d
     ;(d.items || []).forEach(it => {
@@ -176,7 +187,7 @@ async function focusFromQuery() {
   const sid = Number(route.query.submission)
   if (!sid) return
   // 待批队列最多取 100 条，定位目标可能不在其中（如已批改/ 已发布）
-  const hit = list.value.find(i => i.id === sid)
+  const hit = list.value.find(i => (i.submission_id ?? i.id) === sid)
   if (hit) {
     await select(hit)
   } else {

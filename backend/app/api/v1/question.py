@@ -25,7 +25,31 @@ QUESTION_TYPE_LABEL = {
     "single": "单选题", "multiple": "多选题", "judge": "判断题", "blank": "填空题",
     "short": "简答题", "calc": "计算题", "material": "材料分析题", "composition": "作文题",
 }
+# 历史别名：早期接口与自动化脚本曾用 subjective 指代主观题，
+# 而枚举里实际是 short。保留映射，避免存量数据与旧客户端创建的数据
+# 在前端下拉框里匹配不到（显示成原始英文），也避免直接 422 卡住旧用法。
+QUESTION_TYPE_ALIAS = {
+    "subjective": "short",   # 主观题 -> 简答题
+    "essay": "composition",  # 论述/作文
+}
 DIFFICULTY_LABEL = {"easy": "简单", "medium": "中等", "hard": "困难"}
+
+
+def normalize_question_type(raw: Any, *, strict: bool = True) -> str:
+    """把外部传入的题型归一化为合法枚举值。
+
+    strict=True 时非法值抛BusinessException（写接口用，脏数据不应入库）；
+    strict=False 时非法值回落为 'single'（展示/兜底场景用）。
+    """
+    qtype = str(raw or "single").strip().lower()
+    qtype = QUESTION_TYPE_ALIAS.get(qtype, qtype)
+    if qtype in QUESTION_TYPE_LABEL:
+        return qtype
+    if strict:
+        raise BusinessException(
+            f"题型不合法：{raw!r}，可选值 {'/'.join(QUESTION_TYPE_LABEL)}"
+        )
+    return "single"
 
 
 def _has_access(q: Question, user: User) -> bool:
@@ -85,7 +109,10 @@ def list_questions(
         d = dictify(q)
         kp = db.get(KnowledgePoint, q.knowledge_point_id) if q.knowledge_point_id else None
         d["knowledge_point_name"] = kp.name if kp else None
-        d["type_label"] = QUESTION_TYPE_LABEL.get(q.type, q.type)
+        # 存量脏数据（如历史写入的 subjective）归一化后再出，
+        # 否则前端题型下拉框匹配不到该值，会显示原始英文
+        d["type"] = normalize_question_type(q.type, strict=False)
+        d["type_label"] = QUESTION_TYPE_LABEL.get(d["type"], d["type"])
         d["difficulty_label"] = DIFFICULTY_LABEL.get(q.difficulty, q.difficulty)
         items.append(d)
 
@@ -109,7 +136,10 @@ def create_question(
     if not data.get("stem"):
         raise BusinessException("题干不能为空")
     q = Question(
-        type=data.get("type", "single"), stem=data["stem"],
+        # 校验题型合法性：此前直接透传，任何字符串都能入库，
+        # 会导致前端题型下拉框匹配不到、显示原始英文（如 subjective）
+        type=normalize_question_type(data.get("type", "single")),
+        stem=data["stem"],
         options=_dump(data.get("options")), answer=_dump(data.get("answer")),
         analysis=data.get("analysis"), score=float(data.get("score", 5)),
         difficulty=data.get("difficulty", "medium"),
@@ -136,6 +166,9 @@ def update_question(
         raise NotFoundException("题目不存在")
     if q.owner_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("只能编辑自己的题目")
+    # 更新时同样校验题型，避免把非法值写回库
+    if data.get("type") is not None:
+        data = {**data, "type": normalize_question_type(data["type"])}
     for f, v in (("type", data.get("type")), ("stem", data.get("stem")),
                   ("options", _dump(data.get("options"))), ("answer", _dump(data.get("answer"))),
                   ("analysis", data.get("analysis")), ("score", data.get("score")),
@@ -371,10 +404,11 @@ def get_paper(
     for it in sorted(paper.items, key=lambda x: x.sort_order):
         q = it.question
         kp = db.get(KnowledgePoint, q.knowledge_point_id) if q and q.knowledge_point_id else None
+        qtype = normalize_question_type(q.type, strict=False) if q else None
         items.append({
             "paper_item_id": it.id, "question_id": q.id, "sort_order": it.sort_order,
             "score": it.score, "section_name": it.section_name,
-            "type": q.type, "type_label": QUESTION_TYPE_LABEL.get(q.type, q.type),
+            "type": qtype, "type_label": QUESTION_TYPE_LABEL.get(qtype, qtype),
             "stem": q.stem, "options": _load(q.options), "answer": _load(q.answer),
             "analysis": q.analysis, "difficulty": q.difficulty,
             "knowledge_point_name": kp.name if kp else None,

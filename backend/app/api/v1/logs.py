@@ -8,7 +8,7 @@ from openpyxl import Workbook
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_current_user
+from app.api.deps import get_current_admin, get_current_manager, get_current_user
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import (
@@ -25,7 +25,7 @@ def login_logs(
     params: PageParams = Depends(), keyword: Optional[str] = None,
     status: Optional[str] = None, is_abnormal: Optional[bool] = None,
     start_date: Optional[str] = None, end_date: Optional[str] = None,
-    db: Session = Depends(get_db), _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db), _: User = Depends(get_current_manager),
 ):
     stmt = select(LoginLog)
     if keyword:
@@ -54,7 +54,7 @@ def operation_logs(
     params: PageParams = Depends(), module: Optional[str] = None,
     username: Optional[str] = None, status: Optional[str] = None,
     start_date: Optional[str] = None, end_date: Optional[str] = None,
-    db: Session = Depends(get_db), _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db), _: User = Depends(get_current_manager),
 ):
     stmt = select(OperationLog)
     if module:
@@ -87,7 +87,7 @@ def operation_logs(
 def error_logs(
     params: PageParams = Depends(), level: Optional[str] = None,
     start_date: Optional[str] = None, end_date: Optional[str] = None,
-    db: Session = Depends(get_db), _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db), _: User = Depends(get_current_manager),
 ):
     stmt = select(ErrorLog)
     if level:
@@ -109,7 +109,7 @@ def error_logs(
 @router.get("/export", summary="导出日志为 Excel")
 def export_logs(
     log_type: str = Query("login", description="login/operation/error"),
-    db: Session = Depends(get_db), _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db), _: User = Depends(get_current_manager),
 ):
     wb = Workbook()
     ws = wb.active

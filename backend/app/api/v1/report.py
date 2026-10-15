@@ -10,7 +10,8 @@ from sqlalchemy import case, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
-    DataScope, get_current_admin, get_current_teacher, get_current_user, get_data_scope,
+    DataScope, get_current_admin, get_current_manager, get_current_teacher,
+    get_current_user, get_data_scope,
 )
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
@@ -361,7 +362,7 @@ def knowledge_effect(
 @router.get("/admin/overview", summary="系统总览")
 def admin_overview(
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_admin),
+    user: User = Depends(get_current_manager),
 ):
     # 参数名必须为 user：export_excel 会以 admin_overview(db, user=...) 复用本函数
     def _count(model, *where):
@@ -411,7 +412,7 @@ def admin_overview(
 
 
 @router.get("/admin/grade-comparison", summary="各年级教学数据对比")
-def grade_comparison(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+def grade_comparison(db: Session = Depends(get_db), _: User = Depends(get_current_manager)):
     rows = db.execute(
         select(
             Grade.name,
@@ -447,7 +448,7 @@ def grade_comparison(db: Session = Depends(get_db), _: User = Depends(get_curren
 
 
 @router.get("/admin/subject-comparison", summary="各学科教学数据对比")
-def subject_comparison(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+def subject_comparison(db: Session = Depends(get_db), _: User = Depends(get_current_manager)):
     rows = db.execute(
         select(
             Subject.name,

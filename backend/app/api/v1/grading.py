@@ -52,13 +52,18 @@ def pending_submissions(
         task = db.get(Task, s.task_id)
         stu = db.get(User, s.student_id)
         items.append({
-            "submission_id": s.id, "task_id": s.task_id,
+            # submission_id 是权威字段；id 作为别名一并返回。
+            # 前端列表用item.id 做key / 拼详情 URL，若只给 submission_id
+            # 会取到 undefined，导致详情接口报 422 / 前端提示「未找到该提交记录」。
+            "id": s.id, "submission_id": s.id, "task_id": s.task_id,
             "task_title": task.title if task else None,
             "student_id": s.student_id, "student_name": stu.real_name if stu else "",
             "class_id": stu.class_id if stu else None,
+            "total_score": task.total_score if task else 0,
             "score": s.score, "objective_score": s.objective_score,
             "subjective_score": s.subjective_score, "status": s.status,
             "class_rank": s.class_rank, "is_passed": s.is_passed,
+            "needs_manual": bool(s.subjective_score and s.subjective_score > 0),
             "submit_time": dictify(s.submit_time),
         })
     return ok({"items": items, "total": total, "page": params.page})

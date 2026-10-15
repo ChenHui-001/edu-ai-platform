@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_current_user
+from app.api.deps import get_current_admin, get_current_manager, get_current_user
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import (
@@ -28,7 +28,7 @@ def list_users(
     grade_id: Optional[int] = None,
     class_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    _: User = Depends(get_current_manager),
 ):
     stmt = select(User)
     if keyword:
@@ -132,7 +132,7 @@ def delete_user(
 
 @router.get("/users/{user_id}/teachings", summary="教师授课关系")
 def user_teachings(
-    user_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_admin),
+    user_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_manager),
 ):
     rows = db.scalars(
         select(TeachingAssignment).where(TeachingAssignment.teacher_id == user_id)
@@ -270,7 +270,7 @@ def _assign_perms(db: Session, role_id: int, codes: List[str]) -> None:
 @router.get("/permissions", summary="权限点树")
 def list_permissions(
     type: Optional[str] = None, db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    _: User = Depends(get_current_manager),
 ):
     stmt = select(Permission)
     if type:

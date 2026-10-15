@@ -17,20 +17,22 @@ from e2e_framework import (R, Client, check, data_of, rows_of, total_of,
 PWD = "Student@123"
 
 # 故意做错：single 选 A（正确 B）、multiple 只选 A（正确 AC）、judge 选 F（正确 T）
-# 做对：blank 填 4、subjective 写标准答案
+# 做对：blank 填 4、short（简答题）写标准答案
 # 注：主观题在 LLM 未配置时按设计进入「待教师人工批改」，不计入自动判分
 PLAN = {
     "single": "A",       # 错
     "multiple": ["A"],   # 错（漏选 C）
     "judge": "F",        # 错
     "blank": "4",        # 对
-    "subjective":        # 对
+    "short":            # 对
     "x²-6x+5=0 ⟹ (x-3)²=4 ⟹ x-3=±2 ⟹ x=1 或 x=5",
 }
 EXPECT_WRONG = {"single", "multiple", "judge"}
 EXPECT_RIGHT = {"blank"}
-# 主观题：llm_enabled=false 时进入人工批改队列
-SUBJECTIVE = "subjective"
+# 主观题：llm_enabled=false 时进入人工批改队列。
+# 枚举值为 short（简答题）——原先写 "subjective" 是非法值，
+# 后端未校验题型时会被原样入库，导致前端题型显示异常。
+SUBJECTIVE = "short"
 
 
 def run():

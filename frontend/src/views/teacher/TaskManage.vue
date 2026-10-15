@@ -4,7 +4,7 @@
       <h2 class="page-title">作业与考试</h2>
       <div>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
-        <el-button type="primary" :icon="Plus" @click="openDialog()">发布作业 / 考试</el-button>
+        <el-button v-if="can('task:write')" type="primary" :icon="Plus" @click="openDialog()">发布作业 / 考试</el-button>
       </div>
     </div>
 
@@ -243,6 +243,10 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { taskApi, questionApi, eduApi, gradingApi } from '@/api'
+import { useUserStore } from '@/store/user'
+
+const userStore = useUserStore()
+const can = (p) => userStore.hasPerm(p)
 
 const list = ref([])
 const papers = ref([])

@@ -47,7 +47,12 @@ QUESTIONS = [
         "options": [], "answer": "4", "analysis": "5x=20，x=4。",
     },
     {
-        "type": "subjective", "difficulty": "medium", "score": 50,
+        # 主观题必须用合法枚举 short。
+        # 原先写 "subjective"（不在 QUESTION_TYPE_LABEL 内），
+        # 后端 create_question 又未校验题型，导致脏数据入库，
+        # 前端题型下拉框匹配不到、列表显示原始英文。
+        # qids 键名沿用 "subjective" 以免牵动后续引用。
+        "type": "short", "difficulty": "medium", "score": 50,
         "stem": "【自动化测试】请用配方法解方程 x² - 6x + 5 = 0，并写出推导过程。",
         "options": [],
         "answer": "x²-6x+5=0 ⟹ (x-3)²=4 ⟹ x-3=±2 ⟹ x=1 或 x=5",
@@ -223,7 +228,7 @@ def run():
                  {"question_id": qids["multiple"], "score": 15, "section_name": "选择题"},
                  {"question_id": qids["judge"], "score": 10, "section_name": "判断题"},
                  {"question_id": qids["blank"], "score": 15, "section_name": "填空题"},
-                 {"question_id": qids["subjective"], "score": 50, "section_name": "解答题"}]
+                 {"question_id": qids["short"], "score": 50, "section_name": "解答题"}]
         p, _, _ = tea.post("/question/papers", {
             "name": f"【{tag}】七年级数学自动组卷", "subject_id": subj_id,
             "grade_id": R.context["grade_id"], "duration": 60, "items": items,

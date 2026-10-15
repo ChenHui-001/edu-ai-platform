@@ -83,9 +83,25 @@ def get_current_user(
 
 
 def get_current_admin(user: User = Depends(get_current_user)) -> User:
-    """系统管理员。"""
+    """系统管理员（含全量数据与系统级配置：角色、审批、AI 配置、系统配置）。"""
     if ROLE_SYS_ADMIN not in user.role_codes:
         raise PermissionException("需要系统管理员权限")
+    return user
+
+
+def get_current_manager(user: User = Depends(get_current_user)) -> User:
+    """系统管理员或年级管理员（系统管理类）。
+
+    与 `get_current_admin` 的区别：本依赖额外放开给年级管理员，
+    用于**只读与本年级范围内**的管理动作——用户列表、日志审计、
+    附件、系统报表等。这些功能前端菜单本就对 grade_admin 可见，
+    若接口一律要求 sys_admin，会出现「菜单点得进去、接口一律 403」的错配。
+
+    注意：角色权限、注册审批、AI/系统配置、定时任务写操作等
+    仍必须走 `get_current_admin`，不在本依赖范围内。
+    """
+    if not ({ROLE_SYS_ADMIN, ROLE_GRADE_ADMIN} & set(user.role_codes)):
+        raise PermissionException("需要系统管理员或年级管理员权限")
     return user
 
 

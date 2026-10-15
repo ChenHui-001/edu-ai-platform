@@ -61,7 +61,7 @@
                 <el-dropdown-menu>
                   <el-dropdown-item command="admin">系统管理员 admin / Admin@123456</el-dropdown-item>
                   <el-dropdown-item command="teacher">教师 teacher1 / Teacher@123</el-dropdown-item>
-                  <el-dropdown-item command="student">学生 stu710 / Student@123</el-dropdown-item>
+                  <el-dropdown-item command="student">学生 stu731 / Student@123</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -133,11 +133,14 @@ async function handleLogin() {
   }
 }
 
+// 演示账号必须与 init_db.py 的播种规则一致：
+// 学生为 stu{年级}{班级}{序号}，序号从 1 开始（stu101/stu721/stu731...），
+// 不存在 stu710 —— 写错会导致「演示账号一键填充后登录必失败」。
 function fillDemo(cmd) {
   const demos = {
     admin: ['admin', 'Admin@123456'],
     teacher: ['teacher1', 'Teacher@123'],
-    student: ['stu710', 'Student@123']
+    student: ['stu731', 'Student@123']
   }
   const [u, p] = demos[cmd] || []
   form.value.username = u

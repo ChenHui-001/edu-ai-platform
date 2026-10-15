@@ -4,12 +4,16 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
   workflow_dispatch:
     inputs:
       tag:
-        description: '镜像标签'
-        required: true
-        default: 'latest'
+        description: '镜像标签（留空则用 VERSION 文件内容）'
+        required: false
+        default: ''
 
 env:
   REGISTRY: docker.io
@@ -33,15 +37,26 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: 读取版本号（根目录 VERSION 是唯一真源）
+        id: ver
+        run: echo "version=$(cat VERSION 2>/dev/null | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
       - name: 生成标签
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ github.event.inputs.tag || 'latest' }}
-            type=ref,event=tag
-            type=sha
+            type=raw,value=${{ github.event.inputs.tag || steps.ver.outputs.version || 'latest' }}
+            type=ref,event=tag,strip=v
+            type=sha,format=short,prefix=build-
+          # 标签统一去掉 v 前缀，与本地手动推送的 nanpo/edu-ai-platform:1.0.x 保持一致；
+          # 版本号唯一真源仍是根目录 VERSION 文件。
+          flavor: latest=false
+
+      - name: 额外推送 latest（仅打 tag 或手动指定时）
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+        run: echo "推送 latest 标签"
 
       - name: 构建并推送
         uses: docker/build-push-action@v6
@@ -54,3 +69,17 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # latest 单独推一次：metadata-action 的 flavor: latest=false 禁用了自动 latest，
+      # 而本地手动推送的约定是 latest 始终指向最新版本。
+      # 用 --all-instances 让 latest 复用已推送的多架构 manifest list，避免重新构建。
+      - name: 同步 latest 标签
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: unified
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
