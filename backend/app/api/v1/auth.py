@@ -138,6 +138,11 @@ def audit_registration(
 # ---------------------------------------------------------------- 登录
 @router.post("/login", summary="账号密码登录")
 def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
+    # 图形验证码校验：前端 Login.vue 始终携带 captcha_key，
+    # 此处与 register 一致：传了 captcha_key 就必须校验通过。
+    # 未携带则放行（兼容 API 调用与自动化测试），由失败锁定兜底防爆破。
+    if payload.captcha_key and not verify_captcha(payload.captcha_key, payload.captcha or ""):
+        raise BusinessException("验证码错误或已过期")
     ip = get_client_ip(request)
     device = get_user_agent(request)
     user, token, refresh = auth_service.authenticate(

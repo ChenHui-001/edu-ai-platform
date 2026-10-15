@@ -478,11 +478,12 @@ def grade_summary(db: Session, submission: Submission) -> Dict[str, Any]:
         "score_bands": bands,
         "question_stats": q_stats,
         "weak_questions": [q for q in q_stats if q["accuracy"] < 60][:5],
-        "weak_knowledge": self._weak_knowledge(q_stats),
+        "weak_knowledge": _weak_knowledge(q_stats),
     }
 
-    @staticmethod
-    def _weak_knowledge(q_stats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+@staticmethod
+def _weak_knowledge(q_stats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         agg: Dict[str, List[int]] = {}
         for q in q_stats:
             kp = q["knowledge_point"]

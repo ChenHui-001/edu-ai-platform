@@ -76,13 +76,18 @@ def create_task(
     task_type = data.get("type", TaskType.HOMEWORK.value)
     start_at = _parse_dt(data.get("start_at")) or utcnow()
     end_at = _parse_dt(data.get("end_at")) or (start_at + timedelta(days=7))
+    publish_at = _parse_dt(data.get("publish_at"))
+    # 定时发布：publish_at 在未来 → 草稿状态落库、暂不通知学生，
+    # 由内置任务 publish_scheduled_tasks 到期激活并补发通知。
+    scheduled = bool(publish_at and publish_at > utcnow())
 
     task = Task(
         title=data.get("title") or paper.name, type=task_type, paper_id=paper.id,
         subject_id=paper.subject_id, grade_id=paper.grade_id, creator_id=user.id,
-        status=TaskStatus.PUBLISHED.value, start_at=start_at, end_at=end_at,
+        status=TaskStatus.DRAFT.value if scheduled else TaskStatus.PUBLISHED.value,
+        start_at=start_at, end_at=end_at,
         duration=int(data.get("duration") or paper.duration),
-        publish_at=_parse_dt(data.get("publish_at")),
+        publish_at=publish_at,
         allow_retake=int(data.get("allow_retake", 1)),
         show_answer=bool(data.get("show_answer", True)),
         anti_cheat=bool(data.get("anti_cheat", False)),
@@ -102,6 +107,16 @@ def create_task(
         db.add(TaskAssignment(task_id=task.id, class_id=cid))
     for sid in student_ids:
         db.add(TaskAssignment(task_id=task.id, student_id=sid))
+
+    if scheduled:
+        paper.use_count += 1
+        db.commit()
+        db.refresh(task)
+        return ok(
+            dictify(task),
+            message=f"{TYPE_LABEL.get(task_type)}已保存，将于 "
+                    f"{publish_at.strftime('%Y-%m-%d %H:%M')} 自动发布",
+        )
 
     # 通知学生
     notify_ids = set(student_ids)
@@ -241,7 +256,13 @@ def my_tasks(
     if not my_ids:
         return ok({"items": [], "total": 0})
 
-    q = select(Task).where(Task.id.in_(my_ids), Task.type != TaskType.PRACTICE.value)
+    q = select(Task).where(
+        Task.id.in_(my_ids),
+        Task.type != TaskType.PRACTICE.value,
+        # 定时发布的任务到期前对学生不可见
+        Task.status != TaskStatus.DRAFT.value,
+        (Task.publish_at.is_(None)) | (Task.publish_at <= utcnow()),
+    )
     if task_type:
         q = q.where(Task.type == task_type)
     if status:
@@ -287,8 +308,19 @@ def get_task_paper(
     if not paper:
         raise NotFoundException("试卷不存在")
 
-    # 答案可见性判定：仅任务创建者，或（允许显示答案 且 学生已交卷/任务已截止）可见
+    # 发布/开考时间管控（任务创建者豁免，便于教师预览）：
+    # 未发布或未到开考时间，禁止提前获取题目，防止泄题。
     is_creator = task.creator_id == user.id
+    now = utcnow()
+    if not is_creator:
+        if task.status == TaskStatus.DRAFT.value or (
+            task.publish_at and task.publish_at > now
+        ):
+            raise PermissionException("任务尚未发布")
+        if task.start_at and task.start_at > now:
+            raise PermissionException("考试尚未开始，请按时进入")
+
+    # 答案可见性判定：仅任务创建者，或（允许显示答案 且 学生已交卷/任务已截止）可见
     has_submitted = db.scalar(
         select(Submission.id).where(
             Submission.task_id == task_id,
@@ -332,6 +364,10 @@ def submit_answers(
     task = db.get(Task, task_id)
     if not task:
         raise NotFoundException("任务不存在")
+    if task.status == TaskStatus.DRAFT.value or (
+        task.publish_at and task.publish_at > utcnow()
+    ):
+        raise BusinessException("任务尚未发布，无法提交")
     if task.end_at and task.end_at < utcnow():
         raise BusinessException("任务已截止，无法提交")
     if task.start_at and task.start_at > utcnow():

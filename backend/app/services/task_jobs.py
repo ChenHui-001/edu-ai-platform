@@ -9,11 +9,14 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
 from app.models import (
-    Answer, Attachment, ReviewPlan, StudyRecord, Submission, Task, TaskStatus,
+    Answer, Attachment, ReviewPlan, StudyRecord, Submission, Task, TaskAssignment,
+    TaskStatus, User,
 )
 from app.utils.common import utcnow
 
 logger = get_logger("jobs")
+
+_TYPE_LABEL = {"homework": "作业", "exam": "考试", "practice": "随机练习"}
 
 
 def clean_expired_exams() -> Dict[str, Any]:
@@ -162,6 +165,76 @@ def push_review_reminders() -> Dict[str, Any]:
         db.close()
 
 
+def publish_scheduled_tasks() -> Dict[str, Any]:
+    """定时发布：把 publish_at 已到期的草稿任务激活并补发学生通知。
+
+    create_task 中 publish_at 在未来的任务以 draft 状态落库且不通知学生；
+    本任务每分钟扫描一次，到期后置为 published 并补发通知。
+    """
+    from app.models import Notification
+
+    db = SessionLocal()
+    try:
+        now = utcnow()
+        due = db.scalars(
+            select(Task).where(
+                Task.status == TaskStatus.DRAFT.value,
+                Task.publish_at.isnot(None),
+                Task.publish_at <= now,
+            )
+        ).all()
+        activated = 0
+        notified_total = 0
+        for task in due:
+            task.status = TaskStatus.PUBLISHED.value
+            # 补发学生通知（与 create_task 的通知逻辑一致）
+            notify_ids = set(
+                db.scalars(
+                    select(TaskAssignment.student_id).where(
+                        TaskAssignment.task_id == task.id,
+                        TaskAssignment.student_id.isnot(None),
+                    )
+                ).all()
+            )
+            class_ids = db.scalars(
+                select(TaskAssignment.class_id).where(
+                    TaskAssignment.task_id == task.id,
+                    TaskAssignment.class_id.isnot(None),
+                )
+            ).all()
+            for cid in class_ids:
+                notify_ids.update(
+                    db.scalars(
+                        select(User.id).where(
+                            User.class_id == cid, User.status == "active"
+                        )
+                    ).all()
+                )
+            end_txt = task.end_at.strftime("%Y-%m-%d %H:%M") if task.end_at else "-"
+            for sid in notify_ids:
+                db.add(
+                    Notification(
+                        user_id=sid,
+                        title=f"新的{_TYPE_LABEL.get(task.type, '任务')}发布",
+                        content=f"{task.title}，截止时间：{end_txt}",
+                        type="exam", biz_type="task", biz_id=task.id,
+                    )
+                )
+            db.execute(
+                TaskAssignment.__table__.update()
+                .where(TaskAssignment.task_id == task.id)
+                .values(notified=True)
+            )
+            activated += 1
+            notified_total += len(notify_ids)
+        if activated:
+            db.commit()
+        logger.info(f"定时发布激活 {activated} 个任务，补发通知 {notified_total} 人次")
+        return {"activated": activated, "notified": notified_total}
+    finally:
+        db.close()
+
+
 # 任务注册表：func_path -> 执行函数
 JOB_HANDLERS = {
     "app.services.task_jobs.clean_expired_exams": clean_expired_exams,
@@ -169,6 +242,7 @@ JOB_HANDLERS = {
     "app.services.task_jobs.clean_temp_attachments": clean_temp_attachments,
     "app.services.task_jobs.push_review_reminders": push_review_reminders,
     "app.services.task_jobs.generate_weekly_report": generate_weekly_report,
+    "app.services.task_jobs.publish_scheduled_tasks": publish_scheduled_tasks,
 }
 
 

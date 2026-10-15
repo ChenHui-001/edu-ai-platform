@@ -248,6 +248,7 @@ DEFAULT_JOBS = [
     ("清理临时附件", "app.services.task_jobs.clean_temp_attachments", "0 4 * * *", "清理超过 7 天的未绑定业务附件"),
     ("复习提醒推送", "app.services.task_jobs.push_review_reminders", "0 8 * * *", "按艾宾浩斯计划推送今日复习清单"),
     ("周报生成", "app.services.task_jobs.generate_weekly_report", "0 8 * * 1", "生成上周学情周报"),
+    ("定时发布任务", "app.services.task_jobs.publish_scheduled_tasks", "* * * * *", "激活 publish_at 到期的草稿任务并补发学生通知"),
 ]
 
 
@@ -335,7 +336,9 @@ def init_admin(db: Session) -> None:
         identity="sys_admin",
         status="active",
         school_name="示范学校",
-        must_change_password=True,
+        # 初始管理员不强制改密，避免部署后首轮登录即被锁死；
+        # 改密由部署文档另行提示，管理员可在「个人中心」主动修改。
+        must_change_password=False,
     )
     db.add(admin)
     db.flush()

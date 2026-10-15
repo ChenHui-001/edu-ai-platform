@@ -22,6 +22,20 @@ ROLE_TEACHER = "teacher"
 ROLE_STUDENT = "student"
 ROLE_GUEST = "guest"
 
+# 首次登录强制改密白名单：这些路径在 must_change_password=True 时仍可访问，
+# 使改密闭环本身可用（需求 4.1.1「首次登录强制修改密码」）。
+_FORCE_PWD_WHITELIST = (
+    "/api/v1/auth/password",
+    "/api/v1/auth/profile",
+    "/api/v1/auth/logout",
+    "/api/v1/auth/refresh",
+    "/api/v1/auth/captcha",
+    "/api/v1/health",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+)
+
 
 def get_current_user(
     request: Request,
@@ -48,6 +62,13 @@ def get_current_user(
         raise AuthException("用户不存在")
     if not user.is_active:
         raise AuthException(f"账号状态异常：{user.status}")
+    # 首次登录强制改密：非白名单路径一律拦截
+    path = (request.url.path or "").rstrip("/")
+    if user.must_change_password and not any(
+        path == w.rstrip("/") or path.startswith(w.rstrip("/") + "/")
+        for w in _FORCE_PWD_WHITELIST
+    ):
+        raise PermissionException("首次登录或密码已被重置，请先修改密码")
     return user
 
 
