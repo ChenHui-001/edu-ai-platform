@@ -1,31 +1,71 @@
 ﻿<#
     九年义务教育 AI 学习管理系统 - PowerShell 启动器
 
-    相比 start.bat 的优势：
-    - 中文输出在所有终端都不会乱码
-    - 彩色输出，状态更直观
-    - 支持 -Port / -NoBrowser / -Command 参数
+    定位：全部中文输出集中在这里。start.bat / stop.bat / manage.bat
+    只做转发 —— .bat 必须保持「纯 ASCII 无 BOM」，因为 cmd 会把
+    UTF-8 BOM 粘到首行命令上，导致 @echo off 失效、脚本闪退。
 
-    用法：
-      .\start.ps1                      启动（默认 8080 端口）
-      .\start.ps1 -Port 8081           换端口启动
-      .\start.ps1 -NoBrowser           不自动打开浏览器
-      .\start.ps1 -Command stop        停止
-      .\start.ps1 -Command logs        查看日志
-      .\start.ps1 -Command status      查看状态
-      .\start.ps1 -Command reset       清空数据重启
+    用法（推荐 manage.bat，它会转发到这里）：
+      manage.bat                启动（默认 8080，被占用时自动顺延）
+      manage.bat stop           停止
+      manage.bat logs           查看日志
+      manage.bat status         查看状态
+      manage.bat restart        重启
+      manage.bat reset          清空数据后重启
+      manage.bat help           查看全部命令
+
+    直接调用本文件：
+      .\start.ps1                启动
+      .\start.ps1 8081           换端口启动
+      .\start.ps1 -NoBrowser     不自动打开浏览器
+      .\start.ps1 -Command stop  也可继续用 -Command 形式
 #>
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param(
+    # 位置参数：直接 `.\start.ps1 stop` 时接收子命令名。
+    # 注意 Port 用 [int] 会被 `stop`/`logs` 这类字符串触发类型转换错误，
+    # 所以子命令必须由本参数接收，不能占Port 的位置。
+    [Parameter(Position = 0)]
+    [string]$Action,
+
+    [Parameter(Position = 1)]
+    [string]$ActionPort,
+
     [int]$Port = 8080,
     [switch]$NoBrowser,
-    [ValidateSet('start', 'stop', 'logs', 'status', 'restart', 'reset', 'rebuild')]
-    [string]$Command = 'start'
+    [ValidateSet('start', 'stop', 'logs', 'status', 'restart', 'reset', 'rebuild', 'help')]
+    [string]$Command
 )
 
 $ErrorActionPreference = 'Continue'   # docker 的 stderr（如「容器不存在」）不应终止脚本
 Set-Location -Path $PSScriptRoot
+
+# 归一化子命令与端口：
+#   .\start.ps1                -> start, 8080
+#   .\start.ps1 8081           -> start, 8081   （纯数字视为端口）
+#   .\start.ps1 stop           -> stop
+#   .\start.ps1 start 8081     -> start, 8081
+#   .\start.ps1 -Command stop  -> stop（保留旧写法兼容）
+$ValidActions = @('start', 'up', 'stop', 'down', 'logs', 'status', 'restart', 'reset', 'rebuild', 'help')
+if ($Action) {
+    if ($Action -match '^\d+$') {
+        # 第一个位置参数是纯数字 -> 当作端口
+        $Port = [int]$Action
+    } elseif ($ValidActions -contains $Action.ToLower()) {
+        $Command = $Action.ToLower()
+        if ($Command -eq 'up') { $Command = 'start' }   # `up` 是 `start` 的别名
+    } else {
+        Write-Host "未知命令: $Action" -ForegroundColor Red
+        Write-Host "可用命令: $($ValidActions -join ', ')"
+        Write-Host "提示: 直接传数字会被当作端口，例如 .\start.ps1 8081"
+        exit 1
+    }
+}
+if ($ActionPort -and $ActionPort -match '^\d+$') {
+    $Port = [int]$ActionPort
+}
+if (-not $Command) { $Command = 'start' }
 
 # 检测是否处于交互式终端：被管道重定向或被其他脚本调起时不阻塞等待
 $script:NonInteractive = (
@@ -242,7 +282,7 @@ function Invoke-Start {
     if (-not $ready) {
         Write-Warn '等待超时，容器可能仍在初始化'
         Write-Host ''
-        Write-Host '    查看日志：.\start.ps1 -Command logs'
+        Write-Host '    查看日志：manage.bat logs'
         Wait-Enter
         return
     }
@@ -252,9 +292,11 @@ function Invoke-Start {
     Write-Host "$script:Green  启动成功！$script:Reset"
     Write-Host "$script:Green$( '═' * 60)$script:Reset"
     Write-Host ''
-    Write-Host "    系统首页    $script:Bold$script:Cyanhttp://localhost:$script:UsePort$script:Reset"
-    Write-Host "    接口文档    http://localhost:$script:UsePort/docs"
-    Write-Host "    健康检查    http://localhost:$script:UsePort/api/v1/health"
+    # 注意用 ${} 界定变量边界：$script:Cyanhttp 会被解析成变量名
+    # Cyanhttp 而丢失 "http:" 前缀，导致输出成 //localhost:8080
+    Write-Host "    系统首页    ${script:Bold}${script:Cyan}http://localhost:${script:UsePort}${script:Reset}"
+    Write-Host "    接口文档    http://localhost:${script:UsePort}/docs"
+    Write-Host "    健康检查    http://localhost:${script:UsePort}/api/v1/health"
     Write-Host ''
     Write-Host "  $( '─' * 52)"
     Write-Host '    默认账号'
@@ -268,10 +310,13 @@ function Invoke-Start {
     Write-Host ''
     Write-Host '  常用命令：'
     Write-Host ''
-    Write-Host '    .\start.ps1 -Command logs      查看运行日志'
-    Write-Host '    .\start.ps1 -Command stop      停止服务'
-    Write-Host '    .\start.ps1 -Command restart   重启服务'
-    Write-Host '    .\start.ps1 -Command reset     清空数据后重启'
+    Write-Host '    双击 start.bat / stop.bat / manage.bat'
+    Write-Host ''
+    Write-Host '    manage.bat status      查看服务状态'
+    Write-Host '    manage.bat logs        查看运行日志'
+    Write-Host '    manage.bat stop        停止服务'
+    Write-Host '    manage.bat restart     重启服务'
+    Write-Host '    manage.bat help        查看全部命令'
     Write-Host ''
     Write-Host ''
 
@@ -325,7 +370,7 @@ function Invoke-Status {
         Write-Host $health -ForegroundColor Green
     } else {
         Write-Warn '健康检查未通过，可能仍在启动中'
-        Write-Host "    查看日志：.\start.ps1 -Command logs"
+        Write-Host "    查看日志：manage.bat logs"
     }
     Write-Host ''
     Write-Host ''
@@ -348,7 +393,7 @@ function Invoke-Restart {
         }
     }
     Write-Warn '服务仍未就绪'
-    Write-Host '    查看日志：.\start.ps1 -Command logs'
+    Write-Host '    查看日志：manage.bat logs'
     Wait-Enter
 }
 
@@ -384,6 +429,30 @@ function Invoke-Reset {
     Invoke-Start
 }
 
+function Invoke-Help {
+    Write-Host ''
+    Write-Host '════════════════ 用法 ════════════════' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '  manage.bat [命令] [端口]'
+    Write-Host ''
+    Write-Host '    (无参数)      启动服务（默认 8080，被占用时自动顺延）'
+    Write-Host '    start        启动服务'
+    Write-Host '    stop         停止服务'
+    Write-Host '    restart      重启服务'
+    Write-Host '    status       查看状态与健康检查'
+    Write-Host '    logs         跟随查看日志（Ctrl+C 退出）'
+    Write-Host '    reset        清空数据后以初始状态重启（不可逆）'
+    Write-Host '    rebuild      无缓存重新构建镜像（耗时较长）'
+    Write-Host '    help         显示本帮助'
+    Write-Host ''
+    Write-Host '  示例：'
+    Write-Host '    manage.bat start 8081'
+    Write-Host ''
+    Write-Host '  常见账号：admin / Admin@123456（首次登录须改密）'
+    Write-Host ''
+    Wait-Enter
+}
+
 function Invoke-Rebuild {
     Write-Host ''
     Write-Step '清除缓存重新构建镜像（耗时较长）...'
@@ -409,4 +478,5 @@ switch ($Command) {
     'restart' { Invoke-Restart }
     'reset'   { Invoke-Reset }
     'rebuild' { Invoke-Rebuild }
+    'help'    { Invoke-Help }
 }
