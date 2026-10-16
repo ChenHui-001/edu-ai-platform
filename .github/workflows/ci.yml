@@ -57,6 +57,11 @@ jobs:
         working-directory: frontend
         run: npm install
 
+      - name: 模板引用静态普查（白屏隐患）
+        # 模板调用 script 中未定义的标识符 → 浏览器 "$setup.xxx is not a
+        # function" → 整页白屏且无提示，构建期必须拦住
+        run: python tools/scan_vue_refs.py
+
       - name: 构建
         working-directory: frontend
         run: npm run build
