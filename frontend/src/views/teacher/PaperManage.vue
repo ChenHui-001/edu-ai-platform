@@ -389,8 +389,15 @@ async function save() {
   if (!selected.value.length) return ElMessage.warning('请至少选择一道题目')
   saving.value = true
   try {
+    // 后端契约是 items:[{question_id, score}]（score 缺省用题目自身分值）。
+    // 此前发 question_ids+item_scores，后端 items 为空 → 空卷 + 假总分。
+    const qmap = Object.fromEntries(questions.value.map(q => [q.id, q]))
     await questionApi.createPaper({
-      ...form, question_ids: selected.value, item_scores: selected.value.map(() => null)
+      name: form.name, grade_id: form.grade_id, subject_id: form.subject_id,
+      duration: form.duration, description: form.description,
+      items: selected.value.map(id => ({
+        question_id: id, score: qmap[id]?.score ?? null
+      })),
     })
     ElMessage.success('试卷创建成功')
     dlg.value = false
@@ -467,7 +474,14 @@ async function copyPaper(row) {
   load()
 }
 
-function exportPaper(row) { window.open(questionApi.exportPaperUrl(row.id), '_blank') }
+async function exportPaper(row) {
+  // window.open 不带 Authorization（后端 get_current_teacher 必 401）
+  const res = await questionApi.exportPaper(row.id)
+  const url = URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url; a.download = `试卷-${row.name}.xlsx`; a.click()
+  URL.revokeObjectURL(url)
+}
 
 async function remove(row) {
   await ElMessageBox.confirm(`确认删除试卷「${row.name}」？`, '提示', { type: 'warning' })

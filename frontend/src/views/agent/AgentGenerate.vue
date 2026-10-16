@@ -314,7 +314,13 @@ async function run() {
     let res
     if (active.value === 'question_generator') {
       if (!qForm.subject_id) { ElMessage.warning('请选择学科'); return }
-      res = await agentApi.questionGenerator(qForm)
+      // 后端契约是单值 type / knowledge_point_id（此前发复数数组被
+      // 静默忽略，所选题型/知识点永远不生效，全部按默认 single 生成）
+      res = await agentApi.questionGenerator({
+        ...qForm,
+        type: qForm.question_types?.[0] || 'single',
+        knowledge_point_id: qForm.knowledge_point_ids?.[0] || undefined,
+      })
     } else if (active.value === 'paper_composer') {
       if (!paperReq.value) { ElMessage.warning('请输入组卷需求'); return }
       res = await agentApi.paperComposer({ requirement: paperReq.value })

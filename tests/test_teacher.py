@@ -345,6 +345,57 @@ def run():
                 "POST /api/v1/agent/paper-composer")
 
     # ---------------------------------------------------------- 5 发布任务
+    # ---------------------------------- 4b 题库契约与一致性（回归）
+    R.set_phase("阶段二 · 教师视角 | 4b. 题库契约回归")
+    # 1) AI 智能出题：type 契约生效（此前 AgentGenerate 发复数数组被忽略，
+    #    全部按默认 single 生成）。LLM 未配置走 fallback 也能出题。
+    p, _, _ = tea.post("/agent/question-generator", {
+        "subject_id": R.context.get("subject_id") or 1, "grade_id": 1,
+        "type": "judge", "count": 3, "difficulty": "easy", "save": True})
+    d = data_of(p) or {}
+    qs = d.get("questions") or []
+    check("★ AI 出题可调用（LLM 未配置自动降级到题库相似题）",
+          p.get("success") and len(qs) > 0
+          and all(q.get("stem") for q in qs),
+          f"total={d.get('total')} saved={d.get('saved')}")
+    # LLM 路径：type 契约（后端收单值 type，此前前端发复数数组被忽略）。
+    # LLM 未配置时 fallback 返回公共题库相似题（题型各异、不入库），
+    # 属预期降级——type/save 断言仅在 LLM 可用时才有意义。
+    is_fallback = "匹配相似" in str(d.get("tip") or "")
+    if not is_fallback and qs:
+        check("★ AI 出题 type 契约生效（均为请求的 judge）",
+              all(q.get("type") == "judge" for q in qs),
+              f"types={[q.get('type') for q in qs]}")
+        check("AI 题以草稿状态入库", d.get("saved", 0) > 0,
+              f"saved={d.get('saved')}")
+
+    # 2) 删题保护：被试卷引用的题目删除被拒
+    paper_q = R.context.get("paper_question_id") or (
+        list(qids.values())[0] if qids else None)
+    if paper_q:
+        p, _, _ = tea.delete(f"/question/questions/{paper_q}")
+        check("★ 被试卷引用的题目删除被拒（悬空保护）",
+              p.get("success") is False and "引用" in str(p.get("message", "")),
+              f"{p.get('code')} {p.get('message', '')}")
+
+    # 3) 编辑接口不可绕过状态流转：先下架，再尝试经编辑接口直接上架，
+    #    随后用列表接口核验 status（无单题详情端点）——status 应仍为 offline
+    if paper_q:
+        p, _, _ = tea.put(f"/question/questions/{paper_q}/status",
+                          {"status": "offline"})
+        if p.get("success"):
+            tea.put(f"/question/questions/{paper_q}", {"status": "published"})
+            p2, _, _ = tea.get("/question/questions",
+                               params={"keyword": tag, "page_size": 100})
+            target = next((q for q in rows_of(p2)
+                           if q.get("id") == paper_q), {})
+            still_off = target.get("status") == "offline"
+            check("★ 编辑接口不能绕过状态审核（status 字段被忽略）",
+                  still_off, f"status={target.get('status')}")
+            # 恢复上架供后续用例使用
+            tea.put(f"/question/questions/{paper_q}/status",
+                    {"status": "published"})
+
     R.set_phase("阶段二 · 教师视角 | 5. 发布作业与考试")
 
     target_paper = R.context.get("paper_id")

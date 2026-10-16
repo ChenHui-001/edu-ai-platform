@@ -7,6 +7,10 @@
         <el-button :icon="Upload" @click="importVisible = true">批量导入</el-button>
         <el-button v-if="can('question:bank:export')" :icon="Download"
                    @click="exportExcel">导出</el-button>
+        <el-button v-if="can('question:bank:write')" :icon="MagicStick" type="warning"
+                   @click="openAiDlg">AI 智能出题</el-button>
+        <el-button v-if="can('question:bank:write')" :icon="MagicStick" type="warning"
+                   @click="openAiDlg">AI 智能出题</el-button>
         <el-button v-if="can('question:bank:write')" type="primary" :icon="Plus"
                    @click="openDialog()">新增题目</el-button>
       </div>
@@ -275,13 +279,203 @@
       </template>
     </el-dialog>
   </div>
+  <!-- AI 智能出题：条件生成 → 直接入库（草稿态，审核后可用于组卷） -->
+  <el-dialog v-model="aiDlg" title="AI 智能出题" width="640px" destroy-on-close>
+    <el-form :model="aiForm" label-width="90px">
+      <el-row :gutter="10">
+        <el-col :span="12">
+          <el-form-item label="学科" required>
+            <el-select v-model="aiForm.subject_id" style="width:100%" @change="loadAiKps">
+              <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="年级">
+            <el-select v-model="aiForm.grade_id" clearable style="width:100%">
+              <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+      </el-row>
+      <el-row :gutter="10">
+        <el-col :span="8">
+          <el-form-item label="题型">
+            <el-select v-model="aiForm.type" style="width:100%">
+              <el-option v-for="(label, key) in TYPE_LABEL" :key="key" :label="label" :value="key" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="难度">
+            <el-select v-model="aiForm.difficulty" style="width:100%">
+              <el-option label="简单" value="easy" />
+              <el-option label="中等" value="medium" />
+              <el-option label="较难" value="hard" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="数量">
+            <el-input-number v-model="aiForm.count" :min="1" :max="20" style="width:100%" />
+          </el-form-item>
+        </el-col>
+      </el-row>
+      <el-form-item label="知识点">
+        <el-select v-model="aiForm.knowledge_point_id" clearable filterable
+                   style="width:100%" placeholder="可选，AI 将紧扣该知识点出题">
+          <el-option v-for="k in aiKps" :key="k.id" :label="k.name" :value="k.id" />
+        </el-select>
+      </el-form-item>
+    </el-form>
+
+    <div v-if="aiResult?.length" class="mb12">
+      <el-alert type="success" :closable="false" show-icon
+                :title="`已生成 ${aiResult.length} 题并保存至题库（草稿状态）`"
+                description="草稿题审核通过后即可用于组卷；可在列表用「来源=AI」筛选查看" />
+      <el-table :data="aiResult" size="small" border max-height="240" class="mt8">
+        <el-table-column label="题型" width="76">
+          <template #default="{ row }">{{ TYPE_LABEL[row.type] || row.type }}</template>
+        </el-table-column>
+        <el-table-column label="难度" width="58">
+          <template #default="{ row }">{{ row.difficulty }}</template>
+        </el-table-column>
+        <el-table-column prop="score" label="分值" width="52" />
+        <el-table-column label="题干" min-width="300">
+          <template #default="{ row }">{{ stripStem(row.stem).slice(0, 70) }}</template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <template #footer>
+      <el-button @click="aiDlg = false">关闭</el-button>
+      <el-button type="primary" :loading="aiLoading" :disabled="!aiForm.subject_id"
+                 @click="generateAi">生成并入库</el-button>
+    </template>
+  </el-dialog>
+  <!-- AI 智能出题：条件生成 → 直接入库（草稿态，审核后可用于组卷） -->
+  <el-dialog v-model="aiDlg" title="AI 智能出题" width="640px" destroy-on-close>
+    <el-form :model="aiForm" label-width="90px">
+      <el-row :gutter="10">
+        <el-col :span="12">
+          <el-form-item label="学科" required>
+            <el-select v-model="aiForm.subject_id" style="width:100%" @change="loadAiKps">
+              <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="年级">
+            <el-select v-model="aiForm.grade_id" clearable style="width:100%">
+              <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+      </el-row>
+      <el-row :gutter="10">
+        <el-col :span="8">
+          <el-form-item label="题型">
+            <el-select v-model="aiForm.type" style="width:100%">
+              <el-option v-for="(label, key) in TYPE_LABEL" :key="key" :label="label" :value="key" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="难度">
+            <el-select v-model="aiForm.difficulty" style="width:100%">
+              <el-option label="简单" value="easy" />
+              <el-option label="中等" value="medium" />
+              <el-option label="较难" value="hard" />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="数量">
+            <el-input-number v-model="aiForm.count" :min="1" :max="20" style="width:100%" />
+          </el-form-item>
+        </el-col>
+      </el-row>
+      <el-form-item label="知识点">
+        <el-select v-model="aiForm.knowledge_point_id" clearable filterable
+                   style="width:100%" placeholder="可选，AI 将紧扣该知识点出题">
+          <el-option v-for="k in aiKps" :key="k.id" :label="k.name" :value="k.id" />
+        </el-select>
+      </el-form-item>
+    </el-form>
+
+    <div v-if="aiResult && aiResult.length" class="mb12">
+      <el-alert type="success" :closable="false" show-icon
+                :title="'已生成 ' + aiResult.length + ' 题并保存至题库（草稿状态）'"
+                description="草稿题审核通过后即可用于组卷；可在列表用「来源=AI」筛选查看" />
+      <el-table :data="aiResult" size="small" border max-height="240" class="mt8">
+        <el-table-column label="题型" width="76">
+          <template #default="{ row }">{{ TYPE_LABEL[row.type] || row.type }}</template>
+        </el-table-column>
+        <el-table-column label="难度" width="58">
+          <template #default="{ row }">{{ row.difficulty }}</template>
+        </el-table-column>
+        <el-table-column prop="score" label="分值" width="52" />
+        <el-table-column label="题干" min-width="300">
+          <template #default="{ row }">{{ stripStem(row.stem).slice(0, 70) }}</template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <template #footer>
+      <el-button @click="aiDlg = false">关闭</el-button>
+      <el-button type="primary" :loading="aiLoading" :disabled="!aiForm.subject_id"
+                 @click="generateAi">生成并入库</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+
+// ---------- AI 智能出题（复用题库生成 Agent；LLM 未配置时自动降级） ----------
+const aiDlg = ref(false)
+const aiLoading = ref(false)
+const aiResult = ref(null)
+const aiForm = reactive({ subject_id: null, grade_id: null, type: 'single',
+  difficulty: 'medium', count: 5, knowledge_point_id: null })
+const aiKps = ref([])
+
+function stripStem(s) { return String(s || '').replace(/<[^>]+>/g, '') }
+
+function openAiDlg() {
+  Object.assign(aiForm, { subject_id: query.subject_id, grade_id: query.grade_id,
+    type: 'single', difficulty: 'medium', count: 5, knowledge_point_id: null })
+  aiResult.value = null
+  aiDlg.value = true
+  if (aiForm.subject_id) loadAiKps()
+}
+
+async function loadAiKps() {
+  if (!aiForm.subject_id) { aiKps.value = []; return }
+  try {
+    const res = await eduApi.knowledge({ subject_id: aiForm.subject_id, params_limit: 200 })
+    aiKps.value = res.data?.items || res.data || []
+  } catch { aiKps.value = [] }
+}
+
+async function generateAi() {
+  aiLoading.value = true
+  try {
+    const res = await agentApi.questionGenerator({ ...aiForm, save: true })
+    const d = res.data || {}
+    aiResult.value = d.questions || []
+    if (aiResult.value.length) {
+      ElMessage.success(`已生成 ${aiResult.value.length} 题并保存至题库（草稿）`)
+      load()
+    } else {
+      ElMessage.warning(d.tip || '未能生成题目，请调整条件后重试')
+    }
+  } finally { aiLoading.value = false }
+}
+
+
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Plus, Refresh, Search, Upload, UploadFilled, Delete } from '@element-plus/icons-vue'
-import { questionApi, eduApi } from '@/api'
+import { Download, Plus, Refresh, Search, Upload, UploadFilled, Delete, MagicStick } from '@element-plus/icons-vue'
+import { questionApi, eduApi, agentApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
 const userStore = useUserStore()
@@ -487,11 +681,23 @@ async function checkDupe(row) {
   )
 }
 
-function downloadTemplate() { window.open(questionApi.templateUrl(), '_blank') }
+async function downloadTemplate() {
+  // window.open 不携带 Authorization，模板端点要求教师身份
+  const res = await questionApi.downloadTemplate()
+  const url = URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url; a.download = '题目导入模板.xlsx'; a.click()
+  URL.revokeObjectURL(url)
+}
 
-function exportExcel() {
-  const params = { subject_id: query.subject_id ?? '', grade_id: query.grade_id ?? '' }
-  window.open(questionApi.exportUrl(params), '_blank')
+async function exportExcel() {
+  const res = await questionApi.exportExcel({
+    subject_id: query.subject_id || '', grade_id: query.grade_id || ''
+  })
+  const url = URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url; a.download = '题库导出.xlsx'; a.click()
+  URL.revokeObjectURL(url)
 }
 
 function onFileChange(f) { file.value = f.raw; fileList.value = [f]; importResult.value = null }

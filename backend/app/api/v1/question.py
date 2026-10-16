@@ -169,13 +169,14 @@ def update_question(
     # 更新时同样校验题型，避免把非法值写回库
     if data.get("type") is not None:
         data = {**data, "type": normalize_question_type(data["type"])}
+    # status 不在此处更新：上下架/审核必须走 /status 端点，
+    # 否则编辑接口会绕过「公共题库上架需管理员审核」的校验
     for f, v in (("type", data.get("type")), ("stem", data.get("stem")),
                   ("options", _dump(data.get("options"))), ("answer", _dump(data.get("answer"))),
                   ("analysis", data.get("analysis")), ("score", data.get("score")),
                   ("difficulty", data.get("difficulty")), ("subject_id", data.get("subject_id")),
                   ("grade_id", data.get("grade_id")),
-                  ("knowledge_point_id", data.get("knowledge_point_id")),
-                  ("status", data.get("status"))):
+                  ("knowledge_point_id", data.get("knowledge_point_id"))):
         if v is not None:
             setattr(q, f, v)
     if data.get("stem"):
@@ -194,6 +195,13 @@ def delete_question(
         raise NotFoundException("题目不存在")
     if q.owner_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("只能删除自己的题目")
+    # 引用检查：已组卷的题目删除会让 PaperItem 悬空、试卷总分虚高、
+    # 考试预览缺题——必须先从相关试卷移除
+    from app.models import PaperItem
+    ref_cnt = db.scalar(select(func.count()).select_from(PaperItem).where(
+        PaperItem.question_id == q_id)) or 0
+    if ref_cnt:
+        raise BusinessException(f"该题目已被 {ref_cnt} 份试卷引用，请先从相关试卷中移除")
     db.delete(q)
     db.commit()
     return ok(message="题目已删除")
@@ -313,7 +321,12 @@ async def import_questions(
             grade_id=grade_id or 0, subject_id=subject_id or 0,
             knowledge_point_id=int(kp_id) if kp_id else None,
             bank_type=str(get("题库类型", "private")),
-            owner_id=user.id, status=QuestionStatus.PUBLISHED.value,
+            # 公共题库导入必须走审核（draft），防止教师批量导入直接上架；
+            # 私有题库导入即上架（仅自己可见），与单题创建行为一致
+            owner_id=user.id,
+            status=(QuestionStatus.DRAFT.value
+                    if str(get("题库类型", "private")) == "public" else
+                    QuestionStatus.PUBLISHED.value),
             fingerprint=fp, source="import",
         ))
         created += 1
@@ -425,6 +438,16 @@ def create_paper(
     name = data.get("name")
     if not name:
         raise BusinessException("试卷名称不能为空")
+    items = data.get("items") or []
+    if not items:
+        raise BusinessException("请至少选择一道题目")
+    # question_id 存在性校验：悬空 PaperItem 会让预览/考试缺题、总分虚高
+    q_ids = [it.get("question_id") for it in items]
+    valid_ids = set(db.scalars(select(Question.id).where(
+        Question.id.in_([q for q in q_ids if q]))).all())
+    for it in items:
+        if it.get("question_id") not in valid_ids:
+            raise BusinessException(f"题目不存在或已删除（id={it.get('question_id')}）")
     paper = Paper(
         name=name, grade_id=data.get("grade_id", 0), subject_id=data["subject_id"],
         total_score=float(data.get("total_score", 100)),
@@ -434,8 +457,9 @@ def create_paper(
     db.add(paper)
     db.flush()
     total = 0.0
-    for i, item in enumerate(data.get("items", []), start=1):
-        score = float(item.get("score", 5))
+    for i, item in enumerate(items, start=1):
+        score = float(item.get("score") or
+                      db.get(Question, item["question_id"]).score or 5)
         total += score
         db.add(
             PaperItem(
