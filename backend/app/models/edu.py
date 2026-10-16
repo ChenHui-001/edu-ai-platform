@@ -93,3 +93,29 @@ class TeachingAssignment(Base):
     school_year: Mapped[str] = mapped_column(String(16), default="2026-2027")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ClassRequest(Base):
+    """教师自建班级申请（管理员审核制）。
+
+    流程：教师提交（pending）→ 管理员 approve（真实建班并回填 class_id、
+    申请教师自动设为班主任）/ reject（附理由）→ 结果站内通知教师。
+    (teacher_id, name, status) 唯一：同教师同名 pending 不可重复提交。
+    """
+    __tablename__ = "edu_class_request"
+    __table_args__ = (
+        UniqueConstraint("teacher_id", "name", "status", name="uq_class_req_tns"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    grade_id: Mapped[int] = mapped_column(ForeignKey("edu_grade.id", ondelete="CASCADE"), index=True)
+    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True,
+                                        comment="pending/approved/rejected")
+    review_by: Mapped[Optional[int]] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
+    review_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    review_note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    class_id: Mapped[Optional[int]] = mapped_column(ForeignKey("edu_class.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

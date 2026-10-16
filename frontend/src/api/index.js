@@ -56,6 +56,12 @@ export const eduApi = {
   peopleBrief: (params) => request.get('/edu/people/brief', { params }),
   masteryOverview: (classId) => request.get('/edu/knowledge/mastery-overview',
     { params: { class_id: classId } }),
+  // 教师建班申请（审核制）
+  createClassRequest: (data) => request.post('/edu/class-requests', data),
+  myClassRequests: () => request.get('/edu/class-requests/mine'),
+  classRequests: (params) => request.get('/edu/class-requests', { params }),
+  reviewClassRequest: (id, data) => request.post(`/edu/class-requests/${id}/review`, data),
+  withdrawClassRequest: (id) => request.delete(`/edu/class-requests/${id}`),
   createClass: (data) => request.post('/edu/classes', data),
   updateClass: (id, data) => request.put(`/edu/classes/${id}`, data),
   deleteClass: (id) => request.delete(`/edu/classes/${id}`),

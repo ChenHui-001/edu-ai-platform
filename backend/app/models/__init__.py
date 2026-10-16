@@ -1,7 +1,7 @@
 """ORM 模型统一导出。所有模型必须在此导入以完成 Base.metadata 注册。"""
 from app.core.database import Base  # noqa: F401
 from app.models.edu import (  # noqa: F401
-    Class, Grade, KnowledgePoint, Subject, TeachingAssignment,
+    Class, ClassRequest, Grade, KnowledgePoint, Subject, TeachingAssignment,
 )
 from app.models.learning import (  # noqa: F401
     KnowledgeMastery, Note, QuestionFavorite, ReviewPlan, StudyCheckin, StudyGoal,

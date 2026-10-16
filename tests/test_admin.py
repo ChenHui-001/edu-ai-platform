@@ -199,6 +199,75 @@ def run():
                   p.get("success") is False and "学生" in str(p.get("message", "")),
                   f"{p.get('code')} {p.get('message', '')}")
 
+    # ---------------------------------- 2c 建班申请审核流（新功能回归）
+    R.set_phase("阶段一 · 管理员视角 | 2c. 建班申请审核流")
+    if ok_t:
+        stamp = int(time.time()) % 100000
+        req_name = f"审核制测试班{stamp}"
+        p, _, _ = tea2b.post("/edu/class-requests", {
+            "name": req_name, "grade_id": 1, "description": "自动化审核流测试"})
+        req_id = (data_of(p) or {}).get("id")
+        check("教师提交建班申请", p.get("success") and bool(req_id),
+              f"{p.get('code')} {p.get('message', '')}")
+
+        if req_id:
+            p, _, _ = tea2b.post("/edu/class-requests", {
+                "name": req_name, "grade_id": 1})
+            check("同名 pending 重复提交被拒",
+                  p.get("success") is False, p.get("message", ""))
+
+            expect_denied("教师查看全部申请列表被拒", tea2b, "GET",
+                          "/edu/class-requests")
+            expect_denied("教师审核自己的申请被拒", tea2b, "POST",
+                          f"/edu/class-requests/{req_id}/review",
+                          body={"action": "approve"})
+
+        p, _, _ = admin.get("/edu/class-requests", params={"status": "pending"})
+        pend = rows_of(p)
+        mine = next((x for x in pend if x.get("id") == req_id), None)
+        check("管理员待审列表含该申请（含申请人）",
+              mine is not None and mine.get("teacher_name"),
+              f"pending={len(pend)}")
+
+        p, _, _ = admin.post(f"/edu/class-requests/{req_id}/review",
+                             {"action": "reject"})
+        check("拒绝无理由被拒", p.get("success") is False, p.get("message", ""))
+
+        p, _, _ = admin.post(f"/edu/class-requests/{req_id}/review",
+                             {"action": "approve", "note": "同意，自动化测试"})
+        check("管理员通过申请", p.get("success"), p.get("message", ""))
+
+        # 通过后：班级真实创建 + 教师为班主任 + 状态回填 + 通知
+        p, _, _ = admin.get("/edu/classes")
+        created = next((c for c in rows_of(p) if c.get("name") == req_name), None)
+        check("★ 通过后班级真实创建", created is not None,
+              f"grade={created.get('grade_id') if created else None}")
+        if created:
+            p, _, _ = tea2b.get("/edu/class-requests/mine")
+            rec = next((x for x in rows_of(p) if x.get("id") == req_id), {})
+            check("申请状态回填 approved", rec.get("status") == "approved",
+                  f"status={rec.get('status')}")
+            p, _, _ = tea2b.get("/system/notifications", params={"page_size": 10})
+            notified = any("建班申请已通过" in (x.get("title") or "")
+                           for x in rows_of(p))
+            check("审核结果已站内通知教师", notified, "")
+
+            # 同年级同名班级现已存在，同名申请应被拦截
+            p, _, _ = tea2b.post("/edu/class-requests",
+                                 {"name": req_name, "grade_id": 1})
+            check("已存在同名班级时申请被拦", p.get("success") is False,
+                  p.get("message", ""))
+            # 清理测试班级
+            admin.delete(f"/edu/classes/{created['id']}")
+
+        # 撤回流程
+        p, _, _ = tea2b.post("/edu/class-requests", {
+            "name": f"待撤回{stamp}", "grade_id": 1})
+        wid = (data_of(p) or {}).get("id")
+        if wid:
+            p, _, _ = tea2b.delete(f"/edu/class-requests/{wid}")
+            check("教师撤回 pending 申请", p.get("success"), p.get("message", ""))
+
     # ---------------------------------------------------------- 3 用户与角色
     R.set_phase("阶段一 · 管理员视角 | 3. 用户与角色 RBAC")
 

@@ -14,8 +14,11 @@ from app.api.deps import (
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
-from app.models import Class, Grade, KnowledgeMastery, KnowledgePoint, Subject, User
-from app.utils.common import dictify, ok
+from app.models import (
+    Class, ClassRequest, Grade, KnowledgeMastery, KnowledgePoint, Notification,
+    Subject, User,
+)
+from app.utils.common import dictify, ok, utcnow
 
 router = APIRouter(prefix="/edu", tags=["教学资源"])
 
@@ -493,3 +496,142 @@ def knowledge_mastery_overview(
         })
     items.sort(key=lambda x: x["avg_mastery"])  # 薄弱优先
     return ok({"items": items, "student_count": len(stu_ids), "class_name": k.name})
+
+
+# ---------------------------------------------------------------- 教师建班申请（审核制）
+CLASS_REQUEST_STATUS = {"pending", "approved", "rejected"}
+
+
+@router.post("/class-requests", summary="教师提交建班申请")
+def create_class_request(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(get_current_teacher),
+):
+    """教师自建班级申请：提交后进入 pending，由年级管理员/超管审核。"""
+    name = (data.get("name") or "").strip()
+    grade_id = data.get("grade_id")
+    if not name:
+        raise BusinessException("请填写班级名称")
+    if not grade_id or not db.get(Grade, grade_id):
+        raise BusinessException("请选择年级")
+    if db.scalar(select(Class).where(Class.name == name, Class.grade_id == grade_id)):
+        raise BusinessException("该年级下已存在同名班级")
+    # 同教师同名 pending 幂等拦截（DB 还有唯一约束兜底）
+    dup = db.scalar(select(ClassRequest).where(
+        ClassRequest.teacher_id == user.id, ClassRequest.name == name,
+        ClassRequest.status == "pending"))
+    if dup:
+        raise BusinessException("您已提交过同名申请，等待审核中")
+
+    req = ClassRequest(teacher_id=user.id, name=name, grade_id=grade_id,
+                       description=(data.get("description") or "").strip()[:255])
+    db.add(req)
+    db.commit()
+    db.refresh(req)
+    return ok(dictify(req), message="申请已提交，等待管理员审核")
+
+
+@router.get("/class-requests/mine", summary="我的建班申请")
+def my_class_requests(
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+):
+    rows = db.scalars(select(ClassRequest).where(
+        ClassRequest.teacher_id == user.id
+    ).order_by(ClassRequest.created_at.desc())).all()
+    items = []
+    for r in rows:
+        d = dictify(r)
+        g = db.get(Grade, r.grade_id)
+        d["grade_name"] = g.name if g else None
+        if r.class_id:
+            c = db.get(Class, r.class_id)
+            d["class_name"] = c.name if c else None
+        items.append(d)
+    return ok({"items": items})
+
+
+@router.get("/class-requests", summary="建班申请列表（管理员审核用）")
+def list_class_requests(
+    status: Optional[str] = Query(None), db: Session = Depends(get_db),
+    _: User = Depends(get_current_manager),
+):
+    if status and status not in CLASS_REQUEST_STATUS:
+        raise BusinessException("非法的状态筛选")
+    stmt = select(ClassRequest)
+    if status:
+        stmt = stmt.where(ClassRequest.status == status)
+    rows = db.scalars(stmt.order_by(ClassRequest.created_at.desc())).all()
+    items = []
+    for r in rows:
+        d = dictify(r)
+        t = db.get(User, r.teacher_id)
+        d["teacher_name"] = t.real_name if t else ""
+        d["username"] = t.username if t else ""
+        g = db.get(Grade, r.grade_id)
+        d["grade_name"] = g.name if g else None
+        items.append(d)
+    return ok({"items": items})
+
+
+@router.post("/class-requests/{req_id}/review", summary="审核建班申请")
+def review_class_request(
+    req_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(get_current_manager),
+):
+    """approve：真实创建班级并回填，申请教师自动成为班主任；
+    reject：需附理由。审核结果均站内通知申请教师。"""
+    req = db.get(ClassRequest, req_id)
+    if not req:
+        raise NotFoundException("申请不存在")
+    if req.status != "pending":
+        raise BusinessException("该申请已处理过")
+    action = data.get("action")
+    if action not in ("approve", "reject"):
+        raise BusinessException("action 必须是 approve / reject")
+    note = (data.get("note") or "").strip()[:255]
+    if action == "reject" and not note:
+        raise BusinessException("拒绝时请填写理由")
+
+    req.review_by = user.id
+    req.review_at = utcnow()
+    req.review_note = note
+
+    if action == "approve":
+        if db.scalar(select(Class).where(Class.name == req.name, Class.grade_id == req.grade_id)):
+            raise BusinessException("该年级下已存在同名班级，无法通过（请拒绝并说明）")
+        new_class = Class(name=req.name, grade_id=req.grade_id,
+                          head_teacher_id=req.teacher_id, remark=req.description)
+        db.add(new_class)
+        db.flush()
+        req.class_id = new_class.id
+        req.status = "approved"
+        db.add(Notification(user_id=req.teacher_id,
+                     title="建班申请已通过",
+                     content=f"您申请的班级「{req.name}」已创建，您已被设为班主任。"
+                             + (f"备注：{note}" if note else ""),
+                     type="system", biz_type="class_request", biz_id=req.id))
+        msg = "已通过并创建班级"
+    else:
+        req.status = "rejected"
+        db.add(Notification(user_id=req.teacher_id,
+                     title="建班申请被拒绝",
+                     content=f"您申请的班级「{req.name}」未通过审核。理由：{note}",
+                     type="system", biz_type="class_request", biz_id=req.id))
+        msg = "已拒绝"
+
+    db.commit()
+    return ok(dictify(req), message=msg)
+
+
+@router.delete("/class-requests/{req_id}", summary="撤回我的建班申请")
+def withdraw_class_request(
+    req_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+):
+    req = db.get(ClassRequest, req_id)
+    if not req or req.teacher_id != user.id:
+        raise NotFoundException("申请不存在")
+    if req.status != "pending":
+        raise BusinessException("已处理的申请不可撤回")
+    db.delete(req)
+    db.commit()
+    return ok(message="申请已撤回")

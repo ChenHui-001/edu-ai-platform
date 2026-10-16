@@ -5,6 +5,17 @@
       <div>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
         <el-button v-if="can('resource:class:write')" type="primary" :icon="Plus" @click="openDialog()">新增班级</el-button>
+        <!-- 教师视图：自建班申请（审核制） -->
+        <template v-if="!can('resource:class:write')">
+          <el-button type="success" :icon="Plus" @click="applyDlg = true">申请建班</el-button>
+          <el-button :icon="Tickets" @click="myReqDlg = true; loadMyRequests()">
+            我的申请<el-badge v-if="myPending" :value="myPending" class="ml4" />
+          </el-button>
+        </template>
+        <!-- 管理视图：建班审核 -->
+        <el-button v-if="can('resource:class:write')" type="warning" :icon="Bell" @click="reviewDlg = true; loadRequests()">
+          建班审核<el-badge v-if="pendingCount" :value="pendingCount" class="ml4" />
+        </el-button>
       </div>
     </div>
 
@@ -111,13 +122,153 @@
       </template>
     </el-dialog>
   </div>
+  <!-- 教师建班申请对话框 -->
+  <el-dialog v-model="applyDlg" title="申请建班（提交后由管理员审核）" width="460px">
+    <el-form :model="applyForm" label-width="80px">
+      <el-form-item label="班级名称" required>
+        <el-input v-model="applyForm.name" placeholder="如：七年级(3)班 / 初一兴趣数学班" maxlength="32" />
+      </el-form-item>
+      <el-form-item label="所属年级" required>
+        <el-select v-model="applyForm.grade_id" style="width:100%" placeholder="选择年级">
+          <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="申请说明">
+        <el-input v-model="applyForm.description" type="textarea" :rows="2"
+                  placeholder="建班用途，便于管理员审核（如走班教学、分层辅导）" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="applyDlg = false">取消</el-button>
+      <el-button type="primary" :loading="applying" @click="submitApply">提交申请</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 我的建班申请抽屉（教师） -->
+  <el-drawer v-model="myReqDlg" title="我的建班申请" size="420px">
+    <el-table :data="myRequests" size="small" v-loading="myReqLoading">
+      <el-table-column label="班级" min-width="110">
+        <template #default="{ row }">{{ row.name }}<div class="tip">{{ row.grade_name }}</div></template>
+      </el-table-column>
+      <el-table-column label="状态" width="90" align="center">
+        <template #default="{ row }">
+          <el-tag size="small" :type="{ pending: 'warning', approved: 'success', rejected: 'danger' }[row.status]">
+            {{ { pending: '待审核', approved: '已通过', rejected: '已拒绝' }[row.status] }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="审核备注" min-width="120">
+        <template #default="{ row }"><span class="tip">{{ row.review_note || '-' }}</span></template>
+      </el-table-column>
+      <el-table-column label="操作" width="70" align="center">
+        <template #default="{ row }">
+          <el-button v-if="row.status === 'pending'" link type="danger" size="small"
+                     @click="withdraw(row)">撤回</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-drawer>
+
+  <!-- 建班审核抽屉（管理员） -->
+  <el-drawer v-model="reviewDlg" title="建班申请审核" size="560px">
+    <el-table :data="requests" size="small" v-loading="reqLoading">
+      <el-table-column label="申请人" width="100">
+        <template #default="{ row }">{{ row.teacher_name }}<div class="tip">{{ row.username }}</div></template>
+      </el-table-column>
+      <el-table-column label="班级" min-width="110">
+        <template #default="{ row }">{{ row.name }}<div class="tip">{{ row.grade_name }}</div></template>
+      </el-table-column>
+      <el-table-column label="说明" min-width="120">
+        <template #default="{ row }"><span class="tip">{{ row.description || '-' }}</span></template>
+      </el-table-column>
+      <el-table-column label="操作" width="150" align="center">
+        <template #default="{ row }">
+          <template v-if="row.status === 'pending'">
+            <el-button link type="success" size="small" @click="review(row, 'approve')">通过</el-button>
+            <el-button link type="danger" size="small" @click="promptReject(row)">拒绝</el-button>
+          </template>
+          <el-tag v-else size="small"
+                  :type="{ approved: 'success', rejected: 'danger' }[row.status]">
+            {{ { approved: '已通过', rejected: '已拒绝' }[row.status] }}
+          </el-tag>
+        </template>
+      </el-table-column>
+    </el-table>
+    <el-empty v-if="!reqLoading && !requests.length" description="暂无申请" :image-size="70" />
+  </el-drawer>
 </template>
 
 <script setup>
 const { can } = useUserStore()
-import { ref, reactive, onMounted } from 'vue'
+
+// ---------- 教师建班申请（审核制） ----------
+const applyDlg = ref(false)
+const applying = ref(false)
+const applyForm = reactive({ name: '', grade_id: null, description: '' })
+const myReqDlg = ref(false)
+const myRequests = ref([])
+const myReqLoading = ref(false)
+const myPending = computed(() => myRequests.value.filter(r => r.status === 'pending').length)
+
+const reviewDlg = ref(false)
+const requests = ref([])
+const reqLoading = ref(false)
+const pendingCount = ref(0)
+
+async function submitApply() {
+  if (!applyForm.name) return ElMessage.warning('请填写班级名称')
+  if (!applyForm.grade_id) return ElMessage.warning('请选择年级')
+  applying.value = true
+  try {
+    await eduApi.createClassRequest({ ...applyForm })
+    ElMessage.success('申请已提交，等待管理员审核')
+    applyDlg.value = false
+    Object.assign(applyForm, { name: '', grade_id: null, description: '' })
+    loadMyRequests()
+  } finally { applying.value = false }
+}
+
+async function loadMyRequests() {
+  myReqLoading.value = true
+  try {
+    const res = await eduApi.myClassRequests()
+    myRequests.value = res.data?.items || []
+  } finally { myReqLoading.value = false }
+}
+
+async function withdraw(row) {
+  await ElMessageBox.confirm('撤回「' + row.name + '」的申请？', '提示', { type: 'warning' })
+  await eduApi.withdrawClassRequest(row.id)
+  ElMessage.success('已撤回')
+  loadMyRequests()
+}
+
+async function loadRequests() {
+  reqLoading.value = true
+  try {
+    const res = await eduApi.classRequests({})
+    requests.value = res.data?.items || []
+    pendingCount.value = requests.value.filter(r => r.status === 'pending').length
+  } finally { reqLoading.value = false }
+}
+
+async function review(row, action) {
+  let note = ''
+  if (action === 'reject') {
+    const { value } = await ElMessageBox.prompt('请填写拒绝理由', '拒绝申请', {
+      inputValidator: v => (v && v.trim() ? true : '理由不能为空')
+    })
+    note = value
+  }
+  await eduApi.reviewClassRequest(row.id, { action, note })
+  ElMessage.success(action === 'approve' ? '已通过，班级已创建' : '已拒绝')
+  loadRequests()
+  load()
+}
+
+import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Refresh, Upload } from '@element-plus/icons-vue'
+import { Plus, Search, Refresh, Upload, Tickets, Bell } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
 import { eduApi } from '@/api'
 
