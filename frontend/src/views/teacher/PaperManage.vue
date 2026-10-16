@@ -126,16 +126,60 @@
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
 
-        <el-form-item label="选题">
-          <el-button :icon="Refresh" size="small" @click="loadQuestions">刷新题库</el-button>
-          <span class="tip ml8">已选 {{ selected.length }} 题，总分 {{ totalSelectedScore }} 分</span>
+        <el-form-item label="筛选题目">
+          <el-row :gutter="8" style="width:100%">
+            <el-col :span="7">
+              <el-select v-model="qFilter.qtype" clearable placeholder="题型" style="width:100%" @change="loadQuestions">
+                <el-option v-for="(label, key) in TYPE_LABEL" :key="key" :label="label" :value="key" />
+              </el-select>
+            </el-col>
+            <el-col :span="6">
+              <el-select v-model="qFilter.difficulty" clearable placeholder="难度" style="width:100%" @change="loadQuestions">
+                <el-option label="简单" value="easy" />
+                <el-option label="中等" value="medium" />
+                <el-option label="较难" value="hard" />
+              </el-select>
+            </el-col>
+            <el-col :span="11">
+              <el-input v-model="qFilter.keyword" placeholder="题干关键字，回车搜索" clearable @keyup.enter="loadQuestions" @clear="loadQuestions" />
+            </el-col>
+          </el-row>
         </el-form-item>
-        <el-select v-model="selected" multiple filterable placeholder="从题库中选择题目"
-                   style="width:100%" :loading="qLoading" class="q-select">
-          <el-option v-for="q in questions" :key="q.id"
-                     :label="`[${TYPE_LABEL[q.type] || q.type}] ${stripHtml(q.stem).slice(0, 40)}`"
-                     :value="q.id" />
-        </el-select>
+        <el-form-item label="题库勾选">
+          <div style="width:100%">
+            <el-table ref="qTableRef" :data="questions" size="small" max-height="260"
+                      v-loading="qLoading" border @selection-change="onPickChange">
+              <el-table-column type="selection" width="40" />
+              <el-table-column label="题型" width="76">
+                <template #default="{ row }">{{ TYPE_LABEL[row.type] || row.type }}</template>
+              </el-table-column>
+              <el-table-column label="难度" width="58">
+                <template #default="{ row }">
+                  <el-tag :type="diffTag(row.difficulty)" size="small">{{ row.difficulty }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="score" label="分值" width="52" />
+              <el-table-column label="题干" min-width="260">
+                <template #default="{ row }">{{ stripHtml(row.stem).slice(0, 60) }}</template>
+              </el-table-column>
+            </el-table>
+            <div class="mt8">
+              <el-button size="small" type="primary" :disabled="!picked.length" @click="addPicked">
+                加入所选（{{ picked.length }}）
+              </el-button>
+              <el-button size="small" :icon="Refresh" @click="loadQuestions">刷新题库</el-button>
+              <span class="tip ml8">已选 {{ selected.length }} 题，总分 {{ totalSelectedScore }} 分</span>
+            </div>
+          </div>
+        </el-form-item>
+        <el-form-item label="已选题目" v-if="selected.length">
+          <div style="width:100%">
+            <el-tag v-for="id in selected" :key="id" closable size="small"
+                    class="mr4" style="margin-bottom:4px" @close="removePicked(id)">
+              {{ qLabel(id) }}
+            </el-tag>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dlg = false">取消</el-button>
@@ -221,15 +265,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, DocumentCopy, MagicStick } from '@element-plus/icons-vue'
 import { questionApi, eduApi, agentApi } from '@/api'
+import TYPE_LABEL from '@/constants/question'
 
-const TYPE_LABEL = {
-  single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题',
-  short: '简答题', calculate: '计算题', proof: '证明题', essay: '论述题'
-}
 const DIFF = { easy: '简单', medium: '中等', hard: '困难' }
 
 const list = ref([])
@@ -253,6 +294,9 @@ const aiReq = ref('')
 const shareTargets = ref([])
 const shareRemark = ref('')
 const selected = ref([])
+const picked = ref([])
+const qTableRef = ref(null)
+const qFilter = reactive({ qtype: '', difficulty: '', keyword: '' })
 
 const query = reactive({ page: 1, page_size: 20, keyword: '', subject_id: null, source: '' })
 const form = reactive({ id: null, name: '', grade_id: null, subject_id: null,
@@ -297,18 +341,45 @@ async function loadQuestions() {
   try {
     const res = await questionApi.list({
       subject_id: form.subject_id, grade_id: form.grade_id,
+      qtype: qFilter.qtype || undefined,
+      difficulty: qFilter.difficulty || undefined,
+      keyword: qFilter.keyword || undefined,
       status: 'published', page_size: 200
     })
     questions.value = res.data.data?.items || []
+    // 筛选/刷新后恢复已选题目的勾选状态
+    await nextTick()
+    questions.value.forEach(q => {
+      if (selected.value.includes(q.id)) qTableRef.value?.toggleRowSelection(q, true)
+    })
   } finally {
     qLoading.value = false
   }
+}
+
+function onPickChange(rows) { picked.value = rows }
+
+function addPicked() {
+  const fresh = picked.value.map(r => r.id).filter(id => !selected.value.includes(id))
+  if (!fresh.length) return ElMessage.info('所选题目均已加入')
+  selected.value = [...selected.value, ...fresh]
+  ElMessage.success(`已加入 ${fresh.length} 题`)
+}
+
+function removePicked(id) {
+  selected.value = selected.value.filter(x => x !== id)
+}
+
+function qLabel(id) {
+  const q = questions.value.find(x => x.id === id)
+  return q ? `[${TYPE_LABEL[q.type] || q.type}] ${stripHtml(q.stem).slice(0, 20)}` : `题目 #${id}`
 }
 
 function openDialog() {
   Object.assign(form, { id: null, name: '', grade_id: null, subject_id: null,
     total_score: 100, duration: 60, description: '' })
   selected.value = []
+  Object.assign(qFilter, { qtype: '', difficulty: '', keyword: '' })
   dlg.value = true
 }
 
