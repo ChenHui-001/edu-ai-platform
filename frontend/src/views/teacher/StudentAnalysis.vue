@@ -140,7 +140,8 @@ const weakTable = computed(() => mastery.value?.weak_points || [])
 
 async function loadStudents() {
   if (!classId.value) return
-  const res = await systemApi.users({ class_id: classId.value, page_size: 200 })
+  // 学生下拉：人员简表（后端按任教班级校验；/system/users 教师必 403）
+  const res = await eduApi.peopleBrief({ identity: 'student', class_id: classId.value })
   students.value = res.data.data?.items || []
 }
 

@@ -52,6 +52,8 @@ export const eduApi = {
   deleteKnowledge: (id) => request.delete(`/edu/knowledge/${id}`),
   reindex: () => request.post('/edu/knowledge/reindex'),
   classes: (params) => request.get('/edu/classes', { params }),
+  // 人员简表（教师端下拉专用；/system/users 是 admin 专属，教师调用必 403）
+  peopleBrief: (params) => request.get('/edu/people/brief', { params }),
   createClass: (data) => request.post('/edu/classes', data),
   updateClass: (id, data) => request.put(`/edu/classes/${id}`, data),
   deleteClass: (id) => request.delete(`/edu/classes/${id}`),

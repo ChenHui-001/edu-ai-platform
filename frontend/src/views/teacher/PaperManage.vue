@@ -224,7 +224,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, DocumentCopy, MagicStick } from '@element-plus/icons-vue'
-import { questionApi, eduApi, agentApi, systemApi } from '@/api'
+import { questionApi, eduApi, agentApi } from '@/api'
 
 const TYPE_LABEL = {
   single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题',
@@ -410,7 +410,8 @@ onMounted(async () => {
   const [s, g] = await Promise.all([eduApi.subjects(), eduApi.grades()])
   subjects.value = s.data.data || []
   grades.value = g.data.data || []
-  const t = await systemApi.users({ identity: 'teacher', page_size: 200 })
+  // 出题人下拉：用人员简表（/system/users 为 admin 专属，教师必 403）
+  const t = await eduApi.peopleBrief({ identity: 'teacher' })
   teachers.value = t.data.data?.items || []
 })
 </script>

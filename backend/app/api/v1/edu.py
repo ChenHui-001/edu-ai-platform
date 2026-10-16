@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.agents.rag import index_knowledge, reindex_all
-from app.api.deps import get_current_teacher, get_current_user
+from app.api.deps import DataScope, get_current_teacher, get_current_user, get_data_scope
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
@@ -374,3 +374,42 @@ def remove_student(
     u.class_id = None
     db.commit()
     return ok(message="学生已移出班级")
+
+
+# ---------------------------------------------------------------- 人员简表
+@router.get("/people/brief", summary="人员简表（仅 id/姓名/账号，教师端下拉用）")
+def people_brief(
+    identity: str = Query(..., regex="^(student|teacher)$"),
+    class_id: Optional[int] = None,
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    scope: DataScope = Depends(get_data_scope),
+):
+    """教师端下拉的人员简表，替代此前误用的 /system/users（admin 专属，
+    教师调用必 403 —— PaperManage 筛出题人、StudentAnalysis 选学生
+    两处都踩过）。
+
+    - identity=teacher：全校在职教师（出题人筛选；仅 id/姓名/账号，
+      不含手机邮箱等敏感字段，教师互见合理）
+    - identity=student：指定班级的学生；教师只能拉**任教班级**，
+      越界班级按 DataScope 拒绝（防拉全校学生名单）
+    """
+    if identity == "teacher":
+        stmt = select(User.id, User.real_name, User.username).where(
+            User.identity == "teacher", User.status == "active")
+        rows = db.execute(stmt.order_by(User.id)).all()
+    else:
+        if not class_id:
+            raise BusinessException("请指定 class_id")
+        if not scope.is_super:
+            allowed = scope.class_ids()
+            # grade_admin 的 class_ids() 返回 None（本年级全量），
+            # 与超管同语义；教师必须命中任教班级
+            if allowed is not None and class_id not in allowed:
+                if "grade_admin" not in user.role_codes:
+                    raise BusinessException("无权查看该班级学生")
+        rows = db.execute(
+            select(User.id, User.real_name, User.username).where(
+                User.identity == "student", User.class_id == class_id,
+                User.status == "active").order_by(User.username)
+        ).all()
+    return ok({"items": [{"id": r[0], "real_name": r[1], "username": r[2]} for r in rows]})

@@ -113,6 +113,20 @@ def run():
     check("班级列表可读", p.get("success") and len(classes) > 0, f"{len(classes)} 个班级")
     R.context["teacher_class_id"] = (my_class or {}).get("id") or tea.user.get("class_id")
 
+    # 人员简表（教师端下拉专用接口，替代 admin 专属的 /system/users）
+    p, _, _ = tea.get("/edu/people/brief", params={"identity": "teacher"})
+    check("教师简表可读（出题人下拉）", p.get("success") and len(rows_of(p)) >= 1,
+          f"{len(rows_of(p))} 人")
+    my_cid = R.context.get("teacher_class_id")
+    if my_cid:
+        p, _, _ = tea.get("/edu/people/brief",
+                          params={"identity": "student", "class_id": my_cid})
+        check("本班学生简表可读", p.get("success"), f"{p.get('message','')}")
+        p, _, _ = tea.get("/edu/people/brief",
+                          params={"identity": "student", "class_id": 999999})
+        check("非任教班级学生简表被拒（DataScope）",
+              p.get("success") is False, p.get("message", ""))
+
     p, _, _ = tea.get("/edu/knowledge/list", params={"page_size": 200})
     kps = rows_of(p)
     check("知识点列表可读", p.get("success"), f"{len(kps)} 条")
