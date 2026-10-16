@@ -119,7 +119,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, Upload } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
-import { eduApi, systemApi } from '@/api'
+import { eduApi } from '@/api'
 
 const list = ref([])
 const grades = ref([])
@@ -187,7 +187,9 @@ async function openStudents(row) {
   studentDrawer.value = true
   studentLoading.value = true
   try {
-    const res = await systemApi.users({ class_id: row.id, page_size: 200 })
+    // 人员简表：教师可进本页（resource:class:list），/system/users 会 403；
+    // 非任教班级由后端 DataScope 拒绝，抽屉展示空态
+    const res = await eduApi.peopleBrief({ identity: 'student', class_id: row.id })
     students.value = res.data.data?.items || []
   } finally {
     studentLoading.value = false
@@ -227,7 +229,7 @@ onMounted(async () => {
   await load()
   const g = await eduApi.grades()
   grades.value = g.data.data || []
-  const t = await systemApi.users({ identity: 'teacher', page_size: 200 })
+  const t = await eduApi.peopleBrief({ identity: 'teacher' })
   teachers.value = t.data.data?.items || []
 })
 </script>
