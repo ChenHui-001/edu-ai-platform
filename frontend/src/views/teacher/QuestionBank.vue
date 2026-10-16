@@ -285,13 +285,21 @@
         <el-col :span="12">
           <el-form-item label="学科" required>
             <el-select v-model="aiForm.subject_id" style="width:100%" @change="loadAiKps">
-              <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
+              <el-option v-for="s in subjects" :key="s.id"
+                         :label="s.name" :value="s.id">
+                <span>{{ s.name }}</span>
+                <span v-if="s.grade_count > 1"
+                      style="float:right;color:var(--el-text-color-secondary);font-size:12px">
+                  {{ s.grade_count }} 个年级
+                </span>
+              </el-option>
             </el-select>
           </el-form-item>
         </el-col>
         <el-col :span="12">
           <el-form-item label="年级">
-            <el-select v-model="aiForm.grade_id" clearable style="width:100%">
+            <el-select v-model="aiForm.grade_id" clearable style="width:100%"
+                       @change="onAiGradeChange">
               <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
             </el-select>
           </el-form-item>
@@ -375,9 +383,31 @@ const aiKps = ref([])
 function openAiDlg() {
   Object.assign(aiForm, { subject_id: query.subject_id, grade_id: query.grade_id,
     type: 'single', difficulty: 'medium', count: 5, knowledge_point_id: null })
+  // 列表筛选用的是全量 subject_id（可能指向任意年级），而下拉是去重后的
+  // 代表记录，需要按年级换成精确的那条，否则知识点会取错年级
+  syncAiSubjectByGrade()
   aiResult.value = null
   aiDlg.value = true
   if (aiForm.subject_id) loadAiKps()
+}
+
+// subjects 是按名称去重后的列表（同一条目带 same_name_grade_ids），
+// 而 subject_id 精确到年级。切换年级时必须同步换成该年级对应的那条。
+function syncAiSubjectByGrade() {
+  if (!aiForm.subject_id) return
+  const s = subjects.value.find((x) =>
+    x.id === aiForm.subject_id ||
+    (x.same_name_ids || []).includes(aiForm.subject_id))
+  if (!s) return
+  if (!aiForm.grade_id) { aiForm.subject_id = s.id; return }
+  const idx = (s.same_name_grade_ids || []).indexOf(aiForm.grade_id)
+  if (idx >= 0) aiForm.subject_id = s.same_name_ids[idx]
+}
+
+function onAiGradeChange() {
+  syncAiSubjectByGrade()
+  aiForm.knowledge_point_id = null
+  loadAiKps()
 }
 
 async function loadAiKps() {
@@ -389,6 +419,13 @@ async function loadAiKps() {
 }
 
 async function generateAi() {
+  if (!aiForm.subject_id) return ElMessage.warning('请选择学科')
+  // 提交前再对一次年级：知识点是挂在具体 subject_id 上的，
+  // 年级与学科不对应会静默取到别的年级的知识点
+  syncAiSubjectByGrade()
+  if (!aiForm.grade_id) {
+    aiForm.grade_id = subjects.value.find((s) => s.id === aiForm.subject_id)?.grade_id ?? null
+  }
   aiLoading.value = true
   try {
     const res = await agentApi.questionGenerator({ ...aiForm, save: true })
@@ -647,7 +684,7 @@ async function doImport() {
 onMounted(async () => {
   const g = await eduApi.grades()
   grades.value = g.data
-  const s = await eduApi.subjects({})
+  const s = await eduApi.subjects({ distinct: true })
   subjects.value = s.data
   load()
 })

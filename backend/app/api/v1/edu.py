@@ -83,8 +83,19 @@ def delete_grade(
 @router.get("/subjects", summary="学科列表")
 def list_subjects(
     grade_id: Optional[int] = None, keyword: Optional[str] = None,
+    distinct: bool = False,
     db: Session = Depends(get_db), _: User = Depends(get_current_user),
 ):
+    """学科列表。
+
+    学科按年级配置（唯一约束是 (grade_id, name)），所以「语文」在 1-9 年级
+    各有一条。不传 grade_id 时会返回 60+ 条同名记录，直接喂给下拉框会出现
+    大量重复项。
+
+    `distinct=true` 时按名称去重，每科返回一条代表记录（取 sort 最小、
+    即最早年级的 id），并附 `grade_count` 说明它覆盖几个年级。
+    需要按年级精确取 subject_id 的场景（建题/组卷）不要传 distinct。
+    """
     stmt = select(Subject)
     if grade_id:
         stmt = stmt.where(Subject.grade_id == grade_id)
@@ -94,8 +105,27 @@ def list_subjects(
     items = []
     for s in rows:
         d = dictify(s)
-        d["grade_name"] = db.get(Grade, s.grade_id).name if db.get(Grade, s.grade_id) else None
+        g = db.get(Grade, s.grade_id)
+        d["grade_name"] = g.name if g else None
         items.append(d)
+
+    if distinct:
+        # 同名学科在每个年级各有一条；知识点是挂在具体 subject_id 上的，
+        # 因此前端必须能按年级取到精确的那条，否则「数学+七年级」会去查
+        # 一年级的知识点。这里一并返回同名各年级的 id 列表。
+        by_name = {}
+        for d in items:
+            by_name.setdefault(d.get("name"), []).append(d)
+
+        order = []
+        for name, group in by_name.items():
+            rep = group[0]
+            rep["grade_count"] = len(group)
+            rep["same_name_ids"] = [g["id"] for g in group]
+            rep["same_name_grade_ids"] = [g.get("grade_id") for g in group]
+            order.append(rep)
+        items = order
+
     return ok(items)
 
 

@@ -126,6 +126,42 @@ def run():
     subs = rows_of(p)
     check("学科列表可读", p.get("success") and len(subs) > 0, f"{len(subs)} 个")
 
+    # 学科按年级配置（唯一约束 grade_id+name），全量列表必然同名重复。
+    # 不传 grade_id 直接喂给 el-select 会让用户看到几十个「语文」——
+    # distinct=true 必须按名称去重，并保留同名各年级的 id 供精确取值。
+    p, _, _ = tea.get("/edu/subjects", params={"distinct": True})
+    dsubs = rows_of(p)
+    names = [s.get("name") for s in dsubs]
+    dups = sorted({n for n in names if names.count(n) > 1})
+    check("★ distinct 学科列表无同名重复（下拉不再刷屏）",
+          p.get("success") and dsubs and not dups,
+          f"去重后 {len(dsubs)} 个（原始 {len(subs)} 个），"
+          f"重复={dups}" if dups else f"去重后 {len(dsubs)} 个（原始 {len(subs)} 个）")
+    _with_map = [s for s in dsubs if s.get("same_name_grade_ids")
+                 and s.get("same_name_ids")]
+    check("★ 去重条目附带同名各年级 id（保证 subject_id 精确到年级）",
+          len(_with_map) == len(dsubs) and dsubs,
+          f"{len(_with_map)}/{len(dsubs)} 个条目含 same_name_grade_ids")
+    # 抽查一个多年级学科：按年级 id 能定位到不同的 subject_id
+    _multi = next((s for s in dsubs
+                   if len(s.get("same_name_grade_ids") or []) > 1), None)
+    if _multi:
+        _pairs = list(zip(_multi["same_name_grade_ids"], _multi["same_name_ids"]))
+        check("★ 同名不同年级的 subject_id 互不相同",
+              len({sid for _, sid in _pairs}) == len(_pairs),
+              f"{_multi.get('name')}: {len(_pairs)} 个年级 -> "
+              f"{len({sid for _, sid in _pairs})} 个 id")
+
+    # 显式按年级查询仍必须返回该年级的精确记录（建题/组卷依赖）
+    _g1 = grades[0] if grades else None
+    if _g1:
+        p, _, _ = tea.get("/edu/subjects", params={"grade_id": _g1["id"]})
+        gsubs = rows_of(p)
+        check("按年级查学科仍返回该年级精确记录",
+              p.get("success") and gsubs
+              and all(s.get("grade_id") == _g1["id"] for s in gsubs),
+              f"{_g1.get('name')}: {len(gsubs)} 门")
+
     p, _, _ = tea.get("/edu/classes")
     classes = rows_of(p)
     my_class = None

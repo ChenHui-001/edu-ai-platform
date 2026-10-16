@@ -218,7 +218,7 @@ onMounted(async () => {
   status.value = s.data
   const g = await eduApi.grades()
   grades.value = g.data
-  const sub = await eduApi.subjects({})
+  const sub = await eduApi.subjects({ distinct: true })
   subjects.value = sub.data
 })
 </script>
