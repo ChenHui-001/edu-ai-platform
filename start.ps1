@@ -248,12 +248,38 @@ function Invoke-Start {
     Write-Step '准备配置...'
     Initialize-Env
 
-    Write-Step '启动服务（首次运行需构建镜像，约 5-15 分钟）...'
-    Write-Host '    构建过程较长，完成后会自动打开浏览器。'
-    Write-Host ''
     docker compose down --remove-orphans 2>&1 | Out-Null
     Remove-StaleContainer
-    docker compose up -d --build
+
+    # 镜像已存在则直接启动，不再 --build。
+    # compose 的 --build 会重走整个 Dockerfile —— 其中 embedding 模型
+    # 预置步骤要访问 S3/HF 镜像，国内网络下双源各等满 600s 超时
+    # （一键启动卡在 #22 十几分钟就是它）。本地镜像本就是 CI/上次构建
+    # 产物，版本跟随 .env 的 IMAGE_TAG；强制重建请用 manage.bat rebuild。
+    # 镜像名/标签从 .env 解析（compose 的 image: 行用的就是这两个变量）
+    $imgRepo = 'edu-ai-platform'
+    $imgTag = 'latest'
+    if (Test-Path '.env') {
+        $envText = Get-Content '.env' -Raw -Encoding UTF8
+        if ($envText -match '(?m)^\s*DOCKERHUB_REPO=(.+?)\s*$') { $imgRepo = $Matches[1].Trim() }
+        if ($envText -match '(?m)^\s*IMAGE_TAG=(.+?)\s*$') { $imgTag = $Matches[1].Trim() }
+    }
+    $fullImage = "{0}:{1}" -f $imgRepo, $imgTag
+    $haveImage = $false
+    docker image inspect $fullImage *> $null
+    if ($LASTEXITCODE -eq 0) { $haveImage = $true }
+
+    if ($haveImage) {
+        Write-Ok "本地已有镜像 $fullImage，跳过构建直接启动"
+        Write-Host '    如需强制重建：manage.bat rebuild（或 .\start.ps1 -Action rebuild）'
+        Write-Host ''
+        docker compose up -d
+    } else {
+        Write-Step '首次运行，开始构建镜像（约 5-15 分钟）...'
+        Write-Host '    构建完成后会自动打开浏览器。'
+        Write-Host ''
+        docker compose up -d --build
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Err '启动失败'
         Write-Host ''
