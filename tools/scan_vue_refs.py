@@ -25,6 +25,15 @@ BUILTIN = {
     '$event', '$route', '$router', '$emit', '$props', '$refs', '$attrs', '$slots', '$nextTick',
 }
 SLOT_VARS = {'row', 'item', 'index', 'idx', 'slot', 'scope', 'column'}
+# 组合式 API：script 里调用了却没从 'vue' 导入 → 浏览器运行到该行才抛
+# "xxx is not defined"，构建期与常规 lint 均无法发现（rollup 只在运行时抛），
+# 曾导致题库页整页白屏（ref is not defined → setup 中断 → $setup.can 缺失）。
+# 仅运行时 API；defineProps/defineEmits/defineExpose/withDefaults 是编译器宏，
+# 按官方约定无需 import（也允许显式 import），故不纳入检查。
+VUE_APIS = ['ref', 'reactive', 'computed', 'watch', 'watchEffect', 'onMounted',
+            'onUnmounted', 'onBeforeMount', 'onBeforeUnmount', 'onActivated',
+            'onDeactivated', 'nextTick', 'toRef', 'toRefs', 'shallowRef',
+            'shallowReactive', 'customRef', 'provide', 'inject']
 
 
 def _ids(expr):
@@ -48,6 +57,19 @@ def scan(path):
 
     refs = set()
     locals_ = set(SLOT_VARS)
+
+    # ① 组合式 API 导入完整性：调用了却没从 'vue' 导入 → 运行到该行才抛
+    #    "xxx is not defined"；rollup 只在运行时抛，构建期无法发现
+    #    （曾导致题库页整页白屏：ref is not defined → setup 中断 →
+    #     $setup.can 随之缺失）
+    vue_imported = set()
+    for mm in re.finditer(r'import\s*\{([^}]*)\}\s*from\s*[\'"]vue[\'"]', script):
+        vue_imported.update(x.strip().split(' as ')[-1].strip()
+                            for x in mm.group(1).split(',') if x.strip())
+    api_missing = sorted({
+        api for api in VUE_APIS
+        if re.search(r'(?<![\w$.])' + api + r'\s*\(', script) and api not in vue_imported
+    })
     for mm in re.finditer(r'\{\{(.*?)\}\}', tpl, re.S):
         refs.update(_ids(mm.group(1)))
     for mm in re.finditer(
@@ -75,7 +97,7 @@ def scan(path):
         if r[0].isupper():      # 全局注册的组件
             continue
         missing.append(r)
-    return missing
+    return missing, api_missing
 
 
 def main():
@@ -89,18 +111,25 @@ def main():
     bad = 0
     for f in sorted(files):
         try:
-            miss = scan(f)
+            miss, api_missing = scan(f)
         except Exception as exc:                      # noqa: BLE001
             print('扫描异常 %s: %s' % (f, exc))
             continue
-        if miss:
+        if miss or api_missing:
             bad += 1
-            print('[FAIL] %s' % os.path.relpath(f, root).replace('\\', '/'))
-            print('       模板引用但 script 未定义: %s' % ', '.join(miss))
+            rel = os.path.relpath(f, root).replace('\\', '/')
+            if api_missing:
+                print('[FAIL] %s' % rel)
+                print('       组合式 API 未从 vue 导入: %s' % ', '.join(api_missing))
+            if miss:
+                print('[FAIL] %s' % rel)
+                print('       模板引用但 script 未定义: %s' % ', '.join(miss))
     print('扫描 %d 个组件，隐患页面 %d 个' % (len(files), bad))
     if bad:
-        print('提示：模板调用了 script 中不存在的标识符会在浏览器抛 '
-              '"$setup.xxx is not a function" 导致整页白屏。')
+        print('提示：'
+              '①模板调用 script 中不存在的标识符 → "$setup.xxx is not a function"；'
+              '②组合式 API 未从 vue 导入 → "xxx is not defined"，'
+              '二者都会导致整页白屏（构建期不会报错，只在浏览器运行时抛）。')
     return 1 if bad else 0
 
 

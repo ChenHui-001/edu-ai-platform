@@ -430,6 +430,9 @@
 </template>
 
 <script setup>
+import { ref, reactive, computed, onMounted } from 'vue'
+import { useUserStore } from '@/store/user'
+
 const { can } = useUserStore()
 
 // ---------- AI 智能出题（复用题库生成 Agent；LLM 未配置时自动降级） ----------
@@ -477,7 +480,6 @@ async function generateAi() {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Plus, Refresh, Search, Upload, UploadFilled, Delete, MagicStick } from '@element-plus/icons-vue'
 import { questionApi, eduApi, agentApi } from '@/api'
-import { useUserStore } from '@/store/user'
 
 // 按钮级权限统一取 store 的 can getter（见文件顶部解构）
 
