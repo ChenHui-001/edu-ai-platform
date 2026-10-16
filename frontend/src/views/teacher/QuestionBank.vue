@@ -430,6 +430,7 @@
 </template>
 
 <script setup>
+const { can } = useUserStore()
 
 // ---------- AI 智能出题（复用题库生成 Agent；LLM 未配置时自动降级） ----------
 const aiDlg = ref(false)
@@ -478,8 +479,7 @@ import { Download, Plus, Refresh, Search, Upload, UploadFilled, Delete, MagicSti
 import { questionApi, eduApi, agentApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
-const userStore = useUserStore()
-const can = (p) => userStore.hasPerm(p)
+// 按钮级权限统一取 store 的 can getter（见文件顶部解构）
 
 // 须与后端 QUESTION_TYPE_LABEL 保持一致（backend/app/api/v1/question.py）
 const TYPE_LABEL = {

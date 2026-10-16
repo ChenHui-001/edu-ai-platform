@@ -239,14 +239,14 @@
 </template>
 
 <script setup>
+const { can } = useUserStore()
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { taskApi, questionApi, eduApi, gradingApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
-const userStore = useUserStore()
-const can = (p) => userStore.hasPerm(p)
+// 按钮级权限统一取 store 的 can getter（见文件顶部解构）
 
 const list = ref([])
 const papers = ref([])

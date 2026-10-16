@@ -101,6 +101,7 @@
 </template>
 
 <script setup>
+const { can } = useUserStore()
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -108,8 +109,7 @@ import { Search, Refresh } from '@element-plus/icons-vue'
 import { gradingApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
-const userStore = useUserStore()
-const can = (p) => userStore.hasPerm(p)
+// 按钮级权限统一取 store 的 can getter（见文件顶部解构）
 const route = useRoute()
 const router = useRouter()
 const list = ref([])
