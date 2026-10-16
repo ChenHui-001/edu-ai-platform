@@ -13,7 +13,39 @@
       </div>
     </div>
 
-    <el-empty v-if="!studentId" description="请先选择班级与学生" />
+    <!-- 班级知识点掌握概览（选班后即显示；薄弱知识点排前） -->
+    <el-card v-if="classId && !studentId" shadow="never" class="mb16">
+      <template #header>
+        <div class="flex-between">
+          <b>班级知识点掌握概览{{ className ? ` - ${className}` : '' }}</b>
+          <span class="tip" v-if="overview.length">
+            覆盖学生 {{ overviewStudentCount }} 人 · 按平均掌握度升序（薄弱在前）
+          </span>
+        </div>
+      </template>
+      <el-table :data="overview" v-loading="overviewLoading" size="small" border>
+        <el-table-column type="index" label="#" width="46" align="center" />
+        <el-table-column prop="name" label="知识点" min-width="180" show-overflow-tooltip />
+        <el-table-column label="平均掌握度" width="200">
+          <template #default="{ row }">
+            <el-progress :percentage="row.avg_mastery" :stroke-width="10"
+                         :color="row.avg_mastery < 60 ? '#f56c6c' : row.avg_mastery < 80 ? '#e6a23c' : '#67c23a'" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="total_count" label="累计做题" width="90" align="center" />
+        <el-table-column prop="student_count" label="有数据学生" width="100" align="center" />
+        <el-table-column label="薄弱学生(<60)" width="120" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.weak_count" type="danger" size="small">{{ row.weak_count }} 人</el-tag>
+            <span v-else class="tip">-</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!overviewLoading && !overview.length"
+                description="该班级暂无掌握数据（学生完成练习/考试后自动沉淀）" :image-size="70" />
+    </el-card>
+
+    <el-empty v-if="!classId" description="请先选择班级" />
 
     <template v-else-if="detail">
       <el-row :gutter="16" class="mb16">
@@ -149,6 +181,29 @@ function onClassChange() {
   loadStudents()
   studentId.value = null
   detail.value = null
+  loadOverview()
+}
+
+// ---------- 班级知识点掌握概览 ----------
+const overview = ref([])
+const overviewLoading = ref(false)
+const overviewStudentCount = ref(0)
+const className = computed(() => {
+  const c = classes.value.find(x => x.id === classId.value)
+  return c ? `${c.grade_name} ${c.name}` : ''
+})
+
+async function loadOverview() {
+  if (!classId.value) { overview.value = []; return }
+  overviewLoading.value = true
+  try {
+    const res = await eduApi.masteryOverview(classId.value)
+    const d = res.data || {}
+    overview.value = d.items || []
+    overviewStudentCount.value = d.student_count || 0
+  } finally {
+    overviewLoading.value = false
+  }
 }
 
 async function loadDetail() {
@@ -179,4 +234,5 @@ onMounted(async () => {
 
 <style scoped>
 .mb16 { margin-bottom: 16px; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
 </style>

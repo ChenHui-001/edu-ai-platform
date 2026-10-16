@@ -3,15 +3,18 @@ import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.agents.rag import index_knowledge, reindex_all
-from app.api.deps import DataScope, get_current_teacher, get_current_user, get_data_scope
+from app.api.deps import (
+    DataScope, get_current_manager, get_current_teacher, get_current_user,
+    get_data_scope, require_perm,
+)
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
-from app.models import Class, Grade, KnowledgePoint, Subject, User
+from app.models import Class, Grade, KnowledgeMastery, KnowledgePoint, Subject, User
 from app.utils.common import dictify, ok
 
 router = APIRouter(prefix="/edu", tags=["教学资源"])
@@ -32,7 +35,7 @@ def list_grades(
 @router.post("/grades", summary="新增年级")
 def create_grade(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    _: User = Depends(get_current_manager),
 ):
     if db.scalar(select(Grade).where(Grade.name == data.get("name"))):
         raise BusinessException("年级已存在")
@@ -49,7 +52,7 @@ def create_grade(
 @router.put("/grades/{grade_id}", summary="编辑年级")
 def update_grade(
     grade_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    _: User = Depends(get_current_manager),
 ):
     grade = db.get(Grade, grade_id)
     if not grade:
@@ -63,7 +66,7 @@ def update_grade(
 
 @router.delete("/grades/{grade_id}", summary="删除年级")
 def delete_grade(
-    grade_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
+    grade_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_manager),
 ):
     grade = db.get(Grade, grade_id)
     if not grade:
@@ -96,7 +99,7 @@ def list_subjects(
 @router.post("/subjects", summary="新增学科")
 def create_subject(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    _: User = Depends(get_current_manager),
 ):
     exists = db.scalar(select(Subject).where(
         Subject.grade_id == data.get("grade_id"), Subject.name == data.get("name")
@@ -116,7 +119,7 @@ def create_subject(
 @router.put("/subjects/{subject_id}", summary="编辑学科")
 def update_subject(
     subject_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    _: User = Depends(get_current_manager),
 ):
     subject = db.get(Subject, subject_id)
     if not subject:
@@ -130,7 +133,7 @@ def update_subject(
 
 @router.delete("/subjects/{subject_id}", summary="删除学科")
 def delete_subject(
-    subject_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
+    subject_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_manager),
 ):
     subject = db.get(Subject, subject_id)
     if not subject:
@@ -185,7 +188,7 @@ def knowledge_list(
 @router.post("/knowledge", summary="新增知识点")
 def create_knowledge(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    _: User = Depends(require_perm("resource:knowledge:write")),
 ):
     kp = KnowledgePoint(
         name=data["name"], grade_id=data["grade_id"], subject_id=data["subject_id"],
@@ -205,7 +208,7 @@ def create_knowledge(
 @router.put("/knowledge/{kp_id}", summary="编辑知识点")
 def update_knowledge(
     kp_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    _: User = Depends(require_perm("resource:knowledge:write")),
 ):
     kp = db.get(KnowledgePoint, kp_id)
     if not kp:
@@ -221,11 +224,19 @@ def update_knowledge(
 
 @router.delete("/knowledge/{kp_id}", summary="删除知识点")
 def delete_knowledge(
-    kp_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
+    kp_id: int, db: Session = Depends(get_db), _: User = Depends(require_perm("resource:knowledge:write")),
 ):
     kp = db.get(KnowledgePoint, kp_id)
     if not kp:
         raise NotFoundException("知识点不存在")
+    # 引用检查：题目挂载 / 学生掌握度。直接删会让题目知识点悬空（SET NULL）、
+    # 学生掌握数据 CASCADE 清空（学习路径与掌握地图随之失真）。
+    from app.models import Question
+    q_cnt = db.scalar(select(func.count()).select_from(Question).where(
+        Question.knowledge_point_id == kp_id)) or 0
+    if q_cnt:
+        raise BusinessException(
+            f"该知识点已被 {q_cnt} 道题目引用，请先调整相关题目后再删除")
     db.delete(kp)
     db.commit()
     return ok(message="知识点已删除")
@@ -286,7 +297,7 @@ def list_classes(
 @router.post("/classes", summary="新增班级")
 def create_class(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    _: User = Depends(require_perm("resource:class:write")),
 ):
     k = Class(
         name=data["name"], grade_id=data["grade_id"],
@@ -300,7 +311,7 @@ def create_class(
 @router.put("/classes/{class_id}", summary="编辑班级")
 def update_class(
     class_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    _: User = Depends(require_perm("resource:class:write")),
 ):
     k = db.get(Class, class_id)
     if not k:
@@ -314,11 +325,16 @@ def update_class(
 
 @router.delete("/classes/{class_id}", summary="删除班级")
 def delete_class(
-    class_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
+    class_id: int, db: Session = Depends(get_db), _: User = Depends(require_perm("resource:class:write")),
 ):
     k = db.get(Class, class_id)
     if not k:
         raise NotFoundException("班级不存在")
+    student_cnt = db.scalar(select(func.count()).select_from(User).where(
+        User.class_id == class_id, User.identity == "student")) or 0
+    if student_cnt:
+        raise BusinessException(
+            f"该班级仍有 {student_cnt} 名学生，请先转移学生后再删除")
     db.delete(k)
     db.commit()
     return ok(message="班级已删除")
@@ -327,7 +343,7 @@ def delete_class(
 @router.post("/classes/{class_id}/students", summary="批量导入学生")
 def import_students(
     class_id: int, students: List[Dict[str, Any]] = Body(...),
-    db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
+    db: Session = Depends(get_db), _: User = Depends(require_perm("resource:class:write")),
 ):
     """students: [{username, real_name, password?}]"""
     from app.core.security import hash_password
@@ -413,3 +429,67 @@ def people_brief(
                 User.status == "active").order_by(User.username)
         ).all()
     return ok({"items": [{"id": r[0], "real_name": r[1], "username": r[2]} for r in rows]})
+
+
+# ---------------------------------------------------------------- 班级掌握概览
+@router.get("/knowledge/mastery-overview", summary="班级知识点掌握概览（教师端）")
+def knowledge_mastery_overview(
+    class_id: int = Query(..., description="班级 ID"),
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    scope: DataScope = Depends(get_data_scope),
+):
+    """聚合班内学生在每个知识点上的掌握数据，薄弱优先排序，
+    供教师备课 / 讲评定位全班共性薄弱点。
+
+    数据来源 KnowledgeMastery（学生作答后自动沉淀），教师按任教班级
+    查看（DataScope 校验），学生无权访问他人班级聚合。
+    """
+    if not scope.is_super:
+        allowed = scope.class_ids()
+        if allowed is not None and class_id not in allowed:
+            if "grade_admin" not in user.role_codes:
+                raise BusinessException("无权查看该班级的掌握数据")
+
+    k = db.get(Class, class_id)
+    if not k:
+        raise NotFoundException("班级不存在")
+
+    stu_ids = db.scalars(select(User.id).where(
+        User.class_id == class_id, User.identity == "student",
+        User.status == "active",
+    )).all()
+    if not stu_ids:
+        return ok({"items": [], "student_count": 0, "class_name": k.name})
+
+    rows = db.execute(
+        select(
+            KnowledgeMastery.knowledge_point_id,
+            func.avg(KnowledgeMastery.mastery),
+            func.sum(KnowledgeMastery.total_count),
+            func.count(KnowledgeMastery.student_id),
+            func.sum(case((KnowledgeMastery.mastery < 60, 1), else_=0)),
+        ).where(
+            KnowledgeMastery.student_id.in_(stu_ids)
+        ).group_by(KnowledgeMastery.knowledge_point_id)
+    ).all()
+
+    kp_ids = {r[0] for r in rows}
+    kp_map = {x.id: x for x in db.scalars(
+        select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids))).all()} if kp_ids else {}
+
+    items = []
+    for kp_id_, avg_m, total, stu_cnt, weak in rows:
+        kp = kp_map.get(kp_id_)
+        if not kp:
+            continue
+        items.append({
+            "knowledge_point_id": kp_id_,
+            "name": kp.name,
+            "subject_id": kp.subject_id,
+            "avg_mastery": round(float(avg_m or 0), 1),
+            "total_count": int(total or 0),
+            "student_count": int(stu_cnt or 0),
+            "weak_count": int(weak or 0),
+        })
+    items.sort(key=lambda x: x["avg_mastery"])  # 薄弱优先
+    return ok({"items": items, "student_count": len(stu_ids), "class_name": k.name})

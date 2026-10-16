@@ -12,6 +12,11 @@ export const useUserStore = defineStore('user', {
 
   getters: {
     isAdmin: (state) => state.permissions.roles?.includes('sys_admin'),
+    // 权限点判断（按钮级权限）。sys_admin 登录时后端返回 perms=['*'] 通配。
+    can: (state) => (code) => {
+      const perms = state.permissions.permissions || []
+      return perms.includes('*') || perms.includes(code)
+    },
     isTeacher: (state) => state.permissions.roles?.some(r => ['teacher', 'grade_admin', 'sys_admin'].includes(r)),
     isStudent: (state) => state.permissions.roles?.includes('student'),
     realName: (state) => state.userInfo.real_name || '用户',

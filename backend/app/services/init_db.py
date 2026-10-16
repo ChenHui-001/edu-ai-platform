@@ -206,7 +206,7 @@ ROLES: List[Dict] = [
         "code": "teacher", "name": "任课教师", "data_scope": "taught_class", "sort": 3,
         "description": "所授班级学生数据，出题组卷、发布作业考试、批改、学情分析",
         "perms": [
-            "resource:knowledge:list", "resource:class:list",
+            "resource:knowledge:list", "resource:knowledge:write", "resource:class:list",
             "question:bank:list", "question:bank:write", "question:bank:import",
             "question:bank:export",
             "paper:list", "paper:write", "paper:ai", "paper:share", "paper:export",

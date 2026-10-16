@@ -5,7 +5,7 @@
       <div>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
         <el-button :icon="MagicStick" :loading="reindexing" @click="reindex">重建向量索引</el-button>
-        <el-button type="primary" :icon="Plus" @click="openDialog()">新增知识点</el-button>
+        <el-button v-if="can('resource:knowledge:write')" type="primary" :icon="Plus" @click="openDialog()">新增知识点</el-button>
       </div>
     </div>
 
@@ -45,9 +45,9 @@
         <el-table-column prop="sort_order" label="排序" width="70" align="center" />
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDialog(null, row)">添加子级</el-button>
-            <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button v-if="can('resource:knowledge:write')" link type="primary" @click="openDialog(null, row)">添加子级</el-button>
+            <el-button v-if="can('resource:knowledge:write')" link type="primary" @click="openDialog(row)">编辑</el-button>
+            <el-button v-if="can('resource:knowledge:write')" link type="danger" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -91,10 +91,12 @@
 </template>
 
 <script setup>
+const { can } = useUserStore()
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, MagicStick } from '@element-plus/icons-vue'
 import { eduApi } from '@/api'
+import { useUserStore } from '@/store/user'
 
 const tree = ref([])
 const grades = ref([])

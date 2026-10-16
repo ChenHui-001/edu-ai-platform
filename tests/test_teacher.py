@@ -418,6 +418,35 @@ def run():
     # ---------------------------------------------------------- 6 数据权限
     R.set_phase("阶段二 · 教师视角 | 6. 教师数据权限隔离")
 
+    # 知识点删除保护：阶段 3 建的题挂了 kp_id，此时删除必须被拒
+    # （防学生掌握数据 CASCADE 清空、题目知识点悬空）
+    kp_ref = R.context.get("kp_id")
+    if kp_ref:
+        p, _, _ = tea.delete(f"/edu/knowledge/{kp_ref}")
+        check("★ 被题目引用的知识点删除被拒（引用保护）",
+              p.get("success") is False and "引用" in str(p.get("message", "")),
+              f"{p.get('code')} {p.get('message', '')}")
+
+    # 班级知识点掌握概览（新功能）：本班可读 / 非任教班被拒
+    my_cid = R.context.get("teacher_class_id")
+    if my_cid:
+        p, _, _ = tea.get("/edu/knowledge/mastery-overview",
+                          params={"class_id": my_cid})
+        d = data_of(p) or {}
+        check("班级掌握概览可读（新功能）",
+              p.get("success") and isinstance(d.get("items"), list)
+              and isinstance(d.get("student_count"), int),
+              f"{len(d.get('items') or [])} 点 · 学生 {d.get('student_count')}")
+        sorted_ok = all(
+            (d["items"] or [{}])[i].get("avg_mastery", 0)
+            <= (d["items"] or [{}])[i + 1].get("avg_mastery", 0)
+            for i in range(len(d.get("items") or []) - 1))
+        check("概览按平均掌握度升序（薄弱在前）", sorted_ok, "")
+        p, _, _ = tea.get("/edu/knowledge/mastery-overview",
+                          params={"class_id": 999999})
+        check("非任教班级掌握概览被拒（DataScope）",
+              p.get("success") is False, p.get("message", ""))
+
     tea2 = Client("teacher2")
     ok2, d2 = tea2.login("teacher2", PWD)
     check("teacher2 登录成功", ok2, d2)

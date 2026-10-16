@@ -4,7 +4,7 @@
       <h2 class="page-title">班级管理</h2>
       <div>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
-        <el-button type="primary" :icon="Plus" @click="openDialog()">新增班级</el-button>
+        <el-button v-if="can('resource:class:write')" type="primary" :icon="Plus" @click="openDialog()">新增班级</el-button>
       </div>
     </div>
 
@@ -43,8 +43,8 @@
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openStudents(row)">学生</el-button>
-            <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button v-if="can('resource:class:write')" link type="primary" @click="openDialog(row)">编辑</el-button>
+            <el-button v-if="can('resource:class:write')" link type="danger" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -81,7 +81,7 @@
     <!-- 学生管理 -->
     <el-drawer v-model="studentDrawer" :title="`${currentClass?.name || ''} - 学生管理`" size="70%">
       <div class="mb12">
-        <el-button type="primary" :icon="Upload" @click="importDlg = true">批量导入学生</el-button>
+        <el-button v-if="can('resource:class:write')" type="primary" :icon="Upload" @click="importDlg = true">批量导入学生</el-button>
         <el-alert class="mt8" type="info" :closable="false"
                   title="批量导入需填写：username(学号)、real_name(姓名)、password(初始密码，可留空默认123456)" />
       </div>
@@ -114,9 +114,11 @@
 </template>
 
 <script setup>
+const { can } = useUserStore()
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, Upload } from '@element-plus/icons-vue'
+import { useUserStore } from '@/store/user'
 import { eduApi, systemApi } from '@/api'
 
 const list = ref([])

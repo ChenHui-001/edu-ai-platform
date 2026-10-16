@@ -157,6 +157,48 @@ def run():
               f"{ms}ms 知识点={d.get('knowledge')} 题目={d.get('question')}；"
               "多因首次运行需下载 embedding 模型")
 
+    # ---------------------------------- 2b 资源权限矩阵（本轮收紧回归）
+    # 设计：年级/学科/班级/导入学生 = manager 角色（sys_admin+grade_admin），
+    #       知识点写 = 权限点 resource:knowledge:write（teacher/grade_admin 均授）。
+    # 教师对全校性基础数据只读；班级菜单可见但只读（有 list 无 write）。
+    R.set_phase("阶段一 · 管理员视角 | 2b. 资源权限矩阵")
+    tea2b = Client("teacher1")
+    ok_t, d_t = tea2b.login("teacher1", ACCT["teacher1"])
+    check("teacher1 登录（权限矩阵用）", ok_t, d_t)
+    if ok_t:
+        # 教师写班级 → 403（require_perm class:write，teacher 无该权限点）
+        expect_denied("教师新增班级被拒", tea2b, "POST", "/edu/classes",
+                      body={"name": "越权班级", "grade_id": 1})
+        expect_denied("教师修改班级被拒", tea2b, "PUT", "/edu/classes/1",
+                      body={"name": "越权改名"})
+        expect_denied("教师删除班级被拒", tea2b, "DELETE", "/edu/classes/1")
+        expect_denied("教师批量导入学生被拒（创建账号属敏感操作）",
+                      tea2b, "POST", "/edu/classes/1/students",
+                      body=[{"username": "hack001", "real_name": "越权"}])
+        # 教师写知识点 → 通过（knowledge:write 已授教师，建题需补知识点）
+        p, _, _ = tea2b.post("/edu/knowledge", {
+            "name": f"权限回归点{int(time.time()) % 100000}", "subject_id": 1,
+            "grade_id": 1, "level": 2, "description": "教师建题补点用"})
+        kd = data_of(p) or {}
+        check("教师可创建知识点（knowledge:write 已授）",
+              p.get("success") and bool(kd.get("id")),
+              f"{p.get('code')} {p.get('message', '')}")
+        if kd.get("id"):
+            stu_c = Client("stu731")
+            stu_c.login("stu731", ACCT["stu731"])
+            expect_denied("学生删知识点被拒", stu_c, "DELETE",
+                          f"/edu/knowledge/{kd['id']}")
+            p, _, _ = admin.delete(f"/edu/knowledge/{kd['id']}")
+            check("未引用知识点可删除", p.get("success"), p.get("message", ""))
+        # admin 删有学生的班级 → 400 保护
+        p, _, _ = admin.get("/edu/classes")
+        cls = rows_of(p)
+        if cls:
+            p, _, _ = admin.delete(f"/edu/classes/{cls[0]['id']}")
+            check("★ 有学生的班级删除被拒（悬空保护）",
+                  p.get("success") is False and "学生" in str(p.get("message", "")),
+                  f"{p.get('code')} {p.get('message', '')}")
+
     # ---------------------------------------------------------- 3 用户与角色
     R.set_phase("阶段一 · 管理员视角 | 3. 用户与角色 RBAC")
 
