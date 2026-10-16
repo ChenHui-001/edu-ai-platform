@@ -1,4 +1,4 @@
-﻿# ==============================================================
+﻿﻿# ==============================================================
 #  本地开发模式（不经过 Docker）
 #    - 后端：uvicorn app.main:app --reload --port 8000（独立窗口，热重载）
 #    - 前端：vite dev server（独立窗口，端口 5173，/api 代理到 8000）
@@ -80,15 +80,9 @@ $backendCmd = 'chcp 65001 >nul & title backend(8000) & cd /d "' +
               '" & python -m uvicorn app.main:app --reload --port 8000'
 Start-Process cmd -ArgumentList "/k $backendCmd" -WindowStyle Normal
 
-# ---------- 3. 启动前端 vite（独立窗口） ----------
-Write-Step '启动前端 vite（端口 5173，独立窗口）'
-$frontendCmd = 'chcp 65001 >nul & title frontend(5173) & cd /d "' +
-               (Join-Path $PSScriptRoot 'frontend') +
-               '" & npm run dev'
-Start-Process cmd -ArgumentList "/k $frontendCmd" -WindowStyle Normal
-
-# ---------- 4. 等服务就绪后打开浏览器 ----------
-Write-Host '    等待后端就绪'
+# ---------- 3. 等后端就绪再启动前端（消除启动竞态） ----------
+Write-Host '    等待后端就绪（浏览器恢复的旧标签页连接时后端必须已监听，'
+Write-Host '    否则 vite 代理会报启动瞬间的 ECONNREFUSED）'
 $ready = $false
 for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 2
@@ -98,6 +92,13 @@ for ($i = 0; $i -lt 30; $i++) {
     } catch { Write-Host -NoNewline '.' }
 }
 if ($ready) { Write-Ok '后端已就绪' } else { Write-Err2 '后端 60s 内未就绪（详情看 backend 窗口日志）' }
+
+# ---------- 4. 启动前端 vite（独立窗口） ----------
+Write-Step '启动前端 vite（端口 5173，独立窗口）'
+$frontendCmd = 'chcp 65001 >nul & title frontend(5173) & cd /d "' +
+               (Join-Path $PSScriptRoot 'frontend') +
+               '" & npm run dev'
+Start-Process cmd -ArgumentList "/k $frontendCmd" -WindowStyle Normal
 
 Start-Process 'http://localhost:5173'
 
