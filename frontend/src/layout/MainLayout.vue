@@ -148,23 +148,46 @@ const menuGroups = computed(() => {
     return true
   }).filter(r => r.path !== '/dashboard' && r.path !== '/')
 
+  // 按路由前缀归组，而不是逐条硬编码 path 列表。
+    // 之前每组match 写死全量路径，新增页面若忘记同步就会**静默消失**，
+    // 表现为「后端给了权限但菜单里找不到入口」。改为前缀匹配后
+    // 新增路由自动归入对应分组，未匹配的兜底进「其他」。
+  // 分组顺序即优先级：一个路由只归入**第一个**命中的分组。
+    // AI 组必须排在「系统管理」之前，否则 /admin/agent-logs 这类
+    // 物理路径在 /admin/ 下的页面会被系统管理抢走。
   const groups = [
-    { title: '教学资源', icon: 'Collection', match: ['/admin/grades', '/admin/subjects', '/admin/knowledge', '/admin/classes'] },
-    { title: '题库试卷', icon: 'Notebook', match: ['/teacher/questions', '/teacher/papers'] },
-    { title: '教学管理', icon: 'EditPen', match: ['/teacher/tasks', '/teacher/grading'] },
-    { title: '学情分析', icon: 'TrendCharts', match: ['/teacher/analysis', '/teacher/students', '/teacher/reports'] },
-    { title: '学习中心', icon: 'Reading', match: ['/student/practice', '/student/exams', '/student/wrong', '/student/notes', '/student/review', '/student/report', '/student/scores', '/student/favorites', '/student/mastery', '/student/custom', '/student/goals', '/student/path', '/student/flashcard'] },
-    { title: 'AI 智能', icon: 'MagicStick', match: ['/agent/chat', '/agent/generate', '/admin/agent-logs'] },
-    { title: '系统管理', icon: 'Setting', match: ['/admin/users', '/admin/roles', '/admin/registrations', '/admin/logs', '/admin/jobs', '/admin/attachments', '/admin/reports', '/admin/settings', '/admin/ai-config'] }
+    { title: '教学资源', icon: 'Collection', prefixes: ['/admin/grades', '/admin/subjects', '/admin/knowledge', '/admin/classes'] },
+    { title: '题库试卷', icon: 'Notebook', prefixes: ['/teacher/questions', '/teacher/papers'] },
+    { title: '教学管理', icon: 'EditPen', prefixes: ['/teacher/tasks', '/teacher/grading'] },
+    { title: '学情分析', icon: 'TrendCharts', prefixes: ['/teacher/analysis', '/teacher/students', '/teacher/reports'] },
+    { title: '学习中心', icon: 'Reading', prefixes: ['/student/'] },
+    { title: 'AI 智能', icon: 'MagicStick', prefixes: ['/agent/', '/admin/agent-logs'] },
+    { title: '系统管理', icon: 'Setting', prefixes: ['/admin/'] }
   ]
 
-  return groups.map(g => ({
-    title: g.title,
-    icon: g.icon,
-    items: allowed.filter(r => g.match.includes(r.path)).map(r => ({
-      path: r.path, title: r.meta.title, icon: r.meta.icon || 'Document'
-    }))
-  })).filter(g => g.items.length > 0)
+  const matched = new Set()
+  const result = []
+  for (const g of groups) {
+    const items = []
+    for (const r of allowed) {
+      if (matched.has(r.path)) continue
+      if (!g.prefixes.some(p => r.path === p || r.path.startsWith(p))) continue
+      matched.add(r.path)
+      items.push({ path: r.path, title: r.meta.title, icon: r.meta.icon || 'Document' })
+    }
+    if (items.length) result.push({ title: g.title, icon: g.icon, items })
+  }
+
+  // 兜底：未被任何分组覆盖的路由集中展示，避免「授权了却找不到入口」
+  const rest = allowed.filter(r => !matched.has(r.path))
+  if (rest.length) {
+    result.push({
+      title: '其他',
+      icon: 'Menu',
+      items: rest.map(r => ({ path: r.path, title: r.meta.title, icon: r.meta.icon || 'Document' }))
+    })
+  }
+  return result
 })
 
 function formatTime(t) {

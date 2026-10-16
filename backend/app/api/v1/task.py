@@ -24,6 +24,38 @@ router = APIRouter(prefix="/task", tags=["作业与考试"])
 TYPE_LABEL = {"homework": "作业", "exam": "考试", "practice": "随机练习"}
 
 
+def is_task_assigned_to(db: Session, task: Task, user: User) -> bool:
+    """判断任务是否下发给该用户（按 student_id / class_id 两条下发路径）。
+
+    TaskAssignment 支持三种范围：指定学生、指定班级、分组。
+    分组目前无成员表，故按「有班级或指定本人」判定。
+    任务创建者与系统管理员不受此限制（教师需预览自己的卷子）。
+    """
+    if task.creator_id == user.id:
+        return True
+    if "sys_admin" in user.role_codes:
+        return True
+    q = select(TaskAssignment.id).where(TaskAssignment.task_id == task.id)
+    if db.scalar(q.where(TaskAssignment.student_id == user.id)):
+        return True
+    if user.class_id and db.scalar(
+        q.where(TaskAssignment.class_id == user.class_id)
+    ):
+        return True
+    return False
+
+
+def assert_task_accessible(db: Session, task: Task, user: User) -> None:
+    """作答类接口的统一归属校验。
+
+    此前 `/tasks/{id}/paper` 只校验发布时间，**未校验任务是否下发给当前用户**，
+    导致任意登录用户遍历 task_id 即可拿到他人考试的题目并作答（越权）。
+    这里补上归属判断；创建者与超管豁免。
+    """
+    if not is_task_assigned_to(db, task, user):
+        raise PermissionException("该任务未下发给当前用户")
+
+
 # ---------------------------------------------------------------- 教师端
 @router.get("/tasks", summary="作业考试列表（教师）")
 def list_tasks(
@@ -311,6 +343,8 @@ def get_task_paper(
     # 发布/开考时间管控（任务创建者豁免，便于教师预览）：
     # 未发布或未到开考时间，禁止提前获取题目，防止泄题。
     is_creator = task.creator_id == user.id
+    # 归属校验：任务必须下发给当前用户，否则遍历 task_id 即可越权作答他人考试
+    assert_task_accessible(db, task, user)
     now = utcnow()
     if not is_creator:
         if task.status == TaskStatus.DRAFT.value or (
@@ -364,6 +398,8 @@ def submit_answers(
     task = db.get(Task, task_id)
     if not task:
         raise NotFoundException("任务不存在")
+    # 归属校验：未下发给当前用户的任务不允许提交（防越权交卷）
+    assert_task_accessible(db, task, user)
     if task.status == TaskStatus.DRAFT.value or (
         task.publish_at and task.publish_at > utcnow()
     ):
@@ -438,12 +474,32 @@ def heartbeat(
 @router.get("/submissions/{submission_id}", summary="作答详情（含解析）")
 def submission_detail(
     submission_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    scope: DataScope = Depends(get_data_scope),
 ):
     sub = db.get(Submission, submission_id)
     if not sub:
         raise NotFoundException("作答记录不存在")
-    if sub.student_id != user.id and "sys_admin" not in user.role_codes and "teacher" not in user.role_codes:
-        raise PermissionException("无权查看该作答记录")
+    # 归属校验：本人 / 按角色分派。
+    # 原判断只要角色是 teacher 就放行，导致**任何教师可遍历
+    # submission_id 查看他人作答详情与答案解析**（含未教的班）。
+    # 现按角色分派，并统一走 DataScope：
+    # - 本人：始终可看
+    # - sys_admin / grade_admin：DataScope 返回 None（不受限）
+    # - teacher：仅授课班级内的学生（class_ids()）
+    # - student：**只能看自己**，绝不因同班而看到同班同学的作答
+    if sub.student_id != user.id:
+        if "sys_admin" not in user.role_codes:
+            if "teacher" not in user.role_codes and "grade_admin" not in user.role_codes:
+                # 学生（含访客等无教学角色的账号）：仅本人
+                raise PermissionException("无权查看该作答记录")
+            allowed = scope.class_ids()
+            stu_class = db.scalar(select(User.class_id).where(User.id == sub.student_id))
+            if allowed is None:
+                # grade_admin：本年级所有数据，DataScope 视其为不限
+                if "grade_admin" not in user.role_codes:
+                    raise PermissionException("无权查看该作答记录")
+            elif stu_class is None or stu_class not in allowed:
+                raise PermissionException("无权查看该作答记录")
 
     task = db.get(Task, sub.task_id)
     answers = []

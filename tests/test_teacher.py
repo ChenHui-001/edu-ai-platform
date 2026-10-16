@@ -140,6 +140,16 @@ def run():
     kp_id = kps[0]["id"] if kps else None
     R.context["kp_id"] = kp_id
 
+    # teacher1 任教一年级(1)班，而 stu731 属七年级(2)班（teacher4 任教）。
+    # 后续所有任务下发都必须按 **student_ids** 精确指定给 stu731，
+    # 否则它在自己的 /task/my/tasks 里看不到任务，
+    # 且会被新增的归属校验（任务未下发给当前用户）拒绝作答。
+    # 这里提前登录取 ID，供阶段 4/5 的下发逻辑复用。
+    stu_probe = Client("stu731-probe")
+    ok_probe, detail_probe = stu_probe.login("stu731", "Student@123")
+    check("stu731 可登录（下发目标）", ok_probe, detail_probe)
+    R.context["stu731_id"] = (stu_probe.user or {}).get("id")
+
     # ---------------------------------------------------------- 3 建题
     R.set_phase("阶段二 · 教师视角 | 3. 五种题型建题")
 
@@ -305,10 +315,12 @@ def run():
             # AI 生成的试卷应能直接发布考试
             if items2:
                 cid = R.context.get("teacher_class_id")
+                # 与主考试一致：按学生 ID 下发，确保 stu731 能看到并作答
                 p3, _, _ = tea.post("/task/tasks", {
                     "title": f"【{tag}】AI组卷考试", "type": "homework",
                     "paper_id": ap["id"],
-                    "class_ids": [cid] if cid else [],
+                    "class_ids": [] if R.context.get("stu731_id") else ([cid] if cid else []),
+                    "student_ids": [R.context["stu731_id"]] if R.context.get("stu731_id") else [],
                 })
                 check("AI 组卷可直接用于发布考试", p3.get("success"),
                       f"task_id={(data_of(p3) or {}).get('id')}")
@@ -326,12 +338,20 @@ def run():
         R.add("发布考试", False, "无可用试卷，跳过")
         return R.context
 
+    # teacher1 任教一年级(1)班，而 stu731 属七年级(2)班（teacher4 任教）。
+    # 任务必须按 **student_ids** 精确下发给 stu731，否则它在自己的
+    # /task/my/tasks 里看不到任务，且会被新加的归属校验拒绝作答。
+    # stu731_id 已在阶段 2 末尾登录取得。
     class_id = R.context.get("teacher_class_id")
+    # 有学生 ID 时按学生下发（跨班）；否则退回本班
+    assign = ({"class_ids": [], "student_ids": [R.context["stu731_id"]]}
+              if R.context.get("stu731_id")
+              else {"class_ids": [class_id] if class_id else [], "student_ids": []})
     p, _, _ = tea.post("/task/tasks", {
         "title": f"【{tag}】七年级数学单元测试", "type": "exam",
         "paper_id": target_paper, "duration": 60, "allow_retake": 1,
         "show_answer": True, "anti_cheat": True, "pass_score": 60,
-        "class_ids": [class_id] if class_id else [],
+        **assign,
         "description": "自动化测试创建的考试",
     })
     td = data_of(p) or {}
@@ -352,13 +372,17 @@ def run():
             check("完成率字段可用", cr is not None, f"completion_rate={cr}%")
 
         # 跨班级下发能力（文档推荐路线依赖此项）
+        # 注意：stu731_id 必须已真实取得，否则这里会传空数组并
+        # 「假通过」——历史上就是因此让本用例长期失去检测能力。
         p2, _, _ = tea.post("/task/tasks", {
             "title": f"【{tag}】跨班下发测试", "type": "homework",
             "paper_id": target_paper, "class_ids": [],
-            "student_ids": [R.context.get("stu731_id")] if R.context.get("stu731_id") else [],
+            "student_ids": [R.context["stu731_id"]] if R.context.get("stu731_id") else [],
         })
         t2 = data_of(p2) or {}
-        check("可按学生 ID 跨班下发任务", p2.get("success"),
+        check("可按学生 ID 跨班下发任务",
+              p2.get("success") and bool(R.context.get("stu731_id")),
+              f"stu731_id={R.context.get('stu731_id')} "
               f"task_id={t2.get('id')} {p2.get('message', '')}")
         R.context["cross_task_id"] = t2.get("id")
 

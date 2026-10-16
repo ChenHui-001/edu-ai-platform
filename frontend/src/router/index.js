@@ -73,7 +73,7 @@ const routes = [
       { path: 'student/exams', name: 'MyExams', component: () => import('@/views/student/MyExams.vue'),
         meta: { title: '模拟考试', icon: 'Timer', perm: 'student:exam' } },
       { path: 'student/exam/:taskId', name: 'ExamPaper', component: () => import('@/views/student/ExamPaper.vue'),
-        meta: { title: '答题', hidden: true } },
+        meta: { title: '答题', hidden: true, perm: 'student:exam' } },
       { path: 'student/wrong', name: 'WrongBook', component: () => import('@/views/student/WrongBook.vue'),
         meta: { title: '错题本', icon: 'Warning', perm: 'student:wrong' } },
       { path: 'student/notes', name: 'MyNotes', component: () => import('@/views/student/MyNotes.vue'),

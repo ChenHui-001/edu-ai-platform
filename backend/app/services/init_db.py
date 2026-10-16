@@ -171,7 +171,10 @@ PERMISSIONS: List[Tuple[str, str, str, str, str, int]] = [
     # AI 中心
     ("agent:chat", "AI 智能助手", "menu", "/agent/chat", "MagicStick", 500),
     ("agent:generate", "AI 出题", "menu", "/agent/generate", "Cpu", 501),
-    ("agent:plan", "AI 学习规划", "menu", "/agent/plan", "Compass", 502),
+    # agent:plan 指向已存在的「学习路径」页面，不新建 /agent/plan 路由：
+    # 该权限点同时授予 teacher 与 student，原先path 指向不存在的
+    # /agent/plan，属于孤儿菜单（前端无对应路由，用户拿到权限却无处可去）。
+    ("agent:plan", "AI 学习规划", "menu", "/student/path", "Compass", 502),
     ("agent:logs", "AI 调用日志", "menu", "/admin/agent-logs", "Cpu", 510),
 
     # 管理员报表
@@ -262,18 +265,36 @@ DEFAULT_JOBS = [
 
 
 def init_permissions(db: Session) -> None:
-    """初始化权限点。"""
-    existing = {p.code for p in db.scalars(select(Permission)).all()}
+    """初始化权限点（幂等：新增缺失项，并同步已存在项的元数据）。
+
+    原实现只对**新增 code** 建记录，已存在的 code 不更新
+    name/path/icon/sort —— 改了 PERMISSIONS 里的定义后，
+    老库里的path 会一直是旧值，造成「代码已改、数据库未同步」。
+    例如 agent:plan 的 path 从 /agent/plan 改为 /student/path 后，
+    老库若不同步，该权限点就成了指向不存在路由的孤儿菜单。
+    """
+    existing = {p.code: p for p in db.scalars(select(Permission)).all()}
     new_perms = []
+    dirty = False
     for code, name, ptype, path, icon, sort in PERMISSIONS:
-        if code not in existing:
+        cur = existing.get(code)
+        if cur is None:
             new_perms.append(
                 Permission(code=code, name=name, type=ptype, path=path, icon=icon, sort=sort)
             )
+            continue
+        # 已存在则对齐元数据（保留 is_hidden 等运行时状态字段不动）
+        if (cur.name, cur.type, cur.path, cur.icon, cur.sort) != (name, ptype, path, icon, sort):
+            cur.name, cur.type, cur.path, cur.icon, cur.sort = name, ptype, path, icon, sort
+            dirty = True
     if new_perms:
         db.add_all(new_perms)
+    if new_perms or dirty:
         db.commit()
-    logger.info(f"权限点初始化完成，新增 {len(new_perms)} 个")
+    logger.info(
+        f"权限点初始化完成，新增 {len(new_perms)} 个，"
+        f"同步元数据 {'是' if dirty else '否'}"
+    )
 
 
 def init_roles(db: Session) -> None:
