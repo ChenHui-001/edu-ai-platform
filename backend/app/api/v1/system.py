@@ -160,10 +160,15 @@ def reset_password(
 @router.get("/roles", summary="角色列表")
 def list_roles(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
     roles = db.scalars(select(Role).order_by(Role.sort)).all()
+    # user_count 一次聚合查出。原写法 len(r.users) 会对每个角色
+    # 单独发一条 SELECT（N+1），角色多时列表接口线性变慢。
+    counts = dict(db.execute(
+        select(UserRole.role_id, func.count()).group_by(UserRole.role_id)
+    ).all())
     return ok([
         {"id": r.id, "code": r.code, "name": r.name, "description": r.description,
          "data_scope": r.data_scope, "is_builtin": r.is_builtin, "is_active": r.is_active,
-         "sort": r.sort, "user_count": len(r.users),
+         "sort": r.sort, "user_count": counts.get(r.id, 0),
          "permissions": [p.code for p in r.permissions]}
         for r in roles
     ])
@@ -178,15 +183,21 @@ def create_role(
         raise BusinessException("角色编码和名称不能为空")
     if db.scalar(select(Role).where(Role.code == data["code"])):
         raise BusinessException("角色编码已存在")
+    # 角色编码规范：仅小写字母/数字/下划线，防止后续按 code 做权限判断时出错
+    import re as _re
+    if not _re.fullmatch(r"[a-z][a-z0-9_]{1,62}", data["code"].strip()):
+        raise BusinessException("角色编码仅允许小写字母开头，含小写字母/数字/下划线，2-63 位")
     role = Role(
-        code=data["code"], name=data["name"], description=data.get("description"),
+        code=data["code"].strip(), name=data["name"].strip(), description=data.get("description"),
         data_scope=data.get("data_scope", "self"),
         is_builtin=False, is_active=data.get("is_active", True),
         sort=data.get("sort", 99),
     )
     db.add(role)
     db.flush()
-    _assign_perms(db, role.id, data.get("permissions", []))
+    unknown = _assign_perms(db, role.id, data.get("permissions", []))
+    if unknown:
+        raise BusinessException(f"以下权限码不存在：{', '.join(sorted(unknown))}")
     db.commit()
     return ok(dictify(role), message="角色创建成功")
 
@@ -199,12 +210,19 @@ def update_role(
     role = db.get(Role, role_id)
     if not role:
         raise NotFoundException("角色不存在")
+    # 与前端「内置角色不可修改」语义对齐：此前仅前端隐藏按钮，
+    # 直接调 API 仍可改动 sys_admin 等内置角色的权限。
+    if role.is_builtin:
+        raise BusinessException("内置角色不可修改")
     for f in ("name", "description", "data_scope", "is_active", "sort"):
         if f in data:
             setattr(role, f, data[f])
     if "permissions" in data:
         db.execute(RolePermission.__table__.delete().where(RolePermission.role_id == role_id))
-        _assign_perms(db, role_id, data["permissions"])
+        unknown = _assign_perms(db, role_id, data["permissions"])
+        if unknown:
+            # 未知权限码不能静默丢弃：会让管理员以为已授权实际没授上
+            raise BusinessException(f"以下权限码不存在：{', '.join(sorted(unknown))}")
     db.commit()
     return ok(dictify(role), message="角色已更新")
 
@@ -234,7 +252,7 @@ def copy_role(
     new = Role(
         code=code, name=name,
         description=src.description, data_scope=src.data_scope,
-        is_builtin=False, sort=src.sort + 1,
+        is_builtin=False, is_active=src.is_active, sort=src.sort + 1,
     )
     db.add(new)
     db.flush()
@@ -259,24 +277,77 @@ def delete_role(
     return ok(message="角色已删除")
 
 
-def _assign_perms(db: Session, role_id: int, codes: List[str]) -> None:
+def _assign_perms(db: Session, role_id: int, codes: List[str]) -> List[str]:
+    """为角色绑定权限点，返回**不存在**的权限码列表。
+
+    原实现对未知 code 静默跳过 —— 管理员提交了一个打错的权限码
+    不会有任何反馈，授权结果与界面勾选不一致且无从排查。
+    现在返回未知码，由调用方决定报错或记日志；
+    同时去重，避免同一 code 重复插入触发唯一约束 500。
+    """
+    unknown: List[str] = []
+    seen: set = set()
     for code in codes:
+        if code in seen:
+            continue
+        seen.add(code)
         p = db.scalar(select(Permission).where(Permission.code == code))
         if p:
             db.add(RolePermission(role_id=role_id, permission_id=p.id))
+        else:
+            unknown.append(code)
+    return unknown
 
 
 # ---------------------------------------------------------------- 权限树
-@router.get("/permissions", summary="权限点树")
+@router.get("/permissions", summary="权限点列表 / 树")
 def list_permissions(
-    type: Optional[str] = None, db: Session = Depends(get_db),
+    type: Optional[str] = None,
+    role_id: Optional[int] = None,
+    tree: bool = False,
+    db: Session = Depends(get_db),
     _: User = Depends(get_current_manager),
 ):
+    """查询权限点。
+
+    - `role_id`：只返回该角色已绑定的权限点（此前该参数被静默忽略，
+      前端与 e2e 传了都拿全量列表，属契约缺口）；
+    - `tree=true`：组装成 {key,label,children} 树供 el-tree 渲染。
+      分组节点 key 为 `{type}:group`（前端过滤 `:group:` 恰好命中）；
+      叶子 key 即权限 code。此前返回扁平列表，
+      前端期望的分组树形从未真正渲染过。
+    """
     stmt = select(Permission)
+    if role_id is not None:
+        stmt = stmt.join(RolePermission, RolePermission.permission_id == Permission.id).where(
+            RolePermission.role_id == role_id
+        )
     if type:
         stmt = stmt.where(Permission.type == type)
-    perms = db.scalars(stmt.order_by(Permission.sort)).all()
-    return ok([dictify(p) for p in perms])
+    perms = db.scalars(stmt.order_by(Permission.sort, Permission.id)).all()
+
+    if not tree:
+        return ok([dictify(p) for p in perms])
+
+    groups: Dict[str, list] = {}
+    label_map = {"menu": "菜单权限", "button": "操作权限", "data": "数据权限"}
+    for p in perms:
+        groups.setdefault(p.type, []).append({
+            "key": p.code, "label": f"{p.name}（{p.code}）",
+            "code": p.code, "type": p.type,
+        })
+    # 固定分组顺序，菜单在前
+    ordered = ["menu", "button", "data"]
+    nodes = []
+    for gtype in ordered:
+        if gtype not in groups:
+            continue
+        nodes.append({
+            "key": f"{gtype}:group",
+            "label": label_map.get(gtype, gtype),
+            "children": groups[gtype],
+        })
+    return ok(nodes)
 
 
 # ---------------------------------------------------------------- 通知

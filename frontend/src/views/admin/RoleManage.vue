@@ -73,7 +73,7 @@
           <el-input v-model="form.code" placeholder="如：lesson_leader" />
         </el-form-item>
         <el-form-item label="描述">
-          <el-input v-model="form.remark" type="textarea" :rows="2" />
+          <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -100,7 +100,7 @@ const saving = ref(false)
 const dlg = ref(false)
 const treeRef = ref(null)
 
-const form = reactive({ id: null, name: '', code: '', remark: '' })
+const form = reactive({ id: null, name: '', code: '', description: '' })
 const rules = {
   name: [{ required: true, message: '请输入角色名称', trigger: 'blur' }],
   code: [{ required: true, message: '请输入角色标识', trigger: 'blur' }]
@@ -109,17 +109,10 @@ const rules = {
 function selectRole(row) {
   if (!row) return
   current.value = row
-  if (row.permissions) {
-    checkedKeys.value = row.permissions.map(p => p.code || p)
-  } else {
-    loadRolePerm(row.id)
-  }
-}
-
-async function loadRolePerm(roleId) {
-  const res = await systemApi.permissions({ role_id: roleId })
-  const items = res.data.data?.items || []
-  checkedKeys.value = items.map(p => p.code)
+  // 角色列表接口总是返回 permissions（权限码数组），
+  // 因此这里直接回填；原先的 loadRolePerm 分支实际永远不会触发，
+  // 且其后端 role_id 参数此前并未实现（返回全量），属危险死代码，已删除。
+  checkedKeys.value = (row.permissions || []).map(p => p.code || p)
 }
 
 async function load() {
@@ -162,8 +155,12 @@ async function savePerm() {
   try {
     const checked = treeRef.value.getCheckedKeys()
     const half = treeRef.value.getHalfCheckedKeys()
+    // 后端读取的字段是 permissions（权限码数组）。
+    // 原先发的是 permission_codes，后端根本不认 ——
+    // 恰好 saveRole(current.value) 展开时带了列表自带的 permissions
+    // 字段才让保存"碰巧"生效，属于脆弱的隐式契约，现显式对齐。
     const codes = [...checked, ...half].filter(k => !k.includes(':group:'))
-    await systemApi.updateRole(current.value.id, { ...current.value, permission_codes: codes })
+    await systemApi.updateRole(current.value.id, { permissions: codes })
     ElMessage.success('权限已保存')
     await load()
   } finally {
@@ -172,18 +169,26 @@ async function savePerm() {
 }
 
 function openDialog(row) {
-  Object.assign(form, row || { id: null, name: '', code: '', remark: '' })
+  // 字段必须与后端对齐：description（此前用 remark，后端不认识，
+  // 导致"角色描述"输入框是摆设，永远保存不上）。
+  Object.assign(form, row
+    ? { id: row.id, name: row.name, code: row.code, description: row.description || '' }
+    : { id: null, name: '', code: '', description: '' })
   dlg.value = true
 }
 
 async function save() {
   saving.value = true
   try {
-    if (form.id) await systemApi.updateRole(form.id, form)
-    else await systemApi.createRole(form)
+    if (form.id) {
+      // 编辑时不传 code：后端不允许改 code，传了也会被忽略，语义上明确
+      await systemApi.updateRole(form.id, { name: form.name, description: form.description })
+    } else {
+      await systemApi.createRole({ name: form.name, code: form.code, description: form.description })
+    }
     ElMessage.success('保存成功')
     dlg.value = false
-    load()
+    await load()
   } finally {
     saving.value = false
   }
