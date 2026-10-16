@@ -83,6 +83,28 @@ def run():
 
     expect_denied("教师查询任教安排接口被拒绝（仅管理员）", tea, "GET",
                   f"/system/users/{tea.user['id']}/teachings")
+
+    # 登录链路契约：token 必须能续期、错误口令必须被拒、菜单权限点齐全
+    _perms = tea.permission or {}
+    _plist = _perms.get("permissions") or []
+    _need = ["question:bank:list", "question:bank:write", "paper:list", "paper:ai",
+             "task:list", "grading:list", "analysis:class", "agent:generate"]
+    _lack = [x for x in _need if x not in _plist]
+    check("★ 教师权限点齐全（题库/试卷/作业/批改/学情/AI）", not _lack,
+          f"缺失={_lack}" if _lack else f"共 {len(_plist)} 个权限点")
+
+    # 刷新令牌：前端靠它静默续期，失效会导致反复要求重新登录
+    _rt = tea.refresh_token if hasattr(tea, "refresh_token") else None
+    p, _, _ = tea.post("/auth/refresh", {"refresh_token": _rt} if _rt else {})
+    check("刷新令牌可换取新 access_token",
+          p.get("success") and bool((data_of(p) or {}).get("access_token")),
+          f"{p.get('code')} {p.get('message', '')}")
+
+    # 错误口令必须被拒（防止任何形式的绕过）
+    _bad = Client("teacher1-badpwd")
+    _ok2, _d2 = _bad.login("teacher1", "WrongPwd@123456")
+    check("★ 错误口令登录被拒绝", not _ok2, _d2)
+
     p, _, _ = tea.get("/edu/classes")
     all_cls = rows_of(p)
     own = [c for c in all_cls if c.get("head_teacher_id") == tea.user["id"]]
@@ -395,6 +417,76 @@ def run():
             # 恢复上架供后续用例使用
             tea.put(f"/question/questions/{paper_q}/status",
                     {"status": "published"})
+
+    # ------------------------------ 4c 前后端契约一致性（静态核对）
+    R.set_phase("阶段二 · 教师视角 | 4c. 前后端契约一致性")
+
+    # 本组用例直接读源码核对字段名。此前 PaperManage 传 requirement 而后端读
+    # request、AI 组卷漏传 save 导致只出预览不入库、模板读 paper.question_count
+    # 而后端返回 item_count —— 三处都是 build/单测都抓不到的契约漂移。
+    import os
+    import re
+    _repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _paper_vue = os.path.join(_repo, "frontend", "src", "views", "teacher", "PaperManage.vue")
+    _agent_py = os.path.join(_repo, "backend", "app", "api", "v1", "agent.py")
+
+    def _read(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return fh.read()
+        except OSError:
+            return ""
+
+    _pv, _ap = _read(_paper_vue), _read(_agent_py)
+
+    # 1) paper-composer 的请求字段名必须一致
+    _backend_key = "request" if 'data.get("request"' in _ap else (
+        "requirement" if 'data.get("requirement"' in _ap else "")
+    _frontend_key = "requirement" if "paperComposer({ requirement:" in _pv else (
+        "request" if "paperComposer({ request:" in _pv else "")
+    check("★ AI 组卷前后端请求字段名一致（request/requirement）",
+          bool(_backend_key) and _backend_key == _frontend_key,
+          f"后端读 {_backend_key!r}，前端发 {_frontend_key!r}")
+
+    # 2) 组卷必须落库：前端需显式传 save=True，否则只返回预览
+    _save_ok = bool(re.search(
+        r"paperComposer\(\{[^)]*save:\s*true", _pv))
+    check("★ AI 组卷前端已传 save=True（否则只预览不入库）",
+          _save_ok, "PaperManage.runAI 需显式 save: true")
+
+    # 3) 前端渲染字段必须存在于后端返回结构
+    #    注意：item_count 由 paper_agent 产出，不在 api 层字典里，
+    #    必须读 agent 实现文件而不是路由文件
+    _item_key = ("item_count" if "item_count" in _pv else
+                 ("question_count" if "question_count" in _pv else ""))
+    _paper_agent = _read(os.path.join(_repo, "backend", "app", "agents", "paper_agent.py"))
+    check("★ AI 组卷前端读取的题数字段存在于后端返回",
+          bool(_item_key) and ('"%s"' % _item_key) in _paper_agent,
+          f"前端读 paper.{_item_key!r}，paper_agent 返回是否有同名字段")
+
+    # 4) 不读后端不存在的字段（is_fallback 只在 base.py，不在 paper 内）
+    check("★ 组卷弹窗未读取后端不存在的 paper.is_fallback",
+          "paper?.is_fallback" not in _pv,
+          "该字段在 paper_agent 返回中不存在，恒为 false")
+
+    # 5) 题库页「AI 智能出题」按钮不得重复（复制粘贴残留回归）
+    _qb_vue = os.path.join(_repo, "frontend", "src", "views", "teacher", "QuestionBank.vue")
+    _qb = _read(_qb_vue)
+    _ai_btn = _qb.count('@click="openAiDlg">')
+    _ai_dialog = _qb.count('title="AI 智能出题"')
+    check("★ 题库页无重复「AI 智能出题」按钮/弹窗",
+          _ai_btn <= 1 and _ai_dialog <= 1,
+          f"按钮={_ai_btn} 弹窗={_ai_dialog}")
+
+    # 6) API 层不得有重复 key（同名后者覆盖前者，属复制残留）
+    _api_js = _read(os.path.join(_repo, "frontend", "src", "api", "index.js"))
+    _qblock = ""
+    _m = re.search(r"export const questionApi = \{(.*?)\n\}", _api_js, re.S)
+    if _m:
+        _qblock = _m.group(1)
+    _keys = re.findall(r"^\s*([A-Za-z_$][\w$]*):", _qblock, re.M)
+    _dups = sorted({k for k in _keys if _keys.count(k) > 1})
+    check("★ questionApi 无重复 key", not _dups, f"重复={_dups}" if _dups else "无重复")
 
     R.set_phase("阶段二 · 教师视角 | 5. 发布作业与考试")
 

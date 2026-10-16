@@ -89,13 +89,6 @@ export const questionApi = {
     { responseType: 'blob' }),
   exportPaper: (id) => request.get(`/question/papers/${id}/export`,
     { responseType: 'blob' }),
-  // blob 导出（window.open 无法携带 Authorization，get_current_teacher 必 401）
-  exportExcel: (params) => request.get('/question/questions/export',
-    { params, responseType: 'blob' }),
-  downloadTemplate: () => request.get('/question/questions/template',
-    { responseType: 'blob' }),
-  exportPaper: (id) => request.get(`/question/papers/${id}/export`,
-    { responseType: 'blob' }),
   papers: (params) => request.get('/question/papers', { params }),
   paperDetail: (id) => request.get(`/question/papers/${id}`),
   createPaper: (data) => request.post('/question/papers', data),

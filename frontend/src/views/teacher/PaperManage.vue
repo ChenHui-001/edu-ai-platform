@@ -205,13 +205,14 @@
       <div v-if="aiResult" class="ai-result">
         <el-divider content-position="left">
           <b>组卷结果</b>
-          <el-tag size="small" class="ml4" :type="aiResult.paper?.is_fallback ? 'warning' : 'success'">
-            {{ aiResult.paper?.is_fallback ? '规则引擎（降级）' : '大模型组卷' }}
+          <el-tag size="small" class="ml4" :type="aiResult.paper?.id ? 'success' : 'warning'">
+            {{ aiResult.paper?.id ? '已入库' : '仅预览（未入库）' }}
           </el-tag>
         </el-divider>
         <p><b>试卷名称：</b>{{ aiResult.paper?.name }}</p>
-        <p><b>题目数量：</b>{{ aiResult.paper?.question_count ?? aiResult.paper?.total_score ?? '-' }}</p>
-        <p v-if="aiResult.analysis"><b>难度分析：</b>{{ aiResult.analysis }}</p>
+        <p><b>题目数量：</b>{{ aiResult.paper?.item_count ?? '-' }}</p>
+        <p><b>总分：</b>{{ aiResult.paper?.total_score ?? '-' }}</p>
+        <p v-if="aiResult.difficulty_report || aiResult.analysis"><b>难度分析：</b>{{ aiResult.analysis || aiResult.difficulty_report }}</p>
         <p v-if="aiResult.knowledge_coverage"><b>知识点覆盖：</b>{{ aiResult.knowledge_coverage }}</p>
         <p v-if="aiResult.paper?.id" class="mt8">
           <el-button type="success" size="small" @click="useResult">使用该试卷</el-button>
@@ -417,9 +418,16 @@ async function runAI() {
   if (!aiReq.value) return ElMessage.warning('请输入组卷需求')
   aiLoading.value = true
   try {
-    const res = await agentApi.paperComposer({ requirement: aiReq.value })
-    aiResult.value = res.data.data || {}
-    ElMessage.success(res.data.message || '组卷完成')
+    // 后端 paper_composer 读 data["request"]（不是 requirement），
+    // 且 save 默认为 False —— 不传 save=True 只会返回预览、不落库
+    const res = await agentApi.paperComposer({ request: aiReq.value, save: true })
+    const data = res.data.data || {}
+    if (!data.paper?.id) {
+      ElMessage.warning(data.tip || '未生成试卷：题库可用题目不足，请先补充题目')
+    } else {
+      ElMessage.success(data.tip || res.data.message || '组卷完成')
+    }
+    aiResult.value = data
     load()
   } finally {
     aiLoading.value = false
@@ -428,7 +436,12 @@ async function runAI() {
 
 function useResult() {
   aiDlg.value = false
-  ElMessage.success(`已创建试卷「${aiResult.value.paper.name}」`)
+  const p = aiResult.value?.paper || {}
+  ElMessage.success(
+    p.id
+      ? `已创建试卷「${p.name}」（${p.item_count} 题 / ${p.total_score} 分），可在列表查看`
+      : '本次仅生成预览，题库可用题目不足，未创建试卷'
+  )
 }
 
 async function viewDetail(row) {

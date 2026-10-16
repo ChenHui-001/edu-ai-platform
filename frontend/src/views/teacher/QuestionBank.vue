@@ -9,8 +9,6 @@
                    @click="exportExcel">导出</el-button>
         <el-button v-if="can('question:bank:write')" :icon="MagicStick" type="warning"
                    @click="openAiDlg">AI 智能出题</el-button>
-        <el-button v-if="can('question:bank:write')" :icon="MagicStick" type="warning"
-                   @click="openAiDlg">AI 智能出题</el-button>
         <el-button v-if="can('question:bank:write')" type="primary" :icon="Plus"
                    @click="openDialog()">新增题目</el-button>
       </div>
@@ -278,9 +276,10 @@
         <el-button type="primary" :loading="importing" :disabled="!file" @click="doImport">开始导入</el-button>
       </template>
     </el-dialog>
-  </div>
+
+
   <!-- AI 智能出题：条件生成 → 直接入库（草稿态，审核后可用于组卷） -->
-  <el-dialog v-model="aiDlg" title="AI 智能出题" width="640px" destroy-on-close>
+    <el-dialog v-model="aiDlg" title="AI 智能出题" width="640px" destroy-on-close>
     <el-form :model="aiForm" label-width="90px">
       <el-row :gutter="10">
         <el-col :span="12">
@@ -342,7 +341,7 @@
         </el-table-column>
         <el-table-column prop="score" label="分值" width="52" />
         <el-table-column label="题干" min-width="300">
-          <template #default="{ row }">{{ stripStem(row.stem).slice(0, 70) }}</template>
+          <template #default="{ row }">{{ stripHtml(row.stem).slice(0, 70) }}</template>
         </el-table-column>
       </el-table>
     </div>
@@ -353,84 +352,14 @@
                  @click="generateAi">生成并入库</el-button>
     </template>
   </el-dialog>
-  <!-- AI 智能出题：条件生成 → 直接入库（草稿态，审核后可用于组卷） -->
-  <el-dialog v-model="aiDlg" title="AI 智能出题" width="640px" destroy-on-close>
-    <el-form :model="aiForm" label-width="90px">
-      <el-row :gutter="10">
-        <el-col :span="12">
-          <el-form-item label="学科" required>
-            <el-select v-model="aiForm.subject_id" style="width:100%" @change="loadAiKps">
-              <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-        <el-col :span="12">
-          <el-form-item label="年级">
-            <el-select v-model="aiForm.grade_id" clearable style="width:100%">
-              <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-      </el-row>
-      <el-row :gutter="10">
-        <el-col :span="8">
-          <el-form-item label="题型">
-            <el-select v-model="aiForm.type" style="width:100%">
-              <el-option v-for="(label, key) in TYPE_LABEL" :key="key" :label="label" :value="key" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-        <el-col :span="8">
-          <el-form-item label="难度">
-            <el-select v-model="aiForm.difficulty" style="width:100%">
-              <el-option label="简单" value="easy" />
-              <el-option label="中等" value="medium" />
-              <el-option label="较难" value="hard" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-        <el-col :span="8">
-          <el-form-item label="数量">
-            <el-input-number v-model="aiForm.count" :min="1" :max="20" style="width:100%" />
-          </el-form-item>
-        </el-col>
-      </el-row>
-      <el-form-item label="知识点">
-        <el-select v-model="aiForm.knowledge_point_id" clearable filterable
-                   style="width:100%" placeholder="可选，AI 将紧扣该知识点出题">
-          <el-option v-for="k in aiKps" :key="k.id" :label="k.name" :value="k.id" />
-        </el-select>
-      </el-form-item>
-    </el-form>
-
-    <div v-if="aiResult && aiResult.length" class="mb12">
-      <el-alert type="success" :closable="false" show-icon
-                :title="'已生成 ' + aiResult.length + ' 题并保存至题库（草稿状态）'"
-                description="草稿题审核通过后即可用于组卷；可在列表用「来源=AI」筛选查看" />
-      <el-table :data="aiResult" size="small" border max-height="240" class="mt8">
-        <el-table-column label="题型" width="76">
-          <template #default="{ row }">{{ TYPE_LABEL[row.type] || row.type }}</template>
-        </el-table-column>
-        <el-table-column label="难度" width="58">
-          <template #default="{ row }">{{ row.difficulty }}</template>
-        </el-table-column>
-        <el-table-column prop="score" label="分值" width="52" />
-        <el-table-column label="题干" min-width="300">
-          <template #default="{ row }">{{ stripStem(row.stem).slice(0, 70) }}</template>
-        </el-table-column>
-      </el-table>
-    </div>
-
-    <template #footer>
-      <el-button @click="aiDlg = false">关闭</el-button>
-      <el-button type="primary" :loading="aiLoading" :disabled="!aiForm.subject_id"
-                 @click="generateAi">生成并入库</el-button>
-    </template>
-  </el-dialog>
+</div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Download, Plus, Refresh, Search, Upload, UploadFilled, Delete, MagicStick } from '@element-plus/icons-vue'
+import { questionApi, eduApi, agentApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
 const { can } = useUserStore()
@@ -442,8 +371,6 @@ const aiResult = ref(null)
 const aiForm = reactive({ subject_id: null, grade_id: null, type: 'single',
   difficulty: 'medium', count: 5, knowledge_point_id: null })
 const aiKps = ref([])
-
-function stripStem(s) { return String(s || '').replace(/<[^>]+>/g, '') }
 
 function openAiDlg() {
   Object.assign(aiForm, { subject_id: query.subject_id, grade_id: query.grade_id,
@@ -477,11 +404,7 @@ async function generateAi() {
 }
 
 
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Plus, Refresh, Search, Upload, UploadFilled, Delete, MagicStick } from '@element-plus/icons-vue'
-import { questionApi, eduApi, agentApi } from '@/api'
 
-// 按钮级权限统一取 store 的 can getter（见文件顶部解构）
 
 // 须与后端 QUESTION_TYPE_LABEL 保持一致（backend/app/api/v1/question.py）
 const TYPE_LABEL = {

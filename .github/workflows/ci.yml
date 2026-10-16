@@ -62,6 +62,11 @@ jobs:
         # function" → 整页白屏且无提示，构建期必须拦住
         run: python tools/scan_vue_refs.py
 
+      - name: 复制粘贴残留普查（重复按钮/同开弹窗）
+        # 编辑时误用 replace_all 会把整块模板复制成两份，页面出现两个同名
+        # 按钮或点开一个弹两个，但 build 与 lint 全部通过
+        run: python tools/scan_vue_dup.py
+
       - name: 构建
         working-directory: frontend
         run: npm run build
