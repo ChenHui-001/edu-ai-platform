@@ -4,10 +4,10 @@
 个性化学习路径推荐、知识闪卡。由原 1333 行的 api/v1/grading.py 拆分而来，
 路由前缀 /learning 保持不变。
 """
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -19,7 +19,7 @@ from app.models import (
     QuestionFavorite, StudyCheckin, StudyGoal, Subject, Task, User,
     WrongQuestion,
 )
-from app.utils.common import PageParams, dictify, load_json, ok, utcnow
+from app.utils.common import PageParams, dictify, load_json, ok, today_str, utcnow
 
 router = APIRouter()
 
@@ -139,6 +139,36 @@ def remove_favorite_by_question(
         db.delete(fav)
         db.commit()
     return ok(message="已取消收藏")
+
+
+@router.get("/favorites/check-batch", summary="批量检查收藏状态")
+def check_favorites_batch(
+    question_ids: str = Query(..., description="逗号分隔的题目 ID，如 1,2,3（≤100 个）"),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """一次返回多道题的收藏状态。
+
+    前端练习页此前对每道题串行调一次 /favorites/check（30 题 = 30 个
+    请求），这里合并为一次。key 用字符串以贴合 JS 对象取值习惯。
+    """
+    ids = []
+    for x in question_ids.split(","):
+        x = x.strip()
+        if x.isdigit():
+            ids.append(int(x))
+    ids = ids[:100]
+    rows = db.scalars(select(QuestionFavorite).where(
+        QuestionFavorite.user_id == user.id,
+        QuestionFavorite.question_id.in_(ids),
+    )).all() if ids else []
+    fav_map = {f.question_id: f for f in rows}
+    return ok({
+        str(qid): {
+            "favorited": qid in fav_map,
+            "fav_id": fav_map[qid].id if qid in fav_map else None,
+            "tag": fav_map[qid].tag if qid in fav_map else None,
+        } for qid in ids
+    })
 
 
 @router.get("/favorites/check/{question_id}", summary="检查是否已收藏")
@@ -345,7 +375,7 @@ def list_goals(db: Session = Depends(get_db), user: User = Depends(get_current_u
     goals = db.scalars(select(StudyGoal).where(
         StudyGoal.user_id == user.id, StudyGoal.is_active.is_(True)
     ).order_by(StudyGoal.created_at.desc())).all()
-    today = utcnow().strftime("%Y-%m-%d")
+    today = today_str()
     # 批量预取今日打卡与每目标最新 streak（此前每目标 2 次查询）
     goal_ids = [g.id for g in goals]
     today_map, streak_map = {}, {}
@@ -394,7 +424,7 @@ def create_goal(
         target_value=int(data.get("target_value", 10)),
         unit=data.get("unit", "questions"),
         subject_id=data.get("subject_id"),
-        start_date=utcnow().strftime("%Y-%m-%d"),
+        start_date=today_str(),
         end_date=data.get("end_date"),
     )
     db.add(goal)
@@ -437,7 +467,7 @@ def checkin(
     g = db.get(StudyGoal, goal_id)
     if not g or g.user_id != user.id:
         raise NotFoundException("目标不存在")
-    today = utcnow().strftime("%Y-%m-%d")
+    today = today_str()
     existing = db.scalar(select(StudyCheckin).where(
         StudyCheckin.user_id == user.id, StudyCheckin.goal_id == goal_id,
         StudyCheckin.checkin_date == today
@@ -454,7 +484,7 @@ def checkin(
                    "is_completed": existing.actual_value >= g.target_value},
                   message="今日已打卡，已更新完成量")
     # 计算连续天数
-    yesterday = (utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     prev = db.scalar(select(StudyCheckin).where(
         StudyCheckin.user_id == user.id, StudyCheckin.goal_id == goal_id,
         StudyCheckin.checkin_date == yesterday

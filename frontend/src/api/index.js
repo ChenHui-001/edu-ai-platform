@@ -133,6 +133,9 @@ export const learningApi = {
   removeFavorite: (id) => request.delete(`/learning/favorites/${id}`),
   removeFavoriteByQid: (qid) => request.delete(`/learning/favorites/by-question/${qid}`),
   checkFavorite: (qid) => request.get(`/learning/favorites/check/${qid}`),
+  // 批量检查（练习页整卷一次拉取，替代逐题串行 N+1）
+  checkFavoritesBatch: (qids) => request.get('/learning/favorites/check-batch',
+    { params: { question_ids: qids.join(',') } }),
   favoritesPractice: (data) => request.post('/learning/favorites/practice', data),
   // 错题变式练习
   wrongVariant: (wid) => request.post(`/learning/wrong-questions/${wid}/variant`),

@@ -180,16 +180,13 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Refresh, Clock, Close, Star, StarFilled } from '@element-plus/icons-vue'
+import TYPES, { questionTypeLabel } from '@/constants/question'
 import { taskApi, learningApi, eduApi } from '@/api'
 import PomodoroTimer from '@/components/PomodoroTimer.vue'
 
 const route = useRoute()
 const router = useRouter()
 
-const TYPES = {
-  single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题',
-  short: '简答题', calculate: '计算题', proof: '证明题', essay: '论述题'
-}
 
 const subjects = ref([])
 const grades = ref([])
@@ -299,13 +296,14 @@ async function createPractice() {
 
 async function loadFavoriteStatus() {
   if (!paper.value?.items?.length) return
-  favoritedSet.value = new Set()
-  for (const q of paper.value.items) {
-    try {
-      const res = await learningApi.checkFavorite(q.question_id)
-      if (res.data?.favorited) favoritedSet.value.add(q.question_id)
-    } catch { /* ignore */ }
-  }
+  // 批量接口一次拉全卷状态（原先逐题串行，30 题 = 30 个请求）
+  try {
+    const res = await learningApi.checkFavoritesBatch(
+      paper.value.items.map(q => q.question_id))
+    const m = res.data || {}
+    favoritedSet.value = new Set(
+      paper.value.items.map(q => q.question_id).filter(id => m[String(id)]?.favorited))
+  } catch { /* 状态拉取失败不影响作答，静默降级为全未收藏 */ }
 }
 
 async function toggleFavorite(q) {

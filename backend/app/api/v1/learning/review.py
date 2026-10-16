@@ -19,7 +19,7 @@ from app.models import (
     Task, TaskAssignment, User, WrongQuestion,
 )
 from app.services import grading_service
-from app.utils.common import PageParams, dictify, load_json, ok, utcnow
+from app.utils.common import PageParams, dictify, load_json, ok, today_str, utcnow
 
 router = APIRouter()
 
@@ -40,7 +40,7 @@ def review_plans(
         select(func.count()).select_from(stmt.subquery()).where(
             ReviewPlan.is_completed.is_(False))
     ) or 0
-    today = utcnow().strftime("%Y-%m-%d")
+    today = today_str()
     today_total = db.scalar(
         select(func.count()).select_from(stmt.subquery()).where(
             ReviewPlan.is_completed.is_(False),
@@ -73,7 +73,7 @@ def review_plans(
             "stem": q.stem if q else None,
         })
 
-    today = utcnow().strftime("%Y-%m-%d")
+    today = today_str()
     return ok({
         "items": items,
         "today_count": today_total,

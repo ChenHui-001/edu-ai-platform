@@ -97,6 +97,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Promotion, Refresh, Search, Edit, Delete } from '@element-plus/icons-vue'
+import TYPES, { questionTypeLabel } from '@/constants/question'
 import { learningApi } from '@/api'
 
 const router = useRouter()
@@ -109,7 +110,6 @@ const editTag = ref('')
 
 const query = ref({ tag: '', keyword: '' })
 
-const TYPES = { single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题', short_answer: '简答题', essay: '论述题' }
 
 const typeCount = computed(() => new Set(list.value.map(i => i.type)).size)
 const recentCount = computed(() => {

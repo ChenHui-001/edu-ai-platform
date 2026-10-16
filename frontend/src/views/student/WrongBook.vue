@@ -118,12 +118,9 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, MagicStick, RefreshRight, ArrowDown, Download } from '@element-plus/icons-vue'
+import TYPES, { questionTypeLabel } from '@/constants/question'
 import { learningApi, eduApi } from '@/api'
 
-const TYPES = {
-  single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题',
-  short: '简答题', calculate: '计算题', proof: '证明题', essay: '论述题'
-}
 const DIFF = { easy: '简单', medium: '中等', hard: '困难' }
 const REASONS = ['概念不清', '审题错误', '计算失误', '公式记错', '知识遗忘', '方法不会', '粗心大意']
 const router = useRouter()

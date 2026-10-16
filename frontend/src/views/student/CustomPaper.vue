@@ -81,6 +81,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh, MagicStick } from '@element-plus/icons-vue'
+import TYPES, { questionTypeLabel } from '@/constants/question'
 import { learningApi, eduApi, taskApi } from '@/api'
 
 const router = useRouter()
@@ -90,7 +91,6 @@ const kps = ref([])
 const generating = ref(false)
 const result = ref(null)
 
-const TYPES = { single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题', short: '简答题', calculate: '计算题' }
 
 const form = reactive({
   name: '', subject_id: null, grade_id: null, count: 10,

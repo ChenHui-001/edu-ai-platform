@@ -303,6 +303,16 @@ def run():
         check("收藏夹一键生成练习", p.get("success") and d.get("task_id"),
               f"total={d.get('total')}")
 
+        # 批量收藏状态（替代逐题串行 N+1 的回归用例）
+        p, _, _ = stu.post("/learning/favorites", {"question_id": qid, "tag": "批量"})
+        p, _, _ = stu.get("/learning/favorites/check-batch",
+                          params={"question_ids": f"{qid},999999"})
+        d = data_of(p) or {}
+        check("★ 批量收藏状态接口（N+1 回归）",
+              p.get("success")
+              and d.get(str(qid), {}).get("favorited") is True
+              and d.get("999999", {}).get("favorited") is False,
+              f"keys={list(d.keys())[:3]}")
         p, _, _ = stu.delete(f"/learning/favorites/by-question/{qid}")
         check("按题目取消收藏（幂等）", p.get("success"), p.get("message", ""))
 
@@ -339,6 +349,16 @@ def run():
     check("目标列表含日历与 max_streak",
           isinstance(d.get("calendar"), dict) and "max_streak" in d,
           f"goals={len(d.get('items') or [])}")
+    # 时区回归：打卡发生在"今天"，calendar 键必须是本地（北京）日期。
+    # 若后端仍用 UTC，北京时间 0:00-8:00 会落在"昨天"，
+    # 且 today_checked 之后日历当天格子缺失。
+    mine_goal = next((x for x in (d.get("items") or [])
+                      if x.get("today_checked")), None)
+    if mine_goal and d.get("calendar"):
+        local_today = time.strftime("%Y-%m-%d")
+        check("★ 打卡日历使用本地日期（时区回归）",
+              local_today in d["calendar"],
+              f"keys={sorted(d['calendar'])[-2:]} today={local_today}")
 
     p, _, _ = stu.post(f"/learning/goals/{gid}/checkin", {"actual_value": -3})
     d = data_of(p) or {}

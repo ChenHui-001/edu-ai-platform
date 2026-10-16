@@ -13,6 +13,17 @@ from app.core.config import settings
 T = TypeVar("T")
 
 
+def today_str() -> str:
+    """本地时区的当天日期串（YYYY-MM-DD）。
+
+    打卡 / 复习计划 / 学习目标这类「今天」语义必须按用户所在时区算：
+    utcnow() 是 UTC，北京时间 0:00-8:00 期间仍是"昨天"，会把打卡
+    日历与复习计划整体错位 8 小时。容器与开发机 TZ 均为 Asia/Shanghai，
+    datetime.now() 即北京时间。
+    """
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 def utcnow() -> datetime:
     """带时区的当前时间（SQLite 不存时区，这里统一 naive UTC）。"""
     return datetime.now(timezone.utc).replace(tzinfo=None)
