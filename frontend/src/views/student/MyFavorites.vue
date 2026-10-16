@@ -180,10 +180,16 @@ async function remove(item) {
   load()
 }
 
+const generating = ref(false)
 async function generatePractice() {
-  const res = await learningApi.favoritesPractice({})
-  ElMessage.success(res.message)
-  router.push(`/student/exam/${res.data.task_id}`)
+  if (generating.value) return
+  try {
+    const res = await learningApi.favoritesPractice({})
+    ElMessage.success(res.message)
+    router.push(`/student/exam/${res.data.task_id}`)
+  } finally {
+    generating.value = false
+  }
 }
 
 onMounted(load)

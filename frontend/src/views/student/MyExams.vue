@@ -99,7 +99,7 @@ async function load() {
     const res = await taskApi.myTasks({
       page: 1, page_size: 50, status: tab.value === 'pending' ? 'published' : ''
     })
-    list.value = res.data.data?.items || []
+    list.value = res.data?.items || []
   } finally {
     loading.value = false
   }
@@ -110,14 +110,18 @@ function onTabChange() { load() }
 function goExam(t) { router.push({ name: 'ExamPaper', params: { taskId: t.id } }) }
 
 async function viewResult(t) {
-  if (!t.submission_id) return ElMessage.warning('尚未生成成绩')
-  const res = await taskApi.submissionDetail(t.submission_id)
-  const d = res.data.data
-  const right = (d.results || []).filter(r => r.is_correct).length
+  // my/tasks 返回的提交挂在 my_submission 上（无顶层 submission_id）；
+  // 详情接口返回 answers（无 results/total_score/summary）
+  const sid = t.my_submission?.id
+  if (!sid) return ElMessage.warning('尚未生成成绩')
+  const res = await taskApi.submissionDetail(sid)
+  const d = res.data
+  const answers = d.answers || []
+  const right = answers.filter(a => a.is_correct).length
   ElMessageBoxAlert(
-    `任务：${t.title}\n得分：${d.score ?? '-'} / ${d.total_score}\n` +
-    `正确：${right}/${(d.results || []).length} 题\n` +
-    (d.summary ? `评语：${d.summary}` : '')
+    `任务：${d.task_title || t.title}\n得分：${d.score ?? '-'}\n` +
+    `答对：${right}/${answers.length} 题\n` +
+    (d.is_passed == null ? '' : `结果：${d.is_passed ? '及格' : '不及格'}`)
   )
 }
 

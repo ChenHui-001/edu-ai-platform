@@ -150,7 +150,7 @@ async function load() {
   loading.value = true
   try {
     const res = await taskApi.myScores(query)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
     summary.value = d.summary
@@ -165,15 +165,29 @@ async function viewDetail(row) {
   results.value = []
   try {
     const res = await taskApi.submissionDetail(row.id)
-    detail.value = res.data.data
-    results.value = detail.value?.results || []
+    // 后端返回 {answers:[...]}；弹窗模板读 student_answer/correct_answer/
+    // ai_comment 等展示名，这里做一次映射并补 total_score（详情接口不带）
+    detail.value = { ...res.data, total_score: res.data?.total_score ?? row.total_score }
+    results.value = (detail.value?.answers || []).map((a) => ({
+      ...a,
+      student_answer: a.content,
+      correct_answer: a.answer,
+      ai_comment: a.comment,
+    }))
   } finally {
     detailLoading.value = false
   }
 }
 
-function exportExcel() {
-  window.open(reportApi.exportUrl({ scope: 'student' }), '_blank')
+async function exportExcel() {
+  // window.open 无法携带 Authorization（恒 401），且缺 report_type（422）
+  const res = await reportApi.exportExcel({ report_type: 'student_overview' })
+  const url = URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `我的成绩报表.xlsx`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 onMounted(load)

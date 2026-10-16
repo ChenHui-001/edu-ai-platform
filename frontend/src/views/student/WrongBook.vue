@@ -164,7 +164,7 @@ async function load() {
   loading.value = true
   try {
     const res = await learningApi.wrongQuestions(query)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
   } finally {
@@ -177,24 +177,45 @@ function reset() {
   load()
 }
 
+const analyzing = ref(false)
 async function analyze(w) {
-  const res = await learningApi.analyzeWrong(w.id)
-  const d = res.data.data
-  ElMessageBox.alert(
-    `<b>AI 错因分析</b><br/>${d.analysis || '-'}` +
-    (d.error_points?.length ? `<br/><br/><b>失分点：</b>${d.error_points.join('、')}` : ''),
-    'AI 分析', { dangerouslyUseHTMLString: true }
-  )
-  w.ai_reason = d.analysis
+  if (analyzing.value) return
+  analyzing.value = true
+  try {
+    const res = await learningApi.analyzeWrong(w.id)
+    const d = res.data
+    // AI 输出（可能回显题目/作答原文）先转义再进 HTML 弹窗，防注入
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ))
+    ElMessageBox.alert(
+      `<b>AI 错因分析</b><br/>${esc(d.analysis) || '-'}` +
+      (d.error_points?.length ? `<br/><br/><b>失分点：</b>${esc(d.error_points.join('、'))}` : ''),
+      'AI 分析', { dangerouslyUseHTMLString: true }
+    )
+    w.ai_reason = d.analysis
+  } finally {
+    analyzing.value = false
+  }
 }
 
+const redoing = ref(false)
 async function redo(w) {
-  const res = await learningApi.redoWrong(w.id)
-  const d = res.data.data
-  ElMessage.success(`已生成 ${d.count || d.items?.length || 0} 道同类练习题`)
+  if (redoing.value) return
+  redoing.value = true
+  try {
+    const res = await learningApi.redoWrong(w.id)
+    const d = res.data
+    ElMessage.success(`已生成 ${d.count || d.items?.length || 0} 道同类练习题`)
+  } finally {
+    redoing.value = false
+  }
 }
 
+const varianting = ref(false)
 async function variant(w) {
+  if (varianting.value) return
+  varianting.value = true
   variantLoading.value = w.id
   try {
     const res = await learningApi.wrongVariant(w.id)

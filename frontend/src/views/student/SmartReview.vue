@@ -185,7 +185,7 @@ async function loadPlans() {
     if (filterDate.value) params.scheduled_date = filterDate.value
     if (tab.value === 'pending') params.is_completed = false
     const res = await learningApi.reviewPlans(params)
-    planData.value = res.data.data || {}
+    planData.value = res.data || {}
     plans.value = planData.value.items || []
   } finally {
     loading.value = false
@@ -194,17 +194,24 @@ async function loadPlans() {
 
 async function loadMastery() {
   const res = await learningApi.masteryMap(subjectId.value ? { subject_id: subjectId.value } : {})
-  mastery.value = res.data.data || {}
+  mastery.value = res.data || {}
 }
 
 function onTabChange() { loadPlans() }
 
 function loadAll() { loadPlans(); loadMastery() }
 
+const completing = ref(false)
 async function complete(p) {
-  await learningApi.completeReview(p.id, { quality: 'good' })
-  ElMessage.success('复习完成，下次复习时间已顺延')
-  loadPlans()
+  if (completing.value) return
+  completing.value = true
+  try {
+    await learningApi.completeReview(p.id, { quality: 'good' })
+    ElMessage.success('复习完成，下次复习时间已顺延')
+    loadPlans()
+  } finally {
+    completing.value = false
+  }
 }
 
 function openGenDialog() { plan.value = null; genDlg.value = true }
@@ -213,7 +220,7 @@ async function genPlan() {
   generating.value = true
   try {
     const res = await learningApi.generatePlan(genForm)
-    plan.value = res.data.data || {}
+    plan.value = res.data || {}
     ElMessage.success(res.data.message || '计划生成成功')
     loadAll()
   } finally {

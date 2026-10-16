@@ -2,6 +2,7 @@
 
 由原 1333 行的 api/v1/grading.py 拆分而来，路由前缀 /learning 保持不变。
 """
+import html
 import io
 from typing import Any, Dict, Optional
 
@@ -171,19 +172,20 @@ def export_wrong(
         if not q:
             continue
         opts = load_json(q.options) or []
-        rows.append(f"<p><b>{i}.</b> {q.stem}</p>")
+        rows.append(f"<p><b>{i}.</b> {html.escape(q.stem or '')}</p>")
         if opts:
             rows.append("<ol type='A'>" + "".join(
-                f"<li>{o.get('text', '')}</li>" for o in opts) + "</ol>")
+                f"<li>{html.escape(str(o.get('text') or ''))}</li>" for o in opts) + "</ol>")
         if with_answer:
-            rows.append(f"<p><i>答案：{q.answer or ''}</i></p>")
-            rows.append(f"<p><i>解析：{q.analysis or '暂无'}</i></p>")
+            rows.append(f"<p><i>答案：{html.escape(q.answer or '')}</i></p>")
+            rows.append(f"<p><i>解析：{html.escape(q.analysis or '暂无')}</i></p>")
         rows.append("<hr/>")
     rows.append("</body></html>")
-    html = "\n".join(rows)
+    # 本地名不能用 html —— 会遮蔽 html 模块，同函数前面 html.escape 直接 UnboundLocalError
+    html_doc = "\n".join(rows)
     ext = "pdf" if fmt == "pdf" else "html"
     mt = "text/html"
     return StreamingResponse(
-        io.BytesIO(html.encode("utf-8")), media_type=mt,
+        io.BytesIO(html_doc.encode("utf-8")), media_type=mt,
         headers={"Content-Disposition": f"attachment; filename=wrong_questions.{ext}"},
     )

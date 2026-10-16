@@ -4,6 +4,7 @@
 个性化学习路径推荐、知识闪卡。由原 1333 行的 api/v1/grading.py 拆分而来，
 路由前缀 /learning 保持不变。
 """
+from datetime import timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends
@@ -41,13 +42,28 @@ def list_favorites(
         .offset(params.offset).limit(params.page_size)
     ).all()
 
+    # 批量预取（此前每条收藏 3 次 db.get，一页 20 条 = 60 次查询）
+    q_ids = [f.question_id for f in rows]
+    q_map, kp_map, sub_map = {}, {}, {}
+    if q_ids:
+        q_rows = db.scalars(select(Question).where(Question.id.in_(q_ids))).all()
+        q_map = {q.id: q for q in q_rows}
+        kp_ids = {q.knowledge_point_id for q in q_rows if q.knowledge_point_id}
+        sub_ids = {q.subject_id for q in q_rows if q.subject_id}
+        if kp_ids:
+            kp_map = {k.id: k for k in db.scalars(
+                select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids))).all()}
+        if sub_ids:
+            sub_map = {x.id: x for x in db.scalars(
+                select(Subject).where(Subject.id.in_(sub_ids))).all()}
+
     items = []
     for f in rows:
-        q = db.get(Question, f.question_id)
+        q = q_map.get(f.question_id)
         if not q:
             continue
-        kp = db.get(KnowledgePoint, q.knowledge_point_id) if q.knowledge_point_id else None
-        sub = db.get(Subject, q.subject_id) if q.subject_id else None
+        kp = kp_map.get(q.knowledge_point_id) if q.knowledge_point_id else None
+        sub = sub_map.get(q.subject_id) if q.subject_id else None
         items.append({
             "id": f.id, "question_id": f.question_id, "tag": f.tag,
             "note": f.note, "created_at": dictify(f.created_at),
@@ -58,14 +74,12 @@ def list_favorites(
             "knowledge_point_name": kp.name if kp else None,
         })
 
-    # 收集所有标签供前端筛选
-    all_tags = list(set(
-        f.tag for f in db.scalars(
-            select(QuestionFavorite).where(
-                QuestionFavorite.user_id == user.id, QuestionFavorite.tag.isnot(None)
-            )
-        ).all()
-    )) if total > 0 else []
+    # 标签下拉：distinct 查询即可，原先全量拉行再 set 去重
+    all_tags = [r for r in db.scalars(
+        select(QuestionFavorite.tag).where(
+            QuestionFavorite.user_id == user.id, QuestionFavorite.tag.isnot(None)
+        ).distinct()
+    ).all()] if total > 0 else []
 
     return ok({"items": items, "total": total, "tags": all_tags, "page": params.page})
 
@@ -145,7 +159,13 @@ def favorites_practice(
     user: User = Depends(get_current_user),
 ):
     """从收藏的题目中选取，生成一份专项练习卷。"""
-    question_ids = data.get("question_ids", [])
+    question_ids = data.get("question_ids") or []
+    if not isinstance(question_ids, list) or not all(
+        isinstance(x, int) for x in question_ids):
+        raise BusinessException("question_ids 必须是整数数组")
+    # 上限：一次生成几百题的练习卷会拖垮交卷与判分
+    if len(question_ids) > 50:
+        raise BusinessException("单次练习最多选择 50 道题")
     if not question_ids:
         # 不指定则取全部收藏的题目
         question_ids = [
@@ -164,8 +184,10 @@ def favorites_practice(
     if not valid:
         raise BusinessException("收藏的题目均已下架")
 
+    # grade_id 为非空外键：题目未绑年级时回落学生年级（传 0 必撞 FK 500）
+    grade_id = next((q.grade_id for q in valid if q.grade_id), None) or user.grade_id
     paper = Paper(name=f"收藏专项练习 {utcnow():%m-%d}", creator_id=user.id,
-                  subject_id=valid[0].subject_id, grade_id=valid[0].grade_id,
+                  subject_id=valid[0].subject_id, grade_id=grade_id,
                   total_score=sum(q.score for q in valid))
     db.add(paper)
     db.flush()
@@ -173,7 +195,7 @@ def favorites_practice(
         db.add(PaperItem(paper_id=paper.id, question_id=q.id, sort_order=i, score=q.score))
     task = Task(title=paper.name, type="practice", paper_id=paper.id,
                 creator_id=user.id, total_score=paper.total_score, status="published",
-                subject_id=valid[0].subject_id, grade_id=valid[0].grade_id or 0)
+                subject_id=valid[0].subject_id, grade_id=grade_id)
     db.add(task)
     db.commit()
     return ok({"task_id": task.id, "paper_id": paper.id, "total": len(valid)},
@@ -222,22 +244,21 @@ def wrong_variant(
         except Exception:
             ai_questions = []
 
-    # 组合：AI 变式题 + 题库相似题，最多取 5 道
+    # 组合：AI 变式题 + 题库相似题，最多取 5 道。
+    # 注：AI 生成走 save=False（不入库），返回项没有 id，
+    # 无法直接组卷进练习 —— 因此实际可用题只来自题库相似题；
+    # 待 AI 出题接入「先入库再引用」流程后此处可恢复合并逻辑。
     all_qs = similar[:5]
     used_ids = {q.id for q in all_qs}
-    for ai_q in ai_questions[:5]:
-        if ai_q.get("id") and ai_q["id"] not in used_ids:
-            db_q = db.get(Question, ai_q["id"])
-            if db_q and db_q.status == "published":
-                all_qs.append(db_q)
-                used_ids.add(ai_q["id"])
 
     if not all_qs:
         raise BusinessException("暂无可用的变式题目，请稍后重试或练习其他错题")
 
     # 生成练习卷
+    # grade_id 为非空外键：错题/原题未绑年级时回落学生年级（传 0 必撞 FK 500）
+    grade_id = q.grade_id or user.grade_id
     paper = Paper(name=f"变式练习-{q.stem[:15]}...", creator_id=user.id,
-                  subject_id=w.subject_id, grade_id=q.grade_id,
+                  subject_id=w.subject_id, grade_id=grade_id,
                   total_score=sum(qq.score for qq in all_qs))
     db.add(paper)
     db.flush()
@@ -245,7 +266,7 @@ def wrong_variant(
         db.add(PaperItem(paper_id=paper.id, question_id=qq.id, sort_order=i, score=qq.score))
     task = Task(title=paper.name, type="practice", paper_id=paper.id,
                 creator_id=user.id, total_score=paper.total_score, status="published",
-                subject_id=w.subject_id, grade_id=q.grade_id or 0)
+                subject_id=w.subject_id, grade_id=grade_id)
     db.add(task)
     db.commit()
     return ok({"task_id": task.id, "paper_id": paper.id, "total": len(all_qs),
@@ -265,7 +286,13 @@ def create_custom_paper(
     if not subject_id:
         raise BusinessException("请选择学科")
 
-    question_ids = data.get("question_ids", [])
+    question_ids = data.get("question_ids") or []
+    if not isinstance(question_ids, list) or not all(
+        isinstance(x, int) for x in question_ids
+    ):
+        raise BusinessException("question_ids 必须是整数数组")
+    if len(question_ids) > 50:
+        raise BusinessException("自主组卷最多选择 50 道题")
     if question_ids:
         # 手动选题模式
         qs = db.scalars(select(Question).where(
@@ -282,22 +309,29 @@ def create_custom_paper(
             stmt = stmt.where(Question.difficulty == data["difficulty"])
         if data.get("question_types"):
             stmt = stmt.where(Question.type.in_(data["question_types"]))
-        count = min(int(data.get("count", 10)), 30)
+        try:
+            count = int(data.get("count", 10))
+        except (TypeError, ValueError):
+            raise BusinessException("题目数量必须是整数")
+        count = max(1, min(count, 30))
         qs = list(db.scalars(stmt.order_by(func.random()).limit(count)).all())
 
     if not qs:
         raise BusinessException("没有符合条件的题目")
 
+    # grade_id 解析：请求 → 首题 → 学生年级（非空外键不接受 0）
+    grade_id = (data.get("grade_id") or next(
+        (q.grade_id for q in qs if q.grade_id), None) or user.grade_id)
     total_score = sum(q.score for q in qs)
     paper = Paper(name=name, creator_id=user.id, subject_id=subject_id,
-                  grade_id=data.get("grade_id", 0), total_score=total_score)
+                  grade_id=grade_id, total_score=total_score)
     db.add(paper)
     db.flush()
     for i, q in enumerate(qs, 1):
         db.add(PaperItem(paper_id=paper.id, question_id=q.id, sort_order=i, score=q.score))
     task = Task(title=name, type="practice", paper_id=paper.id,
                 creator_id=user.id, total_score=total_score, status="published",
-                subject_id=subject_id, grade_id=data.get("grade_id") or qs[0].grade_id or 0)
+                subject_id=subject_id, grade_id=grade_id)
     db.add(task)
     db.commit()
     return ok({"task_id": task.id, "paper_id": paper.id, "total": len(qs),
@@ -312,25 +346,32 @@ def list_goals(db: Session = Depends(get_db), user: User = Depends(get_current_u
         StudyGoal.user_id == user.id, StudyGoal.is_active.is_(True)
     ).order_by(StudyGoal.created_at.desc())).all()
     today = utcnow().strftime("%Y-%m-%d")
+    # 批量预取今日打卡与每目标最新 streak（此前每目标 2 次查询）
+    goal_ids = [g.id for g in goals]
+    today_map, streak_map = {}, {}
+    if goal_ids:
+        for c in db.scalars(select(StudyCheckin).where(
+            StudyCheckin.user_id == user.id, StudyCheckin.goal_id.in_(goal_ids),
+            StudyCheckin.checkin_date == today,
+        )).all():
+            today_map[c.goal_id] = c
+        # streak 取各目标最近一条打卡记录（streak 为冗余存储的连续天数）
+        for c in db.scalars(select(StudyCheckin).where(
+            StudyCheckin.user_id == user.id, StudyCheckin.goal_id.in_(goal_ids)
+        ).order_by(StudyCheckin.checkin_date.desc())).all():
+            streak_map.setdefault(c.goal_id, c)
+
     items = []
     for g in goals:
-        # 今日打卡状态
-        today_checkin = db.scalar(select(StudyCheckin).where(
-            StudyCheckin.user_id == user.id, StudyCheckin.goal_id == g.id,
-            StudyCheckin.checkin_date == today
-        ))
-        # 连续天数
-        latest = db.scalar(select(StudyCheckin).where(
-            StudyCheckin.user_id == user.id, StudyCheckin.goal_id == g.id
-        ).order_by(StudyCheckin.checkin_date.desc()))
+        tc = today_map.get(g.id)
         items.append({
             "id": g.id, "title": g.title, "target_type": g.target_type,
             "target_value": g.target_value, "unit": g.unit,
             "subject_id": g.subject_id, "start_date": g.start_date,
             "end_date": g.end_date, "is_active": g.is_active,
-            "today_checked": today_checkin is not None,
-            "today_value": today_checkin.actual_value if today_checkin else 0,
-            "streak": latest.streak if latest else 0,
+            "today_checked": tc is not None,
+            "today_value": tc.actual_value if tc else 0,
+            "streak": streak_map[g.id].streak if g.id in streak_map else 0,
             "created_at": dictify(g.created_at),
         })
     # 最近 30 天打卡日历
@@ -401,7 +442,11 @@ def checkin(
         StudyCheckin.user_id == user.id, StudyCheckin.goal_id == goal_id,
         StudyCheckin.checkin_date == today
     ))
-    actual = int(data.get("actual_value", 0))
+    try:
+        actual = int(data.get("actual_value", 0))
+    except (TypeError, ValueError):
+        raise BusinessException("打卡完成量必须是整数")
+    actual = max(0, actual)  # 负数无意义，直接归零
     if existing:
         existing.actual_value = max(existing.actual_value, actual)
         db.commit()
@@ -409,7 +454,7 @@ def checkin(
                    "is_completed": existing.actual_value >= g.target_value},
                   message="今日已打卡，已更新完成量")
     # 计算连续天数
-    yesterday = (utcnow().replace(hour=0) - __import__("datetime").timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday = (utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
     prev = db.scalar(select(StudyCheckin).where(
         StudyCheckin.user_id == user.id, StudyCheckin.goal_id == goal_id,
         StudyCheckin.checkin_date == yesterday
@@ -522,10 +567,11 @@ def get_flashcards(
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
     """从知识点库生成闪卡：正面知识点名称，背面定义/关键词。"""
-    stmt = select(KnowledgePoint).where(
-        KnowledgePoint.is_active.is_(True),
-        KnowledgePoint.level >= 3,
-    )
+    limit = max(1, min(limit, 100))  # 防御超大 limit 拖垮渲染
+    # 不按 level 过滤：种子知识点 level 只有 1/2，原 level>=3 条件
+    # 使闪卡在任何环境下都是空集（功能整体失效）。leaf 语义交给
+    # is_active + 前端展示控制。
+    stmt = select(KnowledgePoint).where(KnowledgePoint.is_active.is_(True))
     if subject_id:
         stmt = stmt.where(KnowledgePoint.subject_id == subject_id)
 
@@ -541,9 +587,12 @@ def get_flashcards(
     all_kps.sort(key=lambda k: (0 if k.id in weak_kp_ids else 1, k.sort))
     all_kps = all_kps[:limit]
 
+    sub_ids = {kp.subject_id for kp in all_kps if kp.subject_id}
+    sub_map = {x.id: x for x in db.scalars(
+        select(Subject).where(Subject.id.in_(sub_ids))).all()} if sub_ids else {}
     cards = []
     for kp in all_kps:
-        sub = db.get(Subject, kp.subject_id)
+        sub = sub_map.get(kp.subject_id)
         cards.append({
             "id": kp.id, "front": kp.name, "back": kp.description or kp.keywords or kp.name,
             "subject_id": kp.subject_id, "subject_name": sub.name if sub else "",

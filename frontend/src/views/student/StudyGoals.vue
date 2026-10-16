@@ -177,17 +177,23 @@ function editGoal(g) {
   dialogVisible.value = true
 }
 
+const saving = ref(false)
 async function saveGoal() {
-  if (!goalForm.value.title) return ElMessage.warning('请输入目标名称')
-  if (editing.value) {
-    await learningApi.updateGoal(editing.value, goalForm.value)
-    ElMessage.success('目标已更新')
-  } else {
-    await learningApi.createGoal(goalForm.value)
-    ElMessage.success('目标已创建')
+  if (saving.value) return
+  if (!goalForm.value.title) { saving.value = false; return ElMessage.warning('请输入目标名称') }
+  try {
+    if (editing.value) {
+      await learningApi.updateGoal(editing.value, goalForm.value)
+      ElMessage.success('目标已更新')
+    } else {
+      await learningApi.createGoal(goalForm.value)
+      ElMessage.success('目标已创建')
+    }
+    dialogVisible.value = false
+    load()
+  } finally {
+    saving.value = false
   }
-  dialogVisible.value = false
-  load()
 }
 
 async function removeGoal(g) {
@@ -203,11 +209,17 @@ function openCheckin(g) {
   checkinVisible.value = true
 }
 
+const checking = ref(false)
 async function doCheckin() {
-  const res = await learningApi.checkin(currentGoal.value.id, { actual_value: checkinValue.value })
-  ElMessage.success(res.message)
-  checkinVisible.value = false
-  load()
+  if (checking.value) return
+  try {
+    const res = await learningApi.checkin(currentGoal.value.id, { actual_value: checkinValue.value })
+    ElMessage.success(res.message)
+    checkinVisible.value = false
+    load()
+  } finally {
+    checking.value = false
+  }
 }
 
 onMounted(load)

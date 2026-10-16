@@ -177,10 +177,14 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Refresh, Clock, Close, Star, StarFilled } from '@element-plus/icons-vue'
 import { taskApi, learningApi, eduApi } from '@/api'
 import PomodoroTimer from '@/components/PomodoroTimer.vue'
+
+const route = useRoute()
+const router = useRouter()
 
 const TYPES = {
   single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题',
@@ -255,7 +259,7 @@ function isCorrect(q) {
 async function onSubjectChange() {
   if (!form.subject_id) { kps.value = []; return }
   const res = await eduApi.knowledgeList({ subject_id: form.subject_id, page_size: 200 })
-  kps.value = res.data.data?.items || res.data.data || []
+  kps.value = res.data?.items || res.data || []
 }
 
 async function loadSubjects() {
@@ -277,7 +281,7 @@ async function createPractice() {
   generating.value = true
   try {
     const res = await taskApi.practice(form)
-    const { task_id } = res.data.data
+    const { task_id } = res.data
     const p = await taskApi.practicePaper(task_id)
     paper.value = { ...p.data.data, task_id }
     answers.value = {}
@@ -334,7 +338,7 @@ async function submitPractice() {
       content: myAnswer(q)
     }))
     const res = await taskApi.submit(paper.value.task_id, { answers: answers_ })
-    const d = res.data.data || {}
+    const d = res.data || {}
     results.value = {}
     ;(d.results || []).forEach(r => { results.value[r.question_id] = r })
     result.value = true
@@ -366,19 +370,35 @@ async function loadHistory() {
   historyLoading.value = true
   try {
     const res = await taskApi.practiceHistory({ page: 1, page_size: 50 })
-    history.value = res.data.data?.items || []
+    history.value = res.data?.items || []
   } finally {
     historyLoading.value = false
   }
 }
 
 async function viewHistory(row) {
-  const res = await taskApi.submissionDetailByTask?.(row.task_id)
+  // 原调用 taskApi.submissionDetailByTask?.(...) —— 该方法不存在，
+  // optional call 恒 undefined，res 未使用（死代码）。
+  // 现在 practice/history 已返回 submission_id，未交卷的练习直接引导重做。
   historyDrawer.value = false
-  ElMessage.info(`练习「${row.name}」得分 ${row.score ?? '-'}，正确率 ${row.accuracy}%`)
+  if (row.submission_id) {
+    router.push({ name: 'ExamPaper', params: { taskId: row.task_id } })
+    return
+  }
+  ElMessage.info(`练习「${row.name}」尚未提交，得分 ${row.score ?? '-'}，正确率 ${row.accuracy ?? 0}%`)
 }
 
-onMounted(loadSubjects)
+// 承接掌握图谱 / 学习路径的「去练习」跳转：预选学科与知识点
+onMounted(() => {
+  loadSubjects()
+  const q = route.query
+  if (q.subject) {
+    form.subject_id = Number(q.subject)
+  }
+  if (q.kp) {
+    selectedKps.value = [Number(q.kp)]
+  }
+})
 </script>
 
 <style scoped>

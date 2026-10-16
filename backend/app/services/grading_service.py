@@ -65,6 +65,9 @@ def save_answers(
     """保存作答并判分（客观题自动判分）。"""
     paper = db.get(Paper, db.get(Task, submission.task_id).paper_id)
     items = {i.id: i for i in paper.items}
+    for a in answers:
+        if not a.get("paper_item_id"):
+            raise BusinessException("答题数据缺少 paper_item_id")
     q_ids = [a["paper_item_id"] for a in answers]
     existing = {
         a.paper_item_id: a for a in db.scalars(
@@ -268,7 +271,9 @@ def finalize_submission(
     submission.duration_seconds = duration_seconds or submission.duration_seconds
     submission.submit_time = utcnow()
     submission.is_passed = submission.score >= (task.pass_score if task else settings.PASS_SCORE)
-    submission.status = "auto_graded" if subjective == 0 else "auto_graded"
+    # 主观题 AI 判分完成同样属于「自动判分完成」；
+    # 人工复核 / 改分经批改中心接口把状态推进为 fully_graded。
+    submission.status = "auto_graded"
 
     db.flush()
 
@@ -369,7 +374,9 @@ def create_practice_paper(
     if knowledge_point_ids:
         stmt = stmt.where(Question.knowledge_point_id.in_(knowledge_point_ids))
 
-    questions = list(db.scalars(stmt.limit(count * 3)).all())
+    questions = list(
+        db.scalars(stmt.order_by(func.random()).limit(count * 3)).all()
+    )
     if len(questions) < count:
         # 放宽条件
         questions = list(

@@ -1,0 +1,397 @@
+# -*- coding: utf-8 -*-
+"""阶段四 · 学习中心（学生端）端到端测试。
+
+覆盖学习中心 9 大功能域：随机练习 / 错题本 / 智能复习 / 学习笔记 /
+收藏夹 / 自主组卷 / 学习目标打卡 / 学习路径 / 知识闪卡。
+另含 2026-10-16 修复项的回归用例：
+  - /learning/practice/{id} 越权（未发布考试题目泄露）→ 404
+  - /learning/practice 缺 subject_id → 400（原 KeyError 500）
+  - count / limit / question_ids 上限 clamp
+  - 笔记导出 HTML 转义（存储型 XSS）
+  - 打卡 actual_value 负数归零、幂等
+依赖：服务可用 + 种子账号（stu731/stu732/stu101/teacher1）。
+单独运行：python tests/run_all.py learning
+"""
+import time
+
+from e2e_framework import R, Client, check, data_of, rows_of, total_of, expect_denied, is_down
+
+STU_PWD = "Student@123"
+
+
+def run():
+    stu = Client("stu731")
+    peer = Client("stu732")     # 同班（七年级(2)班）：共享笔记对照
+    other = Client("stu101")    # 异班（一年级(1)班）：越权对照
+    tea = Client("teacher1")
+
+    # ---------------------------------------------------------- 0 登录
+    R.set_phase("阶段四 · 学习中心 | 0. 登录")
+    ok, d = stu.login("stu731", STU_PWD)
+    check("stu731 登录", ok, d)
+    if not ok:
+        return
+    ok2, d2 = peer.login("stu732", STU_PWD)
+    check("stu732 登录（同班对照）", ok2, d2)
+    ok3, d3 = other.login("stu101", STU_PWD)
+    check("stu101 登录（异班对照）", ok3, d3)
+    okt, dt = tea.login("teacher1", "Teacher@123")
+    check("teacher1 登录（越权对照用）", okt, dt)
+    R.context["learning_stu_id"] = stu.user.get("id")
+
+    # ------------------------------------- 0b 前置：确保题库有可用题
+    # 测试不依赖既有种子数据 —— 全新库也要能独立跑通。
+    R.set_phase("阶段四 · 学习中心 | 0b. 前置题目（自建）")
+    p, _, _ = stu.get("/learning/flashcards", params={"limit": 1})
+    p, _, _ = tea.get("/question/questions", params={"page": 1, "page_size": 1, "subject_id": 1})
+    if total_of(p) == 0:
+        tag = f"LC{int(time.time()) % 100000}"
+        for i in range(6):
+            tea.post("/question/questions", {
+                "type": "single", "difficulty": "easy", "score": 5,
+                "stem": f"【{tag}】学习中心前置题 {i}: 3+{i}=?",
+                "options": [{"key": "A", "text": str(3 + i)}, {"key": "B", "text": "99"},
+                            {"key": "C", "text": "0"}, {"key": "D", "text": "1"}],
+                "answer": "A", "subject_id": 1, "grade_id": 1,
+                "knowledge_point_id": None, "bank_type": "public",
+            })
+        check("前置题目已自建（6 道）", True, tag)
+    else:
+        check("题库已有题目（复用现有数据）", True, f"total={total_of(p)}")
+
+    # ------------------------------------------------- 1 随机练习全流程
+    R.set_phase("阶段四 · 学习中心 | 1. 随机练习（全流程）")
+
+    # 1a 缺 subject_id → 应 400（回归：原 KeyError 直接 500）
+    p, _, _ = stu.post("/learning/practice", {"count": 3})
+    check("★ 缺 subject_id 返回 400 而非 500（回归）",
+          p.get("success") is False and "学科" in str(p.get("message", "")),
+          f"{p.get('code')} {p.get('message', '')}")
+
+    # 1b count 边界：负数 clamp 到 1；超大 clamp 到 50
+    p, _, _ = stu.post("/learning/practice", {"subject_id": 1, "count": -5})
+    d1 = data_of(p) or {}
+    check("count=-5 被 clamp（练习生成成功且 ≥1 题）",
+          p.get("success") and (d1.get("total") or 0) >= 1,
+          f"total={d1.get('total')} {p.get('message', '')}")
+    p, _, _ = stu.post("/learning/practice", {"subject_id": 1, "count": 999})
+    d2 = data_of(p) or {}
+    check("count=999 被 clamp 至 ≤50",
+          p.get("success") and 0 < (d2.get("total") or 0) <= 50,
+          f"total={d2.get('total')}")
+    task_id = d2.get("task_id")
+
+    # 1c 取题 + 交卷（故意答错，制造错题供错题本用例使用）
+    if task_id:
+        p, _, _ = stu.get(f"/learning/practice/{task_id}")
+        paper = data_of(p) or {}
+        items = paper.get("items") or []
+        check("练习取题成功且不含答案字段",
+              p.get("success") and len(items) > 0
+              and all("answer" not in it and "analysis" not in it for it in items),
+              f"{len(items)} 题")
+        # 交卷必须带 paper_item_id（阅卷按卷面题目定位）；content 故意填错制造错题
+        answers = [{"paper_item_id": it["paper_item_id"], "content": "ZZ_wrong"}
+                   for it in items]
+        p, _, _ = stu.post(f"/task/tasks/{task_id}/submit", {"answers": answers})
+        check("练习交卷成功", p.get("success"), p.get("message", ""))
+    else:
+        R.env("练习取题与交卷", "practice 任务未创建，跳过")
+
+    # 1d 练习历史：含 submission_id（本轮新增字段，前端跳详情依赖）
+    p, _, _ = stu.get("/learning/practice/history", params={"page": 1, "page_size": 5})
+    hist = rows_of(p)
+    check("练习历史可读且含 submission_id 字段",
+          p.get("success") and len(hist) > 0 and "submission_id" in hist[0],
+          f"{len(hist)} 条")
+
+    # 1e ★ 越权回归：未发布考试经 /learning/practice 泄露（高危修复）
+    p, _, _ = tea.get("/question/papers", params={"page": 1, "page_size": 1})
+    papers = rows_of(p)
+    if papers:
+        pid = papers[0]["id"]
+        p, _, _ = tea.post("/task/tasks", {
+            "title": f"【LC安全】未发布考试 {int(time.time()) % 100000}",
+            "type": "exam", "paper_id": pid, "duration": 30,
+            "class_ids": [], "student_ids": [],
+            "publish_at": "2099-01-01 00:00:00",
+        })
+        exam_tid = (data_of(p) or {}).get("id")
+        if exam_tid:
+            p1, _, _ = stu.get(f"/learning/practice/{exam_tid}")
+            check("★ 未发布考试经 /learning/practice 取题被拒（越权回归）",
+                  p1.get("success") is not True,
+                  f"{p1.get('code')} {p1.get('message', '')}")
+            expect_denied("★ 官方入口同样拒绝（下发校验）", stu, "GET",
+                          f"/task/tasks/{exam_tid}/paper")
+    else:
+        R.env("越权回归用例", "无试卷可建考试，跳过")
+
+    # ---------------------------------------------------------- 2 错题本
+    R.set_phase("阶段四 · 学习中心 | 2. 错题本")
+    p, _, _ = stu.get("/learning/wrong-questions", params={"page": 1, "page_size": 10})
+    wrongs = rows_of(p)
+    check("错题列表可读（练习答错已收录）",
+          p.get("success") and len(wrongs) > 0,
+          f"{len(wrongs)} 条")
+    if wrongs:
+        w0 = wrongs[0]
+        check("错题列表字段完整（stem/options/type）",
+              all(k in w0 for k in ("stem", "type", "error_count", "is_mastered")),
+              f"keys={sorted(w0.keys())[:8]}")
+        wid = w0["id"]
+
+        p, _, _ = stu.put(f"/learning/wrong-questions/{wid}",
+                          {"error_reason": "概念不清", "is_mastered": False})
+        check("标注错因", p.get("success"), p.get("message", ""))
+
+        p, _, _ = stu.post(f"/learning/wrong-questions/{wid}/analyze")
+        check("AI 错因分析（LLM 未配置走降级）", p.get("success"), p.get("message", ""))
+
+        p, _, _ = stu.post(f"/learning/wrong-questions/{wid}/redo")
+        d = data_of(p) or {}
+        check("错题重做返回原题+同类题",
+              p.get("success") and "origin" in d and "similar" in d,
+              f"similar={len(d.get('similar') or [])}")
+
+        p, _, _ = stu.post(f"/learning/wrong-questions/{wid}/variant")
+        d = data_of(p) or {}
+        check("错题变式练习生成（题库兜底）",
+              p.get("success") and d.get("task_id"),
+              f"source={d.get('source')} total={d.get('total')}")
+
+        p, _, _ = stu.get("/learning/wrong-questions/export",
+                          params={"fmt": "markdown"})
+        d = data_of(p) or {}
+        check("导出错题 markdown", p.get("success") and d.get("content"), f"{len(d.get('content') or '')} 字")
+
+        p, _, _ = stu.get("/learning/wrong-questions/export", params={"fmt": "html"})
+        check("导出错题 html", p.get("success"), p.get("message", ""))
+
+        p, _, _ = stu.get("/learning/wrong-questions/export", params={"fmt": "docx"})
+        check("非法导出格式被 422 拒绝", p.get("success") is False, p.get("message", ""))
+
+        # 越权：他人错题
+        p2, _, _ = peer.get("/learning/wrong-questions", params={"page": 1, "page_size": 1})
+        peer_wrongs = rows_of(p2)
+        if peer_wrongs and peer_wrongs[0]["id"] != wid:
+            expect_denied("他人错题不可标注", stu, "PUT",
+                          f"/learning/wrong-questions/{peer_wrongs[0]['id']}",
+                          body={"error_reason": "hack"})
+
+    # ---------------------------------------------------------- 3 智能复习
+    R.set_phase("阶段四 · 学习中心 | 3. 智能复习")
+    p, _, _ = stu.get("/learning/review/plans")
+    d = data_of(p) or {}
+    plans = d.get("items") or []
+    check("复习计划可读（含全量统计）",
+          p.get("success") and isinstance(d.get("today_count"), int)
+          and isinstance(d.get("pending_count"), int),
+          f"plans={len(plans)} today={d.get('today_count')} pending={d.get('pending_count')}")
+
+    pending = [x for x in plans if not x.get("is_completed")]
+    if pending:
+        pid0 = pending[0]["id"]
+        p, _, _ = stu.put(f"/learning/review/plans/{pid0}/complete",
+                          {"correct_rate": 80})
+        check("完成复习（闭环推进）", p.get("success"), p.get("message", ""))
+        expect_denied("他人复习计划不可完成", peer, "PUT",
+                      f"/learning/review/plans/{pid0}/complete", body={})
+    else:
+        R.env("复习闭环用例", "无待完成计划，跳过")
+
+    p, _, _ = stu.get("/learning/review/mastery")
+    d = data_of(p) or {}
+    items = d.get("items") or []
+    check("掌握地图可读且 level 已计算（回归：原恒 null）",
+          p.get("success") and (not items or all(x.get("level") for x in items)),
+          f"{len(items)} 点，avg={d.get('avg_mastery')}")
+
+    p, _, _ = stu.post("/learning/review/plan", {"days": 7})
+    check("AI 生成复习计划（LLM 未配置走规则降级）", p.get("success"), p.get("message", ""))
+    p, _, _ = stu.post("/learning/review/plan", {"days": 10 ** 6})
+    check("days 超大值被 clamp 不 500", p.get("success"), f"{p.get('code')} {p.get('message', '')}")
+    p, _, _ = stu.post("/learning/review/plan", {"days": "abc"})
+    check("days 非整数返回 400", p.get("success") is False, p.get("message", ""))
+
+    # ---------------------------------------------------------- 4 学习笔记
+    R.set_phase("阶段四 · 学习中心 | 4. 学习笔记")
+    p, _, _ = stu.post("/learning/notes", {
+        "title": "【LC】笔记", "content": "正常内容\n<script>alert('xss')</script>",
+        "tags": ["重点", "错题"], "subject_id": 1,
+    })
+    d = data_of(p) or {}
+    note_id = d.get("id")
+    check("创建笔记（tags 数组）", p.get("success") and bool(note_id), p.get("message", ""))
+
+    p, _, _ = stu.get("/learning/notes", params={"page": 1, "page_size": 5})
+    items = rows_of(p)
+    mine = next((x for x in items if x.get("id") == note_id), None)
+    check("列表含预览且不含正文（防大字段泄漏）",
+          mine is not None and "content" not in mine and "content_preview" in mine,
+          "content_preview 存在" if mine else "未找到")
+
+    p, _, _ = stu.get(f"/learning/notes/{note_id}")
+    d = data_of(p) or {}
+    check("详情 view_count 自增", d.get("view_count", 0) >= 1, f"view={d.get('view_count')}")
+
+    p, _, _ = stu.put(f"/learning/notes/{note_id}", {"is_favorite": True, "tags": ["复习"]})
+    check("更新笔记（收藏+tags）", p.get("success"), p.get("message", ""))
+
+    # XSS 回归：导出 HTML 中 <script> 必须被转义
+    p, _, _ = stu.get(f"/learning/notes/{note_id}/export")
+    d = data_of(p) or {}
+    html = d.get("html") or ""
+    check("★ 导出 HTML 已转义 script（XSS 回归）",
+          p.get("success") and "<script>" not in html and "&lt;script&gt;" in html,
+          f"len={len(html)}")
+    check("导出文件名以 .html 结尾", (d.get("filename") or "").endswith(".html"),
+          d.get("filename", ""))
+
+    # 分享 → 同班可见、异班不可见
+    p, _, _ = stu.put(f"/learning/notes/{note_id}/share", {"shared": True})
+    check("分享笔记", p.get("success"), p.get("message", ""))
+    p, _, _ = peer.get("/learning/notes/shared", params={"page": 1, "page_size": 50})
+    shared = rows_of(p)
+    check("同班同学可见共享笔记", any(x.get("id") == note_id for x in shared),
+          f"{len(shared)} 条共享")
+    p, _, _ = other.get("/learning/notes/shared", params={"page": 1, "page_size": 50})
+    check("异班学生看不到该共享", not any(x.get("id") == note_id for x in rows_of(p)),
+          f"{len(rows_of(p))} 条")
+
+    p, _, _ = peer.get(f"/learning/notes/{note_id}")
+    check("未共享/非本人详情被拒（同班也不行）",
+          p.get("success") is False, f"{p.get('code')}")
+
+    p, _, _ = stu.post(f"/learning/notes/{note_id}/organize")
+    check("AI 整理笔记（降级可用）", p.get("success"), p.get("message", ""))
+
+    p, _, _ = stu.delete(f"/learning/notes/{note_id}")
+    check("删除笔记", p.get("success"), p.get("message", ""))
+    p, _, _ = stu.get(f"/learning/notes/{note_id}")
+    check("删除后详情 404", p.get("success") is False, p.get("message", ""))
+
+    # ---------------------------------------------------------- 5 收藏夹
+    R.set_phase("阶段四 · 学习中心 | 5. 收藏夹")
+    # 取一题收藏（用练习历史里的题目，或错题本题目）
+    p, _, _ = stu.get("/learning/wrong-questions", params={"page_size": 1})
+    wr = rows_of(p)
+    qid = wr[0]["question_id"] if wr else None
+    if qid:
+        p, _, _ = stu.post("/learning/favorites", {"question_id": qid, "tag": "高频"})
+        check("收藏题目", p.get("success"), p.get("message", ""))
+        p, _, _ = stu.post("/learning/favorites", {"question_id": qid, "tag": "必考"})
+        check("重复收藏幂等（更新标签）", p.get("success"),
+              p.get("message", ""))
+        p, _, _ = stu.get(f"/learning/favorites/check/{qid}")
+        d = data_of(p) or {}
+        check("收藏状态检查", d.get("favorited") is True, f"tag={d.get('tag')}")
+
+        p, _, _ = stu.get("/learning/favorites", params={"page": 1, "page_size": 10, "tag": "必考"})
+        check("按标签过滤收藏", p.get("success") and len(rows_of(p)) >= 1,
+              f"tags={ (data_of(p) or {}).get('tags') }")
+
+        # 上限回归：>50 道 → 400
+        p, _, _ = stu.post("/learning/favorites/practice",
+                           {"question_ids": list(range(1, 60))})
+        check("★ 收藏练习 >50 题被拒（上限回归）",
+              p.get("success") is False and "50" in str(p.get("message", "")),
+              p.get("message", ""))
+        # 正常：收藏练习
+        p, _, _ = stu.post("/learning/favorites/practice", {})
+        d = data_of(p) or {}
+        check("收藏夹一键生成练习", p.get("success") and d.get("task_id"),
+              f"total={d.get('total')}")
+
+        p, _, _ = stu.delete(f"/learning/favorites/by-question/{qid}")
+        check("按题目取消收藏（幂等）", p.get("success"), p.get("message", ""))
+
+    # ---------------------------------------------------------- 6 自主组卷
+    R.set_phase("阶段四 · 学习中心 | 6. 自主组卷")
+    p, _, _ = stu.post("/learning/custom-paper", {
+        "name": "【LC】自测卷", "subject_id": 1, "count": 5, "difficulty": "easy"})
+    d = data_of(p) or {}
+    check("随机模式组卷", p.get("success") and d.get("task_id"),
+          f"total={d.get('total')}")
+    p, _, _ = stu.post("/learning/custom-paper", {
+        "subject_id": 1, "count": 5,
+        "question_ids": list(range(1, 60))})
+    check("★ 手动选题 >50 题被拒（上限回归）",
+          p.get("success") is False and "50" in str(p.get("message", "")),
+          p.get("message", ""))
+    p, _, _ = stu.post("/learning/custom-paper", {
+        "subject_id": 999999, "count": 5})
+    check("无匹配题目返回 400 而非空卷", p.get("success") is False, p.get("message", ""))
+    p, _, _ = stu.post("/learning/custom-paper", {
+        "subject_id": 1, "count": "abc"})
+    check("count 非整数返回 400", p.get("success") is False, p.get("message", ""))
+
+    # ---------------------------------------------------------- 7 目标打卡
+    R.set_phase("阶段四 · 学习中心 | 7. 学习目标")
+    p, _, _ = stu.post("/learning/goals", {
+        "title": "【LC】每日 10 题", "target_value": 10, "unit": "questions"})
+    g = data_of(p) or {}
+    gid = g.get("id")
+    check("创建学习目标", p.get("success") and bool(gid), p.get("message", ""))
+
+    p, _, _ = stu.get("/learning/goals")
+    d = data_of(p) or {}
+    check("目标列表含日历与 max_streak",
+          isinstance(d.get("calendar"), dict) and "max_streak" in d,
+          f"goals={len(d.get('items') or [])}")
+
+    p, _, _ = stu.post(f"/learning/goals/{gid}/checkin", {"actual_value": -3})
+    d = data_of(p) or {}
+    check("负数打卡归零（回归）", p.get("success") and d.get("actual_value") == 0,
+          f"actual={d.get('actual_value')}")
+    p, _, _ = stu.post(f"/learning/goals/{gid}/checkin", {"actual_value": 10})
+    d = data_of(p) or {}
+    check("打卡幂等（同日取最大值）", p.get("success") and d.get("actual_value") == 10
+          and d.get("streak", 0) >= 1,
+          f"actual={d.get('actual_value')} streak={d.get('streak')}")
+    p, _, _ = stu.get("/learning/goals")
+    items = (data_of(p) or {}).get("items") or []
+    mine = next((x for x in items if x.get("id") == gid), {})
+    check("列表回显今日已打卡", mine.get("today_checked") is True,
+          f"today={mine.get('today_value')}")
+
+    expect_denied("他人目标不可打卡", peer, "POST",
+                  f"/learning/goals/{gid}/checkin", body={"actual_value": 1})
+    expect_denied("他人目标不可删除", peer, "DELETE", f"/learning/goals/{gid}")
+
+    p, _, _ = stu.delete(f"/learning/goals/{gid}")
+    check("删除目标", p.get("success"), p.get("message", ""))
+
+    # ---------------------------------------------------------- 8 路径与闪卡
+    R.set_phase("阶段四 · 学习中心 | 8. 学习路径 / 闪卡")
+    p, _, _ = stu.get("/learning/path/recommend")
+    d = data_of(p) or {}
+    check("学习路径推荐可读（空数据有引导 message）",
+          p.get("success") and "recommendations" in d
+          and (d.get("ai_advice") or d.get("message")),
+          f"avg={d.get('avg_mastery')} weak={d.get('weak_count')}")
+
+    p, _, _ = stu.get("/learning/flashcards")
+    d = data_of(p) or {}
+    check("闪卡默认可取", p.get("success") and len(d.get("items") or []) > 0,
+          f"{len(d.get('items') or [])} 张")
+
+    p, _, _ = stu.get("/learning/flashcards", params={"limit": 99999})
+    d = data_of(p) or {}
+    check("★ limit 超大被 clamp ≤100（回归）", len(d.get("items") or []) <= 100,
+          f"total={d.get('total')}")
+    p, _, _ = stu.get("/learning/flashcards", params={"limit": 0})
+    check("limit=0 clamp 至 1", len(rows_of(p)) >= 1, "")
+
+    # ---------------------------------------------------------- 9 越权矩阵
+    R.set_phase("阶段四 · 学习中心 | 9. 越权矩阵")
+    p, _, _ = stu.post("/learning/notes", {"title": "越权对照", "content": "x"})
+    nid = (data_of(p) or {}).get("id")
+    if nid:
+        expect_denied("他人笔记详情不可读", peer, "GET", f"/learning/notes/{nid}")
+        expect_denied("他人笔记不可更新", peer, "PUT", f"/learning/notes/{nid}",
+                      body={"title": "hack"})
+        expect_denied("他人笔记不可删除", peer, "DELETE", f"/learning/notes/{nid}")
+        stu.delete(f"/learning/notes/{nid}")
+
+    print("\n学习中心专项测试完成。")

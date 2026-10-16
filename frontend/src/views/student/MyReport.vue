@@ -120,6 +120,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import ReactEcharts from 'echarts-for-react'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import { reportApi, eduApi } from '@/api'
@@ -178,29 +179,29 @@ function pct(count) {
 
 async function loadOverview() {
   const res = await reportApi.studentOverview()
-  overview.value = res.data.data
+  overview.value = res.data
 }
 
 async function loadTrend() {
   const res = await reportApi.scoreTrend(subjectId.value ? { subject_id: subjectId.value } : {})
-  trend.value = res.data.data || []
+  trend.value = res.data || []
 }
 
 async function loadRadar() {
   const res = await reportApi.knowledgeRadar(subjectId.value ? { subject_id: subjectId.value } : {})
-  radar.value = res.data.data || []
+  radar.value = res.data || []
 }
 
 async function loadWrong() {
   const res = await reportApi.wrongAnalysis(subjectId.value ? { subject_id: subjectId.value } : {})
-  wrong.value = res.data.data || {}
+  wrong.value = res.data || {}
 }
 
 async function loadSuggestion() {
   sugLoading.value = true
   try {
     const res = await reportApi.learningSuggestion()
-    suggestion.value = res.data.data
+    suggestion.value = res.data
     ElMessage.success('AI 建议已更新')
   } finally {
     sugLoading.value = false
@@ -211,8 +212,15 @@ async function loadAll() {
   await Promise.all([loadOverview(), loadTrend(), loadRadar(), loadWrong(), loadSuggestion()])
 }
 
-function exportExcel() {
-  window.open(reportApi.exportUrl({ scope: 'student' }), '_blank')
+async function exportExcel() {
+  // 同 ScoreCenter：blob 下载 + report_type 必填
+  const res = await reportApi.exportExcel({ report_type: 'student_overview' })
+  const url = URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `学习总览报表.xlsx`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 onMounted(async () => {

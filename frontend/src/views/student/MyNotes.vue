@@ -158,7 +158,7 @@ async function load() {
   loading.value = true
   try {
     const res = await learningApi.notes(query)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
   } finally {
@@ -176,7 +176,7 @@ async function view(n) {
   viewLoading.value = true
   try {
     const res = await learningApi.note(n.id)
-    current.value = res.data.data
+    current.value = res.data
   } finally {
     viewLoading.value = false
   }
@@ -205,12 +205,18 @@ async function save() {
   }
 }
 
+const organizing = ref(false)
 async function organize(n) {
-  if (!n?.id) return
-  const res = await learningApi.organizeNote(n.id)
-  ElMessage.success(res.data.message || 'AI 整理完成')
-  if (current.value?.id === n.id) await view(n)
-  load()
+  if (organizing.value) return
+  if (!n?.id) { organizing.value = false; return }
+  try {
+    const res = await learningApi.organizeNote(n.id)
+    ElMessage.success(res.data.message || 'AI 整理完成')
+    if (current.value?.id === n.id) await view(n)
+    load()
+  } finally {
+    organizing.value = false
+  }
 }
 
 async function fav(n) {

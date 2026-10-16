@@ -13,10 +13,10 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.exception import NotFoundException
+from app.core.exception import BusinessException, NotFoundException
 from app.models import (
     KnowledgeMastery, KnowledgePoint, Paper, Question, ReviewPlan, Submission,
-    Task, User, WrongQuestion,
+    Task, TaskAssignment, User, WrongQuestion,
 )
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, load_json, ok, utcnow
@@ -34,12 +34,35 @@ def review_plans(
     if is_completed is not None:
         stmt = stmt.where(ReviewPlan.is_completed.is_(is_completed))
     rows = db.scalars(stmt.order_by(ReviewPlan.scheduled_date).limit(200)).all()
+    # 统计基于全量（不带 limit），否则计划多于 200 条时 pending_count 恒为
+    # 截断集内的数量，页面永远提示「还有未完成复习」但不显示是哪些。
+    pending_total = db.scalar(
+        select(func.count()).select_from(stmt.subquery()).where(
+            ReviewPlan.is_completed.is_(False))
+    ) or 0
+    today = utcnow().strftime("%Y-%m-%d")
+    today_total = db.scalar(
+        select(func.count()).select_from(stmt.subquery()).where(
+            ReviewPlan.is_completed.is_(False),
+            ReviewPlan.scheduled_date == today)
+    ) or 0
+
+    # 批量预取（此前每条计划 3 次 db.get，200 条 = 600 次查询）
+    kp_ids = {p.knowledge_point_id for p in rows if p.knowledge_point_id}
+    wq_ids = {p.wrong_question_id for p in rows if p.wrong_question_id}
+    kp_map = {k.id: k for k in db.scalars(
+        select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids))).all()} if kp_ids else {}
+    wq_map = {w.id: w for w in db.scalars(
+        select(WrongQuestion).where(WrongQuestion.id.in_(wq_ids))).all()} if wq_ids else {}
+    q_ids = {w.question_id for w in wq_map.values()}
+    q_map = {q.id: q for q in db.scalars(
+        select(Question).where(Question.id.in_(q_ids))).all()} if q_ids else {}
 
     items = []
     for p in rows:
-        kp = db.get(KnowledgePoint, p.knowledge_point_id)
-        wq = db.get(WrongQuestion, p.wrong_question_id) if p.wrong_question_id else None
-        q = db.get(Question, wq.question_id) if wq else None
+        kp = kp_map.get(p.knowledge_point_id)
+        wq = wq_map.get(p.wrong_question_id) if p.wrong_question_id else None
+        q = q_map.get(wq.question_id) if wq else None
         items.append({
             "id": p.id, "scheduled_date": p.scheduled_date, "stage": p.stage,
             "knowledge_point_id": p.knowledge_point_id,
@@ -53,8 +76,8 @@ def review_plans(
     today = utcnow().strftime("%Y-%m-%d")
     return ok({
         "items": items,
-        "today_count": sum(1 for i in items if i["scheduled_date"] == today and not i["is_completed"]),
-        "pending_count": sum(1 for i in items if not i["is_completed"]),
+        "today_count": today_total,
+        "pending_count": pending_total,
         "today": today,
     })
 
@@ -101,16 +124,21 @@ def mastery_map(
         stmt = stmt.where(KnowledgeMastery.subject_id == subject_id)
     rows = db.scalars(stmt).all()
 
+    kp_ids = {m.knowledge_point_id for m in rows}
+    kp_map = {k.id: k for k in db.scalars(
+        select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids))).all()} if kp_ids else {}
     data = []
     for m in rows:
-        kp = db.get(KnowledgePoint, m.knowledge_point_id)
+        kp = kp_map.get(m.knowledge_point_id)
         if not kp:
             continue
         data.append({
             "knowledge_point_id": kp.id, "name": kp.name,
             "mastery": round(m.mastery, 2), "total_count": m.total_count,
             "correct_count": m.correct_count, "wrong_count": m.wrong_count,
-            "level": m.level if hasattr(m, "level") else None,
+            "level": ("excellent" if m.mastery >= 80 else
+                      "good" if m.mastery >= 60 else
+                      "pass" if m.mastery >= 40 else "weak"),
             "subject_id": m.subject_id,
         })
     data.sort(key=lambda x: x["mastery"])
@@ -132,9 +160,15 @@ def generate_plan(
     from app.agents.study_agent import StudyPlannerAgent
 
     agent = StudyPlannerAgent()
+    # 参数边界：负数/超大值会生成异常计划或拖垮 AI 调用
+    try:
+        days = max(1, min(int(data.get("days", 7)), 30))
+        daily_minutes = max(10, min(int(data.get("daily_minutes", 90)), 600))
+    except (TypeError, ValueError):
+        raise BusinessException("days / daily_minutes 必须是整数")
     res = agent.run(
         db, user_id=user.id, student_id=user.id,
-        days=int(data.get("days", 7)), daily_minutes=int(data.get("daily_minutes", 90)),
+        days=days, daily_minutes=daily_minutes,
     )
     return ok(res.get("data"), message=res.get("message", "计划生成成功"))
 
@@ -145,10 +179,23 @@ def create_practice(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    subject_id = data.get("subject_id")
+    if not subject_id:
+        raise BusinessException("请选择学科")
+    try:
+        count = int(data.get("count", 10))
+    except (TypeError, ValueError):
+        raise BusinessException("题目数量必须是整数")
+    # 边界保护：count 无上限时一次生成上千题的卷子，拖垮交卷与判分
+    count = max(1, min(count, 50))
+    # grade_id=0 会撞非空外键（IntegrityError 500），缺省回落学生年级
+    grade_id = int(data.get("grade_id") or user.grade_id or 0) or None
+    if not grade_id:
+        raise BusinessException("无法确定年级，请先完善个人信息")
     paper = grading_service.create_practice_paper(
         db, creator_id=user.id,
-        grade_id=int(data.get("grade_id", 0)), subject_id=int(data["subject_id"]),
-        count=int(data.get("count", 10)),
+        grade_id=grade_id, subject_id=int(subject_id),
+        count=count,
         question_types=data.get("question_types"),
         difficulty=data.get("difficulty"),
         knowledge_point_ids=data.get("knowledge_point_ids"),
@@ -170,15 +217,24 @@ def practice_history(
     rows = db.scalars(
         stmt.order_by(Task.created_at.desc()).offset(params.offset).limit(params.page_size)
     ).all()
+    # 批量取本人提交（此前每条任务一次查询）
+    task_ids = [t.id for t in rows]
+    sub_map = {}
+    if task_ids:
+        for sub in db.scalars(
+            select(Submission).where(
+                Submission.task_id.in_(task_ids), Submission.student_id == user.id,
+                Submission.submit_time.isnot(None),
+            ).order_by(Submission.submit_time.desc())
+        ).all():
+            sub_map.setdefault(sub.task_id, sub)
+
     items = []
     for t in rows:
-        sub = db.scalar(
-            select(Submission).where(
-                Submission.task_id == t.id, Submission.student_id == user.id
-            ).limit(1)
-        )
+        sub = sub_map.get(t.id)
         items.append({
-            "task_id": t.id, "name": t.title, "created_at": dictify(t.created_at),
+            "task_id": t.id, "submission_id": sub.id if sub else None,
+            "name": t.title, "created_at": dictify(t.created_at),
             "score": sub.score if sub else None,
             "total_score": t.total_score,
             "accuracy": round((sub.score / t.total_score) * 100, 2) if sub and t.total_score else 0,
@@ -193,9 +249,23 @@ def get_practice(
     task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
     task = db.get(Task, task_id)
-    if not task:
+    # 归属与类型双重校验：
+    # 1) 仅 practice 类型可经此入口获取 —— 此前无任何校验，
+    #    学生遍历 task_id 可绕过 /task/tasks/{id}/paper 的发布时间
+    #    与下发范围管控，提前拿到未发布考试的题目（实测泄露）。
+    # 2) 仅创建者本人或被下发者可访问（防 IDOR/枚举）。
+    if not task or task.type != "practice":
+        raise NotFoundException("练习不存在")
+    if task.creator_id != user.id and not db.scalar(
+        select(TaskAssignment.id).where(
+            TaskAssignment.task_id == task.id,
+            TaskAssignment.student_id == user.id,
+        )
+    ):
         raise NotFoundException("练习不存在")
     paper = db.get(Paper, task.paper_id)
+    if not paper:
+        raise NotFoundException("练习试卷不存在")
     items = [
         {
             "paper_item_id": it.id, "question_id": it.question_id,
@@ -204,6 +274,7 @@ def get_practice(
             "options": load_json(it.question.options),
         }
         for it in sorted(paper.items, key=lambda x: x.sort_order)
+        if it.question is not None
     ]
     return ok({
         "task_id": task.id, "name": paper.name, "duration": task.duration,

@@ -179,7 +179,10 @@ export const reportApi = {
   gradeComparison: () => request.get('/report/admin/grade-comparison'),
   subjectComparison: () => request.get('/report/admin/subject-comparison'),
   systemRuntime: () => request.get('/report/admin/system-runtime'),
-  exportUrl: (params) => `/api/v1/report/export/excel?${new URLSearchParams(params)}`
+  exportUrl: (params) => `/api/v1/report/export/excel?${new URLSearchParams(params)}`,
+  // blob 下载：带 token 的 axios 请求。window.open 无法携带 Authorization，
+  // 学生端此前导出必 401；report_type 未传时后端 422（Query 必填）。
+  exportExcel: (params) => request.get('/report/export/excel', { params, responseType: 'blob' }),
 }
 
 // ---------------- 日志与任务 ----------------

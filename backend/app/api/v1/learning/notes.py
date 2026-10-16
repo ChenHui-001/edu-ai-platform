@@ -2,6 +2,7 @@
 
 由原1333 行的 api/v1/grading.py 拆分而来，路由前缀 /learning 保持不变。
 """
+import html
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
@@ -183,13 +184,19 @@ def export_note(
     note = db.get(Note, note_id)
     if not note or note.student_id != user.id:
         raise NotFoundException("笔记不存在")
-    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>{note.title}</title><style>
+    # 内容经 html.escape 转义：笔记由学生自由输入，直接拼接会让
+    # <script> 在导出的 HTML 打开时执行（存储型 XSS）。
+    safe_title = html.escape(note.title or "")
+    safe_content = html.escape(note.content or "")
+    # 注意：本地变量名不能叫 html —— 会遮蔽 import 的 html 模块，
+    # 同函数内先 html.escape 后赋值将触发 UnboundLocalError。
+    html_doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>{safe_title}</title><style>
 body{{font-family:-apple-system,"Microsoft YaHei",sans-serif;max-width:800px;margin:40px auto;line-height:1.8}}
 h1{{border-bottom:2px solid #409eff;padding-bottom:8px}}
-pre{{background:#f5f7fa;padding:12px;border-radius:6px;overflow:auto}}
+pre{{background:#f5f7fa;padding:12px;border-radius:6px;overflow:auto;white-space:pre-wrap}}
 </style></head><body>
-<h1>{note.title}</h1><pre>{note.content}</pre>
+<h1>{safe_title}</h1><pre>{safe_content}</pre>
 <hr><p style="color:#999">导出时间：{utcnow():%Y-%m-%d %H:%M:%S}</p>
 </body></html>"""
-    return ok({"filename": f"{note.title}.html", "html": html})
+    return ok({"filename": f"{note.title}.html", "html": html_doc})

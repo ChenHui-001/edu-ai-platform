@@ -72,6 +72,7 @@ STAGES = [
     ("admin", "阶段一 · 管理员视角", "test_admin"),
     ("teacher", "阶段二 · 教师建题组卷", "test_teacher"),
     ("student", "阶段三 · 学生答题与 AI 批改", "test_student"),
+    ("learning", "阶段四 · 学习中心专项", "test_learning"),
 ]
 
 
