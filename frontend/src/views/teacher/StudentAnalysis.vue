@@ -79,7 +79,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import ReactEcharts from 'echarts-for-react'
-import { reportApi, eduApi, systemApi, learningApi } from '@/api'
+import { reportApi, eduApi, learningApi } from '@/api'
 
 const route = useRoute()
 const classes = ref([])
