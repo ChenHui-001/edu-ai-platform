@@ -42,6 +42,16 @@ async function refreshAccessToken() {
   if (data.data.refresh_token) {
     localStorage.setItem('refresh_token', data.data.refresh_token)
   }
+  // 权限快照同步刷新：管理员调整角色权限后，已登录用户无需重登
+  // 即可在下一次刷新令牌时拿到最新 perms（按钮显隐即时生效）
+  if (data.data.permission) {
+    try {
+      const stored = JSON.parse(localStorage.getItem('user') || '{}')
+      stored.permissions = data.data.permission
+      if (data.data.user) stored.userInfo = { ...stored.userInfo, ...data.data.user }
+      localStorage.setItem('user', JSON.stringify(stored))
+    } catch { /* 本地存储异常不阻断令牌刷新 */ }
+  }
   return data.data.access_token
 }
 
