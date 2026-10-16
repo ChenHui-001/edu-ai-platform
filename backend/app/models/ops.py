@@ -112,6 +112,7 @@ class Attachment(Base):
     file_size: Mapped[int] = mapped_column(Integer, default=0)
     file_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True, comment="business 类型")
+    biz_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True, comment="业务类型")
     biz_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     uploader_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
     download_count: Mapped[int] = mapped_column(Integer, default=0)
