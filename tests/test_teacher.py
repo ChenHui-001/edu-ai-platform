@@ -565,6 +565,32 @@ def run():
             cr = mine[0].get("completion_rate")
             check("完成率字段可用", cr is not None, f"completion_rate={cr}%")
 
+        # 提交列表字段契约（「查看答卷」依赖 submission_id；
+        # 曾因前端读 row.id（不存在）请求 /grading/submissions/undefined → 422）
+        ps, _, _ = tea.get(f"/task/tasks/{task_id}/submissions", params={"page_size": 10})
+        subs = (data_of(ps) or {}).get("items") or []
+        check("提交列表可读且返回 submission_id",
+              ps.get("success") and (not subs or "submission_id" in subs[0]),
+              f"{len(subs)} 条 字段={list(subs[0].keys())[:6] if subs else '无提交'}")
+        if subs:
+            check("提交行含 total_score / duration_seconds（表格列依赖）",
+                  "total_score" in subs[0] and "duration_seconds" in subs[0],
+                  f"total_score={subs[0].get('total_score')} "
+                  f"duration={subs[0].get('duration_seconds')}")
+
+        # 提交列表字段契约（「查看答卷」依赖 submission_id；
+        # 曾因前端读 row.id（不存在）请求 /grading/submissions/undefined → 422）
+        ps, _, _ = tea.get(f"/task/tasks/{task_id}/submissions", params={"page_size": 10})
+        subs = (data_of(ps) or {}).get("items") or []
+        check("提交列表可读且返回 submission_id",
+              ps.get("success") and (not subs or "submission_id" in subs[0]),
+              f"{len(subs)} 条 字段={list(subs[0].keys())[:6] if subs else '无提交'}")
+        if subs:
+            check("提交行含 total_score / duration_seconds（表格列依赖）",
+                  "total_score" in subs[0] and "duration_seconds" in subs[0],
+                  f"total_score={subs[0].get('total_score')} "
+                  f"duration={subs[0].get('duration_seconds')}")
+
         # 跨班级下发能力（文档推荐路线依赖此项）
         # 注意：stu731_id 必须已真实取得，否则这里会传空数组并
         # 「假通过」——历史上就是因此让本用例长期失去检测能力。

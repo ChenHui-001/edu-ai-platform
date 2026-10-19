@@ -168,7 +168,11 @@
         <el-table-column prop="total_score" label="满分" width="90" />
         <el-table-column prop="class_rank" label="排名" width="80" />
         <el-table-column prop="submit_time" label="提交时间" width="170" />
-        <el-table-column prop="duration_seconds" label="用时(分)" width="100" />
+        <el-table-column label="用时" width="100">
+          <template #default="{ row }">
+            {{ row.duration_seconds != null ? Math.round(row.duration_seconds / 60) + ' 分' : '-' }}
+          </template>
+        </el-table-column>
         <el-table-column prop="switch_count" label="切屏次数" width="100" />
         <el-table-column label="操作" width="110">
           <template #default="{ row }">
@@ -399,13 +403,19 @@ async function genAdvice() {
 }
 
 async function viewAnswer(row) {
+  // 提交行只有 submission_id（无 id）。此前读 row.id 得到 undefined，
+  // 请求 /grading/submissions/undefined -> FastAPI int 校验失败 -> 422。
+  const sid = row.submission_id ?? row.id
+  if (!sid) {
+    ElMessage.error('该记录缺少提交 ID，请刷新提交列表')
+    return
+  }
   answerDlg.value = true
   answerLoading.value = true
   answerItems.value = []
   try {
-    const res = await gradingApi.detail(row.id)
+    const res = await gradingApi.detail(sid)
     answerItems.value = res.data?.items || []
-    Object.assign(answerItems.value, { length: answerItems.value.length })
     answerDetail.value = res.data
   } finally {
     answerLoading.value = false

@@ -262,6 +262,8 @@ def task_submissions(
             "attempt": s.attempt, "score": s.score, "is_passed": s.is_passed,
             "class_rank": s.class_rank, "status": s.status,
             "switch_count": s.switch_count,
+            "total_score": task.total_score,
+            "duration_seconds": s.duration_seconds,
             "submit_time": s.submit_time.strftime("%Y-%m-%d %H:%M:%S") if s.submit_time else None,
         })
 
