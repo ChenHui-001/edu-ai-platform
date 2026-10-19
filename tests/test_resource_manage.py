@@ -22,9 +22,56 @@ def _tag():
     return f"[E2E-RS-{_dt.datetime.now().strftime('%H%M%S%f')[-6:]}]"
 
 
+def _cleanup_e2e_leftovers(admin: Client) -> int:
+    """按名称前缀兜底清扫 E2E 残留数据，可自愈历史中断留下的垃圾。
+
+    前缀约定：所有测试创建的资源名都以 "[E2E-RS-" 开头。
+    返回清理条数。
+    """
+    n = 0
+    # 班级（先移出 imp 测试学生再删）
+    p, _, _ = admin.get("/edu/classes")
+    for c in (p.get("data") if isinstance(p.get("data"), list) else []):
+        if c["name"].startswith("[E2E-RS-"):
+            p2, _, _ = admin.get("/system/users", params={
+                "identity": "student", "class_id": c["id"], "page_size": 100})
+            items = p2.get("data") if isinstance(p2.get("data"), list)                 else (p2.get("data") or {}).get("items", [])
+            for u in items:
+                if u.get("username", "").startswith("imp"):
+                    admin.delete(f"/edu/classes/{c['id']}/students/{u['id']}")
+            d, _, _ = admin.delete(f"/edu/classes/{c['id']}")
+            n += bool(d.get("success"))
+    # 年级
+    p, _, _ = admin.get("/edu/grades")
+    for g in (p.get("data") if isinstance(p.get("data"), list) else []):
+        if g["name"].startswith("[E2E-RS-"):
+            d, _, _ = admin.delete(f"/edu/grades/{g['id']}")
+            n += bool(d.get("success"))
+    # 学科
+    p, _, _ = admin.get("/edu/subjects")
+    for s in (p.get("data") if isinstance(p.get("data"), list) else []):
+        if s["name"].startswith("[E2E-RS-"):
+            d, _, _ = admin.delete(f"/edu/subjects/{s['id']}")
+            n += bool(d.get("success"))
+    # 知识点（可能被题目引用，失败忽略）
+    p, _, _ = admin.get("/edu/knowledge", params={"keyword": "[E2E-RS-"})
+    for k in (p.get("data") if isinstance(p.get("data"), list) else []):
+        d, _, _ = admin.delete(f"/edu/knowledge/{k['id']}")
+        n += bool(d.get("success"))
+    return n
+
+
 def run():
     admin = Client("admin")
     admin.login("admin", "Admin@123456")
+
+    # 先清扫上次运行（可能被中断）留下的 [E2E-RS- 残留，保证起点干净
+    try:
+        pre = _cleanup_e2e_leftovers(admin)
+        if pre:
+            print(f"[清理] 运行前清扫历史残留 {pre} 条")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[清理] 运行前清扫失败: {exc}")
     teacher1 = Client("t1"); teacher1.login("teacher1", "Teacher@123")
     teacher4 = Client("t4"); teacher4.login("teacher4", "Teacher@123")
     stu = Client("s1"); stu.login("stu731", "Student@123")
