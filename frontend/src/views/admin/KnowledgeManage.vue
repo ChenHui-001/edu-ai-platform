@@ -128,7 +128,8 @@ async function load() {
   loading.value = true
   try {
     const res = await eduApi.knowledge(query)
-    tree.value = res.data.data || []
+    // /edu/knowledge 返回平铺数组
+    tree.value = Array.isArray(res.data) ? res.data : (res.data?.data || [])
   } finally {
     loading.value = false
   }
@@ -192,8 +193,9 @@ async function reindex() {
 onMounted(async () => {
   await load()
   const [g, s] = await Promise.all([eduApi.grades(), eduApi.subjects()])
-  grades.value = g.data.data || []
-  subjects.value = s.data.data || []
+  // /edu/grades / /edu/subjects?distinct 返回数组
+    grades.value = Array.isArray(g.data) ? g.data : (g.data?.data || [])
+    subjects.value = Array.isArray(s.data) ? s.data : (s.data?.data || [])
 })
 </script>
 

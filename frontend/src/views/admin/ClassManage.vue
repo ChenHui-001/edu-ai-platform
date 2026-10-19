@@ -294,8 +294,9 @@ async function load() {
   loading.value = true
   try {
     const res = await eduApi.classes(query)
-    const d = res.data.data || {}
-    list.value = d.items || []
+    // /edu/classes 返回数组
+    const d = res.data
+    list.value = Array.isArray(d) ? d : (d?.items || [])
     total.value = d.total || 0
   } finally {
     loading.value = false
@@ -341,7 +342,9 @@ async function openStudents(row) {
     // 人员简表：教师可进本页（resource:class:list），/system/users 会 403；
     // 非任教班级由后端 DataScope 拒绝，抽屉展示空态
     const res = await eduApi.peopleBrief({ identity: 'student', class_id: row.id })
-    students.value = res.data.data?.items || []
+    // /edu/classes/{id}/students 也走 people/brief 返数组
+    const sd = res.data
+    students.value = Array.isArray(sd) ? sd : (sd?.items || [])
   } finally {
     studentLoading.value = false
   }
@@ -379,9 +382,10 @@ async function doImport() {
 onMounted(async () => {
   await load()
   const g = await eduApi.grades()
-  grades.value = g.data.data || []
+  grades.value = Array.isArray(g.data) ? g.data : (g.data?.data || [])
   const t = await eduApi.peopleBrief({ identity: 'teacher' })
-  teachers.value = t.data.data?.items || []
+  // people/brief?identity=teacher 返数组
+    teachers.value = Array.isArray(t.data) ? t.data : (t.data?.items || [])
 })
 </script>
 

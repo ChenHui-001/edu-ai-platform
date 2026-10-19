@@ -106,9 +106,10 @@ async function load() {
   try {
     const api = isSubject.value ? eduApi.subjects : eduApi.grades
     const res = await api(query)
-    const d = res.data.data || {}
-    list.value = d.items || []
-    total.value = d.total || 0
+    // /edu/grades 与 /edu/subjects 返回数组（非分页 items），两种结构都兼容
+    const d = res.data
+    list.value = Array.isArray(d) ? d : (d?.items || [])
+    total.value = Array.isArray(d) ? d.length : (d?.total || 0)
   } finally {
     loading.value = false
   }
@@ -156,8 +157,10 @@ watch(() => route.name, () => load())
 onMounted(async () => {
   await load()
   if (isSubject.value) {
+    // /edu/grades 返回数组
     const g = await eduApi.grades()
-    grades.value = g.data.data || []
+    const gd = g.data
+    grades.value = Array.isArray(gd) ? gd : (gd?.items || [])
   }
 })
 </script>
