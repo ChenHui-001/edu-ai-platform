@@ -126,7 +126,9 @@ export const gradingApi = {
   reject: (id, data) => request.post(`/grading/submissions/${id}/reject`, data),
   publish: (id) => request.post(`/grading/submissions/${id}/publish`),
   report: (taskId) => request.post(`/grading/tasks/${taskId}/report`),
-  aiComment: (taskId) => request.post(`/grading/tasks/${taskId}/ai-comment`)
+  aiComment: (taskId) => request.post(`/grading/tasks/${taskId}/ai-comment`),
+  batchGrade: (data) => request.post('/grading/batch/grade', data),
+  batchPublish: (data) => request.post('/grading/batch/publish', data),
 }
 
 // ---------------- 学习中心 ----------------

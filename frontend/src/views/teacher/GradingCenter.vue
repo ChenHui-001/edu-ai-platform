@@ -7,6 +7,12 @@
           共 <b>{{ list.length }}</b> 份待批 ·
           需人工 <b class="warn">{{ needManualCount }}</b> 份
         </span>
+        <el-tooltip placement="bottom" :show-after="200">
+          <template #content>
+            <div class="kb-tip">Ctrl+Enter 保存并批下一份<br>Ctrl+S 保存<br>Alt+F 满分（当前题）<br>Alt+Z 零分（当前题）</div>
+          </template>
+          <el-button :icon="QuestionFilled" circle />
+        </el-tooltip>
         <el-button :icon="Refresh" @click="load">刷新队列</el-button>
       </div>
     </div>
@@ -29,13 +35,30 @@
               <el-radio-button label="manual">需人工</el-radio-button>
             </el-radio-group>
           </div>
+          <!-- 批量操作条 -->
+          <div class="batch-bar" v-if="checkedIds.length">
+            <span class="tip">已选 <b>{{ checkedIds.length }}</b> 份</span>
+            <div class="batch-actions">
+              <el-button size="small" @click="batchGrade" :loading="batching">批量采纳</el-button>
+              <el-button size="small" type="warning" @click="batchPublish" :loading="batching">
+                批量发布
+              </el-button>
+              <el-button size="small" text @click="checkedIds = []">清空</el-button>
+            </div>
+          </div>
           <div v-loading="loading" class="sub-list">
             <div v-for="item in filtered" :key="item.submission_id"
                  class="sub-item"
                  :class="{ active: item.submission_id === current?.id }"
                  @click="select(item)">
               <div class="row-between">
-                <span class="name">{{ item.student_name }}</span>
+                <div class="name-line">
+                  <el-checkbox
+                    :model-value="checkedIds.includes(item.submission_id)"
+                    @click.stop
+                    @change="(v) => toggleCheck(item.submission_id, v)" />
+                  <span class="name">{{ item.student_name }}</span>
+                </div>
                 <el-tag size="small" :type="item.needs_manual ? 'warning' : 'info'">
                   {{ item.needs_manual ? '需人工' : 'AI 已批' }}
                 </el-tag>
@@ -49,6 +72,14 @@
               </div>
             </div>
             <el-empty v-if="!loading && !filtered.length" description="暂无待批改作业" :image-size="70" />
+            <div v-if="hasMore" class="load-more">
+              <el-button size="small" text :loading="loadingMore" @click="loadMore">
+                加载更多（{{ list.length }} / {{ total }}）
+              </el-button>
+            </div>
+            <div v-else-if="list.length" class="load-more tip">
+              已全部加载（{{ list.length }} 份）
+            </div>
           </div>
         </el-card>
       </el-col>
@@ -163,10 +194,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh } from '@element-plus/icons-vue'
+import { Search, Refresh, QuestionFilled } from '@element-plus/icons-vue'
 import { gradingApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
@@ -191,8 +222,17 @@ const queueFilter = ref('all')
 const loading = ref(false)
 const detailLoading = ref(false)
 const saving = ref(false)
+// 批量 / 分页 / 快捷键
+const checkedIds = ref([])
+const batching = ref(false)
+const total = ref(0)
+const PAGE_SIZE = 30
+const page = ref(1)
+const loadingMore = ref(false)
+const focusedIdx = ref(0)   // Alt+F/Alt+Z 作用的题目索引
 
 const needManualCount = computed(() => list.value.filter(i => i.needs_manual).length)
+const hasMore = computed(() => list.value.length < total.value)
 
 const filtered = computed(() => {
   const k = filter.value.trim().toLowerCase()
@@ -267,11 +307,104 @@ function fmtAnswer(a) {
 
 async function load() {
   loading.value = true
+  page.value = 1
   try {
-    const res = await gradingApi.pending({ page: 1, page_size: 100 })
+    const res = await gradingApi.pending({ page: 1, page_size: PAGE_SIZE })
     list.value = res.data?.items || []
+    total.value = res.data?.total ?? list.value.length
+    checkedIds.value = []
   } finally {
     loading.value = false
+  }
+}
+
+/** 分页追加：待批量大时不必一次全拉（此前固定 100 条，超出看不到） */
+async function loadMore() {
+  loadingMore.value = true
+  try {
+    page.value += 1
+    const res = await gradingApi.pending({ page: page.value, page_size: PAGE_SIZE })
+    const more = res.data?.items || []
+    const seen = new Set(list.value.map(x => x.submission_id))
+    list.value = [...list.value, ...more.filter(x => !seen.has(x.submission_id))]
+    total.value = res.data?.total ?? list.value.length
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+function toggleCheck(sid, v) {
+  if (v) {
+    if (!checkedIds.value.includes(sid)) checkedIds.value.push(sid)
+  } else {
+    checkedIds.value = checkedIds.value.filter(x => x !== sid)
+  }
+}
+
+/** 批量采纳：把选中提交的当前分数直接落库（AI 已批的抽检确认场景） */
+async function batchGrade() {
+  batching.value = true
+  try {
+    const res = await gradingApi.batchGrade({ submission_ids: checkedIds.value })
+    const d = res.data || {}
+    ElMessage.success(
+      `批量批改 ${d.graded?.length || 0} 份` +
+      (d.skipped?.length ? `，跳过 ${d.skipped.length} 份` : ''))
+    await load()
+  } catch (e) {
+    ElMessage.error(`批量批改失败：${e?.message || e}`)
+  } finally {
+    batching.value = false
+  }
+}
+
+/** 批量发布：仅对已批改且未发布的记录生效（未批改的自动跳过） */
+async function batchPublish() {
+  try {
+    await ElMessageBox.confirm(
+      `将发布 ${checkedIds.value.length} 份成绩，学生立即可见。确认？`, '批量发布', { type: 'warning' })
+  } catch { return }
+  batching.value = true
+  try {
+    const res = await gradingApi.batchPublish({ submission_ids: checkedIds.value })
+    const d = res.data || {}
+    ElMessage.success(
+      `已发布 ${d.published?.length || 0} 份` +
+      (d.skipped?.length ? `，跳过 ${d.skipped.length} 份（未批改/已发布）` : ''))
+    await load()
+  } catch (e) {
+    ElMessage.error(`批量发布失败：${e?.message || e}`)
+  } finally {
+    batching.value = false
+  }
+}
+
+/** 键盘快捷键：Ctrl+Enter 保存并下一份 / Ctrl+S 保存 / Alt+F 满分 / Alt+Z 零分 */
+function onKeydown(e) {
+  if (!detail.value) return
+  const tag = (e.target?.tagName || '').toLowerCase()
+  const editing = tag === 'input' || tag === 'textarea'
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault()
+    saveAndNext()
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault()
+    saveGrade()
+  } else if (e.altKey && e.key.toLowerCase() === 'f') {
+    e.preventDefault()
+    const it = detail.value.items?.[focusedIdx.value]
+    if (it) setScore(it, it.full_score)
+  } else if (e.altKey && e.key.toLowerCase() === 'z') {
+    e.preventDefault()
+    const it = detail.value.items?.[focusedIdx.value]
+    if (it) setScore(it, 0)
+  } else if (!editing && /^[1-9]$/.test(e.key)) {
+    // 数字键：聚焦到第 N 题（批改时快速跳题）
+    const i = Number(e.key) - 1
+    if (i < (detail.value.items?.length || 0)) {
+      focusedIdx.value = i
+      document.querySelectorAll('.q-item')[i]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
   }
 }
 
@@ -390,6 +523,11 @@ async function publish() {
 onMounted(async () => {
   await load()
   await focusFromQuery()
+  window.addEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>
 
@@ -415,7 +553,17 @@ onMounted(async () => {
   border-color: var(--el-color-primary); background: var(--el-color-primary-light-9);
   box-shadow: inset 3px 0 0 var(--el-color-primary);
 }
+.name-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .name { font-weight: 600; font-size: 14px; }
+
+.batch-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: #f0f6ff; border: 1px solid #d9e8ff; border-radius: 6px;
+  padding: 6px 10px; margin-bottom: 10px;
+}
+.batch-actions { display: flex; gap: 6px; }
+.load-more { text-align: center; padding: 8px 0; }
+.kb-tip { line-height: 1.8; font-size: 12px; }
 .task {
   margin: 4px 0 6px; color: #606266; font-size: 12px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

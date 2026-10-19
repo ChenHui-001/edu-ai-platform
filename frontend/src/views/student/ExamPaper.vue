@@ -11,6 +11,10 @@
         <div class="bar-progress">
           <span>已答 {{ answeredCount }}/{{ items.length }}</span>
           <el-progress :percentage="progress" :stroke-width="10" style="width:140px" />
+          <span class="save-indicator" :class="{ saving: !savedAt }">
+            <el-icon><CircleCheck /></el-icon>
+            {{ savedAt ? `已保存 ${savedAt}` : '保存中…' }}
+          </span>
         </div>
         <div class="bar-actions">
           <span class="countdown" :class="{ warn: remain < 300, urgent: remain < 60 }">
@@ -146,7 +150,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { CircleCheckFilled, CircleCloseFilled, DocumentChecked, Timer } from '@element-plus/icons-vue'
+import { CircleCheck, CircleCheckFilled, CircleCloseFilled, DocumentChecked, Timer } from '@element-plus/icons-vue'
 import { taskApi } from '@/api'
 
 const route = useRoute()
@@ -173,6 +177,7 @@ const itemRefs = ref([])
 const submitted = ref(false)
 const activeIndex = ref(0)          // 当前可视题号（导航同步高亮）
 const draftTipShown = ref(false)    // 草稿提示只弹一次
+const savedAt = ref('')             // 最近一次草稿保存时刻（顶栏指示灯）
 const hasSubjective = computed(() =>
   items.value.some(it => !['single', 'multiple', 'judge', 'blank'].includes(it.type)))
 
@@ -251,9 +256,13 @@ function formatTime(s) {
 // 草稿：刷新不丢答案
 const draftKey = `answer_draft_${taskId}`
 function saveDraft() {
-  localStorage.setItem(draftKey, JSON.stringify({
-    answers: answers.value, multiAnswers: multiAnswers.value, savedAt: Date.now()
-  }))
+  try {
+    localStorage.setItem(draftKey, JSON.stringify({
+      answers: answers.value, multiAnswers: multiAnswers.value, savedAt: Date.now()
+    }))
+    const d = new Date()
+    savedAt.value = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  } catch { /* 存储满时静默 */ }
 }
 function loadDraft() {
   try {
@@ -297,6 +306,10 @@ async function load() {
     if (task.value.anti_cheat) {
       document.addEventListener('visibilitychange', onVisibility)
     }
+    // 进入即保存一次，让顶栏「已保存」指示灯即时可用
+    saveDraft()
+    // 进入即保存一次，让顶栏「已保存」指示灯即时可用
+    saveDraft()
     // 捕获阶段监听：任何滚动容器（含 .el-main）的 scroll 都能收到
     window.addEventListener('scroll', onScroll, true)
     nextTick(() => onScroll())
@@ -392,6 +405,11 @@ onBeforeUnmount(() => {
 .bar-actions { display: flex; align-items: center; gap: 14px; }
 .countdown { font-size: 18px; font-weight: 600; color: #2f6fd0; font-variant-numeric: tabular-nums; }
 .countdown.warn { color: #f56c6c; }
+.save-indicator {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; color: #67c23a;
+}
+.save-indicator.saving { color: #909399; }
 .countdown.urgent { animation: pulse 1s ease-in-out infinite; }
 .cd-label { font-size: 12px; font-weight: 400; color: #909399; margin-right: 2px; }
 @keyframes pulse {

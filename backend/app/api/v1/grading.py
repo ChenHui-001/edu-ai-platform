@@ -241,6 +241,87 @@ def publish_score(
     return ok(message="成绩已发布")
 
 
+@grading_router.post("/batch/grade", summary="批量采纳当前分数（快速批改）")
+def batch_grade(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+):
+    """把选中提交的「当前已有分数」直接落库为已批改。
+
+    典型场景：AI 已批大部分题目、教师抽检确认后批量采纳，避免逐份打开。
+    submission_ids: [1,2,3]；只处理属于自己任务、且非 published 的记录。
+    """
+    ids = data.get("submission_ids") or []
+    if not ids:
+        raise BusinessException("请选择要批改的提交")
+    done, skipped = [], []
+    for sid in ids:
+        sub = db.get(Submission, sid)
+        if not sub:
+            skipped.append({"id": sid, "reason": "不存在"})
+            continue
+        task = db.get(Task, sub.task_id)
+        if task and not scope.is_super and task.creator_id != user.id:
+            skipped.append({"id": sid, "reason": "非本人任务"})
+            continue
+        if sub.status == "published":
+            skipped.append({"id": sid, "reason": "已发布"})
+            continue
+        answers = db.scalars(
+            select(Answer).where(Answer.submission_id == sid)).all()
+        objective = sum(a.score or 0 for a in answers if a.grader_type == "auto")
+        subjective = sum(a.score or 0 for a in answers if a.grader_type in ("ai", "manual"))
+        sub.objective_score = objective
+        sub.subjective_score = subjective
+        sub.score = round(objective + subjective, 2)
+        sub.is_passed = sub.score >= (task.pass_score if task else settings.PASS_SCORE)
+        sub.status = "fully_graded"
+        sub.grade_time = utcnow()
+        done.append(sid)
+    db.commit()
+    return ok({"graded": done, "skipped": skipped},
+              message=f"批量批改 {len(done)} 份，跳过 {len(skipped)} 份")
+
+
+@grading_router.post("/batch/publish", summary="批量发布成绩")
+def batch_publish(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+):
+    """批量发布已批改提交的成绩。只处理 fully_graded 且分数非空的记录。"""
+    from app.models import Notification
+
+    ids = data.get("submission_ids") or []
+    if not ids:
+        raise BusinessException("请选择要发布的提交")
+    done, skipped = [], []
+    for sid in ids:
+        sub = db.get(Submission, sid)
+        if not sub:
+            skipped.append({"id": sid, "reason": "不存在"})
+            continue
+        task = db.get(Task, sub.task_id)
+        if task and not scope.is_super and task.creator_id != user.id:
+            skipped.append({"id": sid, "reason": "非本人任务"})
+            continue
+        if sub.score is None or sub.status not in ("fully_graded", "graded"):
+            skipped.append({"id": sid, "reason": "未完成批改"})
+            continue
+        if sub.status == "published":
+            skipped.append({"id": sid, "reason": "已发布"})
+            continue
+        sub.status = "published"
+        db.add(Notification(
+            user_id=sub.student_id, title="成绩已发布",
+            content=f"《{task.title if task else ''}》成绩：{sub.score} 分",
+            type="system", biz_type="task", biz_id=sub.task_id,
+        ))
+        done.append(sid)
+    db.commit()
+    return ok({"published": done, "skipped": skipped},
+              message=f"批量发布 {len(done)} 份，跳过 {len(skipped)} 份")
+
+
 @grading_router.post("/tasks/{task_id}/report", summary="生成班级学情报告")
 def class_report(
     task_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
