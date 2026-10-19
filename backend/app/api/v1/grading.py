@@ -28,12 +28,18 @@ grading_router = APIRouter(prefix="/grading", tags=["智能批改"])
 @grading_router.get("/pending", summary="待批改列表")
 def pending_submissions(
     params: PageParams = Depends(), task_id: Optional[int] = None,
-    class_id: Optional[int] = None, db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+    class_id: Optional[int] = None, include_graded: bool = False,
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    scope: DataScope = Depends(get_data_scope),
 ):
     stmt = select(Submission).join(Task, Task.id == Submission.task_id).where(
         Task.status != "archived"
     )
+    # 默认只返回「待批改」：已完全批改/已发布的不进队列
+    # （此前已批改 100/100 的记录也躺在待批列表里，语义矛盾）。
+    # include_graded=true 时返回全部（批改中心想看历史记录时用）。
+    if not include_graded:
+        stmt = stmt.where(Submission.status.notin_(("fully_graded", "published")))
     if not scope.is_super:
         stmt = stmt.where(Task.creator_id == user.id)
     if task_id:

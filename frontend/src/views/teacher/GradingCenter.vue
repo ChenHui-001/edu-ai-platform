@@ -70,7 +70,7 @@
                 </el-tag>
                 <span class="score-input">
                   得分
-                  <el-input-number v-model="scores[it.id]" :min="0" :max="it.full_score"
+                  <el-input-number v-model="scores[it.answer_id]" :min="0" :max="it.full_score"
                                    :step="0.5" size="small" style="width:100px" />
                   / {{ it.full_score }}
                 </span>
@@ -85,7 +85,7 @@
                 <el-tag v-for="(p, i) in it.ai_error_points" :key="i" size="small" type="danger"
                         effect="plain" class="ml4">{{ p }}</el-tag>
               </p>
-              <el-input v-model="comments[it.id]" placeholder="教师评语（可选）"
+              <el-input v-model="comments[it.answer_id]" placeholder="教师评语（可选）"
                         type="textarea" :rows="1" class="mt4" />
             </div>
 
@@ -134,7 +134,7 @@ const filtered = computed(() => {
 
 const totalScore = computed(() => {
   if (!detail.value) return 0
-  const s = detail.value.items.reduce((sum, it) => sum + (scores[it.id] ?? it.score ?? 0), 0)
+  const s = detail.value.items.reduce((sum, it) => sum + (scores[it.answer_id] ?? it.score ?? 0), 0)
   return Number(s.toFixed(1))
 })
 
@@ -174,8 +174,8 @@ async function select(item) {
     const d = res.data
     detail.value = d
     ;(d.items || []).forEach(it => {
-      scores[it.id] = it.score ?? 0
-      comments[it.id] = it.teacher_comment || ''
+      scores[it.answer_id] = it.score ?? 0
+      comments[it.answer_id] = it.teacher_comment || ''
     })
   } finally {
     detailLoading.value = false
@@ -201,8 +201,8 @@ async function focusFromQuery() {
         task_title: d.task_title || '-',
       }
       ;(d.items || []).forEach(it => {
-        scores[it.id] = it.score ?? 0
-        comments[it.id] = it.teacher_comment || ''
+        scores[it.answer_id] = it.score ?? 0
+        comments[it.answer_id] = it.teacher_comment || ''
       })
     } catch (e) {
       // 区分错误类型：404 才是「不存在/已批改」；其余（网络/5xx/前端解析）
@@ -223,10 +223,11 @@ async function saveGrade() {
   saving.value = true
   try {
     const answers = (detail.value.items || []).map(it => ({
-      answer_id: it.id,
-      score: scores[it.id] ?? 0,
-      is_correct: (scores[it.id] ?? 0) >= (it.full_score ?? 0),
-      teacher_comment: comments[it.id] || ''
+      answer_id: it.answer_id,
+      score: scores[it.answer_id] ?? 0,
+      teacher_comment: comments[it.answer_id] || '',
+      is_correct: (scores[it.answer_id] ?? 0) >= (it.full_score ?? 0),
+      teacher_comment: comments[it.answer_id] || ''
     }))
     await gradingApi.grade(detail.value.submission_id, { answers })
     ElMessage.success('批改结果已保存')
