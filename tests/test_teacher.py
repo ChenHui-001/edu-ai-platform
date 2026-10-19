@@ -478,8 +478,9 @@ def run():
     # 1) paper-composer 的请求字段名必须一致
     _backend_key = "request" if 'data.get("request"' in _ap else (
         "requirement" if 'data.get("requirement"' in _ap else "")
-    _frontend_key = "requirement" if "paperComposer({ requirement:" in _pv else (
-        "request" if "paperComposer({ request:" in _pv else "")
+    _frontend_key = "requirement" if re.search(
+        r"paperComposer\(\{\s*requirement:", _pv) else (
+        "request" if re.search(r"paperComposer\(\{\s*request:", _pv) else "")
     check("★ AI 组卷前后端请求字段名一致（request/requirement）",
           bool(_backend_key) and _backend_key == _frontend_key,
           f"后端读 {_backend_key!r}，前端发 {_frontend_key!r}")

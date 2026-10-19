@@ -74,6 +74,7 @@ STAGES = [
     ("student", "阶段三 · 学生答题与 AI 批改", "test_student"),
     ("learning", "阶段四 · 学习中心专项", "test_learning"),
     ("requirements", "阶段五 · 需求覆盖补充", "test_requirements"),
+    ("teaching_mgmt", "阶段六 · 教师端教学管理专项", "test_teaching_mgmt"),
 ]
 
 

@@ -105,7 +105,14 @@ def create_task(
     if not paper:
         raise BusinessException("请选择试卷")
 
-    task_type = data.get("type", TaskType.HOMEWORK.value)
+    # 校验任务类型：仅允许 homework / exam，非法值直接拒绝，
+    # 否则 db 会写脏数据进入 task.type（SQLite String 列不强制枚举）
+    raw_type = data.get("type", TaskType.HOMEWORK.value)
+    valid_types = {t.value for t in TaskType}
+    if raw_type not in valid_types:
+        raise BusinessException(
+            f"无效的任务类型 {raw_type!r}，允许：{','.join(sorted(valid_types))}")
+    task_type = raw_type
     start_at = _parse_dt(data.get("start_at")) or utcnow()
     end_at = _parse_dt(data.get("end_at")) or (start_at + timedelta(days=7))
     publish_at = _parse_dt(data.get("publish_at"))
@@ -172,6 +179,22 @@ def create_task(
     db.commit()
     db.refresh(task)
     return ok(dictify(task), message=f"{TYPE_LABEL.get(task_type)}发布成功，已通知 {len(notify_ids)} 名学生")
+
+
+@router.get("/tasks/{task_id}", summary="任务详情")
+def get_task(
+    task_id: int, db: Session = Depends(get_db),
+    user: User = Depends(get_current_teacher),
+):
+    """任务详情：教师仅看自己创建的；管理员看全量。
+    之前缺这个接口，前端编辑回查只能 405。
+    """
+    task = db.get(Task, task_id)
+    if not task:
+        raise NotFoundException("任务不存在")
+    if task.creator_id != user.id and "sys_admin" not in user.role_codes:
+        raise PermissionException("无权限查看该任务")
+    return ok(dictify(task))
 
 
 @router.put("/tasks/{task_id}", summary="编辑任务")

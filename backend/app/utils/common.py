@@ -25,8 +25,14 @@ def today_str() -> str:
 
 
 def utcnow() -> datetime:
-    """带时区的当前时间（SQLite 不存时区，这里统一 naive UTC）。"""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """当前时间（naive，容器 TZ=Asia/Shanghai）。
+
+    早期注释写「naive UTC」与实际不一致：datetime.now(timezone.utc) 在
+    上海时区的容器里比本地时间晚 8 小时，导致前端的 start_at = 本地时间
+    字符串（如 "09:00"）被误判为「未来 8 小时」。统一为上海本地时间，
+    与前端 datetime.now() 保持一致；naive 不带时区便于 SQLite 存取。
+    """
+    return datetime.now()
 
 
 class ORMBase(BaseModel):
