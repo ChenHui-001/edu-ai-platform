@@ -191,7 +191,32 @@
     <el-dialog v-model="aiDlg" title="AI 智能组卷" width="640px">
       <el-alert type="info" :closable="false" class="mb12"
                 title="用自然语言描述需求，AI 自动解析并组卷。示例：生成七年级数学一元一次方程的试卷，10 题，难度中等偏难" />
-      <el-form label-width="90px">
+      <el-form :model="aiForm" label-width="90px">
+        <el-row :gutter="10">
+          <el-col :span="12">
+            <el-form-item label="学科" required>
+              <el-select v-model="aiForm.subject_id" style="width:100%"
+                         @change="onAiSubjectChange">
+                <el-option v-for="s in subjects" :key="s.id"
+                           :label="s.name" :value="s.id">
+                  <span>{{ s.name }}</span>
+                  <span v-if="s.grade_count > 1"
+                        style="float:right;color:var(--el-text-color-secondary);font-size:12px">
+                    {{ s.grade_count }} 个年级
+                  </span>
+                </el-option>
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="年级">
+              <el-select v-model="aiForm.grade_id" clearable style="width:100%"
+                         @change="onAiGradeChange">
+                <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
         <el-form-item label="需求描述">
           <el-input v-model="aiReq" type="textarea" :rows="3"
                     placeholder="如：生成八年级物理期中试卷，选择填空，20 题，60 分钟" />
@@ -292,6 +317,9 @@ const viewDlg = ref(false)
 const aiLoading = ref(false)
 const aiResult = ref(null)
 const aiReq = ref('')
+// AI 组卷必须显式带学科+年级：subjects 来自 /edu/subjects?distinct=true（同名前缀去重），
+// 实际入库的 subject_id 是某具体年级的；selected_subject_id 记下选中的精确 id。
+const aiForm = reactive({ subject_id: null, grade_id: null })
 const shareTargets = ref([])
 const shareRemark = ref('')
 const selected = ref([])
@@ -411,16 +439,42 @@ async function save() {
 function openAI() {
   aiResult.value = null
   aiReq.value = templates[0]
+  // 打开弹窗时把当前列表筛选的学科/年级带过来，subject_id 走 distinct
+  // 模式代表记录 → 切换年级时再按 same_name_grade_ids 换成精确 id
+  aiForm.subject_id = form.subject_id || query.subject_id || null
+  aiForm.grade_id = form.grade_id || query.grade_id || null
+  syncAiSubjectByGrade()
   aiDlg.value = true
 }
 
+// subjects 是 distinct 后的去重列表（同一条目带 same_name_grade_ids），
+// 而后端入库要的是某具体年级的 subject_id。切换年级时必须同步换。
+function syncAiSubjectByGrade() {
+  if (!aiForm.subject_id) return
+  const s = subjects.value.find((x) =>
+    x.id === aiForm.subject_id ||
+    (x.same_name_ids || []).includes(aiForm.subject_id))
+  if (!s) return
+  if (!aiForm.grade_id) { aiForm.subject_id = s.id; return }
+  const idx = (s.same_name_grade_ids || []).indexOf(aiForm.grade_id)
+  if (idx >= 0) aiForm.subject_id = s.same_name_ids[idx]
+}
+
+function onAiGradeChange() { syncAiSubjectByGrade() }
+function onAiSubjectChange() { /* 学科变了不动年级 */ }
+
 async function runAI() {
   if (!aiReq.value) return ElMessage.warning('请输入组卷需求')
+  if (!aiForm.subject_id) return ElMessage.warning('请选择学科')
+  // 提交前再对一次年级：subject_id 精确到年级
+  syncAiSubjectByGrade()
   aiLoading.value = true
   try {
-    // 后端 paper_composer 读 data["request"]（不是 requirement），
-    // 且 save 默认为 False —— 不传 save=True 只会返回预览、不落库
-    const res = await agentApi.paperComposer({ request: aiReq.value, save: true })
+    // 后端 paper_composer 读 data["request"]、save 默认 False 不传则只预览
+    const res = await agentApi.paperComposer({
+      request: aiReq.value, save: true,
+      subject_id: aiForm.subject_id, grade_id: aiForm.grade_id,
+    })
     // res 是 axios 响应：{ data: {code, message, success, data? } }
     // envelope data 缺失（Agent 失败/降级）时不能裸取 res.data.data，会 NPE
     const envelope = res?.data || {}
