@@ -421,14 +421,25 @@ async function runAI() {
     // 后端 paper_composer 读 data["request"]（不是 requirement），
     // 且 save 默认为 False —— 不传 save=True 只会返回预览、不落库
     const res = await agentApi.paperComposer({ request: aiReq.value, save: true })
-    const data = res.data.data || {}
-    if (!data.paper?.id) {
-      ElMessage.warning(data.tip || '未生成试卷：题库可用题目不足，请先补充题目')
+    // res 是 axios 响应：{ data: {code, message, success, data? } }
+    // envelope data 缺失（Agent 失败/降级）时不能裸取 res.data.data，会 NPE
+    const envelope = res?.data || {}
+    const payload = envelope.data || {}
+    if (!envelope.success) {
+      // 后端明确报失败：401/422/500 等
+      ElMessage.error(envelope.message || '组卷请求失败')
+    } else if (!payload.paper?.id) {
+      // success=true 但无 paper —— 多半是题库空或 Agent 内部异常
+      ElMessage.warning(payload.tip || envelope.message
+                         || '未生成试卷：题库可用题目不足，请先补充题目')
     } else {
-      ElMessage.success(data.tip || res.data.message || '组卷完成')
+      ElMessage.success(payload.tip || envelope.message || '组卷完成')
     }
-    aiResult.value = data
+    aiResult.value = payload
     load()
+  } catch (e) {
+    // 兜底：网络/解析异常
+    ElMessage.error('组卷请求异常：' + (e?.message || e))
   } finally {
     aiLoading.value = false
   }

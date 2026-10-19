@@ -87,6 +87,16 @@ def ok(data: Any = None, message: str = "操作成功", **extra) -> Dict[str, An
     return payload
 
 
+def fail(message: str = "操作失败", code: int = 500,
+         **extra) -> Dict[str, Any]:
+    """统一失败响应。success=False，前端应据此走错误分支而不是盲取 data。
+    用于路由层包装 Agent 失败、业务校验失败等场景。
+    """
+    payload: Dict[str, Any] = {"code": code, "message": message, "success": False}
+    payload.update(extra)
+    return payload
+
+
 def load_json(v: Optional[str]) -> Any:
     """把 SQLite Text 列中的 JSON 字符串还原为对象；非法 JSON 原样返回。
 

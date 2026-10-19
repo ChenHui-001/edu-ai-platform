@@ -11,7 +11,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import AgentCallLog, User
-from app.utils.common import PageParams, dictify, ok
+from app.utils.common import PageParams, dictify, fail, ok
 
 router = APIRouter(prefix="/agent", tags=["AI Agent 中心"])
 
@@ -127,6 +127,10 @@ def question_generator(
         difficulty=data.get("difficulty", "medium"),
         save=bool(data.get("save", False)),
     )
+    # Agent 失败时 success=False / data=None —— 不能再用 ok() 包成 success=true，
+    # 否则前端 res.data.data 必崩（典型契约漂移）
+    if not res.get("success"):
+        return fail(res.get("message", "题目生成失败"))
     return ok(res.get("data"), message=res.get("message", "生成完成"))
 
 
@@ -147,6 +151,8 @@ def paper_composer(
         paper_name=data.get("paper_name"),
         save=bool(data.get("save", False)),
     )
+    if not res.get("success"):
+        return fail(res.get("message", "组卷失败"))
     return ok(res.get("data"), message=res.get("message", "组卷完成"))
 
 
@@ -158,6 +164,8 @@ def agent_grading(
     from app.agents.grading_agent import GradingAgent
 
     res = GradingAgent().run(db, user_id=user.id, items=data.get("items", []))
+    if not res.get("success"):
+        return fail(res.get("message", "批改失败"))
     return ok(res.get("data"), message="批改完成")
 
 
@@ -174,6 +182,8 @@ def study_planner(
         days=int(data.get("days", 7)),
         daily_minutes=int(data.get("daily_minutes", 90)),
     )
+    if not res.get("success"):
+        return fail(res.get("message", "学习规划失败"))
     return ok(res.get("data"), message=res.get("message", "规划完成"))
 
 
@@ -197,6 +207,8 @@ def tutor(
         grade_id=data.get("grade_id"), subject_id=data.get("subject_id"),
         student_id=user.id,
     )
+    if not res.get("success"):
+        return fail(res.get("message", "答疑失败"))
     return ok(res.get("data"), message=res.get("message", "解答完成"))
 
 
@@ -212,6 +224,8 @@ def note_organizer(
         note_id=data.get("note_id"), content=data.get("content"),
         title=data.get("title"), save=bool(data.get("save", False)),
     )
+    if not res.get("success"):
+        return fail(res.get("message", "笔记整理失败"))
     return ok(res.get("data"), message=res.get("message", "整理完成"))
 
 
