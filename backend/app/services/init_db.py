@@ -144,6 +144,11 @@ PERMISSIONS: List[Tuple[str, str, str, str, str, int]] = [
     # 作业考试
     ("task:list", "作业考试管理", "menu", "/teacher/tasks", "List", 320),
     ("task:write", "发布作业考试", "button", None, None, 321),
+    # 教案管理
+    ("lesson:plan:list", "教案管理", "menu", "/teacher/lessons", "Document", 325),
+    ("lesson:plan:write", "教案编辑", "button", None, None, 326),
+    ("lesson:plan:copy", "教案复制", "button", None, None, 327),
+    ("lesson:plan:share", "教案共享", "button", None, None, 328),
     ("grading:list", "批改中心", "menu", "/teacher/grading", "EditPen", 330),
     ("grading:do", "执行批改", "button", None, None, 331),
     ("grading:publish", "发布成绩", "button", None, None, 332),
@@ -211,6 +216,7 @@ ROLES: List[Dict] = [
             "question:bank:export",
             "paper:list", "paper:write", "paper:ai", "paper:share", "paper:export",
             "task:list", "task:write",
+            "lesson:plan:list", "lesson:plan:write", "lesson:plan:copy", "lesson:plan:share",
             "grading:list", "grading:do", "grading:publish",
             "analysis:class", "analysis:student", "report:teacher",
             "agent:chat", "agent:generate", "agent:plan",

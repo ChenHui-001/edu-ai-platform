@@ -60,6 +60,8 @@ const routes = [
         meta: { title: '作业考试', icon: 'List', perm: 'task:list' } },
       { path: 'teacher/grading', name: 'GradingCenter', component: () => import('@/views/teacher/GradingCenter.vue'),
         meta: { title: '批改中心', icon: 'EditPen', perm: 'grading:list' } },
+      { path: 'teacher/lessons', name: 'LessonPlanManage', component: () => import('@/views/teacher/LessonPlanManage.vue'),
+        meta: { title: '教案管理', icon: 'Document', perm: 'lesson:plan:list' } },
       { path: 'teacher/analysis', name: 'ClassAnalysis', component: () => import('@/views/teacher/ClassAnalysis.vue'),
         meta: { title: '班级学情', icon: 'TrendCharts', perm: 'analysis:class' } },
       { path: 'teacher/students', name: 'StudentAnalysis', component: () => import('@/views/teacher/StudentAnalysis.vue'),

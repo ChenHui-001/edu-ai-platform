@@ -7,6 +7,9 @@ from app.models.learning import (  # noqa: F401
     KnowledgeMastery, Note, QuestionFavorite, ReviewPlan, StudyCheckin, StudyGoal,
     StudyRecord,
 )
+from app.models.lesson import (  # noqa: F401
+    LessonPlan, LessonStage,
+)
 from app.models.ops import (  # noqa: F401
     AgentCallLog, Attachment, ErrorLog, JobExecutionLog, LoginLog,
     Notification, OperationLog, ScheduledJob,

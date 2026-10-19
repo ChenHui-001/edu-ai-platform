@@ -158,7 +158,7 @@ const menuGroups = computed(() => {
   const groups = [
     { title: '教学资源', icon: 'Collection', prefixes: ['/admin/grades', '/admin/subjects', '/admin/knowledge', '/admin/classes'] },
     { title: '题库试卷', icon: 'Notebook', prefixes: ['/teacher/questions', '/teacher/papers'] },
-    { title: '教学管理', icon: 'EditPen', prefixes: ['/teacher/tasks', '/teacher/grading'] },
+    { title: '教学管理', icon: 'EditPen', prefixes: ['/teacher/tasks', '/teacher/grading', '/teacher/lessons'] },
     { title: '学情分析', icon: 'TrendCharts', prefixes: ['/teacher/analysis', '/teacher/students', '/teacher/reports'] },
     { title: '学习中心', icon: 'Reading', prefixes: ['/student/'] },
     { title: 'AI 智能', icon: 'MagicStick', prefixes: ['/agent/', '/admin/agent-logs'] },

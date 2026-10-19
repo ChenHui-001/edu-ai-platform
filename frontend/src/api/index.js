@@ -235,3 +235,14 @@ export const attachmentApi = {
   bind: (id, data) => request.put(`/attachments/${id}/bind`, data),
   remove: (id) => request.delete(`/attachments/${id}`)
 }
+
+// ---------------- 教案 ----------------
+export const lessonApi = {
+  list: (params) => request.get('/lesson/plans', { params }),
+  detail: (id) => request.get(`/lesson/plans/${id}`),
+  create: (data) => request.post('/lesson/plans', data),
+  update: (id, data) => request.put(`/lesson/plans/${id}`, data),
+  remove: (id) => request.delete(`/lesson/plans/${id}`),
+  copy: (id, data) => request.post(`/lesson/plans/${id}/copy`, data || {}),
+  share: (id, data) => request.post(`/lesson/plans/${id}/share`, data)
+}

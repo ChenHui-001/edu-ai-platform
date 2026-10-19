@@ -2,7 +2,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
-    agent, attachment, auth, edu, grading, logs, question, report, system, task,
+    agent, attachment, auth, edu, grading, lesson, logs, question, report, system, task,
 )
 
 api_router = APIRouter()
@@ -19,3 +19,4 @@ api_router.include_router(report.router)
 api_router.include_router(logs.router)
 api_router.include_router(logs.jobs_router)
 api_router.include_router(attachment.router)
+api_router.include_router(lesson.router)
