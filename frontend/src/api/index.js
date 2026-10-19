@@ -45,6 +45,7 @@ export const eduApi = {
   createSubject: (data) => request.post('/edu/subjects', data),
   updateSubject: (id, data) => request.put(`/edu/subjects/${id}`, data),
   deleteSubject: (id) => request.delete(`/edu/subjects/${id}`),
+  cloneSubject: (id, data) => request.post(`/edu/subjects/${id}/clone`, data),
   knowledge: (params) => request.get('/edu/knowledge', { params }),
   knowledgeList: (params) => request.get('/edu/knowledge/list', { params }),
   createKnowledge: (data) => request.post('/edu/knowledge', data),

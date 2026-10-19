@@ -176,6 +176,50 @@ def delete_subject(
     return ok(message="学科已删除")
 
 
+@router.post("/subjects/{subject_id}/clone", summary="跨年级复制学科")
+def clone_subject(
+    subject_id: int, data: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db), _: User = Depends(get_current_manager),
+):
+    """把指定学科复制到多个目标年级。
+
+    同一 (grade_id, name) 已存在则跳过，不重复创建。常用于把"一年级语文"
+    一键铺到 1-9 年级。返回 created / skipped 明细。
+    """
+    from app.models import Subject as _Sub
+
+    src = db.get(_Sub, subject_id)
+    if not src:
+        raise NotFoundException("源学科不存在")
+    target_grades = data.get("target_grade_ids") or []
+    if not isinstance(target_grades, list) or not target_grades:
+        raise BusinessException("请选择至少一个目标年级")
+
+    created, skipped = [], []
+    for gid in target_grades:
+        gid = int(gid)
+        if gid == src.grade_id:
+            skipped.append({"grade_id": gid, "reason": "源年级，无需复制"})
+            continue
+        if not db.get(Grade, gid):
+            skipped.append({"grade_id": gid, "reason": "年级不存在"})
+            continue
+        if db.scalar(select(_Sub).where(_Sub.grade_id == gid, _Sub.name == src.name)):
+            skipped.append({"grade_id": gid, "reason": "该年级已存在同名学科"})
+            continue
+        new_sub = _Sub(
+            name=src.name, grade_id=gid, code=src.code,
+            textbook_version=src.textbook_version, sort=src.sort,
+        )
+        db.add(new_sub)
+        db.flush()
+        created.append({"id": new_sub.id, "grade_id": gid, "name": src.name})
+    db.commit()
+    return ok({"created": created, "skipped": skipped,
+              "src_subject_id": subject_id},
+              message=f"已复制到 {len(created)} 个年级")
+
+
 # ---------------------------------------------------------------- 知识点
 @router.get("/knowledge", summary="知识点树")
 def knowledge_tree(

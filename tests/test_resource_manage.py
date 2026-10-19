@@ -398,6 +398,109 @@ def run():
     # ============================================================
     # 清理
     # ============================================================
+    # 8. 学科跨年级复制（按年级视图的核心能力）
+    # ============================================================
+    R.set_phase("教学资源 | 8. 跨年级复制学科")
+
+    p, _, _ = admin.get("/edu/subjects", params={"grade_id": 1})
+    g1 = p.get("data") if isinstance(p.get("data"), list) else []
+    src = g1[0] if g1 else None
+    if src:
+        # 找一个 src 尚未在 3/4 年级存在的学科，避免一上来就 skip
+        test_name = None
+        for s in g1:
+            for cg in (3, 4, 6, 8):
+                p2, _, _ = admin.get("/edu/subjects", params={"grade_id": cg})
+                cg_subs = p2.get("data") if isinstance(p2.get("data"), list) else []
+                if not any(x["name"] == s["name"] for x in cg_subs):
+                    test_name = s["name"]
+                    src = s
+                    break
+            if test_name:
+                break
+
+        # 复制到 3 个目标年级
+        targets = []
+        for cg in (3, 4, 6, 8):
+            p2, _, _ = admin.get("/edu/subjects", params={"grade_id": cg})
+            cg_subs = p2.get("data") if isinstance(p2.get("data"), list) else []
+            if not any(x["name"] == src["name"] for x in cg_subs):
+                targets.append(cg)
+            if len(targets) == 3:
+                break
+
+        if targets:
+            p, _, _ = admin.post(f"/edu/subjects/{src['id']}/clone",
+                                  {"target_grade_ids": targets})
+            d = p.get("data") or {}
+            check("★ 跨年级复制学科：新建 N 个",
+                  p.get("success") and len(d.get("created") or []) == len(targets),
+                  f"target={targets} created={len(d.get('created') or [])}")
+
+            # 立即再复制一次应全部 skipped
+            p, _, _ = admin.post(f"/edu/subjects/{src['id']}/clone",
+                                  {"target_grade_ids": targets})
+            d2 = p.get("data") or {}
+            check("★ 同名再复制应全部跳过",
+                  p.get("success") and len(d2.get("created") or []) == 0
+                  and all("同名" in s.get("reason", "")
+                          for s in (d2.get("skipped") or [])),
+                  f"skipped={len(d2.get('skipped') or [])}")
+
+            # 源年级在 target 里应被识别并 skip
+            p, _, _ = admin.post(f"/edu/subjects/{src['id']}/clone",
+                                  {"target_grade_ids": [src["grade_id"]] + targets})
+            d3 = p.get("data") or {}
+            src_skip = next((s for s in (d3.get("skipped") or [])
+                             if s.get("grade_id") == src["grade_id"]), None)
+            check("★ 源年级在 target 里应被识别并跳过",
+                  src_skip is not None and "源年级" in src_skip.get("reason", ""),
+                  f"src_skip={src_skip}")
+
+            # 不存在年级应被识别并 skip
+            p, _, _ = admin.post(f"/edu/subjects/{src['id']}/clone",
+                                  {"target_grade_ids": [99999]})
+            d4 = p.get("data") or {}
+            miss_skip = next((s for s in (d4.get("skipped") or [])
+                              if s.get("grade_id") == 99999), None)
+            check("★ 不存在的年级应被识别并跳过",
+                  miss_skip is not None and "不存在" in miss_skip.get("reason", ""),
+                  f"miss_skip={miss_skip}")
+
+            # 空 target_grade_ids 应被拒
+            p, _, _ = admin.post(f"/edu/subjects/{src['id']}/clone",
+                                  {"target_grade_ids": []})
+            check("空 target_grade_ids 必须被拒",
+                  p.get("success") is not True,
+                  p.get("message", "")[:50])
+
+            # 源学科不存在
+            p, _, _ = admin.post("/edu/subjects/9999999/clone",
+                                  {"target_grade_ids": [3]})
+            check("★ 源学科不存在 404",
+                  p.get("success") is not True,
+                  p.get("message", "")[:50])
+
+            # 越权：教师/学生不能调
+            for u, label in [(teacher1, "教师"), (stu, "学生")]:
+                p, _, _ = u.post(f"/edu/subjects/{src['id']}/clone",
+                                  {"target_grade_ids": [3]})
+                check(f"{label}不能跨年级复制学科",
+                      p.get("success") is not True,
+                      p.get("message", "")[:50])
+
+            # 清理：把新建的删掉
+            for t in targets:
+                p, _, _ = admin.get("/edu/subjects", params={"grade_id": t})
+                items = p.get("data") if isinstance(p.get("data"), list) else []
+                for x in items:
+                    if x["name"] == src["name"]:
+                        admin.delete(f"/edu/subjects/{x['id']}")
+        else:
+            check("跨年级复制前置条件：能找到未占满的目标年级", False,
+                  "无目标年级可测")
+
+    # ============================================================
     if 'gid' in dir() and gid:
         admin.delete(f"/edu/grades/{gid}")
 
