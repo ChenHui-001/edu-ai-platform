@@ -83,13 +83,13 @@
               <el-link type="primary" :underline="false" @click="$router.push('/student/report')">详细报表</el-link>
             </div>
           </template>
-          <ReactECharts v-if="trend.length" :option="trendOption" style="height: 260px" />
+          <EChart v-if="trend.length" :option="trendOption" style="height: 260px" />
           <el-empty v-else description="暂无成绩数据" :image-size="70" />
         </el-card>
 
         <el-card shadow="never">
           <template #header><span>知识点掌握雷达</span></template>
-          <ReactECharts v-if="radar.length" :option="radarOption" style="height: 280px" />
+          <EChart v-if="radar.length" :option="radarOption" style="height: 280px" />
           <el-empty v-else description="暂无掌握度数据" :image-size="70" />
         </el-card>
       </el-col>
@@ -196,7 +196,7 @@
 
         <el-card shadow="never">
           <template #header><span>成绩趋势（近 10 次）</span></template>
-          <ReactECharts v-if="trend.length" :option="trendOption" style="height: 260px" />
+          <EChart v-if="trend.length" :option="trendOption" style="height: 260px" />
           <el-empty v-else description="暂无数据" :image-size="70" />
         </el-card>
       </el-col>
@@ -207,7 +207,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import ReactECharts from 'echarts-for-react'
+import EChart from '@/components/EChart.vue'
 import { gradingApi, reportApi, taskApi } from '@/api'
 import { useUserStore } from '@/store/user'
 

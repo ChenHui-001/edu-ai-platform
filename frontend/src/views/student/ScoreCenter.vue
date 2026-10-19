@@ -62,7 +62,7 @@
       <el-col :span="8">
         <el-card shadow="never">
           <template #header><b>成绩趋势</b></template>
-          <ReactEcharts v-if="list.length" :option="trendOption" style="height: 300px" />
+          <EChart v-if="list.length" :option="trendOption" style="height: 300px" />
           <el-empty v-else description="暂无成绩" :image-size="60" />
         </el-card>
       </el-col>
@@ -97,7 +97,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import ReactEcharts from 'echarts-for-react'
+import EChart from '@/components/EChart.vue'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import { taskApi, reportApi } from '@/api'
 

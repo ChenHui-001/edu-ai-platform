@@ -1,0 +1,25 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - heading "九年义务教育学习管理系统" [level=1] [ref=e11]
+      - paragraph [ref=e12]: AI Agent 版 · 覆盖教-学-练-考-评-改全教学流程
+    - list [ref=e13]:
+      - listitem [ref=e14]: 6 大 AI Agent 协作智能引擎
+      - listitem [ref=e18]: 智能组卷与题库管理
+      - listitem [ref=e23]: 客观题自动批改 + AI 辅助批改
+      - listitem [ref=e27]: 艾宾浩斯智能复习计划
+      - listitem [ref=e31]: 全维度学情数据报表
+  - generic [ref=e37]:
+    - heading "欢迎登录" [level=2] [ref=e38]
+    - paragraph [ref=e39]: 请输入账号密码继续
+    - generic [ref=e40]:
+      - textbox "请输入账号" [ref=e49]
+      - textbox "请输入密码" [ref=e60]
+      - generic [ref=e64]:
+        - textbox "验证码" [ref=e71]
+        - img "点击刷新" [ref=e84] [cursor=pointer]
+      - button "登 录" [ref=e74] [cursor=pointer]
+      - generic [ref=e76]:
+        - link "注册账号" [ref=e77] [cursor=pointer]:
+          - /url: /register
+        - button "演示账号" [ref=e79] [cursor=pointer]

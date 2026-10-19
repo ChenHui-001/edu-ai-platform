@@ -67,7 +67,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header><b>知识点正确率分布</b></template>
-          <ReactEcharts v-if="effect.length" :option="effectOption" style="height: 400px" />
+          <EChart v-if="effect.length" :option="effectOption" style="height: 400px" />
           <el-empty v-else description="暂无数据" :image-size="60" />
         </el-card>
       </el-col>
@@ -81,7 +81,7 @@
             <el-tag :type="$index < 3 ? 'success' : 'info'" size="small">第 {{ $index + 1 }} 名</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="student_name" label="学生" width="120" />
+        <el-table-column prop="name" label="学生" width="120" />
         <el-table-column prop="submission_count" label="提交次数" width="110" align="center" />
         <el-table-column prop="avg_score" label="平均分" width="110" align="center" />
         <el-table-column prop="accuracy" label="正确率" width="170">
@@ -103,7 +103,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import ReactEcharts from 'echarts-for-react'
+import EChart from '@/components/EChart.vue'
 import { Download, Refresh } from '@element-plus/icons-vue'
 import { reportApi, eduApi, taskApi } from '@/api'
 
@@ -151,8 +151,8 @@ async function loadAll() {
       reportApi.classOverview({ class_id: classId.value, task_id: taskId.value }),
       reportApi.studentComparison({ class_id: classId.value, task_id: taskId.value })
     ])
-    overview.value = o.data.data
-    comparison.value = c.data.data || []
+    overview.value = o.data
+    comparison.value = c.data || []
   } finally {
     loading.value = false
   }
@@ -163,7 +163,7 @@ async function loadEffect() {
   loadingEffect.value = true
   try {
     const res = await reportApi.knowledgeEffect({ class_id: classId.value, task_id: taskId.value })
-    effect.value = res.data.data || []
+    effect.value = res.data || []
   } finally {
     loadingEffect.value = false
   }
@@ -175,11 +175,13 @@ function exportExcel() {
 
 onMounted(async () => {
   const [c, t] = await Promise.all([
-    eduApi.classes({ page_size: 100 }),
+    eduApi.classes({ page_size: 100, mine: true }),
     taskApi.list({ page: 1, page_size: 100 })
   ])
-  classes.value = c.data.data?.items || []
-  tasks.value = t.data.data?.items || []
+  // /edu/classes 返回数组（非分页 items），两种结构都兼容
+  const _cd = c.data
+  classes.value = Array.isArray(_cd) ? _cd : (_cd?.items || [])
+  tasks.value = t.data?.items || []
   if (classes.value.length) {
     classId.value = classes.value[0].id
     loadAll()

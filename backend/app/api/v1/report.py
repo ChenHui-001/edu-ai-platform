@@ -238,9 +238,20 @@ def _score_bands(scores: List[float]) -> Dict[str, int]:
 @router.get("/teacher/student-comparison", summary="学生横向对比")
 def student_comparison(
     class_id: int, task_id: Optional[int] = None, db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
 ):
-    students = db.scalars(select(User).where(User.class_id == class_id)).all()
+    # 数据范围校验：与 class-overview 同口径，教师只能看任教班级
+    if not scope.is_super:
+        allowed = scope.class_ids()
+        if allowed is not None and class_id not in allowed:
+            raise BusinessException("无权查看该班级数据")
+
+    from app.models import Answer, TaskAssignment, Task as TaskModel, TaskStatus
+
+    # 教师档案也带 class_id（任教班级），必须过滤身份，否则教师本人
+    # 会出现在学生横向对比里（实测 class1 明细混入了 teacher1）
+    students = db.scalars(select(User).where(
+        User.class_id == class_id, User.identity == "student")).all()
     rows = []
     for s in students:
         stmt = select(Submission).where(
@@ -255,13 +266,40 @@ def student_comparison(
                 WrongQuestion.student_id == s.id, WrongQuestion.is_mastered.is_(False)
             )
         ) or 0
+
+        # 正确率：该生全部作答明细里答对的比例（含客观+主观判分）
+        total_ans = correct_ans = 0
+        last_submit = None
+        for x in subs:
+            ans = db.scalars(select(Answer).where(Answer.submission_id == x.id)).all()
+            total_ans += len(ans)
+            correct_ans += sum(1 for a in ans if a.is_correct)
+            if x.submit_time and (last_submit is None or x.submit_time > last_submit):
+                last_submit = x.submit_time
+
+        # 真实完成率：已提交任务数 / 下发且已发布的任务数
+        assigned = db.scalar(
+            select(func.count()).select_from(TaskAssignment)
+            .join(TaskModel, TaskModel.id == TaskAssignment.task_id)
+            .where(
+                TaskModel.status == TaskStatus.PUBLISHED.value,
+                TaskModel.type != "practice",
+                (TaskAssignment.student_id == s.id)
+                | (TaskAssignment.class_id == s.class_id),
+            )
+        ) or 0
+        completion = round(len({x.task_id for x in subs}) / assigned * 100, 1) \
+            if assigned else 0
+
         rows.append({
             "student_id": s.id, "name": s.real_name, "username": s.username,
             "submit_count": len(subs),
             "avg_score": round(sum(scores) / len(scores), 2) if scores else 0,
             "max_score": max(scores) if scores else 0,
             "wrong_count": wrong,
-            "completion_rate": 100.0 if subs else 0,
+            "accuracy": round(correct_ans / total_ans * 100, 1) if total_ans else 0,
+            "last_submit": dictify(last_submit),
+            "completion_rate": completion,
         })
     rows.sort(key=lambda x: x["avg_score"], reverse=True)
     for i, r in enumerate(rows, start=1):
@@ -272,11 +310,16 @@ def student_comparison(
 @router.get("/teacher/student-detail", summary="学生个体分析")
 def student_detail(
     student_id: int, db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
 ):
     stu = db.get(User, student_id)
     if not stu:
         raise NotFoundException("学生不存在")
+    # 数据范围校验：只能看任教班级（或所辖年级）的学生，防止遍历 student_id
+    if not scope.is_super:
+        allowed = scope.class_ids()
+        if allowed is not None and stu.class_id not in allowed:
+            raise BusinessException("无权查看该学生数据")
 
     subs = db.scalars(
         select(Submission).where(

@@ -23,13 +23,13 @@
         <el-col :span="12">
           <el-card shadow="never">
             <template #header><b>成绩分布</b></template>
-            <ReactEcharts v-if="overview" :option="distOption" style="height: 300px" />
+            <EChart v-if="overview" :option="distOption" style="height: 300px" />
           </el-card>
         </el-col>
         <el-col :span="12">
           <el-card shadow="never">
             <template #header><b>学生成绩排名</b></template>
-            <ReactEcharts v-if="comparison.length" :option="rankOption" style="height: 300px" />
+            <EChart v-if="comparison.length" :option="rankOption" style="height: 300px" />
             <el-empty v-else description="暂无成绩数据" :image-size="60" />
           </el-card>
         </el-col>
@@ -39,8 +39,8 @@
         <template #header><b>学生明细</b></template>
         <el-table v-loading="loading" :data="comparison" border stripe>
           <el-table-column type="index" label="#" width="50" align="center" />
-          <el-table-column prop="student_name" label="学生" width="110" />
-          <el-table-column prop="score" label="总分" width="90" align="center" />
+          <el-table-column prop="name" label="学生" width="110" />
+          <el-table-column prop="rank" label="排名" width="70" align="center" />
           <el-table-column prop="avg_score" label="平均分" width="100" align="center" />
           <el-table-column prop="accuracy" label="正确率" width="100" align="center">
             <template #default="{ row }">
@@ -72,7 +72,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import ReactEcharts from 'echarts-for-react'
+import EChart from '@/components/EChart.vue'
 import { reportApi, eduApi } from '@/api'
 
 const router = useRouter()
@@ -111,7 +111,7 @@ const rankOption = computed(() => {
     grid: { left: 90, right: 30, top: 20, bottom: 40 },
     xAxis: { type: 'value', name: '平均分' },
     yAxis: {
-      type: 'category', data: sorted.map(s => s.student_name).reverse(),
+      type: 'category', data: sorted.map(s => s.name).reverse(),
       axisLabel: { fontSize: 11 }
     },
     series: [{
@@ -136,8 +136,8 @@ async function loadAll() {
       reportApi.classOverview({ class_id: classId.value }),
       reportApi.studentComparison({ class_id: classId.value })
     ])
-    overview.value = o.data.data
-    comparison.value = c.data.data || []
+    overview.value = o.data
+    comparison.value = c.data || []
   } finally {
     loading.value = false
   }
@@ -148,8 +148,10 @@ function goStudent(row) {
 }
 
 onMounted(async () => {
-  const res = await eduApi.classes({ page_size: 100 })
-  classes.value = res.data.data?.items || []
+  const res = await eduApi.classes({ page_size: 100, mine: true })
+  // /edu/classes 返回数组（非分页 items），两种结构都兼容
+    const _d = res.data
+    classes.value = Array.isArray(_d) ? _d : (_d?.items || [])
   if (classes.value.length) {
     classId.value = classes.value[0].id
     loadAll()

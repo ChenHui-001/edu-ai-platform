@@ -61,13 +61,13 @@
         <el-col :span="12">
           <el-card shadow="never">
             <template #header><b>{{ detail.student?.name }} 成绩趋势</b></template>
-            <ReactEcharts :option="trendOption" style="height: 300px" />
+            <EChart :option="trendOption" style="height: 300px" />
           </el-card>
         </el-col>
         <el-col :span="12">
           <el-card shadow="never">
             <template #header><b>知识点掌握情况</b></template>
-            <ReactEcharts v-if="radar.length >= 3" :option="radarOption" style="height: 300px" />
+            <EChart v-if="radar.length >= 3" :option="radarOption" style="height: 300px" />
             <el-empty v-else description="知识点数据不足（需答题关联知识点）" :image-size="60" />
           </el-card>
         </el-col>
@@ -85,7 +85,6 @@
                                :color="row.mastery >= 60 ? '#67c23a' : '#f56c6c'" />
                 </template>
               </el-table-column>
-              <el-table-column prop="wrong_count" label="错题数" width="80" align="center" />
             </el-table>
             <el-empty v-if="!weakTable.length" description="暂无薄弱点记录" :image-size="60" />
           </el-card>
@@ -110,8 +109,8 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import ReactEcharts from 'echarts-for-react'
-import { reportApi, eduApi, learningApi } from '@/api'
+import EChart from '@/components/EChart.vue'
+import { reportApi, eduApi } from '@/api'
 
 const route = useRoute()
 const classes = ref([])
@@ -174,7 +173,7 @@ async function loadStudents() {
   if (!classId.value) return
   // 学生下拉：人员简表（后端按任教班级校验；/system/users 教师必 403）
   const res = await eduApi.peopleBrief({ identity: 'student', class_id: classId.value })
-  students.value = res.data.data?.items || []
+  students.value = res.data?.items || []
 }
 
 function onClassChange() {
@@ -209,14 +208,25 @@ async function loadOverview() {
 async function loadDetail() {
   if (!studentId.value) return
   const res = await reportApi.studentDetail({ student_id: studentId.value })
-  detail.value = res.data.data
-  const m = await learningApi.masteryMap()
-  mastery.value = m.data.data
+  detail.value = res.data
+  // 掌握度数据源：student-detail 已按 student_id 返回该生的知识点掌握，
+  // 之前误调 learningApi.masteryMap()（当前登录人视角），教师查看学生时恒为空
+  const items = detail.value.knowledge_mastery || []
+  const avg = items.length
+    ? Math.round(items.reduce((a, b) => a + (b.mastery || 0), 0) / items.length)
+    : 0
+  mastery.value = {
+    items,
+    weak_points: detail.value.weak_points || [],
+    avg_mastery: avg,
+  }
 }
 
 onMounted(async () => {
-  const res = await eduApi.classes({ page_size: 100 })
-  classes.value = res.data.data?.items || []
+  const res = await eduApi.classes({ page_size: 100, mine: true })
+  // /edu/classes 返回数组（非分页 items），两种结构都兼容
+    const _d = res.data
+    classes.value = Array.isArray(_d) ? _d : (_d?.items || [])
   if (route.query.class_id) {
     classId.value = Number(route.query.class_id)
   } else if (classes.value.length) {

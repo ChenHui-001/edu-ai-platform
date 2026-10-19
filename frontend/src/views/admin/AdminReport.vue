@@ -54,7 +54,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header><b>各学科题量分布</b></template>
-          <ReactEcharts :option="subjectOption" style="height: 320px" />
+          <EChart :option="subjectOption" style="height: 320px" />
         </el-card>
       </el-col>
     </el-row>
@@ -89,7 +89,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import ReactEcharts from 'echarts-for-react'
+import EChart from '@/components/EChart.vue'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import { reportApi } from '@/api'
 

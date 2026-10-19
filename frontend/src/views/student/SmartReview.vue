@@ -77,7 +77,7 @@
           </template>
 
           <template v-if="mastery.items?.length">
-            <ReactEcharts v-if="mastery.items.length >= 3" :option="radarOption" style="height: 280px" />
+            <EChart v-if="mastery.items.length >= 3" :option="radarOption" style="height: 280px" />
             <el-divider content-position="left">
               薄弱知识点（{{ mastery.weak_points?.length || 0 }}）
             </el-divider>
@@ -142,7 +142,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import ReactEcharts from 'echarts-for-react'
+import EChart from '@/components/EChart.vue'
 import { Refresh, MagicStick } from '@element-plus/icons-vue'
 import { learningApi, eduApi } from '@/api'
 

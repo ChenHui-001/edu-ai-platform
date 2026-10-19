@@ -307,13 +307,22 @@ def reindex(db: Session = Depends(get_db), _: User = Depends(get_current_teacher
 @router.get("/classes", summary="班级列表")
 def list_classes(
     grade_id: Optional[int] = None, keyword: Optional[str] = None,
-    db: Session = Depends(get_db), _: User = Depends(get_current_user),
+    mine: bool = False,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    scope: DataScope = Depends(get_data_scope),
 ):
     stmt = select(Class)
     if grade_id:
         stmt = stmt.where(Class.grade_id == grade_id)
     if keyword:
         stmt = stmt.where(Class.name.like(f"%{keyword}%"))
+    # mine=true：教师端学情分析等场景只返回任教班级。
+    # 不加过滤的话下拉里能看到全部班级，选中非任教班级后接口必然 400，
+    # 表现为「下拉可选但一选就报无权查看」（交互矛盾）。
+    if mine and "sys_admin" not in user.role_codes:
+        allowed = scope.class_ids()
+        if allowed is not None:
+            stmt = stmt.where(Class.id.in_(allowed or [0]))
     items = []
     for c in db.scalars(stmt.order_by(Class.id)).all():
         d = dictify(c)

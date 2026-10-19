@@ -715,9 +715,10 @@ def run():
               f"{p.get('code')} {p.get('message', '')}"[:80])
 
     if R.context.get("stu731_id"):
+        # stu731 属七年级(2)班（teacher4 任教）：teacher1 读取应被数据范围校验拦截
         p, _, _ = tea.get("/report/teacher/student-detail",
                           params={"student_id": R.context["stu731_id"]})
-        check("学生个体学情可读", p.get("success"),
+        check("跨班学生个体学情被拒（数据范围校验）", p.get("success") is not True,
               f"{p.get('code')} {p.get('message', '')}"[:80])
 
     return R.context

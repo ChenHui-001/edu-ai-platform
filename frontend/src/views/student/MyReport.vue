@@ -29,7 +29,7 @@
               </el-select>
             </div>
           </template>
-          <ReactEcharts v-if="trend.length" :option="trendOption" style="height: 300px" />
+          <EChart v-if="trend.length" :option="trendOption" style="height: 300px" />
           <el-empty v-else description="暂无成绩数据" :image-size="60" />
         </el-card>
       </el-col>
@@ -37,7 +37,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header><b>知识点掌握雷达</b></template>
-          <ReactEcharts v-if="radar.length >= 3" :option="radarOption" style="height: 300px" />
+          <EChart v-if="radar.length >= 3" :option="radarOption" style="height: 300px" />
           <el-empty v-else description="知识点数据不足（需答题关联知识点）" :image-size="60" />
         </el-card>
       </el-col>
@@ -47,7 +47,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header><b>错题分析</b></template>
-          <ReactEcharts v-if="wrong.total > 0" :option="wrongOption" style="height: 300px" />
+          <EChart v-if="wrong.total > 0" :option="wrongOption" style="height: 300px" />
           <el-empty v-else description="暂无错题，继续保持！" :image-size="60" />
         </el-card>
       </el-col>
@@ -121,7 +121,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import ReactEcharts from 'echarts-for-react'
+import EChart from '@/components/EChart.vue'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import { reportApi, eduApi } from '@/api'
 
