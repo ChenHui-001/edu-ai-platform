@@ -195,9 +195,19 @@
         </el-card>
 
         <el-card shadow="never">
-          <template #header><span>成绩趋势（近 10 次）</span></template>
-          <EChart v-if="trend.length" :option="trendOption" style="height: 260px" />
-          <el-empty v-else description="暂无数据" :image-size="70" />
+          <template #header><span>班级成绩速览</span></template>
+          <el-table v-if="classSummaries.length" :data="classSummaries" size="small" border>
+            <el-table-column prop="name" label="班级" min-width="110" />
+            <el-table-column prop="student_count" label="学生" width="70" align="center" />
+            <el-table-column prop="avg_score" label="平均分" width="90" align="center" />
+            <el-table-column prop="pass_rate" label="及格率">
+              <template #default="{ row }">
+                <el-progress :percentage="Math.min(row.pass_rate || 0, 100)"
+                             :color="row.pass_rate >= 60 ? '#67c23a' : '#e6a23c'" />
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-else description="暂无任教班级或成绩数据" :image-size="70" />
         </el-card>
       </el-col>
     </el-row>
@@ -221,6 +231,8 @@ const reviewData = ref({ today_count: 0, items: [] })
 const trend = ref([])
 const radar = ref([])
 const sysStats = ref({})
+const myClasses = ref([])
+const classSummaries = ref([])
 
 const today = computed(() => new Date().toLocaleDateString('zh-CN', {
   year: 'numeric', month: 'long', day: 'numeric', weekday: 'long'
@@ -350,8 +362,30 @@ onMounted(async () => {
       sysStats.value = s.data
     }
     if (userStore.isTeacher && !userStore.isAdmin) {
-      const s = await reportApi.studentOverview()
-      sysStats.value = { user: { student: 0 }, content: { question: 0 } }
+      // 修复：此前硬编码 student:0 / question:0，工作台永远显示 0。
+      // 学生人数 = 任教班级（mine=true）人数之和；题库总量 = 我的题库 total。
+      const { eduApi, questionApi } = await import('@/api')
+      const c = await eduApi.classes({ page_size: 50, mine: true })
+      myClasses.value = Array.isArray(c.data) ? c.data : (c.data?.items || [])
+      const q = await questionApi.list({ page: 1, page_size: 1 })
+      const qd = q.data
+      const qTotal = Array.isArray(qd) ? qd.length : (qd?.total ?? 0)
+      sysStats.value = {
+        user: { student: myClasses.value.reduce((a, b) => a + (b.student_count || 0), 0) },
+        content: { question: qTotal },
+      }
+      // 班级成绩速览：逐班拉取概览（教师一般任教 1-3 个班，开销可接受）
+      const summaries = await Promise.all(myClasses.value.map(async k => {
+        try {
+          const r = await reportApi.classOverview({ class_id: k.id })
+          const d = r.data || {}
+          return { id: k.id, name: k.name, student_count: d.student_count ?? 0,
+                   avg_score: d.avg_score ?? 0, pass_rate: d.pass_rate ?? 0 }
+        } catch (e) {
+          return { id: k.id, name: k.name, student_count: 0, avg_score: 0, pass_rate: 0 }
+        }
+      }))
+      classSummaries.value = summaries
     }
   } catch (e) { /* 忽略加载错误 */ }
 })
