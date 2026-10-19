@@ -2,27 +2,38 @@
   <div class="page-container">
     <div class="page-header">
       <h2 class="page-title">批改中心</h2>
-      <div>
-        <el-button :icon="Refresh" @click="load">刷新待批</el-button>
+      <div class="header-actions">
+        <span class="queue-summary" v-if="list.length">
+          共 <b>{{ list.length }}</b> 份待批 ·
+          需人工 <b class="warn">{{ needManualCount }}</b> 份
+        </span>
+        <el-button :icon="Refresh" @click="load">刷新队列</el-button>
       </div>
     </div>
 
     <el-row :gutter="16">
-      <!-- 待批改列表 -->
-      <el-col :span="10">
-        <el-card shadow="never">
+      <!-- ============ 左：待批队列 ============ -->
+      <el-col :xs="24" :md="8">
+        <el-card shadow="never" class="queue-card">
           <template #header>
             <div class="flex-between">
               <b>待批改队列</b>
-              <el-tag type="warning" size="small">{{ list.length }} 份</el-tag>
+              <el-tag type="warning" size="small">{{ filtered.length }} 份</el-tag>
             </div>
           </template>
           <el-input v-model="filter" placeholder="搜索学生 / 任务" clearable
-                    :prefix-icon="Search" class="mb12" />
-          <el-list v-loading="loading" class="sub-list">
-            <el-list-item v-for="item in filtered" :key="item.submission_id ?? item.id" class="sub-item"
-                          :class="{ active: (item.submission_id ?? item.id) === current?.id }"
-                          @click="select(item)">
+                    :prefix-icon="Search" class="mb10" />
+          <div class="queue-filters mb10">
+            <el-radio-group v-model="queueFilter" size="small">
+              <el-radio-button label="all">全部</el-radio-button>
+              <el-radio-button label="manual">需人工</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div v-loading="loading" class="sub-list">
+            <div v-for="item in filtered" :key="item.submission_id"
+                 class="sub-item"
+                 :class="{ active: item.submission_id === current?.id }"
+                 @click="select(item)">
               <div class="row-between">
                 <span class="name">{{ item.student_name }}</span>
                 <el-tag size="small" :type="item.needs_manual ? 'warning' : 'info'">
@@ -31,67 +42,118 @@
               </div>
               <p class="task">{{ item.task_title }}</p>
               <div class="row-between">
-                <span class="tip">{{ item.submit_time }}</span>
-                <span class="score">{{ item.score ?? '-' }} / {{ item.total_score }}</span>
+                <span class="tip">{{ fmtTime(item.submit_time) }}</span>
+                <span class="score">
+                  {{ item.score ?? '未批' }}<template v-if="item.score != null"> / {{ item.total_score }}</template>
+                </span>
               </div>
-            </el-list-item>
+            </div>
             <el-empty v-if="!loading && !filtered.length" description="暂无待批改作业" :image-size="70" />
-          </el-list>
+          </div>
         </el-card>
       </el-col>
 
-      <!-- 批改区 -->
-      <el-col :span="14">
-        <el-card shadow="never" v-loading="detailLoading">
+      <!-- ============ 右：批改工作区 ============ -->
+      <el-col :xs="24" :md="16">
+        <el-card shadow="never" v-loading="detailLoading" class="grading-card">
           <template #header>
-            <div class="flex-between" v-if="detail">
-              <b>{{ detail.student?.name }} · {{ detail.task_title }}</b>
-              <div>
-                <el-tag size="small" class="mr8">客观 {{ detail.objective_score ?? 0 }} 分</el-tag>
-                <el-tag size="small" type="warning">主观 {{ detail.subjective_score ?? 0 }} 分</el-tag>
-                <el-button v-if="can('grading:publish')" size="small" type="primary" class="ml8" @click="publish"
-                           :disabled="detail.status !== 'graded'">发布成绩</el-button>
-                <el-button v-if="can('grading:do')" size="small" type="danger" plain @click="reject">打回重做</el-button>
+            <div class="flex-between grading-head" v-if="detail">
+              <div class="student-info">
+                <b class="student-name">{{ detail.student?.name }}</b>
+                <span class="task-name">{{ detail.task_title }}</span>
+              </div>
+              <div class="head-tags">
+                <el-tag size="small">客观 {{ detail.objective_score ?? 0 }}</el-tag>
+                <el-tag size="small" type="warning">主观 {{ detail.subjective_score ?? 0 }}</el-tag>
+                <el-tag size="small" :type="statusType(detail.status)">
+                  {{ statusText(detail.status) }}
+                </el-tag>
               </div>
             </div>
           </template>
 
-          <el-empty v-if="!detail" description="请从左侧选择一份答卷" />
+          <el-empty v-if="!detail" description="请从左侧队列选择一份答卷开始批改" />
 
           <template v-else>
-            <div v-for="(it, idx) in detail.items" :key="idx" class="q-item">
-              <div class="q-head">
-                <b>第 {{ idx + 1 }} 题</b>
-                <el-tag size="small" :type="it.is_correct ? 'success' : 'danger'" class="ml8">
-                  {{ it.is_correct ? '正确' : '错误' }}
-                </el-tag>
-                <el-tag v-if="it.grader_type" size="small" effect="plain" class="ml8">
-                  {{ it.grader_type === 'ai' ? 'AI 批改' : '人工批改' }}
-                </el-tag>
-                <span class="score-input">
-                  得分
-                  <el-input-number v-model="scores[it.answer_id]" :min="0" :max="it.full_score"
-                                   :step="0.5" size="small" style="width:100px" />
-                  / {{ it.full_score }}
-                </span>
+            <!-- 批改进度条 -->
+            <div class="progress-bar">
+              <div class="progress-info">
+                <span>批改进度 <b>{{ scoredCount }}</b> / {{ detail.items?.length || 0 }} 题</span>
+                <span class="tip">总分 <b class="total">{{ totalScore }}</b> / {{ detail.total_score }}</span>
               </div>
-              <p class="content"><b>学生答案：</b>{{ it.content || '（未作答）' }}</p>
-              <p class="correct"><b>正确答案：</b>{{ formatAnswer(it.correct_answer) }}</p>
-              <p v-if="it.ai_comment" class="ai-comment">
-                <b>AI 评语：</b>{{ it.ai_comment }}
-              </p>
-              <p v-if="it.ai_error_points?.length" class="err-points">
-                <b>失分点：</b>
-                <el-tag v-for="(p, i) in it.ai_error_points" :key="i" size="small" type="danger"
-                        effect="plain" class="ml4">{{ p }}</el-tag>
-              </p>
-              <el-input v-model="comments[it.answer_id]" placeholder="教师评语（可选）"
-                        type="textarea" :rows="1" class="mt4" />
+              <el-progress :percentage="gradeProgress" :stroke-width="8"
+                           :status="gradeProgress === 100 ? 'success' : undefined" />
             </div>
 
+            <!-- 逐题批改：左信息 / 右评分 -->
+            <div v-for="(it, idx) in detail.items" :key="it.answer_id"
+                 class="q-item" :class="{ scored: isScored(it) }">
+              <div class="q-head">
+                <span class="q-no">{{ idx + 1 }}</span>
+                <el-tag size="small" effect="plain">{{ TYPE_LABEL[it.type] || it.type }}</el-tag>
+                <el-tag size="small" :type="it.is_correct ? 'success' : it.is_correct === false ? 'danger' : 'info'">
+                  {{ it.is_correct === true ? '正确' : it.is_correct === false ? '错误' : '待判' }}
+                </el-tag>
+                <el-tag v-if="it.grader_type" size="small" effect="plain" type="info">
+                  {{ it.grader_type === 'ai' ? 'AI 批改' : it.grader_type === 'auto' ? '自动判分' : '人工批改' }}
+                </el-tag>
+                <div class="q-score-panel">
+                  <el-button-group size="small">
+                    <el-button size="small" @click="setScore(it, it.full_score)">满分</el-button>
+                    <el-button size="small" @click="setScore(it, 0)">零分</el-button>
+                  </el-button-group>
+                  <el-input-number v-model="scores[it.answer_id]" :min="0" :max="it.full_score || 0"
+                                   :step="0.5" size="small" style="width:110px" />
+                  <span class="full-score">/ {{ it.full_score }}</span>
+                </div>
+              </div>
+
+              <div class="q-body">
+                <div class="q-col q-detail">
+                  <p class="content"><b>学生答案：</b><span class="ans">{{ it.content || '（未作答）' }}</span></p>
+                  <p class="correct">
+                    <b>正确答案：</b>
+                    <span class="std">{{ fmtAnswer(it.standard_answer) || '—' }}</span>
+                  </p>
+                  <p v-if="it.knowledge_point_name" class="kp">
+                    <el-tag size="small" effect="plain" type="info">{{ it.knowledge_point_name }}</el-tag>
+                  </p>
+                  <p v-if="it.ai_comment" class="ai-comment">
+                    <b>AI 评语：</b>{{ it.ai_comment }}
+                  </p>
+                  <p v-if="it.ai_error_points?.length" class="err-points">
+                    <b>失分点：</b>
+                    <el-tag v-for="(p, i) in it.ai_error_points" :key="i" size="small" type="danger"
+                            effect="plain" class="ml4">{{ p }}</el-tag>
+                  </p>
+                </div>
+                <div class="q-col q-grade">
+                  <el-input v-model="comments[it.answer_id]" placeholder="教师评语（可选，会展示给学生）"
+                            type="textarea" :rows="3" />
+                </div>
+              </div>
+            </div>
+
+            <!-- 底部操作栏 -->
             <div class="footer-bar">
-              <span>总分：<b class="total">{{ totalScore }}</b> / {{ detail.total_score }}</span>
-              <el-button v-if="can('grading:do')" type="primary" :loading="saving" @click="saveGrade">保存批改结果</el-button>
+              <div class="footer-total">
+                总分 <b class="total">{{ totalScore }}</b> / {{ detail.total_score }}
+              </div>
+              <div class="footer-actions">
+                <el-button v-if="can('grading:do')" type="danger" plain size="default" @click="reject">
+                  打回重做
+                </el-button>
+                <el-button v-if="can('grading:do')" type="primary" :loading="saving" @click="saveGrade()">
+                  保存批改结果
+                </el-button>
+                <el-button v-if="can('grading:do')" type="success" :loading="saving"
+                           :disabled="!nextItem" @click="saveAndNext">
+                  保存并批下一份
+                </el-button>
+                <el-button v-if="can('grading:publish')" type="warning" :disabled="!canPublish" @click="publish">
+                  发布成绩
+                </el-button>
+              </div>
             </div>
           </template>
         </el-card>
@@ -101,7 +163,6 @@
 </template>
 
 <script setup>
-const { can } = useUserStore()
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -109,37 +170,97 @@ import { Search, Refresh } from '@element-plus/icons-vue'
 import { gradingApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
-// 按钮级权限统一取 store 的 can getter（见文件顶部解构）
+const { can } = useUserStore()
 const route = useRoute()
 const router = useRouter()
+
+const TYPE_LABEL = {
+  single: '单选题', multiple: '多选题', judge: '判断题', blank: '填空题',
+  short: '简答题', calc: '计算题', material: '材料分析题', composition: '作文题',
+}
+// 可发布成绩的状态（后端批改后置为 fully_graded；历史数据可能是 graded）
+const PUBLISHABLE = new Set(['graded', 'fully_graded'])
+
 const list = ref([])
 const detail = ref(null)
-// 当前选中的列表项。模板里用 current?.id 判断高亮，
-// 但此前脚本中并未定义该变量 —— 选中态高亮因此从未生效。
 const current = ref(null)
 const scores = reactive({})
 const comments = reactive({})
 const filter = ref('')
+const queueFilter = ref('all')
 const loading = ref(false)
 const detailLoading = ref(false)
 const saving = ref(false)
 
+const needManualCount = computed(() => list.value.filter(i => i.needs_manual).length)
+
 const filtered = computed(() => {
   const k = filter.value.trim().toLowerCase()
-  if (!k) return list.value
-  return list.value.filter(i =>
+  let out = list.value
+  if (queueFilter.value === 'manual') out = out.filter(i => i.needs_manual)
+  if (!k) return out
+  return out.filter(i =>
     (i.student_name || '').toLowerCase().includes(k) ||
     (i.task_title || '').toLowerCase().includes(k))
 })
 
+/** 当前提交的下一份（用于「保存并批下一份」） */
+const nextItem = computed(() => {
+  const sid = current.value?.id
+  const idx = filtered.value.findIndex(i => i.submission_id === sid)
+  if (idx < 0) return filtered.value[0] || null
+  return filtered.value[idx + 1] || filtered.value[0] || null
+})
+
+const scoredCount = computed(() =>
+  (detail.value?.items || []).filter(it => scores[it.answer_id] !== undefined
+    && scores[it.answer_id] !== null).length)
+
+const gradeProgress = computed(() => {
+  const total = detail.value?.items?.length || 0
+  return total ? Math.round((scoredCount.value / total) * 100) : 0
+})
+
 const totalScore = computed(() => {
   if (!detail.value) return 0
-  const s = detail.value.items.reduce((sum, it) => sum + (scores[it.answer_id] ?? it.score ?? 0), 0)
+  const s = (detail.value.items || []).reduce(
+    (sum, it) => sum + (Number(scores[it.answer_id]) || 0), 0)
   return Number(s.toFixed(1))
 })
 
-function formatAnswer(a) {
-  if (a === null || a === undefined) return '-'
+const canPublish = computed(() =>
+  !!detail.value && PUBLISHABLE.has(detail.value.status) && detail.value.score != null)
+
+function statusText(s) {
+  return {
+    not_graded: '未批改', auto_graded: '待人工确认', fully_graded: '已批改',
+    graded: '已批改', published: '已发布', rejected: '已打回',
+  }[s] || s || '-'
+}
+function statusType(s) {
+  return {
+    not_graded: 'info', auto_graded: 'warning', fully_graded: 'success',
+    graded: 'success', published: 'primary', rejected: 'danger',
+  }[s] || 'info'
+}
+
+function isScored(it) {
+  return scores[it.answer_id] !== undefined && scores[it.answer_id] !== null
+}
+
+function setScore(it, v) {
+  scores[it.answer_id] = v
+}
+
+function fmtTime(t) {
+  if (!t) return '-'
+  const s = String(t).replace('T', ' ')
+  return s.slice(0, 16)
+}
+
+function fmtAnswer(a) {
+  if (a === null || a === undefined) return ''
+  if (Array.isArray(a)) return a.join('')
   if (typeof a === 'object') return JSON.stringify(a)
   return String(a)
 }
@@ -154,11 +275,20 @@ async function load() {
   }
 }
 
+function fillDetail(d, sid) {
+  detail.value = d
+  current.value = { id: sid, submission_id: sid }
+  Object.keys(scores).forEach(k => delete scores[k])
+  Object.keys(comments).forEach(k => delete comments[k])
+  ;(d.items || []).forEach(it => {
+    // 保持 null（未批改）而非默认 0：否则「批改进度」会把未评的题算成已批
+    scores[it.answer_id] = it.score ?? null
+    comments[it.answer_id] = it.teacher_comment || ''
+  })
+}
+
 async function select(item) {
   if (!item) return
-  // 后端权威字段是 submission_id；早期 /grading/pending 只返回该字段，
-  // 而这里原先一律读 item.id，取到 undefined 导致详情接口 422，
-  // 前端提示「未找到该提交记录，可能已完成批改」。这里做兼容取值。
   const sid = item.submission_id ?? item.id
   if (!sid) {
     ElMessage.error('该记录缺少提交 ID，请刷新列表')
@@ -167,16 +297,10 @@ async function select(item) {
   current.value = { ...item, id: sid, submission_id: sid }
   detailLoading.value = true
   detail.value = null
-  // 同步到地址栏，保证刷新/分享后仍停留在同一条
   router.replace({ query: { ...route.query, submission: String(sid) } })
   try {
     const res = await gradingApi.detail(sid)
-    const d = res.data
-    detail.value = d
-    ;(d.items || []).forEach(it => {
-      scores[it.answer_id] = it.score ?? 0
-      comments[it.answer_id] = it.teacher_comment || ''
-    })
+    fillDetail(res.data, sid)
   } finally {
     detailLoading.value = false
   }
@@ -186,28 +310,20 @@ async function select(item) {
 async function focusFromQuery() {
   const sid = Number(route.query.submission)
   if (!sid) return
-  // 待批队列最多取 100 条，定位目标可能不在其中（如已批改/ 已发布）
   const hit = list.value.find(i => (i.submission_id ?? i.id) === sid)
   if (hit) {
     await select(hit)
   } else {
     try {
       const res = await gradingApi.detail(sid)
-      const d = res.data
-      detail.value = d
+      fillDetail(res.data, sid)
       current.value = {
-        id: sid,
-        student_name: d.student?.name || '-',
-        task_title: d.task_title || '-',
+        id: sid, submission_id: sid,
+        student_name: res.data?.student?.name || '-',
+        task_title: res.data?.task_title || '-',
       }
-      ;(d.items || []).forEach(it => {
-        scores[it.answer_id] = it.score ?? 0
-        comments[it.answer_id] = it.teacher_comment || ''
-      })
     } catch (e) {
-      // 区分错误类型：404 才是「不存在/已批改」；其余（网络/5xx/前端解析）
-      // 一律报「加载失败」——此前 catch 吞掉了前端 TypeError 也报「未找到」，
-      // 把真正的 bug 伪装成业务提示（res.data.data 陷阱曾借此长期潜伏）。
+      // 区分错误类型：404 才是「不存在/已批改」；其余一律「加载失败」
       const status = e?.response?.status ?? e?.data?.code
       if (status === 404) {
         ElMessage.warning('未找到该提交记录，可能已完成批改')
@@ -219,27 +335,39 @@ async function focusFromQuery() {
   }
 }
 
-async function saveGrade() {
+async function saveGrade(silent = false) {
   saving.value = true
   try {
     const answers = (detail.value.items || []).map(it => ({
       answer_id: it.answer_id,
-      score: scores[it.answer_id] ?? 0,
+      score: Number(scores[it.answer_id]) || 0,
       teacher_comment: comments[it.answer_id] || '',
-      is_correct: (scores[it.answer_id] ?? 0) >= (it.full_score ?? 0),
-      teacher_comment: comments[it.answer_id] || ''
+      is_correct: (Number(scores[it.answer_id]) || 0) >= (it.full_score ?? 0),
     }))
     await gradingApi.grade(detail.value.submission_id, { answers })
-    ElMessage.success('批改结果已保存')
-    load()
+    if (!silent) ElMessage.success('批改结果已保存')
+    await load()
+    return true
+  } catch (e) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+    return false
   } finally {
     saving.value = false
   }
 }
 
+/** 保存当前并自动跳到下一份，减少「回列表找下一份」的往返 */
+async function saveAndNext() {
+  const ok = await saveGrade(true)
+  if (!ok) return
+  const next = nextItem.value
+  ElMessage.success(`已保存，正在打开 ${next?.student_name || '下一份'}`)
+  if (next) await select(next)
+}
+
 async function reject() {
   const { value } = await ElMessageBox.prompt('请输入打回原因', '打回重做', {
-    inputPlaceholder: '如：第 3 题计算过程缺失，请重新作答'
+    inputPlaceholder: '如：第 3 题计算过程缺失，请重新作答',
   })
   await gradingApi.reject(detail.value.submission_id, { reason: value })
   ElMessage.success('已打回，学生可重新提交')
@@ -266,37 +394,93 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.flex-between, .row-between {
-  display: flex; align-items: center; justify-content: space-between;
-}
-.mb12 { margin-bottom: 12px; }
-.mr8 { margin-right: 8px; }
+.header-actions { display: flex; align-items: center; gap: 12px; }
+.queue-summary { font-size: 13px; color: #606266; }
+.queue-summary b { color: #2f6fd0; }
+.queue-summary b.warn { color: #e6a23c; }
+
+.flex-between, .row-between { display: flex; align-items: center; justify-content: space-between; }
+.mb10 { margin-bottom: 10px; }
 .ml4 { margin-left: 4px; }
-.ml8 { margin-left: 8px; }
-.mt4 { margin-top: 4px; }
-.sub-list { max-height: 620px; overflow-y: auto; }
+.tip { color: #909399; font-size: 12px; }
+
+.queue-card :deep(.el-card__body) { padding-top: 12px; }
+.sub-list { max-height: calc(100vh - 300px); min-height: 320px; overflow-y: auto; }
 .sub-item {
   cursor: pointer; border: 1px solid #ebeef5; border-radius: 8px;
-  margin-bottom: 8px; padding: 10px; transition: all .2s;
+  margin-bottom: 8px; padding: 10px 12px; transition: all .18s;
 }
 .sub-item:hover { border-color: #a5c4f0; background: #f7fafd; }
-.sub-item.active { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
-.name { font-weight: 600; }
-.task { margin: 4px 0; color: #606266; font-size: 13px; }
-.tip { color: #909399; font-size: 12px; }
-.score { color: var(--el-color-primary); font-weight: 600; }
-.q-item {
-  padding: 14px; border: 1px solid #ebeef5; border-radius: 8px; margin-bottom: 12px;
+.sub-item.active {
+  border-color: var(--el-color-primary); background: var(--el-color-primary-light-9);
+  box-shadow: inset 3px 0 0 var(--el-color-primary);
 }
-.q-head { display: flex; align-items: center; margin-bottom: 8px; }
-.score-input { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 13px; }
-.content, .correct, .ai-comment, .err-points { margin: 6px 0; line-height: 1.6; }
-.correct { color: #67c23a; }
+.name { font-weight: 600; font-size: 14px; }
+.task {
+  margin: 4px 0 6px; color: #606266; font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.score { color: var(--el-color-primary); font-weight: 600; font-size: 13px; }
+
+/* ---- 批改工作区 ---- */
+.grading-card :deep(.el-card__header) { padding: 12px 18px; }
+.student-info { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.student-name { font-size: 16px; }
+.task-name {
+  color: #909399; font-size: 13px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; max-width: 320px;
+}
+.head-tags { display: flex; gap: 6px; flex-shrink: 0; }
+
+.progress-bar {
+  position: sticky; top: 0; z-index: 3; background: #fff;
+  padding: 8px 0 10px; margin-bottom: 8px; border-bottom: 1px solid #f0f2f5;
+}
+.progress-info { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+
+.q-item {
+  padding: 12px 14px; border: 1px solid #ebeef5; border-radius: 8px; margin-bottom: 12px;
+  transition: border-color .2s, background .2s;
+}
+.q-item.scored { border-left: 3px solid #67c23a; background: #fbfefb; }
+.q-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.q-no {
+  width: 24px; height: 24px; line-height: 24px; text-align: center;
+  background: #2f6fd0; color: #fff; border-radius: 50%; font-size: 12px; font-weight: 600;
+  flex-shrink: 0;
+}
+.q-score-panel { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.full-score { font-size: 12px; color: #909399; }
+
+.q-body { display: flex; gap: 14px; }
+.q-col.q-detail { flex: 1; min-width: 0; }
+.q-col.q-grade { width: 260px; flex-shrink: 0; }
+.content, .correct, .kp, .ai-comment, .err-points {
+  margin: 5px 0; line-height: 1.65; font-size: 13px;
+}
+.content .ans {
+  display: inline-block; background: #f5f7fa; padding: 1px 8px; border-radius: 4px;
+  color: #303133;
+}
+.correct .std {
+  display: inline-block; background: #f0f9eb; color: #529b2e;
+  padding: 1px 8px; border-radius: 4px; font-weight: 600;
+}
 .ai-comment { color: #2f6fd0; background: #f0f6ff; padding: 6px 10px; border-radius: 6px; }
 .err-points { color: #f56c6c; }
+
 .footer-bar {
-  position: sticky; bottom: 0; background: #fff; padding: 12px 0 4px;
-  border-top: 1px solid #ebeef5; display: flex; align-items: center; justify-content: space-between;
+  position: sticky; bottom: 0; z-index: 3; background: #fff;
+  padding: 12px 0 4px; border-top: 1px solid #ebeef5;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap;
 }
-.total { color: var(--el-color-primary); font-size: 18px; }
+.footer-total { font-size: 14px; }
+.total { color: var(--el-color-primary); font-size: 20px; }
+.footer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+@media (max-width: 1100px) {
+  .q-body { flex-direction: column; }
+  .q-col.q-grade { width: 100%; }
+}
 </style>

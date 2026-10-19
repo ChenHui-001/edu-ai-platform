@@ -106,12 +106,22 @@ def grading_detail(
         })
 
     stu = db.get(User, sub.student_id)
+    # 未批改态（打回后）不展示残留分数：历史脏数据（reject 未清分时代）
+    # 会在批改面板显示「主观 83 分 / 未批改」的矛盾信息。
+    pending_state = sub.status in ("not_graded", None)
+    if pending_state:
+        for it in items:
+            it["score"] = None
+            it["is_correct"] = None
+            it["teacher_comment"] = None
     return ok({
         "submission_id": sub.id, "task_id": sub.task_id,
         "task_title": task.title if task else None,
         "student": {"id": stu.id, "name": stu.real_name, "class_id": stu.class_id} if stu else None,
-        "score": sub.score, "objective_score": sub.objective_score,
-        "subjective_score": sub.subjective_score, "status": sub.status,
+        "score": None if pending_state else sub.score,
+        "objective_score": 0 if pending_state else sub.objective_score,
+        "subjective_score": 0 if pending_state else sub.subjective_score,
+        "status": sub.status,
         "total_score": task.total_score if task else 0,
         "items": items,
     })
@@ -182,6 +192,19 @@ def reject_submission(
         raise PermissionException("只能打回自己发布任务的提交")
     sub.status = "not_graded"
     sub.score = None
+    # 打回后各题得分/评语一并清空，否则「客观/主观分」残留旧值，
+    # 批改面板显示与实际状态矛盾（实测打回后仍显示客观 0/主观 83）。
+    for a in db.scalars(select(Answer).where(Answer.submission_id == submission_id)).all():
+        a.score = None
+        a.is_correct = None
+        a.teacher_comment = None
+        # grader_type 是非空列（Mapped[str]），置 None 会触发约束错误
+        # 导致整个 reject 事务回滚（打回后分数清不掉的真实原因）
+        a.grader_type = "auto"
+    sub.objective_score = 0
+    sub.subjective_score = 0
+    sub.is_passed = None
+    sub.grade_time = None
     sub.comment = data.get("reason", "答案不合格，请重新提交")
     db.add(__import__("app.models", fromlist=["Notification"]).Notification(
         user_id=sub.student_id, title="作业被退回",

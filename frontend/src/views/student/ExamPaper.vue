@@ -13,10 +13,15 @@
           <el-progress :percentage="progress" :stroke-width="10" style="width:140px" />
         </div>
         <div class="bar-actions">
-          <span class="countdown" :class="{ warn: remain < 300 }">
-            <el-icon><Timer /></el-icon> {{ formatTime(remain) }}
+          <span class="countdown" :class="{ warn: remain < 300, urgent: remain < 60 }">
+            <el-icon><Timer /></el-icon>
+            <span class="cd-label">剩余</span> {{ formatTime(remain) }}
           </span>
-          <el-button :icon="DocumentChecked" @click="submitVisible = true">交卷</el-button>
+          <el-badge :value="items.length - answeredCount" :hidden="answeredCount === items.length"
+                    type="warning">
+            <el-button type="danger" plain :icon="DocumentChecked"
+                       @click="submitVisible = true">交卷</el-button>
+          </el-badge>
         </div>
       </div>
 
@@ -25,14 +30,14 @@
         <span class="nav-label">题号</span>
         <span
           v-for="(it, i) in items" :key="it.paper_item_id"
-          class="nav-item" :class="stateOf(i)"
+          class="nav-item" :class="[stateOf(i), { current: activeIndex === i }]"
           @click="scrollTo(i)"
         >{{ i + 1 }}</span>
       </div>
 
       <!-- 题目 -->
       <div class="body">
-        <div v-for="(it, i) in items" :key="it.paper_item_id" :ref="setItemRef"
+        <div v-for="(it, i) in items" :key="it.paper_item_id" :ref="(el) => setItemRef(el, i)"
              class="q-card" :class="{ answered: isAnswered(it) }">
           <div class="q-head">
             <span class="q-no">{{ i + 1 }}</span>
@@ -86,6 +91,12 @@
       </div>
 
       <div class="result-body">
+        <el-alert v-if="hasSubjective && !result.published"
+                  type="info" :closable="false" show-icon class="mb8"
+                  title="主观题已提交，等待教师批改；成绩发布后可在成绩中心查看最终分数" />
+        <el-alert v-if="hasSubjective && !result.published"
+                  type="info" :closable="false" show-icon class="mb8"
+                  title="主观题已提交，等待教师批改；成绩发布后可在成绩中心查看最终分数" />
         <div class="summary-bar" v-if="grading">
           正确 {{ grading.correct_count }}/{{ grading.total }} 题 ·
           正确率 {{ grading.accuracy }}% · 得分率 {{ grading.score_rate }}%
@@ -117,7 +128,10 @@
     <el-dialog v-model="submitVisible" title="确认交卷" width="440px">
       <p>你已完成 <b>{{ answeredCount }}</b> / {{ items.length }} 题。</p>
       <el-alert v-if="answeredCount < items.length" type="warning" :closable="false" show-icon
+                class="mb8"
                 :title="`还有 ${items.length - answeredCount} 题未作答，未答题计 0 分`" />
+      <el-alert v-if="hasSubjective" type="info" :closable="false" show-icon
+                title="含主观题，交卷后需教师批改，成绩稍后发布" />
       <el-input v-if="task.anti_cheat && switchCount > 0" type="textarea" :rows="2" readonly
                 style="margin-top:10px" :model-value="`检测到答题期间切换页面 ${switchCount} 次，已记录`" />
       <template #footer>
@@ -129,7 +143,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CircleCheckFilled, CircleCloseFilled, DocumentChecked, Timer } from '@element-plus/icons-vue'
@@ -157,6 +171,10 @@ const grading = ref(null)
 const submitVisible = ref(false)
 const itemRefs = ref([])
 const submitted = ref(false)
+const activeIndex = ref(0)          // 当前可视题号（导航同步高亮）
+const draftTipShown = ref(false)    // 草稿提示只弹一次
+const hasSubjective = computed(() =>
+  items.value.some(it => !['single', 'multiple', 'judge', 'blank'].includes(it.type)))
 
 const answered = computed(() => {
   const ids = []
@@ -177,9 +195,27 @@ let timer = null
 let heartbeatTimer = null
 const start = ref(0)
 
+/** 当前可视题目同步到题号导航。
+ * 内容区是 .el-main 内部滚动，普通 window scroll 监听收不到；
+ * 用**捕获阶段**监听（第三个参数 true）可捕获任意滚动容器的 scroll，
+ * 这是最可靠的兼容写法（IntersectionObserver 实测也未触发）。 */
+function onScroll() {
+  if (state.value !== 'answering') return
+  // 直接查 DOM：函数式 ref 曾因未传索引而失效（:ref="setItemRef" 收不到 i），
+  // itemRefs 恒空导致本函数第一行就 return、点击题号也不跳转。
+  const cards = document.querySelectorAll('.q-card')
+  if (!cards.length) return
+  const anchor = window.innerHeight * 0.35
+  let idx = 0
+  cards.forEach((el, i) => {
+    if (el.getBoundingClientRect().top <= anchor) idx = i
+  })
+  activeIndex.value = idx
+}
+
 function setItemRef(el, i) { if (el) itemRefs.value[i] = el }
 function scrollTo(i) {
-  itemRefs.value[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  document.querySelectorAll('.q-card')[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 function stateOf(i) {
   const it = items.value[i]
@@ -261,6 +297,9 @@ async function load() {
     if (task.value.anti_cheat) {
       document.addEventListener('visibilitychange', onVisibility)
     }
+    // 捕获阶段监听：任何滚动容器（含 .el-main）的 scroll 都能收到
+    window.addEventListener('scroll', onScroll, true)
+    nextTick(() => onScroll())
   } catch (e) {
     state.value = 'empty'
   } finally {
@@ -282,6 +321,10 @@ async function sendHeartbeat(isSwitch) {
     const res = await taskApi.heartbeat(taskId, { switch: isSwitch, duration_seconds: elapsed })
     switchCount.value = res.data.switch_count
     saveDraft()
+    if (!draftTipShown.value) {
+      draftTipShown.value = true
+      ElMessage.info('答案已自动保存草稿，刷新页面不会丢失')
+    }
   } catch (e) { /* 心跳失败静默 */ }
 }
 
@@ -329,11 +372,14 @@ onBeforeUnmount(() => {
   clearInterval(timer)
   clearInterval(heartbeatTimer)
   document.removeEventListener('visibilitychange', onVisibility)
+  window.removeEventListener('scroll', onScroll, true)
   if (state.value === 'answering') saveDraft()
 })
 </script>
 
 <style scoped>
+.mb8 { margin-bottom: 8px; }
+.mb8 { margin-bottom: 8px; }
 .exam-page { min-height: 100%; background: #f4f6fa; padding-bottom: 40px; }
 .bar {
   position: sticky; top: 0; z-index: 10; background: #fff; padding: 12px 20px;
@@ -346,6 +392,18 @@ onBeforeUnmount(() => {
 .bar-actions { display: flex; align-items: center; gap: 14px; }
 .countdown { font-size: 18px; font-weight: 600; color: #2f6fd0; font-variant-numeric: tabular-nums; }
 .countdown.warn { color: #f56c6c; }
+.countdown.urgent { animation: pulse 1s ease-in-out infinite; }
+.cd-label { font-size: 12px; font-weight: 400; color: #909399; margin-right: 2px; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
+.countdown.urgent { animation: pulse 1s ease-in-out infinite; }
+.cd-label { font-size: 12px; font-weight: 400; color: #909399; margin-right: 2px; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
 
 .nav-bar {
   background: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 6px;
@@ -357,6 +415,10 @@ onBeforeUnmount(() => {
   background: #f0f2f5; font-size: 13px; cursor: pointer; user-select: none;
 }
 .nav-item.done { background: #67c23a; color: #fff; }
+.nav-item.current {
+  background: #2f6fd0; color: #fff; font-weight: 600;
+  box-shadow: 0 0 0 2px rgba(47,111,208,.35);
+}
 .nav-item:hover { outline: 2px solid #2f6fd0; }
 
 .body { max-width: 900px; margin: 0 auto; padding: 20px; }

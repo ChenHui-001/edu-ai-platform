@@ -270,6 +270,66 @@ def run():
     except Exception as exc:  # noqa: BLE001
         check("教师批改契约守护", False, f"用例异常: {exc}")
 
+    # ---------------------------------------------------------- 3c 批改状态机全链路
+    # 覆盖：批改 → 队列消失 → 打回（分数清零+队列重现）→ 重新批改 → 发布 → 学生可见
+    R.set_phase("阶段三 · 学生视角 | 3c. 批改状态机全链路")
+    try:
+        from e2e_framework import Client as _C2
+        tea1b = _C2("ct1b"); tea1b.login("teacher1", "Teacher@123")
+        if R.context.get("task_id") and sub_id:
+            sid = sub_id
+
+            def _in_queue():
+                p, _, _ = tea1b.get("/grading/pending", params={"page_size": 200})
+                ids = {x["submission_id"] for x in (data_of(p) or {}).get("items") or []}
+                return sid in ids
+
+            # 1) 批改后从待批队列消失
+            gd, _, _ = tea1b.get(f"/grading/submissions/{sid}")
+            items_g = (data_of(gd) or {}).get("items") or []
+            tea1b.post(f"/grading/submissions/{sid}/grade",
+                       {"answers": [{"answer_id": it["answer_id"],
+                                     "score": it["full_score"],
+                                     "teacher_comment": "状态机测试"}
+                                    for it in items_g]})
+            check("★ 批改后移出待批队列", not _in_queue(), f"sub={sid}")
+
+            # 2) 打回后：分数清零 + 重新进入队列
+            p, _, _ = tea1b.post(f"/grading/submissions/{sid}/reject",
+                                 {"reason": "状态机测试打回"})
+            check("打回接口调用成功", p.get("success"), p.get("message", "")[:50])
+            gd2, _, _ = tea1b.get(f"/grading/submissions/{sid}")
+            d2 = data_of(gd2) or {}
+            check("★ 打回后分数清零（score/objective/subjective）",
+                  d2.get("score") is None and (d2.get("objective_score") or 0) == 0
+                  and (d2.get("subjective_score") or 0) == 0,
+                  f"score={d2.get('score')} obj={d2.get('objective_score')} subj={d2.get('subjective_score')}")
+            check("★ 打回后重新进入待批队列", _in_queue(), "")
+
+            # 3) 重新批改 → 可发布 → 发布
+            items_g2 = d2.get("items") or []
+            tea1b.post(f"/grading/submissions/{sid}/grade",
+                       {"answers": [{"answer_id": it["answer_id"],
+                                     "score": it["full_score"], "teacher_comment": "复核通过"}
+                                    for it in items_g2]})
+            gd3, _, _ = tea1b.get(f"/grading/submissions/{sid}")
+            d3 = data_of(gd3) or {}
+            check("★ 重新批改后状态可发布",
+                  d3.get("status") == "fully_graded" and d3.get("score") is not None,
+                  f"status={d3.get('status')} score={d3.get('score')}")
+            p, _, _ = tea1b.post(f"/grading/submissions/{sid}/publish", {})
+            check("★ 成绩发布成功", p.get("success"), p.get("message", "")[:40])
+
+            # 4) 学生端可见
+            ps, _, _ = stu.get("/task/my/tasks", params={"page_size": 50})
+            mine = (data_of(ps) or {}).get("items") or []
+            hit = next((x for x in mine if x.get("id") == R.context["task_id"]), None)
+            check("★ 发布后学生任务状态可见",
+                  hit is not None,
+                  f"my_submission={bool((hit or {}).get('my_submission'))}")
+    except Exception as exc:  # noqa: BLE001
+        check("批改状态机全链路", False, f"用例异常: {exc}")
+
     # ---------------------------------------------------------- 4 错题本
     R.set_phase("阶段三 · 学生视角 | 4. 错题本自动收录")
 
