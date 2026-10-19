@@ -372,9 +372,20 @@ def student_detail(
 
 @router.get("/teacher/knowledge-effect", summary="知识点教学效果评估")
 def knowledge_effect(
-    subject_id: Optional[int] = None, db: Session = Depends(get_db),
+    subject_id: Optional[int] = None, class_id: Optional[int] = None,
+    task_id: Optional[int] = None,
+    db: Session = Depends(get_db),
     _: User = Depends(get_current_teacher),
 ):
+    """知识点教学效果评估。
+
+    支持三类过滤（可组合）：
+    - task_id：只统计该任务下的作答（前端「教学报表-选任务」主路径）
+    - class_id：只统计该班级学生的作答
+    - subject_id：按学科过滤题目
+    此前前端传 class_id/task_id 但后端只声明 subject_id，参数被 FastAPI
+    静默丢弃，导致「选择任务」后展示的仍是全库聚合数据（假过滤）。
+    """
     stmt = (
         select(
             KnowledgePoint.name,
@@ -386,6 +397,14 @@ def knowledge_effect(
     )
     if subject_id:
         stmt = stmt.where(Question.subject_id == subject_id)
+    if class_id or task_id:
+        from app.models import Submission as _Sub
+        stmt = stmt.join(_Sub, Answer.submission_id == _Sub.id)
+        if task_id:
+            stmt = stmt.where(_Sub.task_id == task_id)
+        if class_id:
+            stmt = stmt.join(User, _Sub.student_id == User.id).where(
+                User.class_id == class_id)
     rows = db.execute(stmt.group_by(KnowledgePoint.name)).all()
 
     items = []

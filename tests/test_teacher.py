@@ -714,6 +714,21 @@ def run():
         check(f"{name}可读", p.get("success"),
               f"{p.get('code')} {p.get('message', '')}"[:80])
 
+    # knowledge-effect 按 task/class 过滤 + 返回结构守护：
+    # 回归点：后端曾只收 subject_id（参数被静默丢弃），且返回对象被整包
+    # 塞进 el-table 导致「data.reduce is not a function」页面崩溃。
+    p, _, _ = tea.get("/report/teacher/knowledge-effect",
+                      params={"class_id": class_id, "task_id": tid}
+                      if class_id else {"task_id": tid})
+    d = p.get("data") or {}
+    items = d.get("items") if isinstance(d, dict) else d
+    check("知识点效果支持 task 过滤且 items 为数组",
+          p.get("success") and isinstance(items, list),
+          f"items类型={type(items).__name__} 数量={len(items) if isinstance(items, list) else '-'}")
+    check("知识点效果返回 avg_accuracy 汇总",
+          isinstance(d, dict) and "avg_accuracy" in d,
+          f"avg={d.get('avg_accuracy')}")
+
     if R.context.get("stu731_id"):
         # stu731 属七年级(2)班（teacher4 任教）：teacher1 读取应被数据范围校验拦截
         p, _, _ = tea.get("/report/teacher/student-detail",

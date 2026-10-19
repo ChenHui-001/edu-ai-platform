@@ -163,7 +163,10 @@ async function loadEffect() {
   loadingEffect.value = true
   try {
     const res = await reportApi.knowledgeEffect({ class_id: classId.value, task_id: taskId.value })
-    effect.value = res.data || []
+    // knowledge-effect 返回对象 {items, weak, good, avg_accuracy}，表格用 items。
+    // 之前误取整个对象塞给 el-table 导致「data.reduce is not a function」崩溃。
+    const d = res.data
+    effect.value = Array.isArray(d) ? d : (d?.items || [])
   } finally {
     loadingEffect.value = false
   }
