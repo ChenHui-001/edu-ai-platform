@@ -5,7 +5,7 @@
 """
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, File, UploadFile
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -18,7 +18,7 @@ from app.utils.common import PageParams, dictify, load_json, ok, utcnow
 router = APIRouter(prefix="/lesson", tags=["教案管理"])
 
 
-def _hydrate(plan: LessonPlan) -> Dict[str, Any]:
+def _hydrate(db: Session, plan: LessonPlan) -> Dict[str, Any]:
     """把 ORM 对象转成完整字典（含关联展示字段）。"""
     d = dictify(plan)
     if plan.subject:
@@ -29,7 +29,38 @@ def _hydrate(plan: LessonPlan) -> Dict[str, Any]:
         d["knowledge_point_name"] = plan.knowledge_point.name
     if plan.stages:
         d["stages"] = [dictify(s) for s in sorted(plan.stages, key=lambda x: x.sort_order)]
+    d["attachments"] = _plan_attachments(db, plan.id)
     return d
+
+
+def _plan_attachments(db: Session, plan_id: int) -> List[Dict[str, Any]]:
+    """教案附件（复用 Attachment 体系：biz_type="lesson_plan" + biz_id=plan_id）。
+
+    教案附件需对「教案可见者」可见（含共享教案的阅读者），
+    故这里主动聚合而非依赖 /attachments 列表接口（后者按 uploader 过滤，
+    会让共享教案的阅读者看不到他人上传的课件）。
+    """
+    import os as _os
+    from app.models import Attachment
+
+    rows = db.scalars(
+        select(Attachment).where(
+            Attachment.biz_type == "lesson_plan",
+            Attachment.biz_id == plan_id,
+        ).order_by(desc(Attachment.created_at))
+    ).all()
+    items = []
+    for a in rows:
+        d = dictify(a)
+        d.pop("file_path", None)
+        ext = _os.path.splitext(a.filename or "")[1].lower()
+        d["ext"] = ext
+        d["previewable"] = ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf",
+                                    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+        d["preview_url"] = f"/api/v1/attachments/{a.id}/preview"
+        d["download_url"] = f"/api/v1/attachments/{a.id}/download"
+        items.append(d)
+    return items
 
 
 # ============================================================
@@ -75,7 +106,7 @@ def list_plans(
         stmt.order_by(desc(LessonPlan.updated_at))
         .offset(params.offset).limit(params.page_size)
     ).all()
-    return ok({"items": [_hydrate(r) for r in rows],
+    return ok({"items": [_hydrate(db, r) for r in rows],
                "total": total, "page": params.page, "page_size": params.page_size})
 
 
@@ -92,7 +123,7 @@ def get_plan(plan_id: int, db: Session = Depends(get_db),
     # 引用次数自增
     plan.use_count += 1
     db.commit()
-    return ok(_hydrate(plan))
+    return ok(_hydrate(db, plan))
 
 
 # ============================================================
@@ -148,7 +179,7 @@ def create_plan(
         ))
     db.commit()
     db.refresh(plan)
-    return ok(_hydrate(plan), message="教案已创建")
+    return ok(_hydrate(db, plan), message="教案已创建")
 
 
 # ============================================================
@@ -191,7 +222,7 @@ def update_plan(
     plan.updated_at = utcnow()
     db.commit()
     db.refresh(plan)
-    return ok(_hydrate(plan), message="教案已更新")
+    return ok(_hydrate(db, plan), message="教案已更新")
 
 
 # ============================================================
@@ -205,6 +236,13 @@ def delete_plan(plan_id: int, db: Session = Depends(get_db),
         raise NotFoundException("教案不存在")
     if plan.creator_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("只能删除自己的教案")
+    # 附件解绑而非删除：文件是教师资产，教案删了课件可能还要用在别的教案里。
+    # biz 置空 + is_temp=1，交由临时附件定时清理任务按既定策略处理。
+    from app.models import Attachment as _Att
+    db.query(_Att).filter(
+        _Att.biz_type == "lesson_plan", _Att.biz_id == plan_id,
+    ).update({"biz_type": None, "biz_id": None, "is_temp": True},
+             synchronize_session=False)
     db.delete(plan)
     db.commit()
     return ok(message="教案已删除")
@@ -247,7 +285,7 @@ def copy_plan(plan_id: int, data: Dict[str, Any] = Body(default={}),
     src.use_count += 1
     db.commit()
     db.refresh(plan)
-    return ok(_hydrate(plan), message="教案已复制到我的教案库")
+    return ok(_hydrate(db, plan), message="教案已复制到我的教案库")
 
 
 @router.post("/plans/{plan_id}/share", summary="共享/取消共享")
@@ -265,3 +303,109 @@ def toggle_share(plan_id: int, data: Dict[str, Any] = Body(...),
     db.commit()
     return ok({"is_shared": bool(plan.is_shared)},
               message="已共享" if plan.is_shared else "已取消共享")
+
+
+# ============================================================
+# 附件（图片 / PPT / 文档等教学资料）
+# ============================================================
+def _plan_editable(plan: LessonPlan, user: User) -> None:
+    """教案附件写入权限：创建者，或 sys_admin。共享只赋予读/复制权，不赋予写权。"""
+    if plan.creator_id != user.id and "sys_admin" not in user.role_codes:
+        raise PermissionException("只能管理自己教案的附件")
+
+
+@router.post("/plans/{plan_id}/attachments", summary="上传教案附件（图片/PPT/文档）")
+async def upload_plan_attachment(
+    plan_id: int, file: UploadFile = File(...),
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+):
+    """教案专用附件上传。
+
+    不走通用 /attachments/upload：那边接受任意 biz_type/biz_id 且无归属校验，
+    任何登录用户可以把附件挂到他人教案上（越权）。业务归属校验放在业务端点。
+    """
+    import hashlib
+    import os
+    import uuid
+
+    from app.core.config import settings
+    from app.models import Attachment
+
+    plan = db.get(LessonPlan, plan_id)
+    if not plan:
+        raise NotFoundException("教案不存在")
+    _plan_editable(plan, user)
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in settings.ALLOWED_UPLOAD_TYPES:
+        raise BusinessException(
+            f"不支持的文件类型 {ext}，允许：{'、'.join(settings.ALLOWED_UPLOAD_TYPES)}")
+    content = await file.read()
+    if len(content) > settings.MAX_UPLOAD_SIZE * 1024 * 1024:
+        raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
+
+    stored_name = f"{uuid.uuid4().hex}_{hashlib.md5(content).hexdigest()[:12]}{ext}"
+    day_dir = os.path.join(settings.UPLOAD_DIR, utcnow().strftime("%Y%m%d"))
+    os.makedirs(day_dir, exist_ok=True)
+    full_path = os.path.abspath(os.path.join(day_dir, stored_name))
+    if not full_path.startswith(os.path.abspath(settings.UPLOAD_DIR)):
+        raise BusinessException("非法文件路径")
+    with open(full_path, "wb") as fp:
+        fp.write(content)
+
+    att = Attachment(
+        filename=file.filename, stored_name=stored_name, file_path=full_path,
+        file_size=len(content), file_type=file.content_type,
+        category="lesson_plan", biz_type="lesson_plan", biz_id=plan.id,
+        uploader_id=user.id, is_temp=False,
+    )
+    db.add(att)
+    plan.updated_at = utcnow()
+    db.commit()
+    db.refresh(att)
+    return ok({
+        "id": att.id, "filename": att.filename, "size": att.file_size, "ext": ext,
+        "preview_url": f"/api/v1/attachments/{att.id}/preview",
+        "download_url": f"/api/v1/attachments/{att.id}/download",
+    }, message="附件上传成功")
+
+
+@router.get("/plans/{plan_id}/attachments", summary="教案附件列表")
+def list_plan_attachments(
+    plan_id: int, db: Session = Depends(get_db),
+    user: User = Depends(get_current_teacher),
+):
+    plan = db.get(LessonPlan, plan_id)
+    if not plan:
+        raise NotFoundException("教案不存在")
+    if plan.creator_id != user.id and not plan.is_shared \
+            and "sys_admin" not in user.role_codes:
+        raise PermissionException("该教案未共享，不可查看附件")
+    return ok(_plan_attachments(db, plan_id))
+
+
+@router.delete("/plans/{plan_id}/attachments/{att_id}", summary="删除教案附件")
+def delete_plan_attachment(
+    plan_id: int, att_id: int, db: Session = Depends(get_db),
+    user: User = Depends(get_current_teacher),
+):
+    import os
+
+    from app.models import Attachment
+
+    plan = db.get(LessonPlan, plan_id)
+    if not plan:
+        raise NotFoundException("教案不存在")
+    _plan_editable(plan, user)
+    att = db.get(Attachment, att_id)
+    if not att or att.biz_type != "lesson_plan" or att.biz_id != plan_id:
+        raise NotFoundException("附件不存在或不属于该教案")
+    # 删除磁盘文件（忽略失败——DB 记录为准，孤儿文件由定时清理兜底）
+    try:
+        if att.file_path and os.path.exists(att.file_path):
+            os.remove(att.file_path)
+    except OSError:
+        pass
+    db.delete(att)
+    db.commit()
+    return ok(message="附件已删除")

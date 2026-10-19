@@ -224,14 +224,152 @@ def run():
           f"命中 {len(rows)} 份")
 
     # ============================================================
-    # 6. 清理
+    # 6. 附件（图片 / PPT / 文档）
     # ============================================================
-    R.set_phase("教案管理 | 6. 清理")
+    R.set_phase("教案管理 | 6. 附件全链路")
+
+    def _mp_upload(client, path, content: bytes, filename: str,
+                   mime: str = "application/octet-stream"):
+        """手工拼 multipart/form-data（e2e 框架无原生 multipart 支持）。"""
+        boundary = "----wbE2E" + str(abs(hash((filename, len(content)))))[:10]
+        parts = [
+            (f"--{boundary}\r\n"
+             f'Content-Disposition: form-data; name="file"; '
+             f'filename="{filename}"\r\n'
+             f"Content-Type: {mime}\r\n\r\n").encode("latin-1"),
+            content,
+            f"\r\n--{boundary}--\r\n".encode("latin-1"),
+        ]
+        body = b"".join(parts)
+        return client.request(
+            "POST", path, raw_body=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            timeout=60)
+
+    # PNG 1x1（真实图片字节头）
+    png = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+           b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+           b"\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r"
+           b"\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
+    # 伪 PPTX（重点在扩展名与流程，不在内容）
+    pptx = b"PK\x03\x04" + b"e2e-pptx-placeholder " * 8
+
+    p, _, _ = _mp_upload(tea1, f"/lesson/plans/{plan_id}/attachments",
+                         png, f"e2e-board-{_tag()}.png", "image/png")
+    att_img = (p.get("data") or {}).get("id")
+    check("★ 教师可上传图片附件到教案",
+          p.get("success") and bool(att_img),
+          f"id={att_img} {p.get('message', '')[:60]}")
+
+    p, _, _ = _mp_upload(tea1, f"/lesson/plans/{plan_id}/attachments",
+                         pptx, f"e2e-courseware-{_tag()}.pptx",
+                         "application/vnd.openxmlformats-officedocument"
+                         ".presentationml.presentation")
+    att_ppt = (p.get("data") or {}).get("id")
+    check("★ 教师可上传 PPT 附件到教案",
+          p.get("success") and bool(att_ppt),
+          f"id={att_ppt} {p.get('message', '')[:60]}")
+
+    # 不支持的类型必须被拒
+    p, _, _ = _mp_upload(tea1, f"/lesson/plans/{plan_id}/attachments",
+                         b"MZ\x90\x00", "e2e-malware.exe", "application/x-msdownload")
+    check("★ 非法扩展名附件被拒",
+          p.get("success") is not True,
+          p.get("message", "")[:60])
+
+    # 详情返回附件列表（含图片与 PPT）
+    p, _, _ = tea1.get(f"/lesson/plans/{plan_id}")
+    dets = (data_of(p) or {}).get("attachments") or []
+    det_ids = {a.get("id") for a in dets}
+    check("★ 教案详情聚合返回附件列表",
+          att_img in det_ids and att_ppt in det_ids,
+          f"详情附件 {len(dets)} 个：ids={sorted(det_ids)}")
+    check("详情附件带预览/下载地址",
+          all(a.get("preview_url") and a.get("download_url") for a in dets),
+          f"首条 keys={list(dets[0].keys())[:8] if dets else '-'}")
+
+    # 独立附件列表端点
+    p, _, _ = tea1.get(f"/lesson/plans/{plan_id}/attachments")
+    check("教案附件列表端点可达",
+          p.get("success") and len(rows_of(p)) == len(dets),
+          f"{len(rows_of(p))} 条")
+
+    # 预览 / 下载可达（二进制响应）
+    p, _, sc = tea1.request("GET", f"/attachments/{att_img}/preview")
+    check("附件预览可达", sc == 200, f"code={sc}")
+    p, _, sc = tea1.request("GET", f"/attachments/{att_ppt}/download")
+    check("附件下载可达", sc == 200, f"code={sc}")
+
+    # 越权矩阵
+    expect_denied("学生不能上传教案附件", stu, "POST",
+                  f"/lesson/plans/{plan_id}/attachments")
+    expect_denied("学生不能读教案附件列表", stu, "GET",
+                  f"/lesson/plans/{plan_id}/attachments")
+    expect_denied("学生不能删除教案附件", stu, "DELETE",
+                  f"/lesson/plans/{plan_id}/attachments/{att_img or 0}")
+    # 未共享教案：同科 teacher4 不可读附件，也不可上传
+    p, _, _ = tea2.get(f"/lesson/plans/{plan_id}/attachments")
+    check("★ 未共享教案：同科教师不可读附件",
+          p.get("success") is not True,
+          p.get("message", ""))
+    p, _, _ = _mp_upload(tea2, f"/lesson/plans/{plan_id}/attachments",
+                         png, "e2e-cross-upload.png", "image/png")
+    check("★ 未共享教案：同科教师不可上传附件",
+          p.get("success") is not True,
+          p.get("message", "")[:60])
+    # 跨教师不可删除他人教案的附件
+    p, _, _ = tea2.delete(f"/lesson/plans/{plan_id}/attachments/{att_img or 0}")
+    check("★ 跨教师删除教案附件被拒",
+          p.get("success") is not True,
+          p.get("message", "")[:60])
+
+    # 共享后同科教师可读附件（读权，仍无写权）
+    tea1.post(f"/lesson/plans/{plan_id}/share", {"is_shared": True})
+    p, _, _ = tea2.get(f"/lesson/plans/{plan_id}/attachments")
+    check("★ 共享后同科教师可读附件",
+          p.get("success") and len(rows_of(p)) >= 2,
+          f"{len(rows_of(p))} 条")
+    p, _, _ = _mp_upload(tea2, f"/lesson/plans/{plan_id}/attachments",
+                         png, "e2e-shared-upload.png", "image/png")
+    check("★ 共享只赋予读权：同科教师仍不可上传",
+          p.get("success") is not True,
+          p.get("message", "")[:60])
+
+    # 删除单个附件
+    if att_ppt:
+        p, _, _ = tea1.delete(f"/lesson/plans/{plan_id}/attachments/{att_ppt}")
+        check("教师可删除自己教案的附件",
+              p.get("success"),
+              p.get("message", ""))
+        p, _, _ = tea1.get(f"/lesson/plans/{plan_id}/attachments")
+        check("删除后附件列表不再包含该条",
+              att_ppt not in {a.get("id") for a in rows_of(p)},
+              f"剩余 {len(rows_of(p))} 条")
+
+    # ============================================================
+    # 7. 清理（删除教案 → 附件解绑而非删除）
+    # ============================================================
+    R.set_phase("教案管理 | 7. 清理与附件解绑")
+
+    # 记录删除前的附件 id
+    p, _, _ = tea1.get(f"/lesson/plans/{plan_id}/attachments")
+    keep_ids = [a.get("id") for a in rows_of(p)]
 
     p, _, _ = tea1.delete(f"/lesson/plans/{plan_id}")
     check("★ 教师可删除自己的教案",
           p.get("success"),
           p.get("message", ""))
+
+    # 附件应被解绑（biz 置空），而不是连带删除——教师资产保留
+    if keep_ids:
+        p, _, _ = admin.get("/attachments", params={"page_size": 100})
+        all_ids = {a.get("id") for a in rows_of(p)}
+        check("★ 删除教案后附件保留（解绑不删文件）",
+              all(i in all_ids for i in keep_ids),
+              f"保留附件 {keep_ids}")
+        # 清理测试附件，避免污染
+        for i in keep_ids:
+            admin.delete(f"/attachments/{i}")
 
     R.env("教案管理", "见细分阶段")
     print(f"\n[完成] 教案管理专项：教师={tea1.user.get('real_name')}")

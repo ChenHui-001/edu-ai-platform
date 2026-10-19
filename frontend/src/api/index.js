@@ -244,5 +244,12 @@ export const lessonApi = {
   update: (id, data) => request.put(`/lesson/plans/${id}`, data),
   remove: (id) => request.delete(`/lesson/plans/${id}`),
   copy: (id, data) => request.post(`/lesson/plans/${id}/copy`, data || {}),
-  share: (id, data) => request.post(`/lesson/plans/${id}/share`, data)
+  share: (id, data) => request.post(`/lesson/plans/${id}/share`, data),
+  // 附件（图片 / PPT / 文档）：走教案专用端点（含归属校验）
+  uploadAttachment: (planId, formData) => request.post(
+    `/lesson/plans/${planId}/attachments`, formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } }),
+  attachments: (planId) => request.get(`/lesson/plans/${planId}/attachments`),
+  removeAttachment: (planId, attId) => request.delete(
+    `/lesson/plans/${planId}/attachments/${attId}`)
 }

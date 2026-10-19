@@ -171,6 +171,39 @@
         <el-form-item label="教学反思">
           <el-input v-model="form.reflection" type="textarea" :rows="2" placeholder="课后可填写" />
         </el-form-item>
+        <el-form-item label="教学附件">
+          <div class="att-block w-full">
+            <!-- 新建态：先保存拿到 id 才能挂附件 -->
+            <el-upload v-if="form.id" drag multiple
+                       :show-file-list="false"
+                       :http-request="doUploadAttachment"
+                       accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md"
+                       class="w-full">
+              <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+              <div class="el-upload__text">拖拽文件到此处，或 <em>点击上传</em></div>
+              <template #tip>
+                <div class="el-upload__tip">支持图片 / PPT / Word / Excel / PDF，单个 ≤ 50MB</div>
+              </template>
+            </el-upload>
+            <el-alert v-else type="info" :closable="false"
+                      title="保存教案后即可上传课件附件（图片 / PPT / 文档）" />
+            <!-- 附件列表 -->
+            <div v-if="attachments.length" class="att-list mt8">
+              <div v-for="a in attachments" :key="a.id" class="att-item">
+                <el-icon class="mr4"><Document /></el-icon>
+                <span class="att-name" :title="a.filename">{{ a.filename }}</span>
+                <el-tag size="small" type="info" class="mr4">{{ (a.file_size / 1024).toFixed(0) }} KB</el-tag>
+                <el-button link type="primary" size="small"
+                           @click="previewAtt(a)">预览</el-button>
+                <el-button link type="primary" size="small"
+                           @click="downloadAtt(a)">下载</el-button>
+                <el-button link type="danger" size="small"
+                           v-if="a.uploader_id === meId"
+                           @click="removeAtt(a)">删除</el-button>
+              </div>
+            </div>
+          </div>
+        </el-form-item>
         <el-form-item label="共享给同科">
           <el-switch v-model="form.is_shared" />
         </el-form-item>
@@ -187,9 +220,9 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Plus, Refresh, RefreshLeft, Search, Delete, CopyDocument
+  Plus, Refresh, RefreshLeft, Search, Delete, CopyDocument, UploadFilled
 } from '@element-plus/icons-vue'
-import { lessonApi, eduApi } from '@/api'
+import { lessonApi, attachmentApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
 const { can } = useUserStore()
@@ -269,6 +302,7 @@ async function openDialog(row) {
     if (form.subject_id && form.grade_id) {
       await loadFormKnowledge(form.grade_id, form.subject_id)
     }
+    await loadAttachments()
   } else {
     Object.assign(form, {
       id: null, title: '', topic: '', subject_id: query.subject_id,
@@ -278,6 +312,7 @@ async function openDialog(row) {
       board_design: '', homework: '', reflection: '',
       is_shared: false, stages: []
     })
+    attachments.value = []
     form.stages.push({ name: '导入', duration_minutes: 3, content: '' })
     form.stages.push({ name: '新课讲授', duration_minutes: 25, content: '' })
     form.stages.push({ name: '课堂练习', duration_minutes: 10, content: '' })
@@ -312,10 +347,17 @@ async function save() {
         .filter(s => s.name)
         .map((s, i) => ({ ...s, sort_order: i }))
     }
-    if (form.id) await lessonApi.update(form.id, payload)
-    else await lessonApi.create(payload)
-    ElMessage.success('保存成功')
-    dialogVisible.value = false
+    if (form.id) {
+      await lessonApi.update(form.id, payload)
+      ElMessage.success('保存成功')
+      dialogVisible.value = false
+    } else {
+      // 新建成功：回写 id 并保持弹窗打开，用户可继续上传课件附件
+      const r = await lessonApi.create(payload)
+      form.id = (r.data || {}).id
+      ElMessage.success('教案已创建，可继续上传教学附件')
+      await loadAttachments()
+    }
     load()
   } finally { saving.value = false }
 }
@@ -324,6 +366,42 @@ async function copyPlan(row) {
   const res = await lessonApi.copy(row.id, {})
   ElMessage.success(`已复制：${(res.data || {}).title || '教案'}`)
   load()
+}
+
+// ---------------- 附件（图片 / PPT / 文档） ----------------
+const attachments = ref([])
+
+async function loadAttachments() {
+  if (!form.id) { attachments.value = []; return }
+  const r = await lessonApi.attachments(form.id)
+  attachments.value = r.data || []
+}
+
+// el-upload 自定义上传：直接带教案 id 走教案专用端点（含归属校验）
+async function doUploadAttachment({ file }) {
+  if (!form.id) return
+  const fd = new FormData()
+  fd.append('file', file)
+  try {
+    await lessonApi.uploadAttachment(form.id, fd)
+    ElMessage.success(`${file.name} 上传成功`)
+    loadAttachments()
+  } catch (e) {
+    ElMessage.error(`${file.name} 上传失败：${e?.response?.data?.message || e?.message || e}`)
+  }
+}
+
+function previewAtt(a) {
+  window.open(a.preview_url, '_blank')
+}
+function downloadAtt(a) {
+  window.open(a.download_url, '_blank')
+}
+async function removeAtt(a) {
+  await ElMessageBox.confirm(`确定删除附件「${a.filename}」吗？`, '提示', { type: 'warning' })
+  await lessonApi.removeAttachment(form.id, a.id)
+  ElMessage.success('附件已删除')
+  loadAttachments()
 }
 
 async function toggleShare(row) {
@@ -355,4 +433,8 @@ onMounted(async () => {
 <style scoped>
 .filter-card { margin-bottom: 12px; }
 .stage-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.att-block { width: 100%; }
+.att-list { display: flex; flex-direction: column; gap: 6px; }
+.att-item { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+.att-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
