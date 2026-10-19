@@ -205,8 +205,16 @@ async function focusFromQuery() {
         comments[it.id] = it.teacher_comment || ''
       })
     } catch (e) {
-      ElMessage.warning('未找到该提交记录，可能已完成批改')
-      router.replace({ query: {} })
+      // 区分错误类型：404 才是「不存在/已批改」；其余（网络/5xx/前端解析）
+      // 一律报「加载失败」——此前 catch 吞掉了前端 TypeError 也报「未找到」，
+      // 把真正的 bug 伪装成业务提示（res.data.data 陷阱曾借此长期潜伏）。
+      const status = e?.response?.status ?? e?.data?.code
+      if (status === 404) {
+        ElMessage.warning('未找到该提交记录，可能已完成批改')
+        router.replace({ query: {} })
+      } else {
+        ElMessage.error(`批改详情加载失败（${status || '网络异常'}），请稍后重试`)
+      }
     }
   }
 }

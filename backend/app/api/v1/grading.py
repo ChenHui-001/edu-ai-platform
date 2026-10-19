@@ -16,7 +16,7 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exception import BusinessException, NotFoundException
+from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import Answer, KnowledgePoint, Paper, Submission, Task, User
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, load_json, ok, utcnow
@@ -114,34 +114,44 @@ def grading_detail(
 @grading_router.post("/submissions/{submission_id}/grade", summary="手动批改 / 采纳 AI 建议")
 def grade_submission(
     submission_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
 ):
     sub = db.get(Submission, submission_id)
     if not sub:
         raise NotFoundException("作答记录不存在")
+    task = db.get(Task, sub.task_id)
+    # 数据范围校验：只有任务创建者（或管理员）可批改
+    if task and not scope.is_super and task.creator_id != user.id:
+        raise PermissionException("只能批改自己发布的任务")
 
-    items = data.get("items", [])
+    # 前后端契约：前端 GradingCenter 发 {answers: [{answer_id, score,
+    # teacher_comment}]}，后端原读 items+comment——键名全不匹配导致
+    # 循环空转、分数从未保存（页面却提示「已保存」）。双键名兼容。
+    items = data.get("items") or data.get("answers") or []
     for it in items:
         ans = db.get(Answer, it["answer_id"])
         if not ans or ans.submission_id != submission_id:
             continue
         if "score" in it:
             ans.score = max(0.0, min(float(it["score"]), float(ans.full_score)))
-        if "comment" in it:
-            ans.teacher_comment = it["comment"]
+        comment = it.get("teacher_comment", it.get("comment"))
+        if comment is not None:
+            ans.teacher_comment = comment
             ans.grader_type = "manual"
-        ans.is_correct = ans.score >= float(ans.full_score) * settings.PASS_SCORE / 100
+        if ans.score is not None:
+            ans.is_correct = ans.score >= float(ans.full_score) * settings.PASS_SCORE / 100
 
     db.flush()
 
-    # 重算总分与状态
+    # 重算总分与状态。口径：auto=客观题机器判分 → objective_score；
+    # manual（教师手批）与 ai（AI 辅助）均属主观题判分 → subjective_score。
+    # 此前把 manual 计入 objective、ai 计入 subjective，口径相反。
     answers = db.scalars(select(Answer).where(Answer.submission_id == submission_id)).all()
-    objective = sum(a.score or 0 for a in answers if a.grader_type in ("auto", "manual"))
-    subjective = sum(a.score or 0 for a in answers if a.grader_type == "ai")
+    objective = sum(a.score or 0 for a in answers if a.grader_type == "auto")
+    subjective = sum(a.score or 0 for a in answers if a.grader_type in ("ai", "manual"))
     sub.objective_score = objective
     sub.subjective_score = subjective
     sub.score = round(objective + subjective, 2)
-    task = db.get(Task, sub.task_id)
     sub.is_passed = sub.score >= (task.pass_score if task else settings.PASS_SCORE)
     sub.status = "fully_graded"
     sub.grade_time = utcnow()
@@ -156,11 +166,14 @@ def grade_submission(
 @grading_router.post("/submissions/{submission_id}/reject", summary="打回重做")
 def reject_submission(
     submission_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
 ):
     sub = db.get(Submission, submission_id)
     if not sub:
         raise NotFoundException("作答记录不存在")
+    task = db.get(Task, sub.task_id)
+    if task and not scope.is_super and task.creator_id != user.id:
+        raise PermissionException("只能打回自己发布任务的提交")
     sub.status = "not_graded"
     sub.score = None
     sub.comment = data.get("reason", "答案不合格，请重新提交")
@@ -176,15 +189,20 @@ def reject_submission(
 @grading_router.post("/submissions/{submission_id}/publish", summary="发布成绩")
 def publish_score(
     submission_id: int, db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
 ):
     from app.models import Notification
 
     sub = db.get(Submission, submission_id)
     if not sub:
         raise NotFoundException("作答记录不存在")
-    sub.status = "published"
     task = db.get(Task, sub.task_id)
+    if task and not scope.is_super and task.creator_id != user.id:
+        raise PermissionException("只能发布自己发布任务的成绩")
+    # 未批改的提交没有有效分数，发布出去学生会看到 None/0 分
+    if sub.score is None:
+        raise BusinessException("该提交尚未完成批改，无法发布成绩")
+    sub.status = "published"
     db.add(Notification(
         user_id=sub.student_id, title="成绩已发布",
         content=f"《{task.title}》成绩：{sub.score} 分，班级排名第 {sub.class_rank or '-'} 名",

@@ -220,6 +220,56 @@ def run():
               sd2.get("status") in ("not_graded", "auto_graded", "graded"),
               f"status={sd2.get('status')}")
 
+    # ---------------------------------------------------------- 3b 批改契约守护（教师批改全链路）
+    # 回归点：后端 grade 接口曾读 items+comment 键而前端发 answers+
+    # teacher_comment——循环空转、分数从未保存却提示「已保存」。
+    R.set_phase("阶段三 · 学生视角 | 3b. 教师批改契约守护")
+    try:
+        from e2e_framework import Client as _C
+        tea1 = _C("ct1"); ok_login, _ = tea1.login("teacher1", "Teacher@123")
+        if ok_login and R.context.get("task_id"):
+            tid = R.context["task_id"]
+            pd, _, _ = tea1.get("/grading/pending", params={"page_size": 10})
+            pend = (data_of(pd) or {}).get("items") or []
+            mine = next((x for x in pend if x.get("student_id") == stu.user.get("id")), None)
+            if mine:
+                sid = mine["submission_id"]
+                before = mine.get("score")
+                # answer_id 只在批改详情接口返回（学生详情的 answers 无此字段）
+                gd, _, _ = tea1.get(f"/grading/submissions/{sid}")
+                answers_payload = [
+                    {"answer_id": it["answer_id"], "score": it["full_score"],
+                     "teacher_comment": "e2e 人工复核"}
+                    for it in (data_of(gd) or {}).get("items") or []]
+                p, _, _ = tea1.post(f"/grading/submissions/{sid}/grade",
+                                    {"answers": answers_payload})
+                p2, _, _ = tea1.get(f"/grading/submissions/{sid}")
+                d2 = data_of(p2) or {}
+                check("★ 教师批改（前端 answers 契约）分数真实落库",
+                      p.get("success") and d2.get("score") is not None
+                      and d2.get("score") != before,
+                      f"before={before} after={d2.get('score')}")
+                check("★ 批改评语写入（teacher_comment 键）",
+                      any(it.get("teacher_comment") == "e2e 人工复核"
+                          for it in d2.get("items") or []),
+                      "")
+                check("批改口径：manual 判分计入 subjective_score",
+                      (d2.get("subjective_score") or 0) > 0,
+                      f"objective={d2.get('objective_score')} subjective={d2.get('subjective_score')}")
+                # 越权：teacher4 不能批 teacher1 发布任务的提交
+                tea4 = _C("ct4"); tea4.login("teacher4", "Teacher@123")
+                p, _, _ = tea4.post(f"/grading/submissions/{sid}/grade",
+                                    {"answers": answers_payload})
+                check("★ 跨教师批改被拒（数据范围校验）",
+                      p.get("success") is not True,
+                      p.get("message", "")[:50])
+            else:
+                check("教师批改契约守护", False, f"pending 中未找到本学生提交（共 {len(pend)} 条）")
+        else:
+            check("教师批改契约守护", False, f"教师登录或 task_id 缺失")
+    except Exception as exc:  # noqa: BLE001
+        check("教师批改契约守护", False, f"用例异常: {exc}")
+
     # ---------------------------------------------------------- 4 错题本
     R.set_phase("阶段三 · 学生视角 | 4. 错题本自动收录")
 

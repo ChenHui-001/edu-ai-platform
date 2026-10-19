@@ -706,6 +706,7 @@ def run():
               p.get("message", "已批改记录不足时降级属正常") if p.get("success")
               else f"{p.get('code')} {p.get('message')}")
 
+
     for path, name in [("/report/teacher/class-overview", "班级学情总览"),
                        ("/report/teacher/knowledge-effect", "知识点掌握效果"),
                        ("/report/teacher/student-comparison", "学生对比")]:

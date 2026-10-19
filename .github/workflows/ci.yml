@@ -67,6 +67,12 @@ jobs:
         # 按钮或点开一个弹两个，但 build 与 lint 全部通过
         run: python tools/scan_vue_dup.py
 
+      - name: res.data.data 陷阱普查（列表恒空/统计恒0）
+        # axios 拦截器已返回信封，组件里 res.data 即业务数据；
+        # res.data.data 恒为 undefined，导致列表空、统计 0、详情打不开。
+        # 曾在全站 18 文件 52+ 处踩坑（详见 tools/fix_data_data_all.py）
+        run: python tools/check_data_data.py
+
       - name: 构建
         working-directory: frontend
         run: npm run build
