@@ -119,7 +119,7 @@ async function load() {
   loading.value = true
   try {
     const res = await systemApi.roles()
-    roles.value = res.data.data || []
+    roles.value = res.data || []
     await loadPermTree()
   } finally {
     loading.value = false
@@ -128,7 +128,7 @@ async function load() {
 
 async function loadPermTree() {
   const res = await systemApi.permissions({ tree: true })
-  permTree.value = res.data.data || []
+  permTree.value = res.data || []
   // 默认展开前两层
   expandedKeys.value = []
   const walk = (nodes, depth) => {

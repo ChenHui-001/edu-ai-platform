@@ -97,7 +97,7 @@ async function load() {
   loading.value = true
   try {
     const res = await systemApi.config()
-    config.value = res.data.data
+    config.value = res.data
   } finally {
     loading.value = false
   }

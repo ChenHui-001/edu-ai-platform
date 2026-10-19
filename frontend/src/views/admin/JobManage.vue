@@ -123,11 +123,11 @@ async function load() {
   loading.value = true
   try {
     const res = await logApi.jobs(query)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
     const s = await logApi.schedulerStatus()
-    scheduler.value = s.data.data || {}
+    scheduler.value = s.data || {}
   } finally {
     loading.value = false
   }
@@ -177,7 +177,7 @@ async function openExecutions(row) {
   execLoading.value = true
   try {
     const res = await logApi.jobExecutions(row.id, { page: 1, page_size: 100 })
-    executions.value = res.data.data?.items || []
+    executions.value = res.data?.items || []
   } finally {
     execLoading.value = false
   }

@@ -148,7 +148,7 @@ async function load() {
   loading.value = true
   try {
     const res = await gradingApi.pending({ page: 1, page_size: 100 })
-    list.value = res.data.data?.items || []
+    list.value = res.data?.items || []
   } finally {
     loading.value = false
   }
@@ -171,7 +171,7 @@ async function select(item) {
   router.replace({ query: { ...route.query, submission: String(sid) } })
   try {
     const res = await gradingApi.detail(sid)
-    const d = res.data.data
+    const d = res.data
     detail.value = d
     ;(d.items || []).forEach(it => {
       scores[it.id] = it.score ?? 0
@@ -193,7 +193,7 @@ async function focusFromQuery() {
   } else {
     try {
       const res = await gradingApi.detail(sid)
-      const d = res.data.data
+      const d = res.data
       detail.value = d
       current.value = {
         id: sid,

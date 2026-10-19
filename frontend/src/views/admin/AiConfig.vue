@@ -176,7 +176,7 @@ async function load() {
   loading.value = true
   try {
     const res = await request.get('/system/ai-config')
-    const data = res.data.data
+    const data = res.data
     config.value = data.config
     providers.value = data.providers
     // 填充表单
@@ -219,7 +219,7 @@ async function testConnection() {
       llm_base_url: form.value.llm_base_url,
       llm_model: form.value.llm_model
     })
-    testResult.value = res.data.data
+    testResult.value = res.data
     if (testResult.value.success) {
       ElMessage.success('连接测试成功')
     } else {

@@ -351,7 +351,7 @@ async function load() {
   loading.value = true
   try {
     const res = await questionApi.papers(query)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
   } finally {
@@ -375,7 +375,7 @@ async function loadQuestions() {
       keyword: qFilter.keyword || undefined,
       status: 'published', page_size: 200
     })
-    questions.value = res.data.data?.items || []
+    questions.value = res.data?.items || []
     // 筛选/刷新后恢复已选题目的勾选状态
     await nextTick()
     questions.value.forEach(q => {
@@ -476,7 +476,7 @@ async function runAI() {
       subject_id: aiForm.subject_id, grade_id: aiForm.grade_id,
     })
     // res 是 axios 响应：{ data: {code, message, success, data? } }
-    // envelope data 缺失（Agent 失败/降级）时不能裸取 res.data.data，会 NPE
+    // envelope data 缺失（Agent 失败/降级）时不能裸取 res.data，会 NPE
     const envelope = res?.data || {}
     const payload = envelope.data || {}
     if (!envelope.success) {
@@ -514,7 +514,7 @@ async function viewDetail(row) {
   detailLoading.value = true
   try {
     const res = await questionApi.paperDetail(row.id)
-    detailItems.value = res.data.data?.items || []
+    detailItems.value = res.data?.items || []
   } finally {
     detailLoading.value = false
   }
@@ -571,11 +571,11 @@ async function remove(row) {
 onMounted(async () => {
   await load()
   const [s, g] = await Promise.all([eduApi.subjects(), eduApi.grades()])
-  subjects.value = s.data.data || []
-  grades.value = g.data.data || []
+  subjects.value = s.data || []
+  grades.value = g.data || []
   // 出题人下拉：用人员简表（/system/users 为 admin 专属，教师必 403）
   const t = await eduApi.peopleBrief({ identity: 'teacher' })
-  teachers.value = t.data.data?.items || []
+  teachers.value = t.data?.items || []
 })
 </script>
 

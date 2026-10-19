@@ -304,7 +304,7 @@ function onSelect(idx) { active.value = idx; result.value = null }
 async function onSubjectChange() {
   if (!qForm.subject_id) { kps.value = []; return }
   const res = await eduApi.knowledgeList({ subject_id: qForm.subject_id, page_size: 200 })
-  kps.value = res.data.data?.items || res.data.data || []
+  kps.value = res.data?.items || res.data || []
 }
 
 async function run() {
@@ -335,7 +335,7 @@ async function run() {
     } else {
       res = await agentApi.grading(genericForm)
     }
-    result.value = res.data.data || {}
+    result.value = res.data || {}
     ElMessage.success(res.data.message || '生成完成')
   } finally {
     running.value = false
@@ -365,10 +365,10 @@ onMounted(async () => {
   const [a, s, g, st] = await Promise.all([
     agentApi.list(), agentApi.status(), eduApi.subjects(), eduApi.grades()
   ])
-  agents.value = a.data.data || []
-  engine.value = st.data.data
-  subjects.value = s.data.data || []
-  grades.value = g.data.data || []
+  agents.value = a.data || []
+  engine.value = st.data
+  subjects.value = s.data || []
+  grades.value = g.data || []
 })
 </script>
 

@@ -304,7 +304,7 @@ async function load() {
   loading.value = true
   try {
     const res = await taskApi.list(query)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
   } finally {
@@ -356,7 +356,7 @@ async function openSubs(row) {
   subStats.value = null
   try {
     const res = await taskApi.submissions(row.id, { page: 1, page_size: 200 })
-    const d = res.data.data || {}
+    const d = res.data || {}
     submissions.value = d.items || []
     subStats.value = d.stats || {
       total: d.total, submitted: (d.items || []).length,
@@ -378,7 +378,7 @@ async function genReport() {
   reportLoading.value = true
   try {
     const res = await gradingApi.report(currentTask.value.id)
-    report.value = res.data.data
+    report.value = res.data
     ElMessage.success('学情报告已生成')
   } finally {
     reportLoading.value = false
@@ -389,7 +389,7 @@ async function genAdvice() {
   reportLoading.value = true
   try {
     const res = await gradingApi.aiComment(currentTask.value.id)
-    const d = res.data.data
+    const d = res.data
     advice.value = typeof d === 'string' ? d : (d.advice || d.raw || '')
     if (!report.value) await genReport()
     ElMessage.success(d.is_fallback ? '已生成（规则引擎降级）' : 'AI 建议已生成')
@@ -404,9 +404,9 @@ async function viewAnswer(row) {
   answerItems.value = []
   try {
     const res = await gradingApi.detail(row.id)
-    answerItems.value = res.data.data?.items || []
+    answerItems.value = res.data?.items || []
     Object.assign(answerItems.value, { length: answerItems.value.length })
-    answerDetail.value = res.data.data
+    answerDetail.value = res.data
   } finally {
     answerLoading.value = false
   }
@@ -418,9 +418,9 @@ const answer = computed(() => answerDetail.value)
 onMounted(async () => {
   await load()
   const p = await questionApi.papers({ page: 1, page_size: 100 })
-  papers.value = p.data.data?.items || []
+  papers.value = p.data?.items || []
   const c = await eduApi.classes({ page_size: 100 })
-  classes.value = c.data.data?.items || []
+  classes.value = c.data?.items || []
 })
 </script>
 

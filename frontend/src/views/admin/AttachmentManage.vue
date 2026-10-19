@@ -122,7 +122,7 @@ async function load() {
   loading.value = true
   try {
     const res = await attachmentApi.list(query)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
   } finally {

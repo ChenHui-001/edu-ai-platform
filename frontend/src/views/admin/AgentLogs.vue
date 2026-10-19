@@ -166,7 +166,7 @@ async function load() {
       params.end_date = dateRange.value[1]
     }
     const res = await agentApi.logs(params)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
   } finally {
@@ -188,8 +188,8 @@ function detail(row) {
 onMounted(async () => {
   await load()
   const [l, s] = await Promise.all([agentApi.list(), agentApi.status()])
-  agents.value = l.data.data || []
-  engine.value = s.data.data
+  agents.value = l.data || []
+  engine.value = s.data
 })
 </script>
 

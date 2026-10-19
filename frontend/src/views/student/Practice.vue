@@ -261,8 +261,8 @@ async function onSubjectChange() {
 
 async function loadSubjects() {
   const [s, g] = await Promise.all([eduApi.subjects(), eduApi.grades()])
-  subjects.value = s.data.data || []
-  grades.value = g.data.data || []
+  subjects.value = s.data || []
+  grades.value = g.data || []
 }
 
 function resetForm() {
@@ -280,14 +280,14 @@ async function createPractice() {
     const res = await taskApi.practice(form)
     const { task_id } = res.data
     const p = await taskApi.practicePaper(task_id)
-    paper.value = { ...p.data.data, task_id }
+    paper.value = { ...p.data, task_id }
     answers.value = {}
     multiAnswers.value = {}
     fillAnswers.value = {}
     textAnswers.value = {}
     results.value = {}
     result.value = false
-    ElMessage.success(res.data.message || `已生成 ${p.data.data.items.length} 道练习题`)
+    ElMessage.success(res.data.message || `已生成 ${p.data.items.length} 道练习题`)
     loadFavoriteStatus()
   } finally {
     generating.value = false

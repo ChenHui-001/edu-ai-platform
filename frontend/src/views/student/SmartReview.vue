@@ -231,7 +231,7 @@ async function genPlan() {
 onMounted(async () => {
   loadAll()
   const s = await eduApi.subjects()
-  subjects.value = s.data.data || []
+  subjects.value = s.data || []
 })
 </script>
 

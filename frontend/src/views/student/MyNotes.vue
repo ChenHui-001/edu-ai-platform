@@ -235,7 +235,7 @@ async function remove(n) {
 onMounted(async () => {
   await load()
   const s = await eduApi.subjects()
-  subjects.value = s.data.data || []
+  subjects.value = s.data || []
 })
 </script>
 

@@ -220,7 +220,7 @@ async function load() {
   loading.value = true
   try {
     const res = await systemApi.users(query)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
   } finally {
@@ -281,10 +281,10 @@ async function remove(row) {
 onMounted(async () => {
   await load()
   const [r, g] = await Promise.all([systemApi.roles(), eduApi.grades()])
-  roles.value = r.data.data || []
-  grades.value = g.data.data || []
+  roles.value = r.data || []
+  grades.value = g.data || []
   const c = await eduApi.classes({ page_size: 200 })
-  classes.value = (c.data.data?.items) || []
+  classes.value = (c.data?.items) || []
 })
 </script>
 

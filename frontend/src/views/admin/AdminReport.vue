@@ -146,10 +146,10 @@ async function load() {
       reportApi.adminOverview(), reportApi.gradeComparison(),
       reportApi.subjectComparison(), reportApi.systemRuntime()
     ])
-    overview.value = o.data.data
-    grades.value = g.data.data || []
-    subjects.value = s.data.data || []
-    runtime.value = r.data.data
+    overview.value = o.data
+    grades.value = g.data || []
+    subjects.value = s.data || []
+    runtime.value = r.data
   } finally {
     loadingGrade.value = false
   }

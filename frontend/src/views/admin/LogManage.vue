@@ -147,7 +147,7 @@ async function load() {
       params.end_date = dateRange.value[1]
     }
     const res = await API_MAP[tab.value](params)
-    const d = res.data.data || {}
+    const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
   } finally {
