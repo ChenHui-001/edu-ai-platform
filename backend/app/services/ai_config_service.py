@@ -125,7 +125,14 @@ def get_ai_config(db: Session) -> Dict[str, Any]:
             val = _cast(row.value, row.value_type or spec["type"])
         else:
             val = _cast(spec["default"], spec["type"])
-        config[key.upper()] = val
+        # 密钥字段脱敏返回：管理员页面/浏览器网络面板不再出现完整凭据
+        if "key" in key.lower() and val:
+            sv = str(val)
+            config[key.upper()] = (sv if len(sv) <= 8 else f"{sv[:4]}****{sv[-4:]}")
+            meta_key = f"{key}_has_value"
+        else:
+            config[key.upper()] = val
+            meta_key = None
         meta[key] = {
             "label": spec["label"],
             "description": spec["description"],
@@ -154,6 +161,9 @@ def save_ai_config(db: Session, data: Dict[str, Any], admin_id: int) -> Dict[str
             val = "true" if raw else "false"
         else:
             val = str(raw)
+        # 前端回传的掩码值（含 ****）表示「未修改」，不能写回数据库覆盖真实 key
+        if "****" in val:
+            continue
 
         row = db.scalar(select(SysConfig).where(SysConfig.key == key))
         if row:

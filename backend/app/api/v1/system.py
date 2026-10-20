@@ -62,18 +62,34 @@ def create_user(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
-    from app.core.security import hash_password
+    from app.core.security import hash_password, validate_password_strength
+    from app.core.config import settings as _st
 
     if not data.get("username") or not data.get("real_name"):
         raise BusinessException("账号和姓名不能为空")
     if db.scalar(select(User).where(User.username == data["username"])):
         raise BusinessException("该账号已存在")
 
+    # 身份白名单：此前接受任意字符串，会写出 identity='xxx' 的脏用户
+    identity = data.get("identity") or "student"
+    if identity not in ("student", "teacher", "admin"):
+        raise BusinessException("身份仅支持 student / teacher / admin")
+
+    raw_pwd = data.get("password") or _st.DEFAULT_USER_PASSWORD
+    validate_password_strength(raw_pwd, min_length=_st.PASSWORD_MIN_LENGTH)
+
+    # 角色编码必须真实存在：此前静默跳过，用户最终无任何角色、登录后空权限
+    role_codes = data.get("roles") or ["student"]
+    roles_db = db.scalars(select(Role).where(Role.code.in_(role_codes))).all()
+    missing = set(role_codes) - {r.code for r in roles_db}
+    if missing:
+        raise BusinessException(f"以下角色不存在：{', '.join(sorted(missing))}")
+
     user = User(
         username=data["username"],
-        password=hash_password(data.get("password", "Edu@123456")),
+        password=hash_password(raw_pwd),
         real_name=data["real_name"],
-        identity=data.get("identity", "student"),
+        identity=identity,
         status=data.get("status", "active"),
         school_name=data.get("school_name"),
         grade_id=data.get("grade_id"),
@@ -84,10 +100,8 @@ def create_user(
     )
     db.add(user)
     db.flush()
-    for code in data.get("roles", ["student"]):
-        role = db.scalar(select(Role).where(Role.code == code))
-        if role:
-            db.add(UserRole(user_id=user.id, role_id=role.id))
+    for role in roles_db:
+        db.add(UserRole(user_id=user.id, role_id=role.id))
     db.commit()
     db.refresh(user)
     return ok(dictify(user), message="用户创建成功")
@@ -96,21 +110,39 @@ def create_user(
 @router.put("/users/{user_id}", summary="编辑用户")
 def update_user(
     user_id: int, data: Dict[str, Any] = Body(...),
-    db: Session = Depends(get_db), _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db), admin: User = Depends(get_current_admin),
 ):
     user = db.get(User, user_id)
     if not user:
         raise NotFoundException("用户不存在")
+
+    if "identity" in data and data["identity"] not in ("student", "teacher", "admin"):
+        raise BusinessException("身份仅支持 student / teacher / admin")
+
+    # 自我降权保护：移除自己的 sys_admin 会立即失去全部管理权限，
+    # 且无法自助恢复（实测降权后所有管理接口立即 403）。
+    if user_id == admin.id and "roles" in data:
+        if "sys_admin" not in set(data["roles"] or []):
+            raise BusinessException(
+                "不能移除自己的系统管理员角色（如需移交，请由另一位管理员操作）")
+
+    # 角色编码存在性校验
+    roles_db = []
+    if "roles" in data:
+        codes = list(dict.fromkeys(data["roles"] or []))
+        roles_db = db.scalars(select(Role).where(Role.code.in_(codes))).all()
+        missing = set(codes) - {r.code for r in roles_db}
+        if missing:
+            raise BusinessException(f"以下角色不存在：{', '.join(sorted(missing))}")
+
     for f in ("real_name", "email", "phone", "status", "school_name", "grade_id",
               "class_id", "avatar", "identity"):
         if f in data:
             setattr(user, f, data[f])
     if "roles" in data:
         db.execute(UserRole.__table__.delete().where(UserRole.user_id == user_id))
-        for code in data["roles"]:
-            role = db.scalar(select(Role).where(Role.code == code))
-            if role:
-                db.add(UserRole(user_id=user_id, role_id=role.id))
+        for role in roles_db:
+            db.add(UserRole(user_id=user_id, role_id=role.id))
     db.commit()
     return ok(dictify(user), message="用户信息已更新")
 
@@ -151,8 +183,13 @@ def reset_password(
     payload: ResetPwdIn, db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
+    from app.core.config import settings as _st
+    from app.core.security import validate_password_strength
     from app.services.auth_service import reset_password_by_admin
 
+    # 此前完全不校验，实测可重置为 "a" 并直接登录
+    validate_password_strength(payload.new_password,
+                               min_length=_st.PASSWORD_MIN_LENGTH)
     reset_password_by_admin(db, payload.user_id, payload.new_password)
     return ok(message="密码已重置，用户下次登录须修改密码")
 
@@ -235,6 +272,10 @@ def copy_role(
     src = db.get(Role, role_id)
     if not src:
         raise NotFoundException("角色不存在")
+    # 内置角色不可修改是安全边界，允许复制等于提供「可修改的等价全权角色」，
+    # 间接绕过该保护（实测 sys_admin 副本拥有全部 60 个权限且可随意改）。
+    if src.is_builtin:
+        raise BusinessException("内置角色不可复制，请直接新建角色并按需勾选权限")
 
     # code/name 都有唯一约束，固定加 "_copy" 后缀会导致第二次复制必然冲突。
     # 这里按序号自动去重，保证可以反复复制。
@@ -258,7 +299,12 @@ def copy_role(
     db.flush()
     _assign_perms(db, new.id, [p.code for p in src.permissions])
     db.commit()
-    return ok(dictify(new), message="角色复制成功")
+    db.refresh(new)
+    d = dictify(new)
+    # 关系对象需显式读取，否则前端拿到空 permissions（实测副本实际 60 个权限但返回 0）
+    d["permissions"] = [p.code for p in new.permissions]
+    d["user_count"] = 0
+    return ok(d, message="角色复制成功")
 
 
 @router.delete("/roles/{role_id}", summary="删除角色")
@@ -402,10 +448,22 @@ def get_config(db: Session = Depends(get_db), _: User = Depends(get_current_admi
     from app.core.config import settings
 
     # 可在线编辑项：来自 sys_config 表，由管理员通过 PUT /config 维护
+    def _mask(k: str, v):
+        """密钥类配置脱敏：仅保留前缀与后 4 位，前端不再拿到可用凭据。"""
+        if v is None:
+            return None
+        low = k.lower()
+        if any(t in low for t in ("api_key", "secret", "password", "token")):
+            sv = str(v)
+            if len(sv) <= 8:
+                return "****"
+            return f"{sv[:4]}****{sv[-4:]}"
+        return v
+
     editable = []
     for c in db.scalars(select(SysConfig).order_by(SysConfig.category, SysConfig.id)).all():
         editable.append({
-            "key": c.key, "value": c.value, "value_type": c.value_type,
+            "key": c.key, "value": _mask(c.key, c.value), "value_type": c.value_type,
             "category": c.category, "label": c.label or c.key,
             "description": c.description, "is_public": c.is_public,
             "updated_at": dictify(c.updated_at),
@@ -484,6 +542,12 @@ def delete_config(
     row = db.scalar(select(SysConfig).where(SysConfig.key == key))
     if not row:
         raise NotFoundException("配置项不存在")
+    # 关键前缀禁止删除：删掉 llm_enabled / llm_api_key 会让系统行为静默回落到
+    # 环境变量默认值，等于绕过配置审计（实测删除 llm_provider 成功）。
+    PROTECTED_PREFIXES = ("llm_", "security_", "password_", "smtp_", "secret_")
+    if key.lower().startswith(PROTECTED_PREFIXES):
+        raise BusinessException(
+            f"「{key}」属于关键配置，不允许删除；如需恢复默认请修改其值")
     db.delete(row)
     db.commit()
     return ok(message="配置已删除")

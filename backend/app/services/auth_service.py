@@ -228,8 +228,9 @@ def change_password(db: Session, user: User, old_password: str, new_password: st
     """修改密码。"""
     if not verify_password(old_password, user.password):
         raise BusinessException("原密码错误")
-    if len(new_password) < settings.PASSWORD_MIN_LENGTH:
-        raise BusinessException(f"新密码长度不能少于 {settings.PASSWORD_MIN_LENGTH} 位")
+    from app.core.security import validate_password_strength
+
+    validate_password_strength(new_password, min_length=settings.PASSWORD_MIN_LENGTH)
     user.password = hash_password(new_password)
     user.must_change_password = False
     db.commit()

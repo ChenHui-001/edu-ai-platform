@@ -306,14 +306,34 @@ def run():
         check("可查询指定角色的权限点", p.get("success") and data_of(p) is not None,
               f"role_id={roles[0]['id']} name={roles[0].get('name')}")
 
-        # 用时间戳避免重名（上一轮遗留的副本会让本次复制失败）
-        p, _, _ = admin.post(f"/system/roles/{roles[0]['id']}/copy",
-                             {"name": f"E2E测试角色副本{int(time.time())}"})
-        d = data_of(p) or {}
-        new_rid = d.get("id")
-        check("角色复制", p.get("success") and bool(new_rid), f"新角色 id={new_rid}")
-        if new_rid:
-            p, _, _ = admin.delete(f"/system/roles/{new_rid}")
+        # 内置角色不可复制（防止「可修改的等价全权角色」绕过内置保护）
+        builtin_role = next((r for r in roles if r.get("is_builtin")), None)
+        if builtin_role:
+            p, _, _ = admin.post(f"/system/roles/{builtin_role['id']}/copy", {})
+            check("★ 内置角色不可复制",
+                  p.get("success") is not True,
+                  f"{builtin_role.get('code')}: {p.get('message', '')[:30]}")
+
+        # 复制能力用**自定义角色**验证（内置角色已被禁止复制）
+        tmp_code = f"e2e_rc_{int(time.time()) % 100000}"
+        p, _, _ = admin.post("/system/roles", {
+            "code": tmp_code, "name": f"E2E复制源{int(time.time())}",
+            "permissions": ["student:practice"]})
+        src_rid = (data_of(p) or {}).get("id")
+        check("创建自定义角色（复制源）", p.get("success") and bool(src_rid), f"id={src_rid}")
+
+        if src_rid:
+            p, _, _ = admin.post(f"/system/roles/{src_rid}/copy",
+                                 {"name": f"E2E测试角色副本{int(time.time())}"})
+            d = data_of(p) or {}
+            new_rid = d.get("id")
+            check("角色复制", p.get("success") and bool(new_rid), f"新角色 id={new_rid}")
+            check("★ 复制结果返回真实权限数",
+                  len(d.get("permissions") or []) == 1,
+                  f"perms={d.get('permissions')}")
+            if new_rid:
+                admin.delete(f"/system/roles/{new_rid}")
+            p, _, _ = admin.delete(f"/system/roles/{src_rid}")
             check("角色删除（测试数据清理）", p.get("success"), p.get("message", ""))
 
     # 越权矩阵

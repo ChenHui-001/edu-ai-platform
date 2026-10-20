@@ -83,6 +83,7 @@ STAGES = [
     ("agent", "阶段十二 · AI 智能专项", "test_agent"),
     ("agent_opt", "阶段十三 · AI 优化项验证", "test_agent_opt"),
     ("agent_struct", "阶段十四 · AI 结构性优化", "test_agent_struct"),
+    ("system", "阶段十五 · 系统管理专项", "test_system"),
 ]
 
 

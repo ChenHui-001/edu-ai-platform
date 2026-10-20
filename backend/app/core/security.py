@@ -255,3 +255,31 @@ def _purge_captcha() -> None:
     now = datetime.now()
     for k in [k for k, (_, exp) in _CAPTCHA_STORE.items() if exp < now]:
         _CAPTCHA_STORE.pop(k, None)
+
+
+# 常见弱口令（命中即拒绝，避免 P@ssw0rd 这类"看起来合规"的密码）
+_WEAK_PASSWORDS = {
+    "12345678", "123456789", "password", "passw0rd", "qwerty123", "abc12345",
+    "admin123", "admin@123", "a1234567", "11111111", "88888888", "edu@123456",
+}
+
+
+def validate_password_strength(password: str, *, min_length: int = 8) -> None:
+    """密码强度校验：长度 + 字母数字组合 + 弱口令黑名单。
+
+    此前仅 change_password 校验长度，创建用户/管理员重置密码完全不校验，
+    实测可把密码设为 "1" 并直接登录。
+    """
+    from app.core.exception import BusinessException
+
+    pwd = password or ""
+    if len(pwd) < min_length:
+        raise BusinessException(f"密码长度不能少于 {min_length} 位")
+    if len(pwd) > 64:
+        raise BusinessException("密码长度不能超过 64 位")
+    if pwd.lower() in _WEAK_PASSWORDS:
+        raise BusinessException("密码过于简单（常见弱口令），请更换")
+    has_alpha = any(c.isalpha() for c in pwd)
+    has_digit = any(c.isdigit() for c in pwd)
+    if not (has_alpha and has_digit):
+        raise BusinessException("密码需同时包含字母和数字")

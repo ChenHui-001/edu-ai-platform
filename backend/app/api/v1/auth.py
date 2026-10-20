@@ -74,6 +74,10 @@ def get_captcha():
 def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db)):
     if payload.identity not in ("student", "teacher"):
         raise BusinessException("身份类型仅支持学生或教师")
+    from app.core.config import settings as _st
+    from app.core.security import validate_password_strength
+
+    validate_password_strength(payload.password, min_length=_st.PASSWORD_MIN_LENGTH)
     if payload.captcha_key and not verify_captcha(payload.captcha_key, payload.captcha or ""):
         raise BusinessException("验证码错误或已过期")
     if payload.identity == "student" and not payload.class_id:

@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     PASSWORD_MIN_LENGTH: int = 8
+    # 创建用户时的默认初始密码（满足强度要求：字母+数字+长度）
+    DEFAULT_USER_PASSWORD: str = "Edu@2026Init"
 
     # ---------------- 文件 / 附件 ----------------
     UPLOAD_DIR: str = "./data/uploads"

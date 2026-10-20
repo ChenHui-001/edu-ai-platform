@@ -99,7 +99,7 @@
           </el-col>
         </el-row>
         <el-form-item v-if="!form.id" label="初始密码" prop="password">
-          <el-input v-model="form.password" show-password placeholder="不填则默认 123456" />
+          <el-input v-model="form.password" show-password placeholder="不填则默认 Edu@2026Init（≥8 位且含字母+数字）" />
         </el-form-item>
         <el-row :gutter="12">
           <el-col :span="12">
@@ -170,7 +170,7 @@
           <span>{{ current?.real_name }}（{{ current?.username }}）</span>
         </el-form-item>
         <el-form-item label="新密码">
-          <el-input v-model="newPwd" show-password placeholder="留空自动生成" />
+          <el-input v-model="newPwd" show-password placeholder="留空自动生成强密码；需 ≥8 位含字母+数字" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -265,10 +265,28 @@ function openReset(row) {
   resetDlg.value = true
 }
 
+/** 生成满足强度要求的随机初始密码（字母+数字+特殊字符，12 位） */
+function genStrongPassword() {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+  const lower = 'abcdefghijkmnpqrstuvwxyz'
+  const digit = '23456789'
+  const pick = (s, n) => Array.from({ length: n },
+    () => s[Math.floor(Math.random() * s.length)]).join('')
+  return pick(upper, 2) + pick(lower, 4) + pick(digit, 4) + '@#'[Math.floor(Math.random() * 2)]
+}
+
 async function doReset() {
-  await systemApi.resetPassword({ user_id: current.value.id, password: newPwd.value || undefined })
-  ElMessage.success('密码已重置')
-  resetDlg.value = false
+  // 字段名必须是 new_password：此前传 password，后端 Pydantic 校验失败 → 必然 422
+  // 留空时前端生成强密码并明确告知管理员
+  const pwd = (newPwd.value || '').trim() || genStrongPassword()
+  try {
+    await systemApi.resetPassword({ user_id: current.value.id, new_password: pwd })
+    ElMessage.success(`密码已重置为：${pwd}（请转告用户，首次登录需修改）`)
+    newPwd.value = ''
+    resetDlg.value = false
+  } catch (e) {
+    ElMessage.error(e?.message || '重置失败')
+  }
 }
 
 async function remove(row) {
