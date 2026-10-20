@@ -11,7 +11,9 @@ from fastapi import APIRouter, Body, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import (
+    get_current_student, get_current_student_self, get_current_user,
+)
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import (
@@ -26,7 +28,7 @@ router = APIRouter()
 @router.get("/review/plans", summary="我的复习计划")
 def review_plans(
     scheduled_date: Optional[str] = None, is_completed: Optional[bool] = None,
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     stmt = select(ReviewPlan).where(ReviewPlan.student_id == user.id)
     if scheduled_date:
@@ -85,7 +87,7 @@ def review_plans(
 @router.put("/review/plans/{plan_id}/complete", summary="完成复习")
 def complete_review(
     plan_id: int, data: Dict[str, Any] = Body(default={}), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     p = db.get(ReviewPlan, plan_id)
     if not p or p.student_id != user.id:
@@ -117,7 +119,7 @@ def complete_review(
 @router.get("/review/mastery", summary="知识点掌握地图")
 def mastery_map(
     subject_id: Optional[int] = None, db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student),
 ):
     stmt = select(KnowledgeMastery).where(KnowledgeMastery.student_id == user.id)
     if subject_id:
@@ -155,7 +157,7 @@ def mastery_map(
 @router.post("/review/plan", summary="AI 生成复习计划")
 def generate_plan(
     data: Dict[str, Any] = Body(default={}), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     from app.agents.study_agent import StudyPlannerAgent
 
@@ -177,7 +179,7 @@ def generate_plan(
 @router.post("/practice", summary="创建随机练习")
 def create_practice(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     subject_id = data.get("subject_id")
     if not subject_id:
@@ -208,7 +210,7 @@ def create_practice(
 @router.get("/practice/history", summary="练习历史")
 def practice_history(
     params: PageParams = Depends(), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student),
 ):
     stmt = select(Task).where(
         Task.type == "practice", Task.creator_id == user.id
@@ -246,7 +248,7 @@ def practice_history(
 # 否则 FastAPI 会把 "history" 当作 task_id 解析并返回 422。
 @router.get("/practice/{task_id}", summary="获取练习题目")
 def get_practice(
-    task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     task = db.get(Task, task_id)
     # 归属与类型双重校验：

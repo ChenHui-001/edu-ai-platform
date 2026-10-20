@@ -121,6 +121,17 @@ def get_current_student(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def get_current_student_self(user: User = Depends(get_current_user)) -> User:
+    """仅学生本人（写入型学习数据：笔记/练习/收藏/目标/复习）。
+
+    学习中心是学生个人空间，教师与管理员不应在此创建数据——
+    否则会在学生表里留下「教师身份的学生笔记」等错位记录。
+    """
+    if user.identity != "student":
+        raise PermissionException("该功能仅学生可用")
+    return user
+
+
 class DataScope:
     """数据权限范围计算：严格隔离教师/学生可见数据。"""
 

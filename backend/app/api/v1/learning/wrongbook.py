@@ -11,7 +11,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import (
+    get_current_student, get_current_student_self, get_current_user,
+)
 from app.core.database import get_db
 from app.core.exception import NotFoundException
 from app.models import KnowledgePoint, Question, User, WrongQuestion
@@ -24,7 +26,7 @@ def list_wrong(
     params: PageParams = Depends(), subject_id: Optional[int] = None,
     knowledge_point_id: Optional[int] = None, error_reason: Optional[str] = None,
     is_mastered: Optional[bool] = None, keyword: Optional[str] = None,
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     stmt = select(WrongQuestion).where(WrongQuestion.student_id == user.id)
     if subject_id:
@@ -68,7 +70,7 @@ def list_wrong(
 @router.put("/wrong-questions/{wid}", summary="标注错因 / 标记掌握")
 def update_wrong(
     wid: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     w = db.get(WrongQuestion, wid)
     if not w or w.student_id != user.id:
@@ -84,7 +86,7 @@ def update_wrong(
 
 @router.post("/wrong-questions/{wid}/analyze", summary="AI 分析错因")
 def analyze_wrong(
-    wid: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    wid: int, db: Session = Depends(get_db), user: User = Depends(get_current_student_self),
 ):
     from app.agents.grading_agent import GradingAgent
 
@@ -108,7 +110,7 @@ def analyze_wrong(
 
 @router.post("/wrong-questions/{wid}/redo", summary="错题重做（生成专项练习）")
 def redo_wrong(
-    wid: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    wid: int, db: Session = Depends(get_db), user: User = Depends(get_current_student_self),
 ):
     w = db.get(WrongQuestion, wid)
     if not w or w.student_id != user.id:
@@ -135,7 +137,7 @@ def redo_wrong(
 def export_wrong(
     subject_id: Optional[int] = None, with_answer: bool = True,
     fmt: str = Query("markdown", regex="^(markdown|html|pdf)$"),
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     """导出错题本：
     - markdown：返回 markdown 文本（默认）

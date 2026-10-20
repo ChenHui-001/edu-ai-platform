@@ -9,7 +9,9 @@ from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import (
+    get_current_student, get_current_student_self, get_current_user,
+)
 from app.core.database import get_db
 from app.core.exception import NotFoundException, PermissionException
 from app.models import Note, Subject, User
@@ -21,7 +23,7 @@ router = APIRouter()
 def list_notes(
     params: PageParams = Depends(), subject_id: Optional[int] = None,
     keyword: Optional[str] = None, is_favorite: Optional[bool] = None,
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     stmt = select(Note).where(Note.student_id == user.id)
     if subject_id:
@@ -49,9 +51,15 @@ def list_notes(
 def shared_notes(
     page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
     subject_id: Optional[int] = None, db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student),
 ):
-    """查看同班同学共享的笔记（不含本人，按班级隔离）。"""
+    """查看同班同学共享的笔记（不含本人，按班级隔离）。
+
+    仅学生可查看他人笔记；教师/管理员即使有 class_id 也不应浏览
+    学生私有内容（此前教师能通过自己的班号看到本班学生共享笔记）。
+    """
+    if user.identity != "student":
+        return ok({"items": [], "total": 0})
     from app.models import User as U
     classmates = db.scalars(
         select(U.id).where(U.class_id == user.class_id, U.id != user.id)
@@ -78,13 +86,27 @@ def shared_notes(
 
 @router.get("/notes/{note_id}", summary="笔记详情")
 def get_note(
-    note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     note = db.get(Note, note_id)
     if not note:
         raise NotFoundException("笔记不存在")
-    if note.student_id != user.id and "sys_admin" not in user.role_codes:
-        raise PermissionException("无权查看该笔记")
+    if note.student_id != user.id:
+        # 仅系统管理员可跨用户查看（数据核查），且必须留审计痕迹
+        if "sys_admin" not in user.role_codes:
+            raise PermissionException("无权查看该笔记")
+        try:
+            from app.models import OperationLog
+
+            db.add(OperationLog(
+                user_id=user.id, username=user.username,
+                module="学习中心", action="查看学生笔记",
+                method="GET", path=f"/learning/notes/{note_id}",
+                params=f'{{"note_id":{note_id},"owner_id":{note.student_id}}}',
+                ip="", status="success",
+            ))
+        except Exception:  # noqa: BLE001
+            pass
     note.view_count += 1
     db.commit()
     d = dictify(note)
@@ -97,7 +119,7 @@ def get_note(
 @router.post("/notes", summary="创建笔记")
 def create_note(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     note = Note(
         title=data.get("title") or "未命名笔记", content=data.get("content", ""),
@@ -117,7 +139,7 @@ def create_note(
 @router.put("/notes/{note_id}", summary="更新笔记")
 def update_note(
     note_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     note = db.get(Note, note_id)
     if not note or note.student_id != user.id:
@@ -138,7 +160,7 @@ def update_note(
 
 @router.delete("/notes/{note_id}", summary="删除笔记")
 def delete_note(
-    note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_student_self),
 ):
     note = db.get(Note, note_id)
     if not note or note.student_id != user.id:
@@ -151,7 +173,7 @@ def delete_note(
 @router.put("/notes/{note_id}/share", summary="分享笔记给同学")
 def share_note(
     note_id: int, data: Dict[str, Any] = Body(default={}),
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_student_self),
 ):
     """设置笔记为共享/取消共享，共享后同班同学可在「共享笔记」列表查看。"""
     note = db.get(Note, note_id)
@@ -165,7 +187,7 @@ def share_note(
 
 @router.post("/notes/{note_id}/organize", summary="AI 整理笔记")
 def organize_note(
-    note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_student_self),
 ):
     from app.agents.note_agent import NoteOrganizerAgent
 
@@ -179,7 +201,7 @@ def organize_note(
 
 @router.get("/notes/{note_id}/export", summary="导出笔记为 HTML/PDF 预览")
 def export_note(
-    note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     note = db.get(Note, note_id)
     if not note or note.student_id != user.id:

@@ -11,7 +11,9 @@ from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import (
+    get_current_student, get_current_student_self, get_current_user,
+)
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import (
@@ -27,7 +29,7 @@ router = APIRouter()
 def list_favorites(
     params: PageParams = Depends(), tag: Optional[str] = None,
     subject_id: Optional[int] = None, keyword: Optional[str] = None,
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     stmt = select(QuestionFavorite).where(QuestionFavorite.user_id == user.id)
     if tag:
@@ -87,7 +89,7 @@ def list_favorites(
 @router.post("/favorites", summary="收藏题目")
 def add_favorite(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     qid = data.get("question_id")
     if not qid:
@@ -117,7 +119,7 @@ def add_favorite(
 
 @router.delete("/favorites/{fav_id}", summary="取消收藏")
 def remove_favorite(
-    fav_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    fav_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_student_self),
 ):
     fav = db.get(QuestionFavorite, fav_id)
     if not fav or fav.user_id != user.id:
@@ -130,7 +132,7 @@ def remove_favorite(
 @router.delete("/favorites/by-question/{question_id}", summary="按题目取消收藏")
 def remove_favorite_by_question(
     question_id: int, db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     fav = db.scalar(select(QuestionFavorite).where(
         QuestionFavorite.user_id == user.id, QuestionFavorite.question_id == question_id
@@ -144,7 +146,7 @@ def remove_favorite_by_question(
 @router.get("/favorites/check-batch", summary="批量检查收藏状态")
 def check_favorites_batch(
     question_ids: str = Query(..., description="逗号分隔的题目 ID，如 1,2,3（≤100 个）"),
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     """一次返回多道题的收藏状态。
 
@@ -174,7 +176,7 @@ def check_favorites_batch(
 @router.get("/favorites/check/{question_id}", summary="检查是否已收藏")
 def check_favorite(
     question_id: int, db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student),
 ):
     fav = db.scalar(select(QuestionFavorite).where(
         QuestionFavorite.user_id == user.id, QuestionFavorite.question_id == question_id
@@ -186,7 +188,7 @@ def check_favorite(
 @router.post("/favorites/practice", summary="收藏题目生成专项练习")
 def favorites_practice(
     data: Dict[str, Any] = Body(default={}), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     """从收藏的题目中选取，生成一份专项练习卷。"""
     question_ids = data.get("question_ids") or []
@@ -235,7 +237,7 @@ def favorites_practice(
 # ================================================================ P1-1 错题变式练习
 @router.post("/wrong-questions/{wid}/variant", summary="错题变式练习（AI 生成同类题）")
 def wrong_variant(
-    wid: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    wid: int, db: Session = Depends(get_db), user: User = Depends(get_current_student_self),
 ):
     """基于错题的知识点、题型、难度，生成变式练习卷。
     LLM 可用时调用 AI 生成原创变式题；不可用时回退到题库相似题。
@@ -308,7 +310,7 @@ def wrong_variant(
 @router.post("/custom-paper", summary="学生自主组卷")
 def create_custom_paper(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     """学生按知识点/难度/题型自定义练习卷，可命名保存。"""
     name = data.get("name") or f"我的自测卷 {utcnow():%m-%d}"
@@ -371,7 +373,7 @@ def create_custom_paper(
 
 # ================================================================ P2-1 学习目标与打卡
 @router.get("/goals", summary="我的学习目标")
-def list_goals(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def list_goals(db: Session = Depends(get_db), user: User = Depends(get_current_student)):
     goals = db.scalars(select(StudyGoal).where(
         StudyGoal.user_id == user.id, StudyGoal.is_active.is_(True)
     ).order_by(StudyGoal.created_at.desc())).all()
@@ -416,7 +418,7 @@ def list_goals(db: Session = Depends(get_db), user: User = Depends(get_current_u
 @router.post("/goals", summary="创建学习目标")
 def create_goal(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     goal = StudyGoal(
         user_id=user.id, title=data.get("title", "每日学习"),
@@ -435,7 +437,7 @@ def create_goal(
 @router.put("/goals/{goal_id}", summary="更新目标")
 def update_goal(
     goal_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     g = db.get(StudyGoal, goal_id)
     if not g or g.user_id != user.id:
@@ -449,7 +451,7 @@ def update_goal(
 
 @router.delete("/goals/{goal_id}", summary="删除目标")
 def delete_goal(
-    goal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    goal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_student_self),
 ):
     g = db.get(StudyGoal, goal_id)
     if not g or g.user_id != user.id:
@@ -462,7 +464,7 @@ def delete_goal(
 @router.post("/goals/{goal_id}/checkin", summary="每日打卡")
 def checkin(
     goal_id: int, data: Dict[str, Any] = Body(default={}), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student_self),
 ):
     g = db.get(StudyGoal, goal_id)
     if not g or g.user_id != user.id:
@@ -506,7 +508,7 @@ def checkin(
 @router.get("/path/recommend", summary="AI 个性化学习路径推荐")
 def recommend_path(
     subject_id: Optional[int] = None, db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student),
 ):
     """基于掌握度分析薄弱点，推荐下一步学什么。"""
     # 获取掌握度数据
@@ -594,7 +596,7 @@ def recommend_path(
 @router.get("/flashcards", summary="知识闪卡（知识点速记）")
 def get_flashcards(
     subject_id: Optional[int] = None, limit: int = 20,
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     """从知识点库生成闪卡：正面知识点名称，背面定义/关键词。"""
     limit = max(1, min(limit, 100))  # 防御超大 limit 拖垮渲染
