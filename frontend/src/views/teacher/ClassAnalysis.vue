@@ -41,7 +41,10 @@
           <el-table-column type="index" label="#" width="50" align="center" />
           <el-table-column prop="name" label="学生" width="110" />
           <el-table-column prop="rank" label="排名" width="70" align="center" />
-          <el-table-column prop="avg_score" label="平均分" width="100" align="center" />
+          <el-table-column prop="avg_score_rate" label="得分率" width="100" align="center">
+            <template #default="{ row }">{{ row.avg_score_rate ?? 0 }}%</template>
+          </el-table-column>
+          <el-table-column prop="avg_score" label="均分" width="90" align="center" />
           <el-table-column prop="accuracy" label="正确率" width="100" align="center">
             <template #default="{ row }">
               <el-progress :percentage="Math.min(row.accuracy || 0, 100)"
@@ -85,14 +88,17 @@ const loading = ref(false)
 const cards = computed(() => overview.value ? [
   { label: '班级人数', value: overview.value.student_count },
   { label: '参与人数', value: overview.value.active_students },
-  { label: '平均分', value: overview.value.avg_score },
-  { label: '最高分', value: overview.value.max_score },
-  { label: '最低分', value: overview.value.min_score },
-  { label: '及格率', value: `${overview.value.pass_rate}%` }
+  // 得分率（score / total_score）而非原始分：同班可能有不同满分的试卷，
+  // 原始分平均会让 30 分卷与 100 分卷混在一起失去意义
+  { label: '平均得分率', value: `${overview.value.avg_score_rate ?? 0}%` },
+  { label: '最高得分率', value: `${overview.value.max_rate ?? 0}%` },
+  { label: '最低得分率', value: `${overview.value.min_rate ?? 0}%` },
+  { label: '及格率', value: `${overview.value.pass_rate ?? 0}%` },
+  { label: '完成率', value: `${overview.value.completion_rate ?? 0}%` }
 ] : [])
 
 const distOption = computed(() => {
-  const bands = overview.value?.score_bands || {}
+  const bands = overview.value?.score_bands || {}  // 已按得分率分档
   return {
     tooltip: { trigger: 'item' },
     legend: { bottom: 0 },
@@ -105,17 +111,19 @@ const distOption = computed(() => {
 })
 
 const rankOption = computed(() => {
-  const sorted = [...comparison.value].sort((a, b) => (b.avg_score || 0) - (a.avg_score || 0))
+  // 按得分率排名（跨试卷公平）
+  const sorted = [...comparison.value].sort(
+    (a, b) => (b.avg_score_rate || 0) - (a.avg_score_rate || 0))
   return {
     tooltip: { trigger: 'axis' },
     grid: { left: 90, right: 30, top: 20, bottom: 40 },
-    xAxis: { type: 'value', name: '平均分' },
+    xAxis: { type: 'value', name: '得分率(%)', max: 100 },
     yAxis: {
       type: 'category', data: sorted.map(s => s.name).reverse(),
       axisLabel: { fontSize: 11 }
     },
     series: [{
-      type: 'bar', data: sorted.map(s => s.avg_score || 0).reverse(),
+      type: 'bar', data: sorted.map(s => s.avg_score_rate || 0).reverse(),
       itemStyle: { color: '#2f6fd0' }, barMaxWidth: 16,
       label: { show: true, position: 'right', fontSize: 11 }
     }]

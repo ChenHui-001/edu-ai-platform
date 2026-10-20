@@ -79,6 +79,7 @@ STAGES = [
     ("resource", "阶段八 · 管理员教学资源专项", "test_resource_manage"),
     ("teaching", "阶段九 · 教学管理模块专项", "test_teaching_module"),
     ("learning_hub", "阶段十 · 学习中心权限专项", "test_learning_hub"),
+    ("analysis", "阶段十一 · 学情分析专项", "test_analysis"),
 ]
 
 

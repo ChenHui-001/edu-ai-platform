@@ -206,22 +206,71 @@ def class_overview(
     subs = db.scalars(stmt).all()
     scores = [s.score for s in subs]
 
-    # 完成率
-    tasks = db.scalars(
-        select(Task).where(Task.grade_id == k.grade_id, Task.type != "practice")
-    ).all()
+    # ---- 得分率口径 ----
+    # 同一班级可能包含不同满分的试卷（随堂练习 30 分、考试 100 分），
+    # 直接平均原始分毫无意义（实测 8.33 分 = 30 分卷 10 分与 100 分卷 7 分混合）。
+    # 主指标改为得分率，原始分仅作参考。
+    rate_map = _submission_rates(db, subs)
+    rates = list(rate_map.values())
+    avg_rate = round(sum(rates) / len(rates), 2) if rates else 0
+
+    # 及格率：以任务自身的 pass_score 判定（sub.is_passed 已在交卷/批改时按
+    # pass_score 计算），不再硬编码 60 分 —— 5 分满分卷永远达不到 60。
+    passed = sum(1 for s in subs if s.is_passed)
+    pass_rate = round(passed / len(subs) * 100, 2) if subs else 0
+
+    # 完成率：已交卷学生数 / 班级应交人数（此前算了 tasks 但未使用，字段缺失）
+    submitted_students = {s.student_id for s in subs}
+    completion_rate = (round(len(submitted_students) / len(students) * 100, 2)
+                       if students else 0)
 
     return ok({
         "class": {"id": k.id, "name": k.name, "grade_id": k.grade_id},
         "student_count": len(students),
         "submission_count": len(subs),
         "avg_score": round(sum(scores) / len(scores), 2) if scores else 0,
+        "avg_score_rate": avg_rate,
         "max_score": max(scores) if scores else 0,
         "min_score": min(scores) if scores else 0,
-        "pass_rate": round(sum(1 for s in scores if s >= 60) / len(scores) * 100, 2) if scores else 0,
-        "score_bands": _score_bands(scores),
-        "active_students": len({s.student_id for s in subs}),
+        "max_rate": round(max(rates), 2) if rates else 0,
+        "min_rate": round(min(rates), 2) if rates else 0,
+        "pass_rate": pass_rate,
+        "score_bands": _rate_bands(rates),
+        "completion_rate": completion_rate,
+        "active_students": len(submitted_students),
     })
+
+
+def _submission_rates(db: Session, subs) -> Dict[int, float]:
+    """把提交换算为得分率（0~100）。满分缺失或为 0 时按 0 处理。
+
+    同一学生多次提交时取每份提交各自的得分率（用于分布），
+    键为 submission.id 以保唯一。
+    """
+    if not subs:
+        return {}
+    task_ids = {s.task_id for s in subs}
+    totals = {
+        t.id: (t.total_score or 0)
+        for t in db.scalars(select(Task).where(Task.id.in_(task_ids))).all()
+    }
+    out = {}
+    for s in subs:
+        total = totals.get(s.task_id) or 0
+        out[s.id] = round((s.score or 0) / total * 100, 2) if total else 0.0
+    return out
+
+
+def _rate_bands(rates: List[float]) -> Dict[str, int]:
+    """按得分率分档（与原始分满分无关，可跨试卷比较）。"""
+    bands = {"90-100": 0, "80-89": 0, "70-79": 0, "60-69": 0, "<60": 0}
+    for r in rates:
+        if r >= 90: bands["90-100"] += 1
+        elif r >= 80: bands["80-89"] += 1
+        elif r >= 70: bands["70-79"] += 1
+        elif r >= 60: bands["60-69"] += 1
+        else: bands["<60"] += 1
+    return bands
 
 
 def _score_bands(scores: List[float]) -> Dict[str, int]:
@@ -261,6 +310,11 @@ def student_comparison(
             stmt = stmt.where(Submission.task_id == task_id)
         subs = db.scalars(stmt).all()
         scores = [x.score for x in subs]
+        # 得分率（跨卷可比）：个人所有提交的加权平均得分率
+        total_full = sum((db.get(Task, x.task_id).total_score or 0)
+                         for x in subs if db.get(Task, x.task_id))
+        total_scored = sum(x.score or 0 for x in subs)
+        avg_rate = round(total_scored / total_full * 100, 2) if total_full else 0
         wrong = db.scalar(
             select(func.count()).select_from(WrongQuestion).where(
                 WrongQuestion.student_id == s.id, WrongQuestion.is_mastered.is_(False)
@@ -277,9 +331,12 @@ def student_comparison(
             if x.submit_time and (last_submit is None or x.submit_time > last_submit):
                 last_submit = x.submit_time
 
-        # 真实完成率：已提交任务数 / 下发且已发布的任务数
-        assigned = db.scalar(
-            select(func.count()).select_from(TaskAssignment)
+        # 真实完成率 = 已完成的下发任务数 / 下发的正式任务数（practice 不在分母）。
+        # 之前分子直接取 subs 的全部 task_id，包含自主练习 → 分子可超过分母
+        # （实测 200%）。现取「已提交任务」与「下发任务」的交集，并用集合
+        # 去重（同一任务既有班级下发又有个人下发时不重复计数）。
+        assigned_task_ids = set(db.scalars(
+            select(TaskAssignment.task_id)
             .join(TaskModel, TaskModel.id == TaskAssignment.task_id)
             .where(
                 TaskModel.status == TaskStatus.PUBLISHED.value,
@@ -287,21 +344,24 @@ def student_comparison(
                 (TaskAssignment.student_id == s.id)
                 | (TaskAssignment.class_id == s.class_id),
             )
-        ) or 0
-        completion = round(len({x.task_id for x in subs}) / assigned * 100, 1) \
-            if assigned else 0
+        ).all())
+        done_task_ids = {x.task_id for x in subs} & assigned_task_ids
+        completion = (round(len(done_task_ids) / len(assigned_task_ids) * 100, 1)
+                      if assigned_task_ids else 0)
 
         rows.append({
             "student_id": s.id, "name": s.real_name, "username": s.username,
             "submit_count": len(subs),
             "avg_score": round(sum(scores) / len(scores), 2) if scores else 0,
+            "avg_score_rate": avg_rate,
             "max_score": max(scores) if scores else 0,
             "wrong_count": wrong,
             "accuracy": round(correct_ans / total_ans * 100, 1) if total_ans else 0,
             "last_submit": dictify(last_submit),
             "completion_rate": completion,
         })
-    rows.sort(key=lambda x: x["avg_score"], reverse=True)
+    # 按得分率排序：原始分排名会让「100 分卷考 60」排在「30 分卷考 25」之后
+    rows.sort(key=lambda x: x["avg_score_rate"], reverse=True)
     for i, r in enumerate(rows, start=1):
         r["rank"] = i
     return ok(rows)
@@ -348,10 +408,19 @@ def student_detail(
             "id": stu.id, "name": stu.real_name, "username": stu.username,
             "class_id": stu.class_id, "grade_id": stu.grade_id,
         },
+        # 趋势必须带满分与得分率：否则 30 分卷与 100 分卷会画在同一条
+        # 折线上，视觉上「成绩暴跌」而实际是试卷分值不同。
         "score_trend": [
             {
                 "name": (db.get(Task, s.task_id).title if db.get(Task, s.task_id) else ""),
-                "score": s.score, "rank": s.class_rank,
+                "score": s.score,
+                "total_score": (db.get(Task, s.task_id).total_score
+                                if db.get(Task, s.task_id) else 0),
+                "score_rate": (round((s.score or 0) /
+                                     (db.get(Task, s.task_id).total_score or 1) * 100, 2)
+                               if db.get(Task, s.task_id)
+                               and (db.get(Task, s.task_id).total_score or 0) else 0),
+                "rank": s.class_rank,
                 "date": dictify(s.submit_time),
             }
             for s in subs
@@ -366,6 +435,12 @@ def student_detail(
         "summary": {
             "submit_count": len(subs),
             "avg_score": round(sum(s.score for s in subs) / len(subs), 2) if subs else 0,
+            # 平均得分率：跨不同满分试卷唯一可比的汇总口径
+            "avg_score_rate": round(
+                sum(s.score or 0 for s in subs) /
+                max(sum((db.get(Task, x.task_id).total_score or 0)
+                        for x in subs if db.get(Task, x.task_id)), 1) * 100, 2
+            ) if subs else 0,
         },
     })
 
@@ -475,36 +550,52 @@ def admin_overview(
 
 @router.get("/admin/grade-comparison", summary="各年级教学数据对比")
 def grade_comparison(db: Session = Depends(get_db), _: User = Depends(get_current_manager)):
-    rows = db.execute(
-        select(
-            Grade.name,
-            func.count(func.distinct(Question.id)),
-            func.count(func.distinct(Submission.id)),
-        )
-        .select_from(Grade)
-        .outerjoin(Question, Question.grade_id == Grade.id)
-        .outerjoin(Submission, Submission.task_id.in_(select(Task.id).where(Task.grade_id == Grade.id)))
-        .group_by(Grade.name)
-        .order_by(Grade.grade_num)
-    ).all()
+    """各年级对比。
+
+    重写原因（原实现三处问题）：
+    1. outerjoin 的 ON 条件用 `Submission.task_id.in_(子查询)`，与 Grade 无关联
+       → 中间结果 = 年级 × 题目 × 提交的笛卡尔积，数据量大时直接拖垮；
+    2. user_count 未过滤 identity，教师/管理员被算进学生数（实测 53 vs 51）；
+    3. avg_score 跨试卷混算原始分（30 分卷与 100 分卷混合）。
+    """
+    grades = db.scalars(select(Grade).order_by(Grade.grade_num)).all()
+
+    # 批量聚合，避免逐年级多次查询
+    q_counts = dict(db.execute(
+        select(Question.grade_id, func.count()).group_by(Question.grade_id)
+    ).all())
+    t_by_grade = dict(db.execute(
+        select(Task.grade_id, func.count()).group_by(Task.grade_id)
+    ).all())
+    stu_counts = dict(db.execute(
+        select(User.grade_id, func.count())
+        .where(User.identity == "student").group_by(User.grade_id)
+    ).all())
+    # 提交数：按任务所属年级
+    sub_counts = dict(db.execute(
+        select(Task.grade_id, func.count(Submission.id))
+        .join(Submission, Submission.task_id == Task.id)
+        .group_by(Task.grade_id)
+    ).all())
+    # 得分率均值：逐份提交 (score / total_score)，再做年级平均
+    avg_rates = dict(db.execute(
+        select(Task.grade_id,
+               func.avg(Submission.score * 100.0 / func.nullif(Task.total_score, 0)))
+        .join(Submission, Submission.task_id == Task.id)
+        .where(Submission.score.isnot(None), Task.total_score > 0)
+        .group_by(Task.grade_id)
+    ).all())
 
     items = []
-    for name, q_count, s_count in rows:
-        subs = db.scalars(
-            select(Submission).join(Task, Task.id == Submission.task_id)
-            .where(Task.grade_id == select(Grade.id).where(Grade.name == name).scalar_subquery(),
-                   Submission.score.isnot(None))
-        ).all()
-        scores = [s.score for s in subs]
-        users = db.scalar(
-            select(func.count()).select_from(User).where(
-                User.grade_id == select(Grade.id).where(Grade.name == name).scalar_subquery()
-            )
-        ) or 0
+    for g in grades:
         items.append({
-            "grade_name": name, "question_count": q_count or 0,
-            "submission_count": s_count or 0, "user_count": users,
-            "avg_score": round(sum(scores) / len(scores), 2) if scores else 0,
+            "grade_name": g.name,
+            "question_count": q_counts.get(g.id, 0),
+            "task_count": t_by_grade.get(g.id, 0),
+            "submission_count": sub_counts.get(g.id, 0),
+            # 学生数（不含教师/管理员）
+            "user_count": stu_counts.get(g.id, 0),
+            "avg_score_rate": round(float(avg_rates.get(g.id) or 0), 2),
         })
     return ok(items)
 

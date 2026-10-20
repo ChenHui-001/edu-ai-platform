@@ -94,7 +94,12 @@
             <template #header><b>历次成绩</b></template>
             <el-table :data="detail.score_trend || []" border size="small" max-height="330">
               <el-table-column prop="name" label="任务" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="score" label="得分" width="80" align="center" />
+              <el-table-column label="得分" width="100" align="center">
+                <template #default="{ row }">{{ row.score }} / {{ row.total_score }}</template>
+              </el-table-column>
+              <el-table-column label="得分率" width="90" align="center">
+                <template #default="{ row }">{{ row.score_rate ?? 0 }}%</template>
+              </el-table-column>
               <el-table-column prop="rank" label="排名" width="70" align="center" />
               <el-table-column prop="date" label="提交时间" width="160" />
             </el-table>
@@ -123,14 +128,17 @@ const mastery = ref(null)
 const cards = computed(() => {
   if (!detail.value) return []
   const trend = detail.value.score_trend || []
-  const scores = trend.map(t => t.score || 0)
+  // 得分率口径：不同试卷满分不同（30/100 分），原始分无法横向比较
+  const rates = trend.map(t => t.score_rate ?? 0)
   const ranks = trend.map(t => t.rank).filter(Boolean)
   const total = trend.length
+  const avgRate = rates.length
+    ? (rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(1) : 0
   return [
     { label: '参加次数', value: total },
-    { label: '平均分', value: scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : 0 },
-    { label: '最高分', value: scores.length ? Math.max(...scores) : 0 },
-    { label: '最低分', value: scores.length ? Math.min(...scores) : 0 },
+    { label: '平均得分率', value: `${avgRate}%` },
+    { label: '最高得分率', value: rates.length ? `${Math.max(...rates)}%` : '0%' },
+    { label: '最低得分率', value: rates.length ? `${Math.min(...rates)}%` : '0%' },
     { label: '最佳排名', value: ranks.length ? Math.min(...ranks) : '-' },
     { label: '平均掌握度', value: mastery.value ? `${mastery.value.avg_mastery}%` : '-' }
   ]
@@ -144,9 +152,17 @@ const trendOption = computed(() => {
     tooltip: { trigger: 'axis' },
     grid: { left: 50, right: 30, top: 30, bottom: 50 },
     xAxis: { type: 'category', data: trend.map(t => t.name?.slice(0, 8) || ''), axisLabel: { rotate: 30 } },
-    yAxis: { type: 'value', name: '分数' },
+    // 归一化为得分率，避免 30 分卷与 100 分卷混画造成「成绩暴跌」的误读
+    yAxis: { type: 'value', name: '得分率(%)', max: 100 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (ps) => {
+        const t = trend[ps[0].dataIndex] || {}
+        return `${t.name || ''}<br/>得分率 ${ps[0].value}%<br/>得分 ${t.score}/${t.total_score}`
+      }
+    },
     series: [{
-      type: 'line', smooth: true, data: trend.map(t => t.score),
+      type: 'line', smooth: true, data: trend.map(t => t.score_rate ?? 0),
       itemStyle: { color: '#2f6fd0' }, areaStyle: { opacity: 0.12 }
     }]
   }

@@ -83,7 +83,10 @@
         </el-table-column>
         <el-table-column prop="name" label="学生" width="120" />
         <el-table-column prop="submission_count" label="提交次数" width="110" align="center" />
-        <el-table-column prop="avg_score" label="平均分" width="110" align="center" />
+        <el-table-column prop="avg_score_rate" label="得分率" width="100" align="center">
+          <template #default="{ row }">{{ row.avg_score_rate ?? 0 }}%</template>
+        </el-table-column>
+        <el-table-column prop="avg_score" label="均分" width="90" align="center" />
         <el-table-column prop="accuracy" label="正确率" width="170">
           <template #default="{ row }">
             <el-progress :percentage="Math.min(row.accuracy || 0, 100)"
@@ -120,8 +123,10 @@ const loadingEffect = ref(false)
 const cards = computed(() => overview.value ? [
   { label: '班级人数', value: overview.value.student_count },
   { label: '参与人数', value: overview.value.active_students },
-  { label: '班级平均分', value: overview.value.avg_score },
-  { label: '及格率', value: `${overview.value.pass_rate}%` }
+  // 得分率口径（score/total_score）：不同试卷满分不同，原始分不可横向比较
+  { label: '平均得分率', value: `${overview.value.avg_score_rate ?? 0}%` },
+  { label: '及格率', value: `${overview.value.pass_rate ?? 0}%` },
+  { label: '完成率', value: `${overview.value.completion_rate ?? 0}%` }
 ] : [])
 
 const effectOption = computed(() => ({

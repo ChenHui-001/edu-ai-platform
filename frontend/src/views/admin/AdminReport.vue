@@ -46,7 +46,9 @@
             <el-table-column prop="user_count" label="用户数" width="90" align="center" />
             <el-table-column prop="question_count" label="题量" width="90" align="center" />
             <el-table-column prop="submission_count" label="提交数" width="90" align="center" />
-            <el-table-column prop="avg_score" label="平均分" width="90" align="center" />
+            <el-table-column prop="avg_score_rate" label="平均得分率" width="110" align="center">
+              <template #default="{ row }">{{ row.avg_score_rate ?? 0 }}%</template>
+            </el-table-column>
           </el-table>
         </el-card>
       </el-col>
