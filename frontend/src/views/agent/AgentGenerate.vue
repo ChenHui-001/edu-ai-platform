@@ -150,6 +150,9 @@
             <el-button type="primary" :icon="MagicStick" :loading="running" @click="run">
               {{ running ? 'AI 生成中（约 20-60 秒，请勿刷新）' : '开始生成' }}
             </el-button>
+            <el-tooltip :content="'后台任务：提交后立即返回，页面可关闭，稍后回来查看结果'" placement="top">
+              <el-checkbox v-model="asyncMode" :disabled="running">后台生成</el-checkbox>
+            </el-tooltip>
             <el-button :icon="Refresh" @click="result = null">清空结果</el-button>
           </div>
         </el-card>
@@ -259,6 +262,9 @@ const kps = ref([])
 const active = ref('question_generator')
 const result = ref(null)
 const running = ref(false)
+// 后台任务模式：提交到 /agent/jobs 后轮询，避免长连接被网关截断
+const asyncMode = ref(false)
+const jobId = ref(null)
 const saving = ref(false)
 const statusDrawer = ref(false)
 const paperReq = ref('')
@@ -307,7 +313,41 @@ async function onSubjectChange() {
   kps.value = res.data?.items || res.data || []
 }
 
+/** 轮询后台任务直到完成（最长 5 分钟，2s 间隔） */
+async function pollJob(id) {
+  const deadline = Date.now() + 5 * 60 * 1000
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 2000))
+    const res = await agentApi.job(id)
+    const j = res.data || {}
+    if (j.status === 'success') return j.result
+    if (j.status === 'failed') throw new Error(j.error || '生成失败')
+  }
+  throw new Error('任务超时（5 分钟），请到任务列表查看')
+}
+
 async function run() {
+  // 后台模式：提交任务 + 轮询（不占用 HTTP 长连接）
+  if (asyncMode.value) {
+    running.value = true
+    try {
+      const agent = mode.value === 'question' ? 'question' : 'paper'
+      const res = await agentApi.createJob({
+        agent,
+        params: agent === 'question' ? { ...qForm } : { ...pForm }
+      })
+      jobId.value = res.data?.job_id
+      ElMessage.success(`任务已提交（#${jobId.value}），正在后台生成…`)
+      const result = await pollJob(jobId.value)
+      result.value = result?.data || result
+      ElMessage.success('后台生成完成')
+    } catch (e) {
+      ElMessage.error(e.message || '后台任务失败')
+    } finally {
+      running.value = false
+    }
+    return
+  }
   running.value = true
   result.value = null
   try {

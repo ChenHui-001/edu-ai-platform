@@ -195,6 +195,74 @@ class LLMClient:
             }
 
 
+    def stream_chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        user_id: Optional[int] = None,
+        agent_name: str = "llm_stream",
+    ):
+        """流式调用大模型，逐 token yield 文本片段。
+
+        与 chat() 的差异：不返回结构化结果，由调用方拼接；同样写调用日志
+        （总耗时与 token 用量在结束时补记），保证「AI 调用日志」页面完整。
+        """
+        client = self.get_client()
+        if client is None:
+            yield {"type": "fallback", "reason": self._fallback_reason or "LLM 不可用"}
+            return
+
+        import time
+
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        start = time.perf_counter()
+        chunks = []
+        usage = {}
+        try:
+            for chunk in client.stream(
+                [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+            ):
+                text = getattr(chunk, "content", "") or ""
+                meta = getattr(chunk, "usage_metadata", None) or {}
+                if meta:
+                    usage = meta
+                if text:
+                    chunks.append(text)
+                    yield {"type": "delta", "text": text}
+            duration = int((time.perf_counter() - start) * 1000)
+            log_agent_call(
+                agent_name=agent_name, user_id=user_id,
+                input_text=user_prompt[:2000],
+                output_text="".join(chunks)[:2000],
+                input_tokens=usage.get("input_tokens", 0),
+                output_tokens=usage.get("output_tokens", 0),
+                duration_ms=duration, status="success",
+            )
+            yield {"type": "end", "duration_ms": duration, "usage": usage}
+        except Exception as exc:  # noqa: BLE001
+            duration = int((time.perf_counter() - start) * 1000)
+            logger.error("LLM 流式调用失败 [%s]: %s", agent_name, exc)
+            log_agent_call(
+                agent_name=agent_name, user_id=user_id, input_text=user_prompt[:2000],
+                duration_ms=duration, status="failed", is_fallback=True,
+                error_msg=str(exc)[:1000],
+            )
+            yield {"type": "error", "message": f"模型调用失败：{exc}"}
+
+
+_llm_singleton: Optional["LLMClient"] = None
+
+
+def get_llm() -> "LLMClient":
+    """进程级 LLMClient 单例（复用 ChatOpenAI 连接池与配置）。"""
+    global _llm_singleton
+    if _llm_singleton is None:
+        _llm_singleton = LLMClient()
+    return _llm_singleton
+
+
 def log_agent_call(
     *,
     agent_name: str,

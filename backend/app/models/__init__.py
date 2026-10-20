@@ -12,7 +12,7 @@ from app.models.lesson import (  # noqa: F401
 )
 from app.models.ops import (  # noqa: F401
     AgentCallLog, Attachment, ErrorLog, JobExecutionLog, LoginLog,
-    Notification, OperationLog, ScheduledJob,
+    AgentJob, AgentRate, Notification, OperationLog, ScheduledJob,
 )
 from app.models.question import (  # noqa: F401
     Difficulty, Paper, PaperItem, PaperShare, Question, QuestionBankType,

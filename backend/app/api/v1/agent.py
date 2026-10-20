@@ -1,4 +1,5 @@
 """AI Agent 中心接口：统一编排 + 6 个专属 Agent + 调用日志。"""
+import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
@@ -17,7 +18,7 @@ from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.core.rate_limit import check_agent_rate
 from app.models import AgentCallLog, User
-from app.utils.common import PageParams, dictify, fail, ok
+from app.utils.common import PageParams, dictify, fail, ok, utcnow
 
 import logging
 
@@ -99,7 +100,7 @@ def chat(
     request = data.get("message") or data.get("request")
     if not request:
         raise BusinessException("请输入你的需求")
-    check_agent_rate(user.id)
+    check_agent_rate(db, user.id)
 
     # student_id 语义：学生只能是自己；教师/管理员可指定目标学生
     # （此前恒为调用者，教师说「给张三出题」会用到教师自己的学情上下文）
@@ -141,6 +142,116 @@ def chat(
     })
 
 
+# ---------------------------------------------------------------- 流式对话
+def _sse(event: Dict[str, Any]) -> str:
+    return "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+
+
+@router.post("/chat/stream", summary="AI 统一对话（SSE 流式）")
+def chat_stream(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """流式版统一对话。
+
+    - 文本类意图（答疑/聊天/笔记/规划）：真实逐 token 输出，首字延迟 ~1s
+    - 结构化意图（出题/组卷/批改）：先路由再一次性返回结果事件
+      （这类结果需要完整 JSON，逐字输出反而增加前端拼接复杂度）
+    - LLM 不可用时：直接返回规则引擎降级结果，前端表现与非流式一致
+    """
+    from fastapi.responses import StreamingResponse
+
+    request = data.get("message") or data.get("request")
+    if not request:
+        raise BusinessException("请输入你的需求")
+    check_agent_rate(db, user.id)
+
+    is_staff = bool({"teacher", "grade_admin", "sys_admin"} & set(user.role_codes))
+    target_sid = int(data.get("student_id")) if (
+        is_staff and data.get("student_id")) else user.id
+
+    def gen():
+        import time
+
+        start = time.perf_counter()
+        # 1) 意图路由（非流式，通常 <50ms）
+        try:
+            orch = get_orchestrator()
+            result = orch.run(
+                db, user_id=user.id, request=request,
+                args={
+                    "grade_id": data.get("grade_id"),
+                    "subject_id": data.get("subject_id"),
+                    "student_id": target_sid,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("流式对话路由失败")
+            yield _sse({"type": "error", "message": str(exc)[:200]})
+            return
+
+        intent = result.get("intent") or "chat"
+        yield _sse({"type": "meta", "intent": intent,
+                    "agent": result.get("agent"), "request": request})
+
+        TEXT_INTENTS = {"chat", "tutor", "note", "study", "plan"}
+        data_block = result.get("data") or {}
+        structured = intent not in TEXT_INTENTS or isinstance(data_block, dict) and (
+            data_block.get("questions") or data_block.get("paper") or data_block.get("items"))
+
+        # 2a) 结构化结果：一次性下发
+        if structured:
+            answer = _extract_answer(data_block)
+            if answer:
+                yield _sse({"type": "delta", "text": answer})
+            yield _sse({
+                "type": "done",
+                "intent": intent, "agent": result.get("agent"),
+                "is_fallback": result.get("is_fallback", False),
+                "data": data_block,
+                "duration_ms": result.get("duration_ms")
+                or int((time.perf_counter() - start) * 1000),
+            })
+            return
+
+        # 2b) 文本意图：走 LLM 流式
+        from app.agents.llm import is_available as _llm_on
+
+        if _llm_on():
+            from app.agents.llm import get_llm
+
+            engine = get_llm()
+            sys_prompt = (
+                "你是一位中学教师助手。用简洁、准确的中文回答学生问题；"
+                "涉及公式时保持清晰；不确定的内容明确说明。"
+            )
+            got_any = False
+            for ev in engine.stream_chat(sys_prompt, request, user_id=user.id,
+                                         agent_name=f"stream_{intent}"):
+                if ev.get("type") == "delta":
+                    got_any = True
+                    yield _sse({"type": "delta", "text": ev["text"]})
+                elif ev.get("type") == "error":
+                    yield _sse({"type": "error", "message": ev.get("message")})
+                    return
+            if got_any:
+                yield _sse({"type": "done", "intent": intent, "agent": "tutor",
+                            "is_fallback": False,
+                            "duration_ms": int((time.perf_counter() - start) * 1000)})
+                return
+
+        # 2c) 降级：规则引擎结果一次性下发
+        answer = _extract_answer(data_block) or "（当前为规则引擎降级模式，未启用大模型）"
+        yield _sse({"type": "delta", "text": answer})
+        yield _sse({"type": "done", "intent": intent, "agent": result.get("agent"),
+                    "is_fallback": True,
+                    "duration_ms": int((time.perf_counter() - start) * 1000)})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
 def _extract_answer(data: Any) -> str:
     """从各 Agent 返回结构中提取可读文本。"""
     if not isinstance(data, dict):
@@ -159,7 +270,7 @@ def question_generator(
 ):
     from app.agents.question_agent import QuestionGeneratorAgent
 
-    check_agent_rate(user.id)
+    check_agent_rate(db, user.id)
     res = QuestionGeneratorAgent().run(
         db, user_id=user.id,
         grade_id=data.get("grade_id"), subject_id=int(data.get("subject_id", 0)),
@@ -188,7 +299,7 @@ def paper_composer(
 ):
     from app.agents.paper_agent import PaperComposerAgent
 
-    check_agent_rate(user.id)
+    check_agent_rate(db, user.id)
     res = PaperComposerAgent().run(
         db, user_id=user.id, request=data.get("request", ""),
         grade_id=data.get("grade_id"), subject_id=data.get("subject_id"),
@@ -216,7 +327,7 @@ def agent_grading(
 ):
     from app.agents.grading_agent import GradingAgent
 
-    check_agent_rate(user.id)
+    check_agent_rate(db, user.id)
     res = GradingAgent().run(db, user_id=user.id, items=data.get("items", []))
     _warn_if_slow(res, "grading")
     if not res.get("success"):
@@ -238,7 +349,7 @@ def study_planner(
     if is_staff and data.get("student_id"):
         target_sid = int(data["student_id"])
 
-    check_agent_rate(user.id)
+    check_agent_rate(db, user.id)
     res = StudyPlannerAgent().run(
         db, user_id=user.id,
         student_id=target_sid,
@@ -258,7 +369,7 @@ def tutor(
 ):
     from app.agents.tutor_agent import TutorAgent
 
-    check_agent_rate(user.id)
+    check_agent_rate(db, user.id)
     # 兼容 message / question / question_text 三种入参：
     # 前端 AgentChat 与文档示例用 question，历史调用用 message，
     # 只认 message 会把问题整体丢弃，Agent 直接返回「请描述你的问题」。
@@ -306,7 +417,7 @@ def note_organizer(
             if save:
                 raise PermissionException("管理员不可覆写他人笔记")
 
-    check_agent_rate(user.id)
+    check_agent_rate(db, user.id)
     res = NoteOrganizerAgent().run(
         db, user_id=user.id,
         note_id=note_id, content=data.get("content"),
@@ -318,6 +429,135 @@ def note_organizer(
     if not res.get("success"):
         return fail(res.get("message", "笔记整理失败"))
     return ok(res.get("data"), message=res.get("message", "整理完成"))
+
+
+# ---------------------------------------------------------------- 异步任务（长任务）
+JOB_AGENTS = {"question", "paper"}
+
+
+def _run_job(job_id: int) -> None:
+    """后台执行任务（独立 Session，避免请求结束后 Session 已关闭）。"""
+    from app.core.database import SessionLocal
+    from app.models import AgentJob
+
+    db = SessionLocal()
+    try:
+        job = db.get(AgentJob, job_id)
+        if not job:
+            return
+        job.status = "running"
+        job.started_at = utcnow()
+        db.commit()
+
+        params = json.loads(job.params or "{}")
+        res: Dict[str, Any]
+        if job.agent == "question":
+            from app.agents.question_agent import QuestionGeneratorAgent
+
+            res = QuestionGeneratorAgent().run(
+                db, user_id=job.user_id,
+                grade_id=params.get("grade_id"),
+                subject_id=int(params.get("subject_id", 0)),
+                knowledge_point_id=params.get("knowledge_point_id"),
+                question_type=params.get("type", "single"),
+                count=int(params.get("count", 5)),
+                difficulty=params.get("difficulty", "medium"),
+                save=bool(params.get("save", False)),
+            )
+        else:
+            from app.agents.paper_agent import PaperComposerAgent
+
+            res = PaperComposerAgent().run(
+                db, user_id=job.user_id, request=params.get("request", ""),
+                grade_id=params.get("grade_id"), subject_id=params.get("subject_id"),
+                total_score=float(params.get("total_score", 100)),
+                difficulty_ratio=params.get("difficulty_ratio"),
+                type_ratio=params.get("type_ratio"),
+                knowledge_point_ids=params.get("knowledge_point_ids"),
+                paper_name=params.get("paper_name"),
+                save=bool(params.get("save", False)),
+            )
+
+        job.result = json.dumps(res, ensure_ascii=False, default=str)
+        job.status = "success" if res.get("success") else "failed"
+        job.error = None if res.get("success") else (res.get("message") or "")[:500]
+        _warn_if_slow(res, f"job:{job.agent}")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("异步任务 %s 执行失败", job_id)
+        job = db.get(AgentJob, job_id)
+        if job:
+            job.status = "failed"
+            job.error = str(exc)[:500]
+    finally:
+        job.finished_at = utcnow()
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+        db.close()
+
+
+@router.post("/jobs", summary="提交长任务（异步出题/组卷）")
+def create_job(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(get_current_teacher),
+):
+    """提交长任务，立即返回 job_id；用 GET /agent/jobs/{id} 轮询结果。"""
+    from app.models import AgentJob
+
+    agent = (data.get("agent") or "").strip()
+    if agent not in JOB_AGENTS:
+        raise BusinessException(f"不支持的任务类型 {agent!r}，可选：{sorted(JOB_AGENTS)}")
+    params = data.get("params") or {}
+    if not isinstance(params, dict):
+        raise BusinessException("params 必须是对象")
+    check_agent_rate(db, user.id)
+
+    job = AgentJob(user_id=user.id, agent=agent, status="pending",
+                   params=json.dumps(params, ensure_ascii=False))
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    import threading
+
+    threading.Thread(target=_run_job, args=(job.id,), daemon=True).start()
+    return ok({"job_id": job.id, "status": job.status},
+              message="任务已提交，请轮询 /agent/jobs/%d 获取结果" % job.id)
+
+
+@router.get("/jobs/{job_id}", summary="查询任务状态与结果")
+def get_job(
+    job_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+):
+    from app.models import AgentJob
+
+    job = db.get(AgentJob, job_id)
+    if not job:
+        raise NotFoundException("任务不存在")
+    if job.user_id != user.id and "sys_admin" not in user.role_codes:
+        raise PermissionException("无权查看该任务")
+    d = dictify(job)
+    d["result"] = json.loads(job.result) if job.result else None
+    return ok(d)
+
+
+@router.get("/jobs", summary="我的任务列表")
+def list_jobs(
+    params: PageParams = Depends(), status: Optional[str] = None,
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+):
+    from app.models import AgentJob
+
+    stmt = select(AgentJob).where(AgentJob.user_id == user.id)
+    if status:
+        stmt = stmt.where(AgentJob.status == status)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(
+        stmt.order_by(desc(AgentJob.created_at)).offset(params.offset).limit(params.page_size)
+    ).all()
+    items = [dictify(r) for r in rows]
+    return ok({"items": items, "total": total, "page": params.page})
 
 
 # ---------------------------------------------------------------- 调用日志

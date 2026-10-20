@@ -155,3 +155,40 @@ class Notification(Base):
     biz_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+class AgentRate(Base):
+    """AI 接口限流计数（按用户 + 分钟窗口，DB 共享以支持多实例）。
+
+    选 DB 而非 Redis：本系统是单机 SQLite 部署形态，引入 Redis 成本高于收益；
+    若未来切 PostgreSQL/多写入场景，此表同样适用（UPSERT 语义一致）。
+    """
+
+    __tablename__ = "sys_agent_rate"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    window_minute: Mapped[int] = mapped_column(Integer, primary_key=True,
+                                               comment="epoch 分钟数，作窗口键")
+    count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class AgentJob(Base):
+    """AI 长任务（异步执行 + 轮询）。
+
+    出题/组卷在真实 LLM 下耗时 20-60s，同步 HTTP 容易被网关/代理截断；
+    改为提交即返回 job_id，后台线程执行，前端轮询进度与结果。
+    """
+
+    __tablename__ = "sys_agent_job"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    agent: Mapped[str] = mapped_column(String(32), index=True, comment="question/paper")
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True,
+                                        comment="pending/running/success/failed")
+    params: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="请求参数 JSON")
+    result: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="结果 JSON")
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

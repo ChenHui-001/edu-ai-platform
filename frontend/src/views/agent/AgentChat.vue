@@ -176,30 +176,107 @@ async function scrollBottom() {
   if (scrollBox.value) scrollBox.value.scrollTop = scrollBox.value.scrollHeight
 }
 
+/** 流式发送：fetch + ReadableStream 逐段渲染（SSE 协议手动解析）。
+ *  优势：首字延迟 ~1s，用户不必盯着转圈 20-60 秒。
+ *  兼容：若服务端未返回流（旧版本/网关缓冲），自动回退为普通请求。 */
 async function send() {
   const text = input.value.trim()
   if (!text || loading.value) return
   input.value = ''
   messages.value.push({ role: 'user', content: text })
   const idx = messages.value.length
-  messages.value.push({ role: 'ai', thinking: true, content: '' })
+  messages.value.push({ role: 'ai', thinking: true, content: '', streaming: true })
   loading.value = true
   scrollBottom()
+
+  const token = localStorage.getItem('access_token') || ''
+  const base = import.meta.env.VITE_API_BASE || '/api/v1'
   try {
-    const res = await agentApi.chat({
-      message: text, grade_id: ctx.value.grade_id, subject_id: ctx.value.subject_id
+    const resp = await fetch(`${base}/agent/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        message: text, grade_id: ctx.value.grade_id, subject_id: ctx.value.subject_id
+      })
     })
-    const d = res.data
-    messages.value[idx] = {
-      role: 'ai',
-      content: d.answer || '（无内容返回）',
-      data: d.data,
-      agent: d.agent,
-      duration: d.duration_ms,
-      fallback: d.is_fallback
+    if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`)
+    const ctype = resp.headers.get('content-type') || ''
+    if (!ctype.includes('event-stream')) throw new Error('服务端未启用流式')
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buf = ''
+    let acc = ''
+    let meta = {}
+    let dataBlock = null
+    let fallback = false
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const parts = buf.split('\n\n')
+      buf = parts.pop() || ''
+      for (const part of parts) {
+        const line = part.split('\n').find(l => l.startsWith('data:'))
+        if (!line) continue
+        let ev
+        try { ev = JSON.parse(line.slice(5).trim()) } catch { continue }
+        if (ev.type === 'meta') {
+          meta = ev
+          messages.value[idx].agent = ev.agent
+        } else if (ev.type === 'delta') {
+          acc += ev.text || ''
+          messages.value[idx].content = acc
+          messages.value[idx].thinking = false
+          scrollBottom()
+        } else if (ev.type === 'done') {
+          dataBlock = ev.data || null
+          fallback = !!ev.is_fallback
+          messages.value[idx] = {
+            ...messages.value[idx],
+            content: acc || messages.value[idx].content || '（无内容返回）',
+            data: dataBlock,
+            agent: ev.agent || meta.agent,
+            duration: ev.duration_ms,
+            fallback,
+            thinking: false,
+            streaming: false
+          }
+        } else if (ev.type === 'error') {
+          throw new Error(ev.message || '生成失败')
+        }
+      }
+    }
+    if (messages.value[idx].thinking) {
+      messages.value[idx] = {
+        ...messages.value[idx],
+        content: acc || '（无内容返回）',
+        thinking: false, streaming: false,
+        agent: meta.agent, fallback
+      }
     }
   } catch (e) {
-    messages.value[idx] = { role: 'ai', content: `请求失败：${e.message}` }
+    // 流式不可用时回退到普通请求
+    try {
+      const res = await agentApi.chat({
+        message: text, grade_id: ctx.value.grade_id, subject_id: ctx.value.subject_id
+      })
+      const d = res.data || {}
+      messages.value[idx] = {
+        role: 'ai',
+        content: d.answer || '（无内容返回）',
+        data: d.data,
+        agent: d.agent,
+        duration: d.duration_ms,
+        fallback: d.is_fallback
+      }
+    } catch (e2) {
+      messages.value[idx] = { role: 'ai', content: `请求失败：${e2.message || e.message}` }
+    }
   } finally {
     loading.value = false
     scrollBottom()

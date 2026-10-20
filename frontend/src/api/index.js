@@ -184,7 +184,11 @@ export const agentApi = {
   studyPlanner: (data) => request.post('/agent/study-planner', data),
   tutor: (data) => request.post('/agent/tutor', data),
   noteOrganizer: (data) => request.post('/agent/note-organizer', data),
-  logs: (params) => request.get('/agent/logs', { params })
+  logs: (params) => request.get('/agent/logs', { params }),
+  // 长任务：提交后轮询（出题/组卷在 LLM 下降需 20-60s）
+  createJob: (data) => request.post('/agent/jobs', data),
+  job: (id) => request.get(`/agent/jobs/${id}`),
+  jobs: (params) => request.get('/agent/jobs', { params }),
 }
 
 // ---------------- 报表 ----------------
