@@ -89,8 +89,19 @@ def list_tasks(
             select(func.count()).select_from(Submission).where(Submission.task_id == t.id)
         ) or 0
         d["submission_count"] = subs
+        # 完成率分母必须展开班级成员（assignments 里一个班只算 1 条，
+        # 会导致与详情页口径不一致、甚至出现 200% 这种值）
+        assigned_ids = set()
+        for a in t.assignments:
+            if a.student_id:
+                assigned_ids.add(a.student_id)
+            elif a.class_id:
+                assigned_ids.update(db.scalars(
+                    select(User.id).where(User.class_id == a.class_id)).all())
+        d["assigned_count"] = len(assigned_ids)
         d["completion_rate"] = (
-            round(subs / len(t.assignments) * 100, 2) if t.assignments else 0
+            round(min(subs, len(assigned_ids)) / len(assigned_ids) * 100, 2)
+            if assigned_ids else 0
         )
         items.append(d)
     return ok({"items": items, "total": total, "page": params.page})
@@ -120,18 +131,38 @@ def create_task(
     # 由内置任务 publish_scheduled_tasks 到期激活并补发通知。
     scheduled = bool(publish_at and publish_at > utcnow())
 
+    # 参数范围校验（此前完全不校验，可写出 pass_score=9999、
+    # duration=0、end_at 早于 start_at 的脏任务）
+    # 注意：不能用 or 兜底取默认值——duration=0 是非法输入而非"未传"，
+    # `0 or paper.duration` 会静默采用试卷时长，校验形同虚设。
+    raw_duration = data.get("duration")
+    duration_val = int(raw_duration) if raw_duration is not None else int(paper.duration or 0)
+    if duration_val <= 0:
+        raise BusinessException("考试时长必须大于 0 分钟")
+    # 及格分默认值必须与试卷总分匹配：settings.PASS_SCORE=60 是百分制假设，
+    # 遇到总分 5 分的随堂练习会导致「默认参数永远无法发布」，故超出时按 60% 折算。
+    total = float(paper.total_score or 100)
+    if data.get("pass_score") is None:
+        pass_score = settings.PASS_SCORE if settings.PASS_SCORE <= total else round(total * 0.6, 2)
+    else:
+        pass_score = float(data["pass_score"])
+    if not (0 < pass_score <= total):
+        raise BusinessException(f"及格分应在 0~{total} 之间，当前 {pass_score}")
+    if end_at <= start_at:
+        raise BusinessException("截止时间必须晚于开始时间")
+
     task = Task(
         title=data.get("title") or paper.name, type=task_type, paper_id=paper.id,
         subject_id=paper.subject_id, grade_id=paper.grade_id, creator_id=user.id,
         status=TaskStatus.DRAFT.value if scheduled else TaskStatus.PUBLISHED.value,
         start_at=start_at, end_at=end_at,
-        duration=int(data.get("duration") or paper.duration),
+        duration=duration_val,
         publish_at=publish_at,
         allow_retake=int(data.get("allow_retake", 1)),
         show_answer=bool(data.get("show_answer", True)),
         anti_cheat=bool(data.get("anti_cheat", False)),
         total_score=paper.total_score,
-        pass_score=float(data.get("pass_score", settings.PASS_SCORE)),
+        pass_score=pass_score,
         description=data.get("description"),
     )
     db.add(task)
@@ -141,6 +172,25 @@ def create_task(
     student_ids: List[int] = []
     class_ids: List[int] = data.get("class_ids", [])
     student_ids.extend(data.get("student_ids", []))
+    # 没有任何下发对象的任务学生永远看不到（孤儿任务），直接拒绝。
+    # 定时发布同样需要下发对象。
+    if not class_ids and not student_ids:
+        raise BusinessException("请选择下发班级或学生")
+
+    # 下发对象存在性 + 教师任教范围校验（管理员不限）
+    role_codes = user.role_codes
+    is_admin = "sys_admin" in role_codes
+    for cid in class_ids:
+        if not db.get(Class, cid):
+            raise BusinessException(f"班级 {cid} 不存在")
+        if not is_admin:
+            scope = DataScope(user=user, db=db)
+            allowed = scope.class_ids()
+            if allowed is not None and cid not in allowed:
+                raise BusinessException(f"只能给自己任教的班级下发（班级 {cid} 不在任教范围）")
+    for sid in student_ids:
+        if not db.get(User, sid):
+            raise BusinessException(f"学生 {sid} 不存在")
 
     for cid in class_ids:
         db.add(TaskAssignment(task_id=task.id, class_id=cid))
@@ -240,6 +290,10 @@ def task_submissions(
     task = db.get(Task, task_id)
     if not task:
         raise NotFoundException("任务不存在")
+    # 数据范围：只有任务创建者（或管理员）能看提交名单、分数与切屏记录。
+    # 此前缺此校验，任意教师遍历 task_id 即可获取他人任务的学生成绩。
+    if task.creator_id != user.id and "sys_admin" not in user.role_codes:
+        raise PermissionException("无权限查看该任务的提交情况")
 
     stmt = select(Submission).where(Submission.task_id == task_id)
     if class_id:
@@ -434,17 +488,21 @@ def submit_answers(
     if task.start_at and task.start_at > utcnow():
         raise BusinessException("任务尚未开始")
 
-    attempt = int(data.get("attempt", 1))
-    exists = db.scalar(
+    # attempt 一律由服务端判定：此前直接信任客户端传入值，
+    # 学生传 attempt=99 即可绕过 allow_retake=1 无限重考。
+    last = db.scalar(
         select(Submission).where(
             Submission.task_id == task_id, Submission.student_id == user.id,
-            Submission.attempt == attempt,
-        )
+        ).order_by(Submission.attempt.desc()).limit(1)
     )
-    if exists and exists.submit_time:
-        if attempt >= task.allow_retake:
-            raise BusinessException(f"最多允许作答 {task.allow_retake} 次")
-        attempt += 1
+    max_attempt = max(int(task.allow_retake or 1), 1)
+    if last and last.submit_time:
+        if last.attempt >= max_attempt:
+            raise BusinessException(f"最多允许作答 {max_attempt} 次，已用完次数")
+        attempt = last.attempt + 1
+    else:
+        # 未交卷的草稿沿用其 attempt，保证覆盖同一份而不是新建
+        attempt = last.attempt if last else 1
 
     sub = grading_service.get_student_submission(db, task_id, user.id, attempt)
     answers = data.get("answers", [])
@@ -489,6 +547,9 @@ def heartbeat(
     )
     if not sub:
         return ok(message="no active submission")
+    # 已交卷记录不允许再改切屏次数/时长（否则交卷后可篡改考试行为数据）
+    if sub.submit_time is not None:
+        return ok({"switch_count": sub.switch_count}, message="已交卷，心跳忽略")
     if data.get("switch"):
         sub.switch_count += 1
     sub.duration_seconds = int(data.get("duration_seconds") or sub.duration_seconds or 0)

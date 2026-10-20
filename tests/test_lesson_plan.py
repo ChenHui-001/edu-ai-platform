@@ -71,11 +71,17 @@ def run():
           p.get("success") and (data_of(p) or {}).get("is_shared") is True,
           p.get("message", ""))
 
-    # tea2 列表里现在能看到
+    # 共享范围：仅同科教师可见。teacher4 任教七年级，本教案属一年级，
+    # 属跨学科 → 不应出现在其列表中（此前实现只判 is_shared，所有教师可见）。
     p, _, _ = tea2.get("/lesson/plans", params={"page_size": 50})
-    check("★ 共享后 → 同科教师在列表里能看到",
-          any((r or {}).get("id") == plan_id for r in rows_of(p)),
-          f"tea2 列表里有/无 id={plan_id}")
+    cross_visible = any((r or {}).get("id") == plan_id for r in rows_of(p))
+    check("★ 跨学科教师看不到他人共享教案（学科隔离生效）",
+          not cross_visible,
+          f"teacher4(七年级) 列表中含一年级教案={cross_visible}")
+    # 自己仍然可见（共享不改变创建者可见性）
+    p, _, _ = tea1.get("/lesson/plans", params={"page_size": 50})
+    check("共享后创建者本人仍可见",
+          any((r or {}).get("id") == plan_id for r in rows_of(p)), "")
 
     # only_mine=true 看自己
     p, _, _ = tea1.get("/lesson/plans", params={"only_mine": True, "page_size": 50})

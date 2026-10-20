@@ -87,10 +87,21 @@ def list_plans(
     if only_mine:
         stmt = stmt.where(LessonPlan.creator_id == user.id)
     else:
-        # 同科教师共享的也看得到：用 subject_id 匹配 + 排除自己
-        stmt = stmt.where(
-            (LessonPlan.creator_id == user.id) | (LessonPlan.is_shared == 1)
-        )
+        # 共享教案仅对「同科教师」可见（此前只判 is_shared=1，
+        # 任何学科教师都能看到全部共享教案，与注释/设计不符）。
+        from app.models import TeachingAssignment
+        my_subject_ids = set(db.scalars(
+            select(TeachingAssignment.subject_id).where(
+                TeachingAssignment.teacher_id == user.id,
+                TeachingAssignment.is_active.is_(True))
+        ).all())
+        if my_subject_ids:
+            stmt = stmt.where(
+                (LessonPlan.creator_id == user.id)
+                | ((LessonPlan.is_shared == 1) & LessonPlan.subject_id.in_(my_subject_ids))
+            )
+        else:
+            stmt = stmt.where(LessonPlan.creator_id == user.id)
     if subject_id:
         stmt = stmt.where(LessonPlan.subject_id == subject_id)
     if grade_id:

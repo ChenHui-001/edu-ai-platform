@@ -129,7 +129,9 @@ def run():
         publish_at = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
         p, _, _ = tea1.post("/task/tasks", {
             "paper_id": paper_id, "type": "homework",
-            "title": "定时发布作业-测试", "class_ids": [], "student_ids": [],
+            # 定时发布同样需要下发对象：到期激活后学生才看得到，
+            # 空下发的定时任务会变成永远无人可见的孤儿（发布接口已校验）
+            "title": "定时发布作业-测试", "class_ids": [1], "student_ids": [],
             "start_at": publish_at, "publish_at": publish_at,
         })
         scheduled = p.get("success") and "自动发布" in p.get("message", "")
