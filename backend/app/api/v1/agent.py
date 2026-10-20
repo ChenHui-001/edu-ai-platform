@@ -7,9 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.agents.base import AGENT_REGISTRY, get_orchestrator
 from app.agents.llm import is_available
-from app.api.deps import get_current_user
+from app.api.deps import (
+    get_current_student,
+    get_current_teacher,
+    get_current_user,
+)
+from app.core.config import settings
 from app.core.database import get_db
-from app.core.exception import BusinessException, NotFoundException
+from app.core.exception import BusinessException, NotFoundException, PermissionException, NotFoundException
 from app.models import AgentCallLog, User
 from app.utils.common import PageParams, dictify, fail, ok
 
@@ -32,7 +37,8 @@ def list_agents(user: User = Depends(get_current_user)):
         "agents": items,
         "orchestrator_mode": orch.mode,
         "llm_enabled": is_available(),
-        "llm_provider": None,
+        # 此前硬编码 None，前端状态页拿不到实际供应商
+        "llm_provider": settings.LLM_PROVIDER if is_available() else None,
     })
 
 
@@ -114,7 +120,7 @@ def _extract_answer(data: Any) -> str:
 @router.post("/question-generator", summary="题库生成 Agent")
 def question_generator(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_teacher),
 ):
     from app.agents.question_agent import QuestionGeneratorAgent
 
@@ -137,7 +143,7 @@ def question_generator(
 @router.post("/paper-composer", summary="智能组卷 Agent")
 def paper_composer(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_teacher),
 ):
     from app.agents.paper_agent import PaperComposerAgent
 
@@ -159,7 +165,7 @@ def paper_composer(
 @router.post("/grading", summary="智能批改 Agent")
 def agent_grading(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_teacher),
 ):
     from app.agents.grading_agent import GradingAgent
 
@@ -172,13 +178,20 @@ def agent_grading(
 @router.post("/study-planner", summary="学习规划 Agent")
 def study_planner(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student),
 ):
     from app.agents.study_agent import StudyPlannerAgent
 
+    # 目标学生：学生身份只能为自己生成；教师/管理员可指定（学情分析场景）。
+    # 此前 student_id 完全由客户端决定，学生可传他人 id 读取他人学情。
+    is_staff = bool({"teacher", "grade_admin", "sys_admin"} & set(user.role_codes))
+    target_sid = user.id
+    if is_staff and data.get("student_id"):
+        target_sid = int(data["student_id"])
+
     res = StudyPlannerAgent().run(
         db, user_id=user.id,
-        student_id=data.get("student_id") or user.id,
+        student_id=target_sid,
         days=int(data.get("days", 7)),
         daily_minutes=int(data.get("daily_minutes", 90)),
     )
@@ -215,14 +228,36 @@ def tutor(
 @router.post("/note-organizer", summary="笔记整理 Agent")
 def note_organizer(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_student),
 ):
+    """笔记整理。
+
+    ⚠️ 安全边界：note_id 必须校验归属。此前直接把客户端传入的 note_id
+    交给 Agent，Agent 内部 `db.get(Note, note_id)` 不做归属判断，
+    导致任意用户可读取（并 save=True 覆写）他人私密笔记。
+    管理员仅允许「读取整理结果」，不允许写回他人笔记。
+    """
     from app.agents.note_agent import NoteOrganizerAgent
+    from app.models import Note
+
+    note_id = data.get("note_id")
+    save = bool(data.get("save", False))
+    if note_id:
+        note = db.get(Note, note_id)
+        if not note:
+            raise NotFoundException("笔记不存在")
+        owner = note.student_id == user.id
+        is_admin = "sys_admin" in user.role_codes
+        if not owner:
+            if not is_admin:
+                raise PermissionException("无权整理他人笔记")
+            if save:
+                raise PermissionException("管理员不可覆写他人笔记")
 
     res = NoteOrganizerAgent().run(
         db, user_id=user.id,
-        note_id=data.get("note_id"), content=data.get("content"),
-        title=data.get("title"), save=bool(data.get("save", False)),
+        note_id=note_id, content=data.get("content"),
+        title=data.get("title"), save=save,
     )
     if not res.get("success"):
         return fail(res.get("message", "笔记整理失败"))
@@ -252,18 +287,21 @@ def agent_logs(
         .offset(params.offset).limit(params.page_size)
     ).all()
 
-    stats = db.execute(
-        select(
-            func.count(),
-            func.avg(AgentCallLog.duration_ms),
-            func.sum(AgentCallLog.input_tokens),
-            func.sum(AgentCallLog.output_tokens),
-        ).select_from(AgentCallLog)
-    ).one()
-
-    by_agent = db.execute(
-        select(AgentCallLog.agent_name, func.count()).group_by(AgentCallLog.agent_name)
-    ).all()
+    # 统计必须与明细同权：非管理员只看自己的汇总，
+    # 否则 items 只有自己 14 条、summary 却是全站 38 次（实测泄漏）。
+    stat_stmt = select(
+        func.count(),
+        func.avg(AgentCallLog.duration_ms),
+        func.sum(AgentCallLog.input_tokens),
+        func.sum(AgentCallLog.output_tokens),
+    ).select_from(AgentCallLog)
+    by_stmt = select(AgentCallLog.agent_name, func.count()).group_by(
+        AgentCallLog.agent_name)
+    if not is_admin:
+        stat_stmt = stat_stmt.where(AgentCallLog.user_id == user.id)
+        by_stmt = by_stmt.where(AgentCallLog.user_id == user.id)
+    stats = db.execute(stat_stmt).one()
+    by_agent = db.execute(by_stmt).all()
 
     return ok({
         "items": [dictify(r) for r in rows], "total": total, "page": params.page,

@@ -80,6 +80,7 @@ STAGES = [
     ("teaching", "阶段九 · 教学管理模块专项", "test_teaching_module"),
     ("learning_hub", "阶段十 · 学习中心权限专项", "test_learning_hub"),
     ("analysis", "阶段十一 · 学情分析专项", "test_analysis"),
+    ("agent", "阶段十二 · AI 智能专项", "test_agent"),
 ]
 
 
