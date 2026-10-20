@@ -95,7 +95,12 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "https://api.deepseek.com/v1"
     LLM_MODEL: str = "deepseek-chat"
     LLM_TEMPERATURE: float = 0.7
-    LLM_MAX_TOKENS: int = 4096
+    # 输出 token 是 LLM 耗时的主要来源：4096 会让单次调用接近 60s 超时边界。
+    # 实测出题 5 题 / 笔记整理 / 组卷等任务输出均在 2k token 以内，
+    # 故默认调整为 2048（可通过系统配置 llm_max_tokens 覆盖）。
+    LLM_MAX_TOKENS: int = 2048
+    # AI 接口按用户限流（每分钟），防止高频触发生成刷 token
+    AGENT_RATE_LIMIT_PER_MIN: int = 12
     LLM_TIMEOUT: int = 60
     LLM_ENABLED: bool = True  # 未配置 Key 时自动降级为规则引擎
 

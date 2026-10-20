@@ -123,7 +123,9 @@
           <el-input ref="inputRef" v-model="input" type="textarea" :rows="2" resize="none" maxlength="500"
                     placeholder="描述你的需求，Enter 发送，Shift+Enter 换行"
                     @keydown.enter.exact.prevent="send" />
-          <el-button type="primary" :loading="loading" :icon="Promotion" @click="send">发送</el-button>
+          <el-button type="primary" :loading="loading" :icon="Promotion" @click="send">
+            {{ loading ? 'AI 思考中（最长约 60 秒）' : '发送' }}
+          </el-button>
         </div>
         <div class="tip">{{ input.length }}/500 · AI 生成内容仅供参考，请结合教材核实</div>
       </div>

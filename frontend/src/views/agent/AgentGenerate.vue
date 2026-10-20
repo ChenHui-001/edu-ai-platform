@@ -148,7 +148,7 @@
 
           <div class="action-bar">
             <el-button type="primary" :icon="MagicStick" :loading="running" @click="run">
-              {{ running ? '生成中…' : '开始生成' }}
+              {{ running ? 'AI 生成中（约 20-60 秒，请勿刷新）' : '开始生成' }}
             </el-button>
             <el-button :icon="Refresh" @click="result = null">清空结果</el-button>
           </div>
@@ -242,7 +242,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Refresh, Cpu, Notebook, Tickets, EditPen, Calendar, ChatDotRound, Collection } from '@element-plus/icons-vue'
 import { agentApi, eduApi, questionApi } from '@/api'
 
@@ -345,6 +345,12 @@ async function run() {
 async function saveAll() {
   const qs = result.value.questions || []
   if (!qs.length) return
+  // 二次确认：写入题库对全校教师可见，属于不可逆的公共数据变更
+  try {
+    await ElMessageBox.confirm(
+      `将把 ${qs.length} 道题写入题库，入库后所有教师均可选用。请先核对题目与答案。`,
+      '确认入库', { type: 'warning', confirmButtonText: '确认入库', cancelButtonText: '再检查一下' })
+  } catch { return }
   saving.value = true
   try {
     let okCount = 0

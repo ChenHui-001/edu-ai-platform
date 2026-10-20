@@ -14,11 +14,41 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exception import BusinessException, NotFoundException, PermissionException, NotFoundException
+from app.core.exception import BusinessException, NotFoundException, PermissionException
+from app.core.rate_limit import check_agent_rate
 from app.models import AgentCallLog, User
 from app.utils.common import PageParams, dictify, fail, ok
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/agent", tags=["AI Agent 中心"])
+
+# 单次 Agent 调用超过该耗时记 warning，便于运维定位模型变慢/网络抖动
+SLOW_CALL_MS = 20_000
+
+
+def _audit_write(db: Session, user: User, action: str, detail: str) -> None:
+    """Agent 写库审计：save=True 属于「AI 直接改数据」的高风险操作。"""
+    try:
+        from app.models import OperationLog
+
+        db.add(OperationLog(
+            user_id=user.id, username=user.username,
+            module="AI智能", action=action, method="POST",
+            path="/api/v1/agent", params=detail[:1000], status="success",
+        ))
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
+def _warn_if_slow(res: dict, agent: str) -> None:
+    ms = (res or {}).get("duration_ms") or 0
+    if ms >= SLOW_CALL_MS:
+        logger.warning("Agent %s 调用耗时 %.1fs（阈值 %.0fs）",
+                       agent, ms / 1000, SLOW_CALL_MS / 1000)
 
 
 # ---------------------------------------------------------------- 概览
@@ -44,8 +74,6 @@ def list_agents(user: User = Depends(get_current_user)):
 
 @router.get("/status", summary="AI 引擎状态")
 def agent_status(_: User = Depends(get_current_user)):
-    from app.core.config import settings
-
     orch = get_orchestrator()
     from app.agents.rag import get_collection
 
@@ -71,13 +99,20 @@ def chat(
     request = data.get("message") or data.get("request")
     if not request:
         raise BusinessException("请输入你的需求")
+    check_agent_rate(user.id)
+
+    # student_id 语义：学生只能是自己；教师/管理员可指定目标学生
+    # （此前恒为调用者，教师说「给张三出题」会用到教师自己的学情上下文）
+    is_staff = bool({"teacher", "grade_admin", "sys_admin"} & set(user.role_codes))
+    target_sid = int(data.get("student_id")) if (
+        is_staff and data.get("student_id")) else user.id
 
     orch = get_orchestrator()
     result = orch.run(
         db, user_id=user.id, request=request,
         args={
             "grade_id": data.get("grade_id"), "subject_id": data.get("subject_id"),
-            "student_id": user.id,
+            "student_id": target_sid,
         },
     )
 
@@ -88,7 +123,7 @@ def chat(
         r = TutorAgent().run(
             db, user_id=user.id, request=request,
             grade_id=data.get("grade_id"), subject_id=data.get("subject_id"),
-            student_id=user.id,
+            student_id=target_sid,
         )
         result["data"] = r.get("data")
         result["agent"] = "tutor"
@@ -124,6 +159,7 @@ def question_generator(
 ):
     from app.agents.question_agent import QuestionGeneratorAgent
 
+    check_agent_rate(user.id)
     res = QuestionGeneratorAgent().run(
         db, user_id=user.id,
         grade_id=data.get("grade_id"), subject_id=int(data.get("subject_id", 0)),
@@ -133,6 +169,11 @@ def question_generator(
         difficulty=data.get("difficulty", "medium"),
         save=bool(data.get("save", False)),
     )
+    _warn_if_slow(res, "question_generator")
+    if data.get("save") and res.get("success"):
+        _audit_write(db, user, "AI 生成题目入库",
+                     f"subject={data.get('subject_id')} count={data.get('count', 5)} "
+                     f"saved={(res.get('data') or {}).get('saved')}")
     # Agent 失败时 success=False / data=None —— 不能再用 ok() 包成 success=true，
     # 否则前端 res.data.data 必崩（典型契约漂移）
     if not res.get("success"):
@@ -147,6 +188,7 @@ def paper_composer(
 ):
     from app.agents.paper_agent import PaperComposerAgent
 
+    check_agent_rate(user.id)
     res = PaperComposerAgent().run(
         db, user_id=user.id, request=data.get("request", ""),
         grade_id=data.get("grade_id"), subject_id=data.get("subject_id"),
@@ -157,8 +199,13 @@ def paper_composer(
         paper_name=data.get("paper_name"),
         save=bool(data.get("save", False)),
     )
+    _warn_if_slow(res, "paper_composer")
     if not res.get("success"):
         return fail(res.get("message", "组卷失败"))
+    if data.get("save"):
+        _audit_write(db, user, "AI 组卷入库",
+                     f"subject={data.get('subject_id')} "
+                     f"paper_id={(res.get('data') or {}).get('paper_id')}")
     return ok(res.get("data"), message=res.get("message", "组卷完成"))
 
 
@@ -169,7 +216,9 @@ def agent_grading(
 ):
     from app.agents.grading_agent import GradingAgent
 
+    check_agent_rate(user.id)
     res = GradingAgent().run(db, user_id=user.id, items=data.get("items", []))
+    _warn_if_slow(res, "grading")
     if not res.get("success"):
         return fail(res.get("message", "批改失败"))
     return ok(res.get("data"), message="批改完成")
@@ -189,12 +238,14 @@ def study_planner(
     if is_staff and data.get("student_id"):
         target_sid = int(data["student_id"])
 
+    check_agent_rate(user.id)
     res = StudyPlannerAgent().run(
         db, user_id=user.id,
         student_id=target_sid,
         days=int(data.get("days", 7)),
         daily_minutes=int(data.get("daily_minutes", 90)),
     )
+    _warn_if_slow(res, "study_planner")
     if not res.get("success"):
         return fail(res.get("message", "学习规划失败"))
     return ok(res.get("data"), message=res.get("message", "规划完成"))
@@ -207,6 +258,7 @@ def tutor(
 ):
     from app.agents.tutor_agent import TutorAgent
 
+    check_agent_rate(user.id)
     # 兼容 message / question / question_text 三种入参：
     # 前端 AgentChat 与文档示例用 question，历史调用用 message，
     # 只认 message 会把问题整体丢弃，Agent 直接返回「请描述你的问题」。
@@ -254,11 +306,15 @@ def note_organizer(
             if save:
                 raise PermissionException("管理员不可覆写他人笔记")
 
+    check_agent_rate(user.id)
     res = NoteOrganizerAgent().run(
         db, user_id=user.id,
         note_id=note_id, content=data.get("content"),
         title=data.get("title"), save=save,
     )
+    _warn_if_slow(res, "note_organizer")
+    if save and res.get("success"):
+        _audit_write(db, user, "AI 整理笔记写回", f"note_id={note_id}")
     if not res.get("success"):
         return fail(res.get("message", "笔记整理失败"))
     return ok(res.get("data"), message=res.get("message", "整理完成"))
