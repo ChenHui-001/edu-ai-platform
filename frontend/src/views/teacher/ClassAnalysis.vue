@@ -87,7 +87,7 @@ const loading = ref(false)
 
 const cards = computed(() => overview.value ? [
   { label: '班级人数', value: overview.value.student_count },
-  { label: '参与人数', value: overview.value.active_students },
+  { label: '参与人数', value: overview.value.participated_students ?? overview.value.active_students },
   // 得分率（score / total_score）而非原始分：同班可能有不同满分的试卷，
   // 原始分平均会让 30 分卷与 100 分卷混在一起失去意义
   { label: '平均得分率', value: `${overview.value.avg_score_rate ?? 0}%` },

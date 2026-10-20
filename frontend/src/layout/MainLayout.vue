@@ -139,10 +139,23 @@ const activeMenu = computed(() => route.path)
 // 渲染时直接用 allRoutes，不能用 allRoutes.value（会得到 undefined）。
 const allRoutes = router.getRoutes().filter(r => r.meta?.title && !r.meta.hidden && r.path.startsWith('/'))
 
+// 身份限定路由前缀：只有对应身份的用户能看到（分组配置里用 onlyIdentity 引用）
+const IDENTITY_PREFIXES = {
+  student: ['/student/'],
+}
+
 const menuGroups = computed(() => {
   const roles = userStore.permissions.roles || []
   const perms = userStore.permissions.permissions || []
+  // 身份限定分组（如学习中心仅学生）：其前缀路由必须整体排除，
+  // 否则身份不符时这些路由会落进最后的「其他」兜底组（实测 admin 菜单出现「其他」并含 14 个学生页）
+  const identity = userStore.userInfo?.identity
+    || (userStore.isStudent ? 'student' : '')
+  const hiddenPrefixes = Object.entries(IDENTITY_PREFIXES)
+    .filter(([id]) => id !== identity)
+    .flatMap(([, prefixes]) => prefixes)
   const allowed = allRoutes.filter(r => {
+    if (hiddenPrefixes.some(p => r.path === p || r.path.startsWith(p))) return false
     if (r.meta.roles && !r.meta.roles.some(x => roles.includes(x))) return false
     if (r.meta.perm && !perms.includes('*') && !perms.includes(r.meta.perm)) return false
     return true
@@ -160,7 +173,9 @@ const menuGroups = computed(() => {
     { title: '题库试卷', icon: 'Notebook', prefixes: ['/teacher/questions', '/teacher/papers'] },
     { title: '教学管理', icon: 'EditPen', prefixes: ['/teacher/tasks', '/teacher/grading', '/teacher/lessons'] },
     { title: '学情分析', icon: 'TrendCharts', prefixes: ['/teacher/analysis', '/teacher/students', '/teacher/reports'] },
-    { title: '学习中心', icon: 'Reading', prefixes: ['/student/'] },
+    // 学习中心是学生个人空间：管理员/教师即便持有 student:* 权限点，
+    // 进入后也只会看到全空的个人数据（无班级、无作业），故按身份隐藏。
+    { title: '学习中心', icon: 'Reading', prefixes: ['/student/'], onlyIdentity: 'student' },
     { title: 'AI 智能', icon: 'MagicStick', prefixes: ['/agent/', '/admin/agent-logs'] },
     { title: '系统管理', icon: 'Setting', prefixes: ['/admin/'] }
   ]
@@ -168,6 +183,8 @@ const menuGroups = computed(() => {
   const matched = new Set()
   const result = []
   for (const g of groups) {
+    // 身份限定分组（如学习中心仅学生可见）
+    if (g.onlyIdentity && identity !== g.onlyIdentity) continue
     const items = []
     for (const r of allowed) {
       if (matched.has(r.path)) continue

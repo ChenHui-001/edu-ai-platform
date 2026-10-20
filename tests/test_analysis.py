@@ -49,6 +49,10 @@ def run():
     check("★ 班级概览含完成率字段（此前缺失/死代码）",
           "completion_rate" in d and 0 <= (d.get("completion_rate") or 0) <= 100,
           f"completion_rate={d.get('completion_rate')}%")
+    check("★ 参与人数使用 participated_students 语义键",
+          "participated_students" in d,
+          f"participated_students={d.get('participated_students')} "
+          f"（旧键 active_students={d.get('active_students')} 保留兼容）")
     check("★ 最高/最低得分率与原始分同口径输出",
           "max_rate" in d and "min_rate" in d
           and (d.get("max_rate") or 0) >= (d.get("min_rate") or 0),
@@ -139,6 +143,9 @@ def run():
     check("系统总览含用户/内容/考试/ai/组织五组",
           all(k in ov for k in ("user", "content", "exam", "ai", "org")),
           f"字段={sorted(ov.keys())}")
+    check("★ 系统总览补 avg_score_rate（全校平均得分率）",
+          "avg_score_rate" in (ov.get("exam") or {}),
+          f"exam={ov.get('exam')}")
 
     p, _, _ = admin.get("/report/admin/grade-comparison")
     grades = rows_of(p) or (p.get("data") or [])
@@ -176,6 +183,14 @@ def run():
     p, _, _ = admin.get("/report/admin/subject-comparison")
     subs = rows_of(p) or (p.get("data") or [])
     check("学科对比可读", isinstance(subs, list) and len(subs) > 0, f"{len(subs)} 行")
+
+    # 新增维度：按年级 + 学科（避免同名学科被合并后无法定位年级）
+    p, _, _ = admin.get("/report/admin/subject-comparison", params={"by_grade": "true"})
+    by_grade = p.get("data") or []
+    check("★ 学科对比支持按年级+学科维度（by_grade=true）",
+          p.get("success") and isinstance(by_grade, list)
+          and (not by_grade or "grade" in by_grade[0]),
+          f"{len(by_grade)} 行，字段={sorted(by_grade[0].keys()) if by_grade else []}")
 
     p, _, _ = admin.get("/report/admin/system-runtime")
     check("系统运行报表可读（管理员专属）", p.get("success"), "")

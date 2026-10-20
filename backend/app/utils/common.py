@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
 
 from fastapi import Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, field_validator, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -42,16 +42,38 @@ class ORMBase(BaseModel):
 
 
 class PageParams(BaseModel):
-    """分页入参。"""
+    """分页入参。
 
-    page: int = Query(1, ge=1, description="页码，从 1 开始")
+    容错策略：page/page_size 传入 0、负数或超大值时**自动收敛**到合法区间，
+    而不是返回 422。前端分页组件在「清空筛选」「首次渲染」等场景会传 0，
+    此前直接 422 导致列表白屏（实测 page=0 / page_size=0 均 422）。
+    """
+
+    page: int = Query(1, description="页码，从 1 开始（<1 时按 1 处理）")
     page_size: int = Query(
-        settings.DEFAULT_PAGE_SIZE, ge=1, le=settings.MAX_PAGE_SIZE, description="每页数量"
+        settings.DEFAULT_PAGE_SIZE, description="每页数量（越界自动收敛）"
     )
+
+    @field_validator("page", mode="before")
+    @classmethod
+    def _clamp_page(cls, v):
+        try:
+            return max(1, int(v))
+        except (TypeError, ValueError):
+            return 1
+
+    @field_validator("page_size", mode="before")
+    @classmethod
+    def _clamp_page_size(cls, v):
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return settings.DEFAULT_PAGE_SIZE
+        return min(max(1, n), settings.MAX_PAGE_SIZE)
 
     @property
     def offset(self) -> int:
-        return (self.page - 1) * self.page_size
+        return (max(1, self.page) - 1) * self.page_size
 
 
 class PageResult(BaseModel):

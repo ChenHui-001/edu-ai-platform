@@ -68,7 +68,7 @@
           <el-card shadow="never">
             <template #header><b>知识点掌握情况</b></template>
             <EChart v-if="radar.length >= 3" :option="radarOption" style="height: 300px" />
-            <el-empty v-else description="知识点数据不足（需答题关联知识点）" :image-size="60" />
+            <el-empty v-else :description="radarEmptyText" :image-size="70" />
           </el-card>
         </el-col>
       </el-row>
@@ -145,6 +145,13 @@ const cards = computed(() => {
 })
 
 const radar = computed(() => mastery.value?.items || [])
+
+/** 雷达图空态文案：区分「完全无数据」与「数据不足 3 个无法成图」 */
+const radarEmptyText = computed(() => {
+  const n = radar.value.length
+  if (n === 0) return '暂无知识点掌握数据（完成练习/考试后自动沉淀）'
+  return `仅 ${n} 个知识点有掌握数据，至少需 3 个才能绘制雷达图`
+})
 
 const trendOption = computed(() => {
   const trend = detail.value?.score_trend || []

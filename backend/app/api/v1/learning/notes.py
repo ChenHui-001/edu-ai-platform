@@ -5,7 +5,7 @@
 import html
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,22 @@ from app.models import Note, Subject, User
 from app.utils.common import PageParams, dictify, load_json, ok, utcnow
 
 router = APIRouter()
+
+def _index_note_bg(note_id: int, title: str, content: str,
+                   student_id: int, subject_id: int) -> None:
+    """后台向量化：只接收标量，避免在请求会话关闭后访问 ORM 对象。"""
+    try:
+        from types import SimpleNamespace
+
+        from app.agents.rag import index_note
+
+        index_note(SimpleNamespace(
+            id=note_id, title=title or "", content=content or "",
+            student_id=student_id, subject_id=subject_id,
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
 
 @router.get("/notes", summary="我的笔记列表")
 def list_notes(
@@ -37,12 +53,19 @@ def list_notes(
     rows = db.scalars(
         stmt.order_by(Note.updated_at.desc()).offset(params.offset).limit(params.page_size)
     ).all()
+    # 预加载学科名：原实现每条笔记调用两次 db.get(Subject)（N+1 且重复）
+    subject_ids = {n.subject_id for n in rows if n.subject_id}
+    subj_names = {
+        sid: nm for sid, nm in db.execute(
+            select(Subject.id, Subject.name).where(Subject.id.in_(subject_ids))
+        ).all()
+    } if subject_ids else {}
     items = []
     for n in rows:
         d = dictify(n)
         d["content_preview"] = (n.content or "")[:100]
         d.pop("content", None)
-        d["subject_name"] = db.get(Subject, n.subject_id).name if n.subject_id and db.get(Subject, n.subject_id) else None
+        d["subject_name"] = subj_names.get(n.subject_id)
         items.append(d)
     return ok({"items": items, "total": total, "page": params.page})
 
@@ -107,8 +130,10 @@ def get_note(
             ))
         except Exception:  # noqa: BLE001
             pass
-    note.view_count += 1
-    db.commit()
+    # 浏览数只统计「本人查看」；管理员核查（跨用户）不计入，避免虚增学生笔记热度
+    if note.student_id == user.id:
+        note.view_count += 1
+        db.commit()
     d = dictify(note)
     d["ai_outline"] = load_json(d.get("ai_outline"))
     d["ai_mindmap"] = load_json(d.get("ai_mindmap"))
@@ -118,7 +143,8 @@ def get_note(
 
 @router.post("/notes", summary="创建笔记")
 def create_note(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    background: BackgroundTasks, data: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_student_self),
 ):
     note = Note(
@@ -130,15 +156,16 @@ def create_note(
     db.add(note)
     db.commit()
     db.refresh(note)
-    from app.agents.rag import index_note
-
-    index_note(note)
+    # 向量化放后台：Embedding 计算可能耗时数百毫秒，同步执行会拖慢保存响应
+    background.add_task(_index_note_bg, note.id, note.title, note.content,
+                        note.student_id, note.subject_id or 0)
     return ok(dictify(note), message="笔记创建成功")
 
 
 @router.put("/notes/{note_id}", summary="更新笔记")
 def update_note(
-    note_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    note_id: int, background: BackgroundTasks, data: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_student_self),
 ):
     note = db.get(Note, note_id)
@@ -152,9 +179,8 @@ def update_note(
     if "is_favorite" in data:
         note.is_favorite = bool(data["is_favorite"])
     db.commit()
-    from app.agents.rag import index_note
-
-    index_note(note)
+    background.add_task(_index_note_bg, note.id, note.title, note.content,
+                        note.student_id, note.subject_id or 0)
     return ok(message="笔记已更新")
 
 

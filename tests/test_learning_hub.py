@@ -194,9 +194,36 @@ def run():
     check("创建练习缺必填参数被拒", p.get("success") is not True,
           p.get("message", "")[:30])
 
-    p, _, _ = stu.get("/learning/wrong-questions", params={"page": 0})
-    check("非法页码 page=0 返回参数错误（非 500）",
-          p.get("success") is not True, "422 参数校验")
+    # 分页容错：page=0 / page_size=0 应被收敛为 1，而不是 422（前端清空筛选时常见）
+    p, _, sc = stu.get("/learning/wrong-questions", params={"page": 0, "page_size": 0})
+    check("★ 非法页码 page=0/page_size=0 自动收敛（不再 422）",
+          p.get("success") is True and sc == 200,
+          f"HTTP {sc} items={len(rows_of(p))}")
+    p, _, sc = stu.get("/learning/wrong-questions", params={"page_size": 99999})
+    check("★ 超大 page_size 被收敛到上限（不报错）",
+          p.get("success") is True, f"HTTP {sc}")
+
+    # 管理员核查笔记不计浏览数
+    p, _, _ = stu.post("/learning/notes", {"title": f"{TAG} 计数验证", "content": "x"})
+    nid2 = (data_of(p) or {}).get("id")
+    if nid2:
+        v0 = (data_of(stu.get(f"/learning/notes/{nid2}")[0]) or {}).get("view_count")
+        admin.get(f"/learning/notes/{nid2}")
+        v1 = (data_of(admin.get(f"/learning/notes/{nid2}")[0]) or {}).get("view_count")
+        check("★ 管理员核查不增加学生笔记浏览数",
+              (v1 or 0) == (v0 or 0),
+              f"view_count {v0} -> {v1}")
+        stu.delete(f"/learning/notes/{nid2}")
+
+    # 笔记创建（RAG 索引已转后台任务，响应应正常返回）
+    p, _, sc = stu.post("/learning/notes",
+                        {"title": f"{TAG} 后台索引", "content": "内容" * 50})
+    nid3 = (data_of(p) or {}).get("id")
+    check("★ 笔记创建成功后端索引（响应正常且数据可读）",
+          p.get("success") and bool(nid3),
+          f"HTTP {sc} id={nid3}")
+    if nid3:
+        stu.delete(f"/learning/notes/{nid3}")
 
     # 清理
     if note_id:
