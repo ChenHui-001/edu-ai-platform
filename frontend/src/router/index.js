@@ -109,7 +109,12 @@ const routes = [
         meta: { title: '个人中心', hidden: true } }
     ]
   },
-  { path: '/:pathMatch(.*)*', redirect: '/dashboard' }
+  // 未知路径不再静默回首页：此前任何拼错的地址都表现为「点击后一闪，
+  // 又回到 dashboard」，用户与排查者都无法判断是权限问题还是地址写错。
+  { path: '/403', name: 'Forbidden',
+    component: () => import('@/views/ErrorPage.vue'), meta: { title: '无权访问', public: true } },
+  { path: '/:pathMatch(.*)*', name: 'NotFound',
+    component: () => import('@/views/ErrorPage.vue'), meta: { title: '页面不存在', public: true } }
 ]
 
 const router = createRouter({
@@ -139,12 +144,12 @@ router.beforeEach((to, from, next) => {
   const roles = user.permissions?.roles || []
 
   if (to.meta.roles && !to.meta.roles.some((r) => roles.includes(r))) {
-    return next('/dashboard')
+    return next('/403')
   }
   if (to.meta.perm) {
     const perms = user.permissions?.permissions || []
     if (!perms.includes('*') && !perms.includes(to.meta.perm)) {
-      return next('/dashboard')
+      return next('/403')
     }
   }
   next()

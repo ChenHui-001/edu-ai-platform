@@ -16,9 +16,9 @@
         <el-card shadow="never">
           <template #header><b>选择能力</b></template>
           <el-menu :default-active="active" @select="onSelect" class="agent-menu">
-            <el-menu-item v-for="a in agents" :key="a.code" :index="a.code">
-              <el-icon><component :is="iconOf(a.code)" /></el-icon>
-              <span>{{ a.name }}</span>
+            <el-menu-item v-for="a in agents" :key="a.name" :index="a.name">
+              <el-icon><component :is="iconOf(a.name)" /></el-icon>
+              <span>{{ a.display_name || a.name }}</span>
             </el-menu-item>
           </el-menu>
 
@@ -44,13 +44,14 @@
                 <el-col :span="8">
                   <el-form-item label="学科">
                     <el-select v-model="qForm.subject_id" style="width:100%" @change="onSubjectChange">
-                      <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
+                      <el-option v-for="s in genSubjects" :key="s.id" :label="s.name" :value="s.id" />
                     </el-select>
                   </el-form-item>
                 </el-col>
                 <el-col :span="8">
                   <el-form-item label="年级">
-                    <el-select v-model="qForm.grade_id" clearable style="width:100%">
+                    <el-select v-model="qForm.grade_id" clearable style="width:100%"
+                               @change="onGradeChange">
                       <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
                     </el-select>
                   </el-form-item>
@@ -171,7 +172,7 @@
             <el-table :data="result.questions" border>
               <el-table-column type="expand">
                 <template #default="{ row }">
-                  <p class="stem" v-html="row.stem"></p>
+                  <p class="stem" v-html="safeStem(row.stem)"></p>
                   <p v-if="parse(row.options)" class="opts">
                     <span v-for="o in parse(row.options)" :key="o.key" class="opt">{{ o.key }}. {{ o.text }}</span>
                   </p>
@@ -248,6 +249,12 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Refresh, Cpu, Notebook, Tickets, EditPen, Calendar, ChatDotRound, Collection } from '@element-plus/icons-vue'
 import { agentApi, eduApi, questionApi } from '@/api'
+import { sanitizeHtml } from '@/utils/sanitize'
+
+// 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
+// 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
+function safeStem(s) { return sanitizeHtml(s) }
+
 
 const TYPES = {
   single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题',
@@ -281,7 +288,7 @@ const paperTemplates = [
   '生成九年级英语完形填空专项卷，15 题，难度偏难'
 ]
 
-const currentAgent = computed(() => agents.value.find(a => a.code === active.value))
+const currentAgent = computed(() => agents.value.find(a => a.name === active.value))
 const isFallback = computed(() => result.value?.is_fallback === true)
 
 const textResult = computed(() => {
@@ -307,9 +314,42 @@ function fmt(o) {
 
 function onSelect(idx) { active.value = idx; result.value = null }
 
+/**
+ * 出题用的学科列表。
+ *
+ * 这里是「学科 → 知识点 → 出题」的入口，必须拿到**精确的 subject_id**，
+ * 不能用 distinct 去重后的代表记录：Subject 的唯一键是 (grade_id, name)，
+ * 代表 id 永远指向最低年级，选中它会去查一年级的知识点。
+ * 实测由此产生过脏数据 —— 七年级「一元一次方程」的 5 道题被挂到
+ * 「20以内加减法」(一年级知识点) 上，掌握图谱/复习计划全部算错。
+ *
+ * 所以：选了年级就只列该年级的学科；没选年级时列出全部（同名多行是准确的，
+ * 用户选哪一行就对应哪个年级）。年级变化时清空已选的学科与知识点。
+ */
+const genSubjects = computed(() => {
+  const all = subjects.value
+  const gid = qForm.grade_id
+  if (!gid) return all
+  return all.filter(s => s.grade_id === gid)
+})
+
+function onGradeChange() {
+  // 年级变了，原学科/知识点必然不属于新年级，必须清空避免跨年级脏数据
+  const keep = subjects.value.some(
+    s => s.id === qForm.subject_id && s.grade_id === qForm.grade_id)
+  if (!keep) {
+    qForm.subject_id = null
+    kps.value = []
+  }
+  qForm.knowledge_point_ids = []
+}
+
 async function onSubjectChange() {
   if (!qForm.subject_id) { kps.value = []; return }
-  const res = await eduApi.knowledgeList({ subject_id: qForm.subject_id, page_size: 200 })
+  // 必须带上年级：只按 subject_id 查时，若该 id 属于别的年级就会装错知识点
+  const params = { subject_id: qForm.subject_id, params_limit: 300 }
+  if (qForm.grade_id) params.grade_id = qForm.grade_id
+  const res = await eduApi.knowledgeList(params)
   kps.value = res.data?.items || res.data || []
 }
 
@@ -408,13 +448,24 @@ async function saveAll() {
 }
 
 onMounted(async () => {
-  const [a, s, g, st] = await Promise.all([
-    agentApi.list(), agentApi.status(), eduApi.subjects(), eduApi.grades()
+  // 这四个请求的顺序必须与解构顺序严格对应。此前解构写成 [a, s, g, st]，
+  // 赋值却按 (list, engine, subjects, grades) 错位取用：
+  //   engine ← grades 列表 → 引擎状态恒显示「规则引擎模式」
+  //   subjects ← /agent/status 对象 → 学科下拉为空
+  //   grades ← 学科列表（含 57 条同名）→ 年级下拉装满学科名
+  // 另外 /agent/list 返回的是 {agents: [...]}，不是数组，
+  // 直接赋给 agents 会让 v-for 遍历对象、computed 里的 .find 抛 TypeError。
+  const [list, status, subs, grs] = await Promise.all([
+    agentApi.list(), agentApi.status(),
+    // 这里**不能**用 distinct：出题必须拿到「学科+年级」配套的精确 id。
+    // 去重后的代表 id 指向最低年级，会让知识点下拉装错年级。
+    // 下拉重复由 genSubjects 按年级过滤解决（未选年级时按年级分组展示）。
+    eduApi.subjects(), eduApi.grades()
   ])
-  agents.value = a.data || []
-  engine.value = st.data
-  subjects.value = s.data || []
-  grades.value = g.data || []
+  agents.value = list.data?.agents || (Array.isArray(list.data) ? list.data : [])
+  engine.value = status.data
+  subjects.value = subs.data || []
+  grades.value = grs.data || []
 })
 </script>
 

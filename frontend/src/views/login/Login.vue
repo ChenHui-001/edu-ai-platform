@@ -109,7 +109,8 @@ async function loadCaptcha() {
 }
 
 async function handleLogin() {
-  await formRef.value.validate()
+  // 同上：校验失败的 rejection 不能被全局错误兜底捕获
+  if (!(await formRef.value.validate().catch(() => false))) return
   loading.value = true
   try {
     const res = await userStore.login({

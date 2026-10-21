@@ -136,6 +136,7 @@
 <script setup>
 import { nextTick, onMounted, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
+import { sanitizeHtml } from '@/utils/sanitize'
 import { Delete, Promotion } from '@element-plus/icons-vue'
 import { agentApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
@@ -167,7 +168,10 @@ const AGENT_LABEL = {
 }
 
 function agentLabel(n) { return AGENT_LABEL[n] || n || 'AI 助手' }
-function renderMd(t) { return md.render(t || '') }
+// markdown-it 默认 html:false（不解析裸标签），但 [x](javascript:...) 这类
+// 链接语法仍会生成可点击的恶意 href；LLM 输出也可能夹带 <img onerror>。
+// 统一再走一次白名单净化，杜绝 AI 回复成为 XSS 载体。
+function renderMd(t) { return sanitizeHtml(md.render(t || '')) }
 function stripHtml(s) { return String(s || '').replace(/<[^>]*>/g, '') }
 function toggleA(i, n) { expanded.value[`${i}-${n}`] = !expanded.value[`${i}-${n}`] }
 

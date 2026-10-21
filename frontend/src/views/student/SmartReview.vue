@@ -145,6 +145,7 @@ import { ElMessage } from 'element-plus'
 import EChart from '@/components/EChart.vue'
 import { Refresh, MagicStick } from '@element-plus/icons-vue'
 import { learningApi, eduApi } from '@/api'
+import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
 const plans = ref([])
 const planData = ref({})
@@ -193,7 +194,9 @@ async function loadPlans() {
 }
 
 async function loadMastery() {
-  const res = await learningApi.masteryMap(subjectId.value ? { subject_id: subjectId.value } : {})
+  // 下拉是去重代表 id（指向最低年级），还原成本年级精确 id 再查
+  const sid = resolveSubjectId(subjects.value, subjectId.value, currentGradeId())
+  const res = await learningApi.masteryMap(sid ? { subject_id: sid } : {})
   mastery.value = res.data || {}
 }
 
@@ -229,9 +232,8 @@ async function genPlan() {
 }
 
 onMounted(async () => {
+  subjects.value = await fetchSubjects({ gradeId: currentGradeId() })
   loadAll()
-  const s = await eduApi.subjects()
-  subjects.value = s.data || []
 })
 </script>
 

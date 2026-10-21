@@ -63,7 +63,7 @@
         </div>
       </div>
 
-      <p class="stem" v-html="w.stem"></p>
+      <p class="stem" v-html="safeStem(w.stem)"></p>
       <p v-if="parse(w.options)?.length" class="opts">
         <span v-for="o in parse(w.options)" :key="o.key"
               :class="{ wrong: isMyWrong(o.key, w.wrong_answer), right: isRight(o.key, w.answer) }">
@@ -119,7 +119,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, MagicStick, RefreshRight, ArrowDown, Download } from '@element-plus/icons-vue'
 import TYPES, { questionTypeLabel } from '@/constants/question'
-import { learningApi, eduApi } from '@/api'
+import { learningApi } from '@/api'
+import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
+import { sanitizeHtml } from '@/utils/sanitize'
+
+// 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
+// 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
+function safeStem(s) { return sanitizeHtml(s) }
+
 
 const DIFF = { easy: '简单', medium: '中等', hard: '困难' }
 const REASONS = ['概念不清', '审题错误', '计算失误', '公式记错', '知识遗忘', '方法不会', '粗心大意']
@@ -160,7 +167,10 @@ function isRight(key, answer) {
 async function load() {
   loading.value = true
   try {
-    const res = await learningApi.wrongQuestions(query)
+    // 下拉里是去重后的代表 id（指向最低年级），必须还原成当前年级那条，
+    // 否则「选数学」查的是一年级数学的 id，七年级错题一条也匹配不到。
+    const sid = resolveSubjectId(subjects.value, query.subject_id, currentGradeId())
+    const res = await learningApi.wrongQuestions({ ...query, subject_id: sid })
     const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
@@ -252,9 +262,11 @@ async function exportWrong() {
 }
 
 onMounted(async () => {
+  // 先拿学科再 load：load() 要用 subjects 把去重 id 还原成年级精确 id。
+  // 学科按年级配置，(grade_id, name) 唯一，不传 distinct 会有 7 个「数学」；
+  // 且 distinct 返回的代表 id 指向最低年级，直接拿去过滤错题会一条都查不到。
+  subjects.value = await fetchSubjects({ gradeId: currentGradeId() })
   await load()
-  const s = await eduApi.subjects()
-  subjects.value = s.data || []
 })
 </script>
 

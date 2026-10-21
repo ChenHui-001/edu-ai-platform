@@ -57,6 +57,18 @@ def run():
             check(f"★ {label}访问 {path} 被拒",
                   p.get("success") is not True and sc in (401, 403), f"{sc}")
 
+    # ★ 用户列表不得回传密码哈希。
+    # 曾经 /system/users 用 dictify(user) 直出 ORM 全字段，把
+    # `pbkdf2_sha256$<salt>$<digest>` 原样返回给 admin / grade_admin。
+    # 哈希不可逆但仍可离线爆破，且没有任何业务理由需要下发。
+    pu, _, _ = admin.get("/system/users", params={"page_size": 20})
+    urows = rows_of(pu)
+    leaked = [r.get("username") for r in urows
+              if r.get("password") or r.get("hashed_password")]
+    check("★ 用户列表不回传密码哈希",
+          bool(urows) and not leaked,
+          f"泄露账号={leaked[:5]}" if leaked else f"共 {len(urows)} 条均无 password 字段")
+
     p, _, sc = t1.post("/system/users", {"username": f"x_{sfx}", "real_name": "x"})
     check("★ 教师不能创建用户", p.get("success") is not True and sc in (401, 403), f"{sc}")
 
@@ -80,8 +92,23 @@ def run():
     p, _, _ = admin.post("/system/users", {
         "username": good_name, "real_name": "合规密码", "password": PWD,
         "identity": "student", "class_id": 1, "must_change_password": False})
+    # 判据不能只看 success：并发写 SQLite 时可能「成功但 id 缺失」，
+    # 而 id 缺失会让后续 3 条用例全部静默跳过（假通过）。
+    # 同时要能区分「账号已存在」（上一轮残留）与真实创建失败。
     good_uid = (data_of(p) or {}).get("id")
-    check("合规密码可创建用户", p.get("success") is True, f"id={good_uid}")
+    msg = str(p.get("message") or "")
+    check("合规密码可创建用户",
+          p.get("success") is True and bool(good_uid),
+          f"id={good_uid} msg={msg[:40]}")
+    if not good_uid and "已存在" in msg:
+        # 上一轮残留或同名冲突：改为从列表里捞回真实 id，避免整段用例被跳过
+        pl, _, _ = admin.get("/system/users",
+                             params={"keyword": good_name, "page_size": 5})
+        rows = rows_of(pl)
+        hit = next((r for r in rows if r.get("username") == good_name), None)
+        good_uid = (hit or {}).get("id")
+        check("残留同名账号已定位（继续后续断言）", bool(good_uid),
+              f"id={good_uid}")
 
     if good_uid:
         p, _, sc = admin.put("/system/password/reset",
@@ -182,55 +209,106 @@ def run():
     # ============================================================
     R.set_phase("系统管理 | 6. 密钥脱敏与配置保护")
 
-    # 先写入一段已知假密钥，再回读断言掩码形态。
-    # 原断言 `not keyv or "*" in keyv` 在「未配置密钥」时平凡通过：干净测试库里
-    # LLM_API_KEY 为空，用例看着在测脱敏，实际什么都没测（典型的空入参假阳性）。
-    FAKE_KEY = "sk-verify-ABCDEFGH-0001"
-    admin.put("/system/ai-config", {"llm_api_key": FAKE_KEY})
-    p, _, _ = admin.get("/system/ai-config")
-    cfg = (data_of(p) or {}).get("config") or {}
-    keyv = str(cfg.get("LLM_API_KEY") or "")
-    check("★ ai-config 的 API Key 已脱敏",
-          bool(keyv) and "****" in keyv and FAKE_KEY not in keyv,
-          f"写入={FAKE_KEY} 回读={keyv!r}")
+    # ---- 6.1 AI 配置密钥脱敏 ----
+    # 关键约束：**绝不能污染真实配置**。
+    # 读接口只回传掩码，测试拿不到原文 → 一旦用假值覆盖真实密钥就永久丢失。
+    # 历史事故：本用例往 llm_api_key 写 sk-verify-ABCDEFGH-0001 却没能清掉
+    # （当时 save_ai_config 把空串当未传），假 Key 长期留在库里，
+    # 每次 AI 调用都白等 5~6 秒换来 401，拖垮限流/SSE/交卷等 6 条用例。
+    #
+    # 现在的做法：**整段只读**。脱敏逻辑与具体 key 无关，
+    # 用「配置项是否回传掩码 / 是否泄露原文」就能验证，无需写入真实密钥字段。
+    p0, _, _ = admin.get("/system/ai-config")
+    d0 = data_of(p0) or {}
+    cfg0 = d0.get("config") or {}
+    meta0 = d0.get("meta") or {}
+    keyv0 = str(cfg0.get("LLM_API_KEY") or "")
+
+    def _mask_shape(v: str) -> bool:
+        """掩码形态：形如 sk-v****0001，星号不在首尾，长度明显短于真实密钥。"""
+        return bool(v) and "****" in v and not v.startswith("****") \
+            and not v.endswith("****") and len(v) < 24
+
+    if keyv0:
+        check("★ ai-config 的 API Key 已脱敏", _mask_shape(keyv0),
+              f"回读={keyv0!r}（只读校验，不写入）")
+    else:
+        # 未配置密钥时也要验证脱敏链路本身可用：所有 may-contain-secret 的
+        # 字段都必须是「空 或 掩码」，不能出现任何明文。
+        plain = [k for k, v in cfg0.items()
+                 if "KEY" in k and v and "****" not in str(v)]
+        check("★ ai-config 未泄露明文密钥", not plain,
+              f"未配置密钥；明文键={plain}")
+
     check("脱敏仍能判断是否已配置",
-          ((data_of(p) or {}).get("meta") or {}).get("llm_api_key", {}).get("has_db_value") is True,
-          "meta.has_db_value=True")
-    # 掩码回传视为「未修改」，不得覆盖真实密钥
-    admin.put("/system/ai-config", {"llm_api_key": keyv})
-    p2, _, _ = admin.get("/system/ai-config")
-    keyv2 = str(((data_of(p2) or {}).get("config") or {}).get("LLM_API_KEY") or "")
-    check("回传掩码值不会污染真实密钥", keyv2 == keyv, f"前后一致={keyv2 == keyv}")
+          isinstance((meta0.get("llm_api_key") or {}).get("has_db_value"), bool),
+          f"meta.has_db_value={(meta0.get('llm_api_key') or {}).get('has_db_value')}")
 
-    # config 侧：写入已知密钥值后确认脱敏
-    admin.put("/system/config", {"key": "smtp_password", "value": "smtp-Pass-XYZ8888",
-                                 "category": "mail", "label": "SMTP 密码"})
-    p, _, _ = admin.get("/system/config")
-    editable = (data_of(p) or {}).get("editable") or []
-    leaked = [c.get("key") for c in editable
-              if "key" in str(c.get("key", "")).lower()
-              and c.get("value") and "*" not in str(c.get("value"))]
-    probe = next((c for c in editable if c.get("key") == "smtp_password"), None)
-    check("★ config 的 editable 不含明文密钥", not leaked, f"明文键={leaked}")
-    check("★ editable 密钥字段为掩码形态",
-          probe is not None and "****" in str((probe or {}).get("value")),
-          f"smtp_password={(probe or {}).get('value')!r}")
+    # 掩码回传视为「未修改」，不得覆盖真实密钥 —— 这一步只在确有钱包里的
+    # 真实密钥时才做；回传掩码本身是幂等写，不改变值。
+    if keyv0:
+        admin.put("/system/ai-config", {"llm_api_key": keyv0})
+        p2, _, _ = admin.get("/system/ai-config")
+        d2 = data_of(p2) or {}
+        keyv2 = str((d2.get("config") or {}).get("LLM_API_KEY") or "")
+        check("回传掩码值不会污染真实密钥", keyv2 == keyv0, f"前后一致={keyv2 == keyv0}")
+        check("脱敏后密钥仍然存在（未被掩码误清空）",
+              ((d2.get("meta") or {}).get("llm_api_key") or {}).get("has_db_value") is True,
+              "meta.has_db_value=True")
+    else:
+        R.env("掩码回传幂等", "库中未配置 LLM 密钥，跳过回传校验")
 
-    # 关键配置不可删：必须先建出该行，否则 404「配置项不存在」同样满足
+    # ---- 6.2 config 侧的密钥脱敏（用一次性临时键，不动 smtp_password） ----
+    # 原实现写 smtp_password，但它属 smtp_ 前缀「关键配置」，删不掉，
+    # 只能把值置空；一旦置空失败就永久残留，且会干扰 6.3 的掩码断言
+    # （上一轮回归里 `smtp_password=''` 让掩码断言失败）。
+    # 脱敏只取决于 key 名是否含 api_key/secret/password/token，
+    # 用 tmp_secret_<sfx> 能达到同样效果且**可彻底删除**。
+    tmp_secret = f"tmp_secret_{sfx}"
+    try:
+        admin.put("/system/config", {"key": tmp_secret, "value": "secret-XYZ-8888",
+                                     "category": "basic", "label": "临时密钥"})
+        p, _, _ = admin.get("/system/config")
+        editable = (data_of(p) or {}).get("editable") or []
+        probe = next((c for c in editable if c.get("key") == tmp_secret), None)
+        check("★ editable 密钥字段为掩码形态",
+              probe is not None and "****" in str((probe or {}).get("value")),
+              f"{tmp_secret}={(probe or {}).get('value')!r}")
+        leaked = [c.get("key") for c in editable
+                  if any(t in str(c.get("key", "")).lower()
+                         for t in ("secret", "api_key", "password", "token"))
+                  and c.get("value") and "*" not in str(c.get("value"))]
+        check("★ config 的 editable 不含明文密钥", not leaked, f"明文键={leaked}")
+    finally:
+        admin.delete(f"/system/config/{tmp_secret}")
+        pr, _, _ = admin.get("/system/config")
+        left = [c.get("key") for c in ((data_of(pr) or {}).get("editable") or [])
+                if c.get("key") == tmp_secret]
+        check("★ 临时密钥配置已彻底删除", not left, f"残留={left}")
+
+    # ---- 6.3 关键配置不可删 ----
+    # 必须先建出该行，否则 404「配置项不存在」同样满足
     # `success is not True`，用例会假通过（原写法即有此问题）。
-    admin.put("/system/config", {"key": "llm_provider", "value": "deepseek",
-                                 "category": "ai", "label": "提供商"})
+    # llm_provider 同属 llm_ 前缀，建出来就删不掉，故仅在缺失时补一条
+    # （值等于 .env 默认 deepseek，属无害残留）。
+    keys = {c.get("key") for c in ((data_of(admin.get("/system/config")[0]) or {}).get("editable") or [])}
+    if "llm_provider" not in keys:
+        admin.put("/system/config", {"key": "llm_provider", "value": "deepseek",
+                                     "category": "ai", "label": "提供商"})
     p, _, sc = admin.delete("/system/config/llm_provider")
     check("★ 关键配置（llm_*）不可删除",
           p.get("success") is not True and "关键配置" in str(p.get("message") or ""),
           f"{sc} {p.get('message', '')[:40]}")
+    # smtp_ 前缀的保护：库中可能没有 smtp_password 这一行，先建出来再删，
+    # 否则 404「配置项不存在」也满足 `success is not True`，属假通过。
+    keys2 = {c.get("key") for c in ((data_of(admin.get("/system/config")[0]) or {}).get("editable") or [])}
+    if "smtp_password" not in keys2:
+        admin.put("/system/config", {"key": "smtp_password", "value": "",
+                                     "category": "mail", "label": "SMTP 密码"})
     p, _, sc = admin.delete("/system/config/smtp_password")
     check("★ 关键配置（smtp_*）不可删除",
           p.get("success") is not True and "关键配置" in str(p.get("message") or ""),
           f"{sc} {p.get('message', '')[:40]}")
-
-    # 还原：清空假密钥，避免影响后续阶段
-    admin.put("/system/ai-config", {"llm_api_key": ""})
 
     # 非关键配置可正常增删
     p, _, _ = admin.put("/system/config", {"key": f"tmp_cfg_{sfx}", "value": "1",

@@ -1,6 +1,7 @@
 """附件管理接口：上传、预览、下载、删除。"""
 import hashlib
 import os
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -18,8 +19,70 @@ from app.utils.common import PageParams, dictify, ok, utcnow
 
 router = APIRouter(prefix="/attachments", tags=["附件管理"])
 
+# 匿名上传限流桶：{ip: [时间戳]}，仅用于注册证明材料，进程内即可
+_PUBLIC_UPLOAD_HITS: Dict[str, List] = {}
+_PUBLIC_UPLOAD_LOCK = threading.Lock()
+
 PREVIEW_TYPES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"}
 OFFICE_TYPES = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+
+
+@router.post("/public-upload", summary="注册证明材料上传（匿名，仅图片）")
+async def public_upload(
+    file: UploadFile = File(...), db: Session = Depends(get_db),
+    request: Request = None,
+):
+    """注册页在**未登录**状态上传证明材料。
+
+    原先注册页复用 /attachments/upload（需登录）→ 401，证明材料永远传不上去。
+    此处做严格收敛，避免变成公开图床：
+      - 仅允许图片类型（jpg/jpeg/png/webp/gif），不接受 pdf/office
+      - 单文件上限 min(MAX_UPLOAD_SIZE, 5MB)
+      - uploader_id 留空、is_temp=True（由定时任务清理）
+      - 同一 IP 10 分钟内最多 10 次
+    """
+    ip = get_client_ip(request) if request is not None else "unknown"
+    now = utcnow()
+    with _PUBLIC_UPLOAD_LOCK:
+        bucket = _PUBLIC_UPLOAD_HITS.setdefault(ip, [])
+        bucket[:] = [t for t in bucket if (now - t).total_seconds() < 600]
+        if len(bucket) >= 10:
+            raise BusinessException("上传过于频繁，请 10 分钟后再试")
+        bucket.append(now)
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        raise BusinessException("证明材料仅支持 jpg/png/webp/gif 图片")
+
+    content = await file.read()
+    max_bytes = min(settings.MAX_UPLOAD_SIZE, 5) * 1024 * 1024
+    if len(content) > max_bytes:
+        raise BusinessException(f"文件大小超过限制（{max_bytes // 1024 // 1024}MB）")
+    if not content:
+        raise BusinessException("文件为空")
+
+    digest = hashlib.md5(content).hexdigest()[:12]
+    stored_name = f"{uuid.uuid4().hex}_{digest}{ext}"
+    day_dir = utcnow().strftime("%Y%m%d")
+    dir_path = os.path.join(settings.UPLOAD_DIR, day_dir)
+    os.makedirs(dir_path, exist_ok=True)
+    full_path = os.path.abspath(os.path.join(dir_path, stored_name))
+    if not full_path.startswith(os.path.abspath(settings.UPLOAD_DIR)):
+        raise BusinessException("非法文件路径")
+    with open(full_path, "wb") as f:
+        f.write(content)
+
+    att = Attachment(
+        filename=file.filename, stored_name=stored_name, file_path=full_path,
+        file_size=len(content), file_type=file.content_type,
+        category="register", biz_type="register", biz_id=None,
+        uploader_id=None, is_temp=True,
+    )
+    db.add(att)
+    db.commit()
+    db.refresh(att)
+    return ok({"id": att.id, "filename": att.filename, "size": att.file_size},
+              message="上传成功")
 
 
 @router.post("/upload", summary="上传附件")
@@ -114,6 +177,7 @@ async def batch_upload(
 def list_attachments(
     params: PageParams = Depends(), category: Optional[str] = None,
     biz_type: Optional[str] = None, biz_id: Optional[int] = None,
+    keyword: Optional[str] = None, is_temp: Optional[bool] = None,
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
     stmt = select(Attachment)
@@ -123,6 +187,13 @@ def list_attachments(
         stmt = stmt.where(Attachment.biz_type == biz_type)
     if biz_id:
         stmt = stmt.where(Attachment.biz_id == biz_id)
+    # 页面上的「文件名」搜索框与「状态」下拉此前没有对应入参：
+    # FastAPI 会静默忽略未声明的 query 参数，于是前端无论填什么都返回全量，
+    # 表现为「搜索框是摆设」。这两个条件必须与前端 query 字段同名。
+    if keyword:
+        stmt = stmt.where(Attachment.filename.contains(keyword))
+    if is_temp is not None:
+        stmt = stmt.where(Attachment.is_temp.is_(is_temp))
     if "sys_admin" not in user.role_codes:
         stmt = stmt.where(Attachment.uploader_id == user.id)
 

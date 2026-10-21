@@ -10,10 +10,10 @@
       <el-tab-pane label="已完成" name="done" />
     </el-tabs>
 
-    <el-empty v-if="!loading && !list.length" description="暂无考试任务" />
+    <el-empty v-if="!loading && !shown.length" description="暂无考试任务" />
 
     <el-row :gutter="16">
-      <el-col :span="12" v-for="t in list" :key="t.id">
+      <el-col :span="12" v-for="t in shown" :key="t.id">
         <el-card shadow="never" class="task-card">
           <div class="task-head">
             <div>
@@ -44,8 +44,10 @@
             </template>
             <template v-else>
               <span class="score-badge">
-                得分 <b>{{ t.score ?? '-' }}</b> / {{ t.total_score }}
-              </span>
+                <!-- 得分挂在 my_submission 上，任务对象本身没有 score 字段。
+                     只读 t.score 会让「已完成」永远显示「得分 -」。 -->
+                得分 <b>{{ t.my_submission?.score ?? t.score ?? '-' }}</b>
+                / {{ t.my_submission?.total_score ?? t.total_score }}</span>
               <el-button link type="primary" @click="viewResult(t)">查看解析</el-button>
               <el-button v-if="t.allow_retake" link type="warning" @click="goExam(t)">重考</el-button>
             </template>
@@ -57,7 +59,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh, EditPen } from '@element-plus/icons-vue'
@@ -104,6 +106,14 @@ async function load() {
     loading.value = false
   }
 }
+
+// 两个 tab 必须按「是否已交卷」真正分流：后端 status=published 只是任务状态，
+// 已交卷的任务同样满足。仅靠接口过滤会让「待完成」里堆满已做完的考试，
+// 点「开始答题」才被告知不能重复作答；「已完成」里也会混入没做过的任务。
+const shown = computed(() => list.value.filter((t) => {
+  const done = !!(t.my_submission && t.my_submission.submit_time)
+  return tab.value === 'done' ? done : !done
+}))
 
 function onTabChange() { load() }
 

@@ -110,12 +110,19 @@ def _cast(value: Optional[str], value_type: str) -> Any:
 
 
 def get_ai_config(db: Session) -> Dict[str, Any]:
-    """读取当前 AI 配置：sys_config 表 > settings 环境变量。"""
+    """读取当前 AI 配置：sys_config 表 > settings 环境变量。
+
+    注意：max_tokens 施加硬上限。降低默认值（4096→2048）后，**已有库里的旧值
+    会继续覆盖新默认值**，优化静默失效（实测 DB 内残留 4096，UI 也显示 4096）。
+    因此这里对超出 settings 上限的值做收敛，并在 meta 标记 capped。
+    """
     rows = {
         r.key: r for r in db.scalars(
             select(SysConfig).where(SysConfig.key.like(f"{_PREFIX}%"))
         ).all()
     }
+
+    caps = {"llm_max_tokens": int(settings.LLM_MAX_TOKENS or 0)}
 
     config = {}
     meta = {}
@@ -125,6 +132,11 @@ def get_ai_config(db: Session) -> Dict[str, Any]:
             val = _cast(row.value, row.value_type or spec["type"])
         else:
             val = _cast(spec["default"], spec["type"])
+        capped = False
+        cap = caps.get(key)
+        if cap and isinstance(val, int) and val > cap:
+            val = cap
+            capped = True
         # 密钥字段脱敏返回：管理员页面/浏览器网络面板不再出现完整凭据
         if "key" in key.lower() and val:
             sv = str(val)
@@ -139,6 +151,8 @@ def get_ai_config(db: Session) -> Dict[str, Any]:
             "category": spec["category"],
             "is_public": spec["is_public"],
             "has_db_value": row is not None,
+            "capped": capped,
+            "cap": cap if capped else None,
         }
 
     return {
@@ -152,8 +166,17 @@ def save_ai_config(db: Session, data: Dict[str, Any], admin_id: int) -> Dict[str
     """保存 AI 配置到 sys_config 表，并触发 LLM 客户端重载。"""
     updated = []
     for key, spec in _FIELDS.items():
-        # 接收字段名不区分大小写（前端传 llm_provider 或 LLM_PROVIDER 均可）
-        raw = data.get(key) or data.get(key.upper())
+        # 接收字段名不区分大小写（前端传 llm_provider 或 LLM_PROVIDER 均可）。
+        # 必须按「键是否存在」判断，不能用 `data.get(key) or data.get(key.upper())`：
+        # 空字符串是**合法的清空意图**，`or` 会把它当成「未传」而 `continue`，
+        # 结果是 API 无法清空密钥 —— 请求返回 success 且 updated 里还有这个 key，
+        # 管理员以为已清除，实际旧密钥仍生效（曾导致测试写入的假 Key 永久留在库里）。
+        if key in data:
+            raw = data[key]
+        elif key.upper() in data:
+            raw = data[key.upper()]
+        else:
+            continue
         if raw is None:
             continue
         # 转为字符串存储
@@ -194,12 +217,26 @@ def save_ai_config(db: Session, data: Dict[str, Any], admin_id: int) -> Dict[str
 
 
 def _reload_llm_client() -> None:
-    """清除 LLM 客户端缓存，使新配置在下次调用时生效。"""
+    """清除 LLM 客户端缓存，使新配置在下次调用时生效。
+
+    必须同时清除**熔断状态**：熔断是对「这份密钥无效」的判定，
+    管理员改了密钥后该判定立即失效，否则改对了也一直走规则引擎降级，
+    表现为「配置保存成功但 AI 永远不工作」。
+    """
     try:
-        from app.agents.llm import llm_client
-        llm_client._client = None
-        llm_client._fallback_reason = ""
-        logger.info("LLM 客户端已重载，等待下次调用时生效新配置")
+        from app.agents import llm as _llm_mod
+        # 模块里存在两个实例：模块级 llm_client 与 get_llm() 单例。
+        # base.py 的 Agent 走的是 llm_client，而部分调用走 get_llm()，
+        # 只清一个会出现「部分功能生效、部分仍用旧配置」的鬼现象。
+        targets = [_llm_mod.llm_client]
+        while_single = getattr(_llm_mod, "_llm_singleton", None)
+        if while_single is not None and while_single is not _llm_mod.llm_client:
+            targets.append(while_single)
+        for c in targets:
+            c._client = None
+            c._fallback_reason = ""
+            c._disabled_reason = ""
+        logger.info(f"LLM 客户端已重载（{len(targets)} 个实例，含熔断复位）")
     except Exception as exc:
         logger.warning(f"重载 LLM 客户端失败: {exc}")
 

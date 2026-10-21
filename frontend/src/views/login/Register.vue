@@ -17,7 +17,7 @@
         </el-form-item>
 
         <el-form-item label="密码" prop="password">
-          <el-input v-model="form.password" type="password" show-password placeholder="至少 6 位" />
+          <el-input v-model="form.password" type="password" show-password placeholder="至少 8 位，需含字母和数字" />
         </el-form-item>
 
         <el-form-item label="确认密码" prop="confirmPassword">
@@ -36,7 +36,7 @@
           <el-select v-model="form.class_id" placeholder="请选择班级" style="width:100%">
             <el-option
               v-for="c in classes" :key="c.id"
-              :label="`${c.grade_name || ''} ${c.name}`" :value="c.id"
+              :label="classLabel(c)" :value="c.id"
             />
           </el-select>
         </el-form-item>
@@ -76,6 +76,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { authApi, attachmentApi, eduApi } from '@/api'
+import { validatePassword } from '@/utils/password'
 
 const router = useRouter()
 const formRef = ref()
@@ -97,7 +98,7 @@ const rules = {
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码至少 6 位', trigger: 'blur' }
+    { validator: validatePassword, trigger: 'blur' }
   ],
   confirmPassword: [
     { required: true, message: '请再次输入密码', trigger: 'blur' },
@@ -113,6 +114,15 @@ const rules = {
   }]
 }
 
+// 班级名多已自带年级前缀（如「一年级(1)班」），直接拼 grade_name 会重复成
+// 「一年级 一年级(1)班」。同名判断后按需补前缀。
+function classLabel(c) {
+  const name = c.name || ''
+  const grade = c.grade_name || ''
+  if (!grade || name.startsWith(grade)) return name
+  return `${grade} ${name}`
+}
+
 function onIdentityChange() {
   form.value.class_id = null
 }
@@ -122,11 +132,12 @@ async function uploadFile({ file }) {
   fd.append('file', file)
   fd.append('category', 'registration')
   try {
-    const res = await attachmentApi.upload(fd)
+    // 注册页未登录，必须用匿名上传接口（/attachments/upload 需登录会 401）
+    const res = await attachmentApi.publicUpload(fd)
     attachmentIds.value.push(res.data.id)
     fileList.value.push({ name: file.name, url: res.data.url, id: res.data.id })
     ElMessage.success('上传成功')
-  } catch (e) { /* 错误已提示 */ }
+  } catch (e) { /* 错误已由拦截器提示 */ }
 }
 
 function removeFile(file) {
@@ -134,7 +145,9 @@ function removeFile(file) {
 }
 
 async function handleRegister() {
-  await formRef.value.validate()
+  // validate() 校验失败时 reject，未 catch 会冒泡到 app.config.errorHandler
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
   loading.value = true
   try {
     await authApi.register({
@@ -149,8 +162,15 @@ async function handleRegister() {
 }
 
 onMounted(async () => {
-  const res = await eduApi.classes()
-  classes.value = res.data
+  // 注册页必须能在**未登录**状态完整渲染：这里只用匿名接口，且失败也要降级，
+  // 绝不能因为班级列表拉取失败把整页打回登录页。
+  try {
+    const res = await eduApi.classesPublic()
+    classes.value = res.data || []
+  } catch (e) {
+    classes.value = []
+    ElMessage.warning('班级列表暂时无法加载，可稍后重试或先不选班级')
+  }
 })
 </script>
 

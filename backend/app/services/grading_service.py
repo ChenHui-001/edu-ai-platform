@@ -378,17 +378,24 @@ def create_practice_paper(
         db.scalars(stmt.order_by(func.random()).limit(count * 3)).all()
     )
     if len(questions) < count:
-        # 放宽条件
+        # 放宽条件：只放宽「题型 / 难度 / 知识点」，**绝不放宽年级**。
+        # 原实现这里把 grade_id 一起丢掉了，只按 subject_id 查：
+        # 由于 Subject 的唯一键是 (grade_id, name)，subject_id 本身已经绑定了
+        # 某个具体年级，丢掉 grade_id 就等于允许「七年级学生拿到一年级语文题」。
+        # 实测 stu731（七年级）请求语文时，严格条件 0 条 → 降级后抽到
+        # grade_id=1 的 5 道题，卷面却标着七年级，学生完全做不了。
+        relaxed = select(Question).where(
+            Question.subject_id == subject_id,
+            Question.status == "published",
+        )
+        if grade_id:
+            relaxed = relaxed.where(Question.grade_id == grade_id)
         questions = list(
-            db.scalars(
-                select(Question).where(
-                    Question.subject_id == subject_id, Question.status == "published"
-                ).limit(count * 2)
-            ).all()
+            db.scalars(relaxed.limit(count * 2)).all()
         )
     questions = questions[:count]
     if not questions:
-        raise BusinessException("该学科暂无题目，请先向老师申请添加")
+        raise BusinessException("该学科在该年级暂无题目，请先向老师申请添加")
 
     paper = Paper(
         name=f"随机练习-{utcnow():%m%d%H%M}",

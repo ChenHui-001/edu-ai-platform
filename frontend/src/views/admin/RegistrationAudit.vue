@@ -11,8 +11,18 @@
     </div>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="list" border stripe>
-        <el-table-column prop="username" label="用户名" width="120" />
+      <div class="toolbar">
+        <el-input v-model="keyword" placeholder="搜索账号/姓名" clearable style="width:220px"
+                  @keyup.enter="load" @clear="load">
+          <template #append>
+            <el-button @click="load">搜索</el-button>
+          </template>
+        </el-input>
+        <el-button @click="load">刷新</el-button>
+        <span class="tip">共 {{ total }} 条</span>
+      </div>
+      <el-table v-loading="loading" :data="list" border stripe empty-text="暂无待审批申请">
+        <el-table-column prop="username" label="账号" width="120" />
         <el-table-column prop="real_name" label="姓名" width="100" />
         <el-table-column label="申请身份" width="100">
           <template #default="{ row }">
@@ -75,7 +85,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { authApi } from '@/api'
 
 const list = ref([])
@@ -83,12 +93,15 @@ const total = ref(0)
 const loading = ref(false)
 const dlg = ref(false)
 const current = ref(null)
+const keyword = ref('')
 const query = reactive({ page: 1, page_size: 20, status: 'pending' })
 
 async function load() {
   loading.value = true
   try {
-    const res = await authApi.registrations(query)
+    const params = { ...query }
+    if (keyword.value.trim()) params.keyword = keyword.value.trim()
+    const res = await authApi.registrations(params)
     const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
@@ -103,15 +116,31 @@ function detail(row) {
 }
 
 async function audit(row, action) {
-  const remark = await new Promise(resolve => {
-    let v = ''
-    // 简单提示：直接提交，可在详情里补录意见
-    resolve(v)
-  })
-  await authApi.auditRegistration({ id: row.id, action, remark })
-  ElMessage.success(action === 'approved' ? '已通过，账号已创建' : '已拒绝')
-  dlg.value = false
-  load()
+  // 契约对齐后端 AuditIn{registration_id, approved, reason}：
+  // 原实现发 {id, action, remark} → 必然 422，审批功能整体不可用。
+  const approved = action === 'approved'
+  let reason = ''
+  if (!approved) {
+    try {
+      const { value } = await ElMessageBox.prompt('请填写拒绝理由', '拒绝申请', {
+        inputPlaceholder: '必填，将展示给申请人',
+        inputValidator: (v) => (v && v.trim().length >= 2) || '请填写拒绝理由（至少 2 个字）',
+        confirmButtonText: '确认拒绝',
+        cancelButtonText: '取消',
+      })
+      reason = (value || '').trim()
+    } catch {
+      return  // 用户取消
+    }
+  }
+  try {
+    await authApi.auditRegistration({
+      registration_id: row.id, approved, reason: reason || null,
+    })
+    ElMessage.success(approved ? '已通过，账号已创建' : '已拒绝')
+    dlg.value = false
+    load()
+  } catch { /* 错误已由拦截器提示 */ }
 }
 
 onMounted(load)

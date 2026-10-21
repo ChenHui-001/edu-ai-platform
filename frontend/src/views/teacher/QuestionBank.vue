@@ -76,7 +76,7 @@
         <el-table-column type="expand">
           <template #default="{ row }">
             <div class="expand-box">
-              <p><b>题干：</b><span v-html="row.stem"></span></p>
+              <p><b>题干：</b><span v-html="safeStem(row.stem)"></span></p>
               <p v-if="parseJson(row.options)?.length"><b>选项：</b>
                 <span v-for="o in parseJson(row.options)" :key="o.key">{{ o.key }}. {{ o.text }}　</span>
               </p>
@@ -369,6 +369,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Plus, Refresh, Search, Upload, UploadFilled, Delete, MagicStick } from '@element-plus/icons-vue'
 import { questionApi, eduApi, agentApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import { sanitizeHtml } from '@/utils/sanitize'
+
+// 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
+// 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
+function safeStem(s) { return sanitizeHtml(s) }
+
 
 const { can } = useUserStore()
 

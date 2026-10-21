@@ -49,7 +49,7 @@
             <span class="q-score">{{ it.score }} 分</span>
             <el-tag v-if="answered.includes(it.paper_item_id)" size="small" type="success" effect="plain">已答</el-tag>
           </div>
-          <div class="q-stem" v-html="it.stem"></div>
+          <div class="q-stem" v-html="safeStem(it.stem)"></div>
 
           <!-- 选择题 -->
           <el-radio-group v-if="['single','judge'].includes(it.type)"
@@ -116,7 +116,7 @@
               {{ isRight(it) ? '正确' : '错误' }}
             </el-tag>
           </div>
-          <div class="q-stem" v-html="it.stem"></div>
+          <div class="q-stem" v-html="safeStem(it.stem)"></div>
           <div class="r-answers">
             <div><b>你的答案：</b>{{ myAnswer(it) || '未作答' }}</div>
             <div v-if="it.answer" style="color:#67c23a"><b>正确答案：</b>{{ fmt(it.answer) }}</div>
@@ -140,7 +140,7 @@
                 style="margin-top:10px" :model-value="`检测到答题期间切换页面 ${switchCount} 次，已记录`" />
       <template #footer>
         <el-button @click="submitVisible = false">继续答题</el-button>
-        <el-button type="primary" @click="doSubmit">确认交卷</el-button>
+        <el-button type="primary" @click="doSubmit()">确认交卷</el-button>
       </template>
     </el-dialog>
   </div>
@@ -152,6 +152,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, CircleCheckFilled, CircleCloseFilled, DocumentChecked, Timer } from '@element-plus/icons-vue'
 import { taskApi } from '@/api'
+import { sanitizeHtml } from '@/utils/sanitize'
+
+// 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
+// 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
+function safeStem(s) { return sanitizeHtml(s) }
+
 
 const route = useRoute()
 const router = useRouter()
@@ -283,6 +289,16 @@ async function load() {
     const res = await taskApi.taskPaper(taskId)
     task.value = res.data.task
     items.value = res.data.items
+
+    // 已交卷且次数已用完：直接回列表，避免学生白做一场
+    // （后端交卷时才 400「最多允许作答 N 次，已用完次数」）
+    const sub = task.value.my_submission
+    const maxAttempt = task.value.max_attempt || 1
+    if (sub && sub.submit_time && (sub.attempt || 1) >= maxAttempt) {
+      ElMessage.info(`该考试已交卷（得分 ${sub.score ?? '-'}），不能重复作答`)
+      router.replace('/student/exams')
+      return
+    }
 
     if (loadDraft()) ElMessage.success('已恢复未提交的草稿答案')
 

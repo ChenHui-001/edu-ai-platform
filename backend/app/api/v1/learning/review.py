@@ -18,7 +18,7 @@ from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import (
     KnowledgeMastery, KnowledgePoint, Paper, Question, ReviewPlan, Submission,
-    Task, TaskAssignment, User, WrongQuestion,
+    Subject, Task, TaskAssignment, User, WrongQuestion,
 )
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, load_json, ok, today_str, utcnow
@@ -31,21 +31,34 @@ def review_plans(
     db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     stmt = select(ReviewPlan).where(ReviewPlan.student_id == user.id)
+    today = today_str()
     if scheduled_date:
         stmt = stmt.where(ReviewPlan.scheduled_date == scheduled_date)
     if is_completed is not None:
         stmt = stmt.where(ReviewPlan.is_completed.is_(is_completed))
     rows = db.scalars(stmt.order_by(ReviewPlan.scheduled_date).limit(200)).all()
-    # 统计基于全量（不带 limit），否则计划多于 200 条时 pending_count 恒为
-    # 截断集内的数量，页面永远提示「还有未完成复习」但不显示是哪些。
+
+    # 统计必须基于全量（不带 limit），否则计划多于 200 条时 pending_count 恒为
+    # 截断集内的数量。
+    #
+    # 注意不能写成 select(count()).select_from(stmt.subquery()).where(...)：
+    # 子查询之上再引用 ReviewPlan 列会让 SQLAlchemy 把 edu_review_plan
+    # 再拼进 FROM，形成笛卡尔积。实测学生只有 7 条今日计划 / 91 条未完成，
+    # 接口返回 588 / 7644（84 × 7、84 × 91），页面因此显示数千条待复习。
+    # 统计条件单独构造，直接 count(ReviewPlan) 即可。
+    base_filters = [ReviewPlan.student_id == user.id]
+    if scheduled_date:
+        base_filters.append(ReviewPlan.scheduled_date == scheduled_date)
+    if is_completed is not None:
+        base_filters.append(ReviewPlan.is_completed.is_(is_completed))
+
     pending_total = db.scalar(
-        select(func.count()).select_from(stmt.subquery()).where(
-            ReviewPlan.is_completed.is_(False))
+        select(func.count()).select_from(ReviewPlan).where(
+            *base_filters, ReviewPlan.is_completed.is_(False))
     ) or 0
-    today = today_str()
     today_total = db.scalar(
-        select(func.count()).select_from(stmt.subquery()).where(
-            ReviewPlan.is_completed.is_(False),
+        select(func.count()).select_from(ReviewPlan).where(
+            *base_filters, ReviewPlan.is_completed.is_(False),
             ReviewPlan.scheduled_date == today)
     ) or 0
 
@@ -194,9 +207,24 @@ def create_practice(
     grade_id = int(data.get("grade_id") or user.grade_id or 0) or None
     if not grade_id:
         raise BusinessException("无法确定年级，请先完善个人信息")
+
+    # 学科与年级必须配套。Subject 的唯一约束是 (grade_id, name)，「语文」在
+    # 1-9 年级各有一条，前端下拉若传了去重后的代表 id（指向最低年级），
+    # 就会拼出「subject=一年级语文 + grade=七年级」这种组合 —— 题目被
+    # grade_id 过滤成 0 条，或者更糟：级联前后端不一致时把一年级题发给七年级学生
+    # （实测 stu731 拿到的是 grade_id=1 的题，卷面却标着七年级）。
+    # 这里按学科名回查目标年级的那条，彻底消除跨年级串题。
+    subject_id = int(subject_id)
+    subj = db.get(Subject, subject_id)
+    if subj and grade_id and subj.grade_id != grade_id:
+        same = db.scalar(select(Subject).where(
+            Subject.name == subj.name, Subject.grade_id == grade_id))
+        if same:
+            subject_id = same.id
+
     paper = grading_service.create_practice_paper(
         db, creator_id=user.id,
-        grade_id=grade_id, subject_id=int(subject_id),
+        grade_id=grade_id, subject_id=subject_id,
         count=count,
         question_types=data.get("question_types"),
         difficulty=data.get("difficulty"),

@@ -83,14 +83,23 @@ def student_overview(db: Session = Depends(get_db), user: User = Depends(get_cur
 
 @router.get("/student/score-trend", summary="成绩趋势")
 def score_trend(
-    limit: int = Query(20, le=100), db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    subject_id: Optional[int] = None, limit: int = Query(20, le=100),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    subs = db.scalars(
-        select(Submission).where(
-            Submission.student_id == user.id, Submission.score.isnot(None)
-        ).order_by(Submission.id).limit(limit)
-    ).all()
+    """成绩趋势。
+
+    此前没有声明 `subject_id`，而个人报表页把它当作筛选条件传了过来 ——
+    FastAPI 对未声明的 query 参数不报错，直接丢弃，于是「切学科后趋势图不变」。
+    过滤条件落在 Task 上（学科归属在任务/试卷，不在答卷）。
+    """
+    stmt = select(Submission).where(
+        Submission.student_id == user.id, Submission.score.isnot(None)
+    )
+    if subject_id:
+        stmt = stmt.where(Submission.task_id.in_(
+            select(Task.id).where(Task.subject_id == subject_id)
+        ))
+    subs = db.scalars(stmt.order_by(Submission.id).limit(limit)).all()
     items = []
     for s in subs:
         task = db.get(Task, s.task_id)
@@ -132,16 +141,20 @@ def wrong_analysis(
     if subject_id:
         base = base.where(WrongQuestion.subject_id == subject_id)
 
+    # 以下三块统计必须复用 base 的过滤条件。
+    # 原实现只对 total 用了 base，choropleth 三块仍按 student_id 全量统计 ——
+    # 页面切学科后「错题总数」变成了 0，饼图/排行/趋势却纹丝不动，数据自相矛盾。
+    scoped = base.where().subquery()
     reason_dist = db.execute(
         select(WrongQuestion.error_reason, func.count()).where(
-            WrongQuestion.student_id == user.id
+            WrongQuestion.id.in_(select(scoped.c.id))
         ).group_by(WrongQuestion.error_reason)
     ).all()
 
     kp_rank = db.execute(
         select(KnowledgePoint.name, func.count())
         .join(WrongQuestion, WrongQuestion.knowledge_point_id == KnowledgePoint.id)
-        .where(WrongQuestion.student_id == user.id)
+        .where(WrongQuestion.id.in_(select(scoped.c.id)))
         .group_by(KnowledgePoint.name)
         .order_by(desc(func.count()))
         .limit(10)
@@ -149,9 +162,10 @@ def wrong_analysis(
 
     since = (utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
     trend = db.execute(
-        select(WrongQuestion.last_wrong_at, func.count())
-        .where(WrongQuestion.student_id == user.id, WrongQuestion.last_wrong_at >= since)
-        .group_by(func.date(WrongQuestion.last_wrong_at))
+        select(WrongQuestion.last_wrong_at, func.count()).where(
+            WrongQuestion.id.in_(select(scoped.c.id)),
+            WrongQuestion.last_wrong_at >= since,
+        ).group_by(func.date(WrongQuestion.last_wrong_at))
         .order_by(func.date(WrongQuestion.last_wrong_at))
     ).all()
 

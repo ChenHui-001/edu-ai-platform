@@ -89,7 +89,8 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh, Aim } from '@element-plus/icons-vue'
-import { learningApi, eduApi } from '@/api'
+import { learningApi } from '@/api'
+import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
 const router = useRouter()
 const loading = ref(false)
@@ -111,7 +112,9 @@ function masteryColor(v) {
 async function load() {
   loading.value = true
   try {
-    const res = await learningApi.learningPath(subjectFilter.value ? { subject_id: subjectFilter.value } : {})
+    // 去重代表 id 指向最低年级，直接查会得到空的学习路径
+    const sid = resolveSubjectId(subjects.value, subjectFilter.value, currentGradeId())
+    const res = await learningApi.learningPath(sid ? { subject_id: sid } : {})
     data.value = res.data
   } finally {
     loading.value = false
@@ -119,8 +122,7 @@ async function load() {
 }
 
 async function loadSubjects() {
-  const res = await eduApi.subjects()
-  subjects.value = res.data || []
+  subjects.value = await fetchSubjects({ gradeId: currentGradeId() })
 }
 
 function practice(rec) {

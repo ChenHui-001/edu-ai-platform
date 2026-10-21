@@ -368,11 +368,21 @@ def run():
                             params={"identity": "student", "class_id": import_class, "page_size": 100})
         items = p.get("data") if isinstance(p.get("data"), list) else (p.get("data") or {}).get("items", [])
         sids = [u["id"] for u in items if u.get("username", "").startswith("imp")]
+        removed = 0
         for sid in sids:
-            admin.delete(f"/edu/classes/{import_class}/students/{sid}")
+            _p, _, _ = admin.delete(f"/edu/classes/{import_class}/students/{sid}")
+            removed += bool(_p.get("success"))
+        # ⚠️ 这里**不能**只断言 `len(sids) >= 1`（「有学生待移出」）。
+        # 那种写法对「移出操作全部失败」同样成立 —— 曾经就因为移出静默失败、
+        # 班级删不掉，在库里留下 `[E2E-RS-] 导入测试班` 和 2 个 imp 学生，
+        # 而用例照样 PASS。必须**回读班级花名册**确认真的空了。
+        p, _, _ = admin.get("/system/users",
+                            params={"identity": "student", "class_id": import_class, "page_size": 100})
+        left = p.get("data") if isinstance(p.get("data"), list) else (p.get("data") or {}).get("items", [])
+        left_imp = [u.get("username") for u in left if u.get("username", "").startswith("imp")]
         check("管理员可批量移出学生",
-              len(sids) >= 1,
-              f"清掉 {len(sids)} 个测试学生")
+              bool(sids) and removed == len(sids) and not left_imp,
+              f"待移出 {len(sids)} 个，成功 {removed} 个，班级残留 {left_imp}")
 
         # 删测试班
         p, _, _ = admin.delete(f"/edu/classes/{import_class}")
@@ -548,8 +558,26 @@ def run():
                   "无目标年级可测")
 
     # ============================================================
+    # 收尾：兜底清扫 + 断言干净
+    # ============================================================
+    # 各阶段的「阶段结束清理」断言有时会因为前置步骤跳过而整段不执行（`if import_class:`
+    # 之类），一旦工厂返回空，整块清理被静默跳过 —— 残留就留到下一轮，把
+    # `test_admin.py` 的年级/班级计数断言顶红。所以收尾统一再扫一遍前缀。
     if 'gid' in dir() and gid:
         admin.delete(f"/edu/grades/{gid}")
+    # 清扫后必须**回读**确认，不能用 `check(..., True, ...)` 恒定通过 ——
+    # 那样清扫失败也绿，等于没有兜底。
+    try:
+        swept = _cleanup_e2e_leftovers(admin)
+        _gp, _, _ = admin.get("/edu/grades")
+        _cp, _, _ = admin.get("/edu/classes")
+        _left = [x["name"] for x in (rows_of(_gp) + rows_of(_cp))
+                 if str(x.get("name", "")).startswith("[E2E-RS-")]
+        check("★ 收尾清扫：无 [E2E-RS-] 残留",
+              not _left,
+              f"清扫 {swept} 条，残留={_left}" if _left else f"清扫 {swept} 条，回读无残留")
+    except Exception as exc:  # noqa: BLE001
+        check("★ 收尾清扫：无 [E2E-RS-] 残留", False, f"清扫异常：{exc}")
 
     R.env("教学资源", "见细分阶段")
     print(f"\n[完成] 教学资源专项：管理员={admin.user.get('real_name')}")

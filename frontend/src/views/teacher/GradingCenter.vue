@@ -209,8 +209,14 @@ const TYPE_LABEL = {
   single: '单选题', multiple: '多选题', judge: '判断题', blank: '填空题',
   short: '简答题', calc: '计算题', material: '材料分析题', composition: '作文题',
 }
-// 可发布成绩的状态（后端批改后置为 fully_graded；历史数据可能是 graded）
-const PUBLISHABLE = new Set(['graded', 'fully_graded'])
+// 可发布成绩的状态。
+// 枚举真实取值见 backend/app/models/task.py::GradeStatus：
+//   not_graded / auto_graded / fully_graded / published
+// 此前这里写的是 'graded' —— 该值**在枚举里并不存在**，纯客观题自动判分后
+// 状态停在 auto_graded（页面标「待人工确认」），于是「发布成绩」按钮永远
+// disabled：教师把题改完、保存成功，按钮仍是灰的，成绩永远发不出去。
+// 保留 'graded' 只为兼容历史脏数据。
+const PUBLISHABLE = new Set(['auto_graded', 'graded', 'fully_graded'])
 
 const list = ref([])
 const detail = ref(null)
@@ -268,8 +274,15 @@ const totalScore = computed(() => {
   return Number(s.toFixed(1))
 })
 
-const canPublish = computed(() =>
-  !!detail.value && PUBLISHABLE.has(detail.value.status) && detail.value.score != null)
+// 详情接口返回的 item 里没有 needs_manual 字段（那是队列接口才有的），
+// 这里按题型 + 是否已给分判断，与后端 publish 的复核逻辑保持一致。
+const SUBJECTIVE = new Set(['short', 'calc', 'material', 'composition'])
+const canPublish = computed(() => {
+  const d = detail.value
+  if (!d || d.score == null || !PUBLISHABLE.has(d.status)) return false
+  if (d.status === 'published') return false
+  return !(d.items || []).some(it => SUBJECTIVE.has(it.type) && it.score == null)
+})
 
 function statusText(s) {
   return {

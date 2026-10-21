@@ -91,7 +91,7 @@
                      size="small" circle @click="toggleFavorite(q)" />
         </div>
 
-        <p class="stem" v-html="q.stem"></p>
+        <p class="stem" v-html="safeStem(q.stem)"></p>
 
         <!-- 单选 / 判断 -->
         <el-radio-group v-if="q.type === 'single' || q.type === 'judge'"
@@ -182,7 +182,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Refresh, Clock, Close, Star, StarFilled } from '@element-plus/icons-vue'
 import TYPES, { questionTypeLabel } from '@/constants/question'
 import { taskApi, learningApi, eduApi } from '@/api'
+import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 import PomodoroTimer from '@/components/PomodoroTimer.vue'
+import { sanitizeHtml } from '@/utils/sanitize'
+
+// 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
+// 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
+function safeStem(s) { return sanitizeHtml(s) }
+
 
 const route = useRoute()
 const router = useRouter()
@@ -255,14 +262,21 @@ function isCorrect(q) {
 
 async function onSubjectChange() {
   if (!form.subject_id) { kps.value = []; return }
-  const res = await eduApi.knowledgeList({ subject_id: form.subject_id, page_size: 200 })
+  // 知识点按学科+年级配套取，否则查的是最低年级的知识点，下拉为空
+  const sid = resolveSubjectId(subjects.value, form.subject_id, form.grade_id || currentGradeId())
+  const res = await eduApi.knowledgeList({ subject_id: sid, page_size: 200 })
   kps.value = res.data?.items || res.data || []
 }
 
 async function loadSubjects() {
-  const [s, g] = await Promise.all([eduApi.subjects(), eduApi.grades()])
-  subjects.value = s.data || []
+  // 只列本年级学科（全量会有 7 个同名「数学」），并把年级默认对齐学生年级。
+  // 后端 create_practice 会按 subject_id + grade_id 双重过滤抽题，
+  // 传去重代表 id（指向一年级）会让七年级学生抽到一年级题。
+  const gid = currentGradeId()
+  const [s, g] = await Promise.all([fetchSubjects({ gradeId: gid }), eduApi.grades()])
+  subjects.value = s
   grades.value = g.data || []
+  if (!form.grade_id && gid) form.grade_id = gid
 }
 
 function resetForm() {
@@ -277,7 +291,12 @@ async function createPractice() {
   if (!form.subject_id) return ElMessage.warning('请选择学科')
   generating.value = true
   try {
-    const res = await taskApi.practice(form)
+    const gradeId = form.grade_id || currentGradeId()
+    const res = await taskApi.practice({
+      ...form,
+      grade_id: gradeId,
+      subject_id: resolveSubjectId(subjects.value, form.subject_id, gradeId)
+    })
     const { task_id } = res.data
     const p = await taskApi.practicePaper(task_id)
     paper.value = { ...p.data, task_id }

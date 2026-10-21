@@ -1,0 +1,114 @@
+[
+ {
+  "no": 1,
+  "module": "用户管理",
+  "title": "列表加载",
+  "steps": [
+   "管理员访问 /admin/users"
+  ],
+  "expected": "渲染用户表格并显示总数",
+  "actual": "渲染 20 行，共 66 条",
+  "verdict": "PASS",
+  "evidence": "[netfail] GET /api/v1/auth/captcha :: net::ERR_ABORTED ; [console.error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "shot": "shots/001_列表加载.png"
+ },
+ {
+  "no": 2,
+  "module": "用户管理",
+  "title": "搜索框检索已有账号",
+  "steps": [
+   "搜索框输入 teacher",
+   "回车"
+  ],
+  "expected": "列表收敛为匹配项",
+  "actual": "搜索「teacher」命中，行数 20→4",
+  "verdict": "PASS",
+  "evidence": "",
+  "shot": "shots/002_搜索框检索已有账号.png"
+ },
+ {
+  "no": 3,
+  "module": "用户管理",
+  "title": "搜索框检索不存在账号",
+  "steps": [
+   "搜索框输入 zzz_no_user_9999",
+   "回车"
+  ],
+  "expected": "列表为空并给出空态",
+  "actual": "无匹配返回 0 行，空态「暂无数据」",
+  "verdict": "PASS",
+  "evidence": "",
+  "shot": "shots/003_搜索框检索不存在账号.png"
+ },
+ {
+  "no": 4,
+  "module": "用户管理",
+  "title": "新增用户填弱口令 123456",
+  "steps": [
+   "点击新增用户",
+   "账号填 uipw163209",
+   "密码填 123456",
+   "提交"
+  ],
+  "expected": "被密码强度校验拦住（至少 8 位且含字母）",
+  "actual": "弱口令被拦：密码长度不能少于 8 位 | 页面出错：Request failed with status code 400",
+  "verdict": "PASS",
+  "evidence": "[HTTP 400] POST /api/v1/system/users ; [netfail] GET /src/views/Dashboard.vue?vue&type=style&index=0&scoped=7f773d42&lang.css :: net::ERR_ABORTED ; [netfail] GET /src/components/EChart.vue :: net::ERR_ABORTED ; [console.error] Failed to load resource: the server responded with a status of 400 (Bad Request) ; [console.error] [app error] AxiosError: Request failed with status code 400\n    at settle (http://localhost:5173/node_modules/.vite/deps/axios.js?v=4395236b:1799:12)\n    at XMLHttpRequest.onloadend (http://localhost:5173/node_modules/.vite/deps/axios.js?v=4395236b:2329:7) component event handler",
+  "shot": "shots/004_新增用户填弱口令_123456.png"
+ },
+ {
+  "no": 5,
+  "module": "用户管理",
+  "title": "重置用户密码",
+  "steps": [
+   "搜索 teacher1",
+   "点击重置密码",
+   "留空自动生成强密码并确认"
+  ],
+  "expected": "提示重置成功并返回新密码",
+  "actual": "重置成功：「密码已重置为：UKsxpz5927#（请转告用户，首次登录需修改）」",
+  "verdict": "PASS",
+  "evidence": "[netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED",
+  "shot": "shots/005_重置用户密码.png"
+ },
+ {
+  "no": 6,
+  "module": "角色权限",
+  "title": "角色列表加载",
+  "steps": [
+   "访问 /admin/roles"
+  ],
+  "expected": "渲染角色列表",
+  "actual": "角色列表渲染 5 行",
+  "verdict": "PASS",
+  "evidence": "[netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED",
+  "shot": "shots/006_角色列表加载.png"
+ },
+ {
+  "no": 7,
+  "module": "角色权限",
+  "title": "删除内置角色",
+  "steps": [
+   "定位「系统管理员」行",
+   "点击删除并确认"
+  ],
+  "expected": "拒绝删除并说明内置角色不可删",
+  "actual": "内置角色删除被拒且角色仍在：「内置角色不可删除，可选择停用 | 页面出错：Request failed with status code 400」",
+  "verdict": "PASS",
+  "evidence": "[HTTP 400] DELETE /api/v1/system/roles/1 ; [netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED ; [console.error] Failed to load resource: the server responded with a status of 400 (Bad Request) ; [console.error] [app error] AxiosError: Request failed with status code 400\n    at settle (http://localhost:5173/node_modules/.vite/deps/axios.js?v=4395236b:1799:12)\n    at XMLHttpRequest.onloadend (http://localhost:5173/node_modules/.vite/deps/axios.js?v=4395236b:2329:7) component event handler",
+  "shot": "shots/007_删除内置角色.png"
+ },
+ {
+  "no": 8,
+  "module": "系统配置",
+  "title": "系统配置页可访问",
+  "steps": [
+   "访问系统配置页"
+  ],
+  "expected": "页面正常渲染配置项",
+  "actual": "配置页可访问（http://localhost:5173/admin/settings），可见文本前 80 字：'九年义务教育学习管理\\n工作台\\n教学资源\\n题库试卷\\n教学管理\\n学情分析\\nAI 智能\\n系统管理\\n用户管理\\n角色权限\\n注册审批\\n日志审计\\n定时任务\\n附件管理\\n系统报表'",
+  "verdict": "PASS",
+  "evidence": "[netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED",
+  "shot": "shots/008_系统配置页可访问.png"
+ }
+]

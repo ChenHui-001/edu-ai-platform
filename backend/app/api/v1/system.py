@@ -17,6 +17,22 @@ from app.utils.common import PageParams, dictify, ok, utcnow
 
 router = APIRouter(prefix="/system", tags=["系统管理"])
 
+# 用户对象序列化时必须剔除的字段。
+# `dictify()` 走的是 ORM 全字段导出，因此凡是要把 User 回传给前端的地方
+# 都必须经过 `user_dict()`，否则 `password`（PBKDF2 哈希）会原样泄露给
+# admin / grade_admin。哈希不可逆，但拿到后可离线爆破，属无必要暴露。
+_USER_SECRET_FIELDS = ("password",)
+
+
+def user_dict(u: User, with_roles: bool = True) -> Dict[str, Any]:
+    """安全的用户序列化：剔除密码哈希等敏感字段。"""
+    d = dictify(u)
+    for f in _USER_SECRET_FIELDS:
+        d.pop(f, None)
+    if with_roles:
+        d["roles"] = u.role_codes
+    return d
+
 
 # ---------------------------------------------------------------- 用户
 @router.get("/users", summary="用户列表")
@@ -50,9 +66,7 @@ def list_users(
     ).all()
     items = []
     for u in rows:
-        d = dictify(u)
-        d["roles"] = u.role_codes
-        items.append(d)
+        items.append(user_dict(u))
     return ok({"items": items, "total": total, "page": params.page, "page_size": params.page_size})
 
 
@@ -104,7 +118,7 @@ def create_user(
         db.add(UserRole(user_id=user.id, role_id=role.id))
     db.commit()
     db.refresh(user)
-    return ok(dictify(user), message="用户创建成功")
+    return ok(user_dict(user), message="用户创建成功")
 
 
 @router.put("/users/{user_id}", summary="编辑用户")
@@ -144,7 +158,7 @@ def update_user(
         for role in roles_db:
             db.add(UserRole(user_id=user_id, role_id=role.id))
     db.commit()
-    return ok(dictify(user), message="用户信息已更新")
+    return ok(user_dict(user), message="用户信息已更新")
 
 
 @router.delete("/users/{user_id}", summary="删除用户")
@@ -449,12 +463,18 @@ def get_config(db: Session = Depends(get_db), _: User = Depends(get_current_admi
 
     # 可在线编辑项：来自 sys_config 表，由管理员通过 PUT /config 维护
     def _mask(k: str, v):
-        """密钥类配置脱敏：仅保留前缀与后 4 位，前端不再拿到可用凭据。"""
+        """密钥类配置脱敏：仅保留前缀与后 4 位，前端不再拿到可用凭据。
+
+        空值必须原样返回空串：此前 `len(sv) <= 8` 会把 "" 也渲染成 `****`，
+        管理员无法区分「已配置」和「已清空」（把密钥清空后界面仍显示有值）。
+        """
         if v is None:
             return None
+        sv = str(v)
+        if sv == "":
+            return ""
         low = k.lower()
         if any(t in low for t in ("api_key", "secret", "password", "token")):
-            sv = str(v)
             if len(sv) <= 8:
                 return "****"
             return f"{sv[:4]}****{sv[-4:]}"
@@ -469,15 +489,19 @@ def get_config(db: Session = Depends(get_db), _: User = Depends(get_current_admi
             "updated_at": dictify(c.updated_at),
         })
 
+    # 运行态项：LLM 三项必须走 sys_config 优先的取值路径，否则管理员在
+    # 「AI 配置」页改完 provider/model/key 后，这一页仍显示 .env 的旧值。
+    from app.agents.llm import _get_db_value as _cfg_val, is_available as _llm_available
+
     return ok({
-        # 运行态只读项（来自环境变量 / settings）
+        # 运行态只读项（sys_config 优先，回落 settings）
         "app_name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "debug": settings.DEBUG,
         "database": settings.DATABASE_URL.split("://")[0],
-        "llm_provider": settings.LLM_PROVIDER,
-        "llm_model": settings.LLM_MODEL,
-        "llm_enabled": bool(settings.LLM_API_KEY),
+        "llm_provider": _cfg_val("llm_provider", "string", settings.LLM_PROVIDER),
+        "llm_model": _cfg_val("llm_model", "string", settings.LLM_MODEL),
+        "llm_enabled": _llm_available(),
         "max_upload_size": settings.MAX_UPLOAD_SIZE,
         "scheduler_enabled": settings.SCHEDULER_ENABLED,
         "log_retention_days": settings.LOG_RETENTION_DAYS,

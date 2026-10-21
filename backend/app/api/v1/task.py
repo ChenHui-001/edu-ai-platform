@@ -441,6 +441,13 @@ def get_task_paper(
             Submission.submit_time.isnot(None),
         )
     ) is not None
+    # 已交卷状态回传给答题页：否则学生重新打开 /student/exam/{id} 会看到
+    # 一张全新的可作答试卷，做完一场才在交卷时被 400「次数已用完」打回。
+    my_sub = db.scalar(
+        select(Submission).where(
+            Submission.task_id == task_id, Submission.student_id == user.id,
+        ).order_by(Submission.attempt.desc()).limit(1)
+    )
     task_finished = bool(task.end_at and task.end_at < utcnow())
     reveal_answer = is_creator or (task.show_answer and (has_submitted or task_finished))
 
@@ -463,6 +470,15 @@ def get_task_paper(
             "total_score": task.total_score, "start_at": dictify(task.start_at),
             "end_at": dictify(task.end_at), "anti_cheat": task.anti_cheat,
             "allow_retake": task.allow_retake, "show_answer": task.show_answer,
+            "my_submission": None if my_sub is None else {
+                "id": my_sub.id,
+                "score": my_sub.score,
+                "total_score": task.total_score,
+                "status": my_sub.status,
+                "submit_time": dictify(my_sub.submit_time),
+                "attempt": my_sub.attempt,
+            },
+            "max_attempt": max(int(task.allow_retake or 1), 1),
         },
         "paper": {"id": paper.id, "name": paper.name, "total_score": paper.total_score},
         "items": items,

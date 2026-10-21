@@ -84,7 +84,14 @@ def run():
 
     p, _, _ = admin.get("/edu/grades")
     grades = rows_of(p)
-    check("年级列表", p.get("success") and len(grades) == 9, f"{len(grades)} 个年级")
+    # ⚠️ 不要断言 `len(grades) == 9`：9 是**种子数据**的年级数，而回归自己会通过
+    # 「教学资源专项」新建年级（`[E2E-RS-xxx] 年级`），一旦清理不彻底，下一轮就变 10 个。
+    # 这类「把种子数量写死」的断言在干净库上偶尔绿、在跑过几轮的库上必然红，属假失败。
+    # 改为校验语义：必须是 1~9 年级齐全（grade_num 1..9 全覆盖），允许有额外年级。
+    _nums = {g.get("grade_num") for g in grades}
+    check("年级列表",
+          p.get("success") and {1, 2, 3, 4, 5, 6, 7, 8, 9} <= _nums,
+          f"{len(grades)} 个年级，grade_num 覆盖 {sorted(n for n in _nums if n)}")
 
     p, _, _ = admin.get("/edu/subjects")
     subs = rows_of(p)
@@ -99,7 +106,14 @@ def run():
 
     p, _, _ = admin.get("/edu/classes")
     classes = rows_of(p)
-    check("班级列表", p.get("success") and len(classes) == 4, f"{len(classes)} 个班级")
+    # 同理不可写死 `== 4`：种子是 4 个班，但「建班申请审核流」用例会**真实创建**班级
+    # （通过后 grade=1 那个），资源专项还会建 `[E2E-RS-] 导入测试班`。
+    # 改为校验语义：种子 4 个班必须都在（按名称），且表里至少有它们。
+    _seed_classes = {"一年级(1)班", "一年级(2)班", "七年级(1)班", "七年级(2)班"}
+    _names = {c.get("name") for c in classes}
+    check("班级列表",
+          p.get("success") and _seed_classes <= _names,
+          f"{len(classes)} 个班级，种子班齐全={_seed_classes <= _names}")
 
     p, _, _ = admin.get("/edu/knowledge/list")
     kps = rows_of(p)
@@ -271,16 +285,40 @@ def run():
     # ---------------------------------------------------------- 3 用户与角色
     R.set_phase("阶段一 · 管理员视角 | 3. 用户与角色 RBAC")
 
+    # 用户列表按 User.id.desc() 排序，teacher1 是最早创建的账号（id 最小），
+    # 一旦库里用户数超过 page_size 就会被挤到后面去 —— 曾经取 page_size=100
+    # 而库里已有 107 人，teacher1 直接「消失」，连带下面 4 条断言全部假失败
+    # （id=None / 班级对比跳过 / 后续用例拿不到 teacher1_id）。
+    # 因此身份覆盖度用 identity 维度分别取样，具体账号用 keyword 精确查，
+    # 不依赖「前 N 条里一定有它」这种脆弱假设。
     p, _, _ = admin.get("/system/users", params={"page_size": 100})
     users = rows_of(p)
     total = total_of(p)
     check("用户列表", p.get("success") and total >= 17, f"total={total}")
+
     roles_seen = {u.get("role_name") or u.get("identity") for u in users}
     roles_seen.discard(None)
+    # 分页取样可能漏掉某个身份，再按 identity 逐个确认后才判断覆盖度。
+    # 注意：管理员账号的 identity 值是 **sys_admin**（不是 "admin"），
+    # 用 "admin" 查会返回 0 条 —— 这是本用例曾经假失败的真正原因。
+    for _id in ("student", "teacher", "sys_admin"):
+        if _id in roles_seen:
+            continue
+        _pi, _, _ = admin.get(
+            "/system/users", params={"identity": _id, "page_size": 1})
+        if total_of(_pi):
+            roles_seen.add(_id)
     check("用户列表覆盖多角色", len(roles_seen) >= 3, f"{sorted(roles_seen)}")
 
-    t1 = next((u for u in users if u["username"] == "teacher1"), None)
-    s731 = next((u for u in users if u["username"] == "stu731"), None)
+    def _find_user(username: str):
+        """按用户名精确查，不依赖分页顺序。"""
+        _p, _, _ = admin.get(
+            "/system/users", params={"keyword": username, "page_size": 20})
+        return next(
+            (u for u in rows_of(_p) if u.get("username") == username), None)
+
+    t1 = _find_user("teacher1")
+    s731 = _find_user("stu731")
     check("teacher1 存在", t1 is not None,
           f"id={t1 and t1['id']} class_id={t1 and t1.get('class_id')}")
     check("stu731 存在", s731 is not None,

@@ -17,7 +17,7 @@ from app.api.deps import (
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
-from app.models import Answer, KnowledgePoint, Paper, Submission, Task, User
+from app.models import (Answer, KnowledgePoint, Paper, Submission, Task, User)
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, load_json, ok, utcnow
 
@@ -231,6 +231,19 @@ def publish_score(
     # 未批改的提交没有有效分数，发布出去学生会看到 None/0 分
     if sub.score is None:
         raise BusinessException("该提交尚未完成批改，无法发布成绩")
+    # 服务端必须自己复核「是否还有待人工的题」：前端 canPublish 只是提示层，
+    # 直接调接口一样能发。发布含未批主观题的卷子 → 学生拿到的总分少算大题分值。
+    # 主观题判定与详情接口一致：题型属于主观题集合，且尚未给分。
+    from app.models import Question
+    subjective_types = {"short", "calc", "material", "composition"}
+    ungraded = 0
+    for a in db.scalars(select(Answer).where(
+            Answer.submission_id == sub.id, Answer.score.is_(None))).all():
+        q = db.get(Question, a.question_id)
+        if q and q.type in subjective_types:
+            ungraded += 1
+    if ungraded:
+        raise BusinessException(f"还有 {ungraded} 道主观题未批改，无法发布成绩")
     sub.status = "published"
     db.add(Notification(
         user_id=sub.student_id, title="成绩已发布",

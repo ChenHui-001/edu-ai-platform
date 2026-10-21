@@ -131,7 +131,12 @@ def run():
     R.set_phase("学习中心 | 5. 核心功能冒烟")
 
     # 练习创建 → 取题
-    p, _, _ = stu.get("/edu/subjects", params={"distinct": True})
+    # 必须用**学生本年级**的学科 id：Subject 唯一键是 (grade_id, name)，
+    # distinct=true 返回的代表记录指向最低年级（一年级），拿它给七年级学生
+    # 发起练习会被年级过滤挡住 → 400「该学科在该年级暂无题目」。
+    stu_grade = stu.user.get("grade_id")
+    p, _, _ = stu.get("/edu/subjects",
+                      params={"grade_id": stu_grade} if stu_grade else {"distinct": True})
     subs = rows_of(p)
     if subs:
         p, _, sc = stu.post("/learning/practice", {

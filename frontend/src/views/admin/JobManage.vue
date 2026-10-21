@@ -20,7 +20,9 @@
     <el-card shadow="never">
       <el-table v-loading="loading" :data="list" border stripe>
         <el-table-column prop="name" label="任务名称" min-width="160" />
-        <el-table-column prop="job_code" label="任务标识" width="160" />
+        <el-table-column label="任务标识" width="220" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.func_path || '-' }}</template>
+        </el-table-column>
         <el-table-column prop="cron_expression" label="Cron 表达式" width="160" />
         <el-table-column label="类型" width="110">
           <template #default="{ row }">
@@ -55,12 +57,21 @@
         <el-form-item label="任务名称">
           <el-input v-model="form.name" placeholder="如：错题提醒推送" />
         </el-form-item>
-        <el-form-item label="任务标识">
-          <el-input v-model="form.job_code" placeholder="英文标识，如 wrong_remind" />
+        <el-form-item label="执行逻辑">
+          <!-- 后端校验 func_path 必须命中 JOB_HANDLERS 白名单，
+               以前这里是自由文本输入，用户填什么都会被 400 拒绝。 -->
+          <el-select v-model="form.func_path" placeholder="请选择要执行的逻辑"
+                     :disabled="!!form.id" style="width:100%">
+            <el-option v-for="h in handlers" :key="h.path"
+                       :label="`${h.label}（${h.path.split('.').pop()}）`" :value="h.path" />
+          </el-select>
+          <div class="tip">
+            编辑已有任务时不可更改执行逻辑（后端不支持更新该字段）。
+          </div>
         </el-form-item>
         <el-form-item label="Cron 表达式">
           <el-input v-model="form.cron_expression" placeholder="分 时 日 月 周，如 0 8 * * *" />
-          <div class="tip">格式：秒 分 时 日 月 周（5 段：分 时 日 月 周）</div>
+          <div class="tip">5 段格式：分 时 日 月 周（如 <code>0 8 * * *</code> 表示每天 8:00）</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.is_active" />
@@ -101,6 +112,7 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import { logApi } from '@/api'
 
 const list = ref([])
+const handlers = ref([])
 const executions = ref([])
 const total = ref(0)
 const loading = ref(false)
@@ -111,7 +123,7 @@ const execLoading = ref(false)
 const scheduler = ref({})
 
 const query = reactive({ page: 1, page_size: 20 })
-const form = reactive({ id: null, name: '', job_code: '', cron_expression: '', is_active: true, description: '' })
+const form = reactive({ id: null, name: '', func_path: '', cron_expression: '', is_active: true, description: '' })
 
 const statusCards = computed(() => [
   { label: '调度器状态', value: scheduler.value.running ? '运行中' : '已停止' },
@@ -128,18 +140,27 @@ async function load() {
     total.value = d.total || 0
     const s = await logApi.schedulerStatus()
     scheduler.value = s.data || {}
+    // 执行逻辑清单只在首次加载时取，切换分页不必重复请求
+    if (!handlers.value.length) {
+      const h = await logApi.jobHandlers()
+      handlers.value = h.data || []
+    }
   } finally {
     loading.value = false
   }
 }
 
 function openDialog(row) {
-  Object.assign(form, row || { id: null, name: '', job_code: '', cron_expression: '', is_active: true, description: '' })
+  Object.assign(form, row
+    ? { ...row }
+    : { id: null, name: '', func_path: '', cron_expression: '', is_active: true, description: '' })
   dlg.value = true
 }
 
 async function save() {
   if (!form.name || !form.cron_expression) return ElMessage.warning('请填写任务名称与 Cron 表达式')
+  // 前端先拦一道，避免明知会 400 还发请求（后端仍会二次校验）
+  if (!form.id && !form.func_path) return ElMessage.warning('请选择执行逻辑')
   saving.value = true
   try {
     if (form.id) await logApi.updateJob(form.id, form)
@@ -161,7 +182,8 @@ async function toggle(row) {
 async function run(row) {
   await ElMessageBox.confirm(`确认立即执行任务「${row.name}」？`, '提示', { type: 'info' })
   const res = await logApi.runJob(row.id)
-  ElMessage.success(res.data.message || '执行完成')
+  // 提示语在响应体顶层 message，不在 data 里（data 是执行结果本身）
+  ElMessage.success(res.message || '执行完成')
   load()
 }
 

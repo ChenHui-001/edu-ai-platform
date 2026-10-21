@@ -302,7 +302,10 @@ onMounted(async () => {
   roles.value = r.data || []
   grades.value = g.data || []
   const c = await eduApi.classes({ page_size: 200 })
-  classes.value = (c.data?.items) || []
+  // /edu/classes 返回数组（非分页 items），只读 data.items 会让「所属班级」
+  // 下拉恒为空 —— 无法把学生/教师绑定到班级。
+  const _cd = c.data
+  classes.value = Array.isArray(_cd) ? _cd : (_cd?.items || [])
 })
 </script>
 

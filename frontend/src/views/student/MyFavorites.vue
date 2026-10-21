@@ -70,7 +70,7 @@
           <span class="fav-date">{{ formatDate(item.created_at) }}</span>
         </div>
 
-        <p class="stem" v-html="item.stem"></p>
+        <p class="stem" v-html="safeStem(item.stem)"></p>
 
         <div v-if="item.options" class="options">
           <div v-for="o in parseOptions(item.options)" :key="o.key" class="opt-line">
@@ -99,6 +99,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Promotion, Refresh, Search, Edit, Delete } from '@element-plus/icons-vue'
 import TYPES, { questionTypeLabel } from '@/constants/question'
 import { learningApi } from '@/api'
+import { sanitizeHtml } from '@/utils/sanitize'
+
+// 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
+// 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
+function safeStem(s) { return sanitizeHtml(s) }
+
 
 const router = useRouter()
 const loading = ref(false)

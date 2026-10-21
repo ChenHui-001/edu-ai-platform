@@ -17,7 +17,23 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 
 // 全局错误捕获：组件 setup / 渲染异常此前只会让内容区白屏、无任何提示，
 // 排查成本极高。现将错误显式呈现（顶部红条 + 提示），并保留 console 输出。
+//
+// 但**业务错误不能走这里**：request.js 拦截器已经 ElMessage 过一次，
+// 组件里 await 未 catch 时 rejection 会冒泡到这里，于是用户看到
+// 「该题目已被 6 份试卷引用」后面又跟一句「页面出错：Request failed with
+// status code 400」，顶部还挂一条不消失的红条 —— 把可预期的业务校验
+// 伪装成前端崩溃，既误导用户也掩盖真问题。
+// request.js 抛出的错误都带 __handled 标记，axios 原生错误靠 isAxiosError 兜底识别。
+function isBusinessError(err) {
+  return !!err && (err.__handled === true || err.isAxiosError === true || !!err.response)
+}
+
 app.config.errorHandler = (err, instance, info) => {
+  if (isBusinessError(err)) {
+    // 已提示过用户，只留控制台痕迹便于排查
+    console.warn('[app error][已忽略:业务错误]', err?.message || err, info)
+    return
+  }
   console.error('[app error]', err, info)
   const msg = err?.message || String(err)
   ElMessage.error(`页面出错：${msg.slice(0, 120)}`)

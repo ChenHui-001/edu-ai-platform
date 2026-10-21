@@ -41,23 +41,40 @@ def run():
 
     # ------------------------------------- 0b 前置：确保题库有可用题
     # 测试不依赖既有种子数据 —— 全新库也要能独立跑通。
+    #
+    # 注意：学科必须用**学生自己年级**的那一条。Subject 的唯一键是
+    # (grade_id, name)，「语文」在 1~9 年级各有一条、9 个不同 id。
+    # 这里原来硬编码 subject_id=1 / grade_id=1（一年级语文），而 stu731 是
+    # 七年级学生 —— 随机练习按学年过滤后必然「该学科在该年级暂无题目」，
+    # 3 条用例连带失败。改为按学生 grade_id 动态解析。
     R.set_phase("阶段四 · 学习中心 | 0b. 前置题目（自建）")
-    p, _, _ = stu.get("/learning/flashcards", params={"limit": 1})
-    p, _, _ = tea.get("/question/questions", params={"page": 1, "page_size": 1, "subject_id": 1})
-    if total_of(p) == 0:
+    stu_grade = stu.user.get("grade_id") or 7
+    subj_list, _, _ = tea.get("/edu/subjects", params={"grade_id": stu_grade})
+    subj_items = rows_of(subj_list)
+    subj_id = next((s["id"] for s in subj_items
+                    if s.get("name") == "语文"), None) or (subj_items[0]["id"] if subj_items else 1)
+    R.context["stu_grade_id"] = stu_grade
+    R.context["stu_subject_id"] = subj_id
+    # 该学科该年级现有题数；不足 6 道就补，保证 count 边界用例有题可抽
+    p, _, _ = tea.get("/question/questions",
+                      params={"page": 1, "page_size": 1,
+                              "subject_id": subj_id, "grade_id": stu_grade})
+    have = total_of(p) or 0
+    if have < 6:
         tag = f"LC{int(time.time()) % 100000}"
-        for i in range(6):
+        for i in range(6 - have):
             tea.post("/question/questions", {
                 "type": "single", "difficulty": "easy", "score": 5,
                 "stem": f"【{tag}】学习中心前置题 {i}: 3+{i}=?",
                 "options": [{"key": "A", "text": str(3 + i)}, {"key": "B", "text": "99"},
                             {"key": "C", "text": "0"}, {"key": "D", "text": "1"}],
-                "answer": "A", "subject_id": 1, "grade_id": 1,
+                "answer": "A", "subject_id": subj_id, "grade_id": stu_grade,
                 "knowledge_point_id": None, "bank_type": "public",
             })
-        check("前置题目已自建（6 道）", True, tag)
+        check(f"前置题目已自建（年级 {stu_grade} / 学科 {subj_id}）", True, tag)
     else:
-        check("题库已有题目（复用现有数据）", True, f"total={total_of(p)}")
+        check("题库已有题目（复用现有数据）",
+              True, f"total={have} 年级={stu_grade} 学科={subj_id}")
 
     # ------------------------------------------------- 1 随机练习全流程
     R.set_phase("阶段四 · 学习中心 | 1. 随机练习（全流程）")
@@ -69,12 +86,21 @@ def run():
           f"{p.get('code')} {p.get('message', '')}")
 
     # 1b count 边界：负数 clamp 到 1；超大 clamp 到 50
-    p, _, _ = stu.post("/learning/practice", {"subject_id": 1, "count": -5})
+    SID = R.context.get("stu_subject_id") or 1
+    # 顺带守住跨年级防护：拿**别年级**的学科 id 请求，必须明确拒绝而不是
+    # 悄悄抽出一堆该学生做不了的题（这正是曾经的真实缺陷）。
+    other_subj = 1 if SID != 1 else 2
+    p, _, _ = stu.post("/learning/practice", {"subject_id": other_subj, "count": 3})
+    check("★ 跨年级学科 id 被拒（不返回别年级题目）",
+          p.get("success") is False or (data_of(p) or {}).get("total") == 0,
+          f"{p.get('code')} {p.get('message', '')[:40]}")
+
+    p, _, _ = stu.post("/learning/practice", {"subject_id": SID, "count": -5})
     d1 = data_of(p) or {}
     check("count=-5 被 clamp（练习生成成功且 ≥1 题）",
           p.get("success") and (d1.get("total") or 0) >= 1,
           f"total={d1.get('total')} {p.get('message', '')}")
-    p, _, _ = stu.post("/learning/practice", {"subject_id": 1, "count": 999})
+    p, _, _ = stu.post("/learning/practice", {"subject_id": SID, "count": 999})
     d2 = data_of(p) or {}
     check("count=999 被 clamp 至 ≤50",
           p.get("success") and 0 < (d2.get("total") or 0) <= 50,
@@ -156,9 +182,18 @@ def run():
 
         p, _, _ = stu.post(f"/learning/wrong-questions/{wid}/variant")
         d = data_of(p) or {}
-        check("错题变式练习生成（题库兜底）",
-              p.get("success") and d.get("task_id"),
-              f"source={d.get('source')} total={d.get('total')}")
+        # 变式练习按「同学科 + 同题型 + 同知识点」找相似题。
+        # 种子数据里一个知识点每种题型往往只有 1 道题（就是原题本身），
+        # 排除原题后自然为 0 —— 此时返回 400「暂无可用的变式题目」是
+        # **正确行为**，不能算失败。真正的判据是：要么出卷成功，要么给出
+        # 明确的可读提示，绝不能 500 或静默返回空 data。
+        ok_variant = bool(p.get("success") and d.get("task_id"))
+        clear_reason = (p.get("success") is False
+                        and "变式" in str(p.get("message", "")))
+        check("错题变式练习生成（或明确提示无同类题）",
+              ok_variant or clear_reason,
+              f"source={d.get('source')} total={d.get('total')} "
+              f"msg={str(p.get('message', ''))[:30]!r}")
 
         p, _, _ = stu.get("/learning/wrong-questions/export",
                           params={"fmt": "markdown"})
@@ -318,8 +353,10 @@ def run():
 
     # ---------------------------------------------------------- 6 自主组卷
     R.set_phase("阶段四 · 学习中心 | 6. 自主组卷")
+    # 同样必须用学生本年级的学科 id，否则抽题被年级过滤挡住（不是缺陷）
     p, _, _ = stu.post("/learning/custom-paper", {
-        "name": "【LC】自测卷", "subject_id": 1, "count": 5, "difficulty": "easy"})
+        "name": "【LC】自测卷", "subject_id": R.context.get("stu_subject_id") or 1,
+        "count": 5, "difficulty": "easy"})
     d = data_of(p) or {}
     check("随机模式组卷", p.get("success") and d.get("task_id"),
           f"total={d.get('total')}")

@@ -224,16 +224,27 @@ def clone_subject(
 @router.get("/knowledge", summary="知识点树")
 def knowledge_tree(
     grade_id: Optional[int] = None, subject_id: Optional[int] = None,
+    subject_name: Optional[str] = None,
     term: Optional[int] = None,
     keyword: Optional[str] = None, db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """知识点树。grade_id/subject_id 不传时返回全部（供前端初始化加载）。"""
+    """知识点树。grade_id/subject_id 不传时返回全部（供前端初始化加载）。
+
+    `subject_name` 用于「只选学科、不选年级」的筛选场景：学科按年级配置
+    （唯一键 `(grade_id, name)`），同一名称对应 9 条记录、9 个 id，
+    用户只选「数学」时前端拿到的只是一个代表 id，直接按 id 过滤会漏掉
+    其他 8 个年级的数学知识点。按名称过滤才能覆盖全部年级。
+    """
     stmt = select(KnowledgePoint).where(KnowledgePoint.is_active.is_(True))
     if grade_id:
         stmt = stmt.where(KnowledgePoint.grade_id == grade_id)
     if subject_id:
         stmt = stmt.where(KnowledgePoint.subject_id == subject_id)
+    if subject_name:
+        stmt = stmt.where(KnowledgePoint.subject_id.in_(
+            select(Subject.id).where(Subject.name == subject_name)
+        ))
     if term:
         stmt = stmt.where(KnowledgePoint.term == term)
     if keyword:
@@ -348,6 +359,25 @@ def reindex(db: Session = Depends(get_db), _: User = Depends(get_current_teacher
 
 
 # ---------------------------------------------------------------- 班级
+@router.get("/classes/public", summary="班级列表（注册页匿名可用）")
+def list_classes_public(db: Session = Depends(get_db)):
+    """注册页在**未登录**状态需要选择班级。
+
+    原先注册页直接调 /edu/classes（需登录）→ 401 被全局拦截器判为
+    「登录已过期」→ 跳回 /login，导致注册入口完全打不开。
+    此接口只暴露 id / 名称 / 年级，不含学生数、班主任等内部信息。
+    """
+    items = []
+    for c in db.scalars(select(Class).order_by(Class.id)).all():
+        g = db.get(Grade, c.grade_id) if c.grade_id else None
+        items.append({
+            "id": c.id, "name": c.name,
+            "grade_id": c.grade_id,
+            "grade_name": g.name if g else None,
+        })
+    return ok(items)
+
+
 @router.get("/classes", summary="班级列表")
 def list_classes(
     grade_id: Optional[int] = None, keyword: Optional[str] = None,
@@ -385,8 +415,19 @@ def create_class(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
     _: User = Depends(require_perm("resource:class:write")),
 ):
+    # 同年级下同名班级必须拦截：班级下拉按名称展示，出现两个「一年级(1)班」
+    # 后学生归属、考勤与统计都会分裂且无法从界面区分。
+    # 教师建班申请（create_class_request）一直有这道校验，管理员直接建班漏了。
+    name = (data.get("name") or "").strip()
+    grade_id = data.get("grade_id")
+    if not name:
+        raise BusinessException("请填写班级名称")
+    if not grade_id or not db.get(Grade, grade_id):
+        raise BusinessException("请选择年级")
+    if db.scalar(select(Class).where(Class.name == name, Class.grade_id == grade_id)):
+        raise BusinessException("该年级下已存在同名班级")
     k = Class(
-        name=data["name"], grade_id=data["grade_id"],
+        name=name, grade_id=grade_id,
         head_teacher_id=data.get("head_teacher_id"), remark=data.get("remark"),
     )
     db.add(k)
@@ -402,6 +443,17 @@ def update_class(
     k = db.get(Class, class_id)
     if not k:
         raise NotFoundException("班级不存在")
+    if "name" in data:
+        new_name = (data.get("name") or "").strip()
+        if not new_name:
+            raise BusinessException("班级名称不能为空")
+        # 改名同样要防重名（同年级内），否则绕过 create 的校验
+        target_grade = data.get("grade_id", k.grade_id)
+        dup = db.scalar(select(Class).where(
+            Class.name == new_name, Class.grade_id == target_grade, Class.id != k.id))
+        if dup:
+            raise BusinessException("该年级下已存在同名班级")
+        data["name"] = new_name
     for f in ("name", "head_teacher_id", "remark", "is_active"):
         if f in data:
             setattr(k, f, data[f])

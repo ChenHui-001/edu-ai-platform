@@ -41,22 +41,53 @@ class AuditMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         start = time.perf_counter()
+
+        # ⚠️ 请求体必须在 `call_next` **之前**读取。
+        # BaseHTTPMiddleware 用 `_CachedRequest` 包装 request：只有在 dispatch 里
+        # 调用过 body()/stream() 之后，它才会把读到的内容缓存下来喂给下游 app。
+        # 原实现在 call_next 返回**之后**才 `await request.body()`，此时下游端点
+        # 已经把流消费完毕（`_wrapped_rcv_consumed=True`），再次读取必定抛
+        # `RuntimeError: Stream consumed` —— 而异常被 `_log` 的 except 吞掉，
+        # 表现为「所有 POST/PUT/PATCH/DELETE 的操作日志从未写进库」，
+        # 只有 GET 的日志能存下来（GET 无 body 不触发该分支）。
+        raw_body = b""
+        ctype = (request.headers.get("content-type") or "").lower()
+        # 只缓存 JSON 体：multipart 文件上传若整段读进内存会直接撑爆
+        # 大附件场景，而审计日志本来也不记录二进制内容。
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and (
+            "application/json" in ctype or ctype == ""
+        ):
+            try:
+                raw_body = await request.body()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"读取请求体失败（审计降级）: {exc}")
+                raw_body = b""
+
         try:
             response = await call_next(request)
         except Exception as exc:  # 交给全局异常处理器，这里只记录
-            await self._log(request, 500, time.perf_counter() - start, error=str(exc))
+            await self._log(
+                request, 500, time.perf_counter() - start,
+                error=str(exc), raw_body=raw_body,
+            )
             raise
 
         duration_ms = int((time.perf_counter() - start) * 1000)
         if response.status_code >= 500:
-            await self._log(request, response.status_code, duration_ms, error="服务端异常")
+            await self._log(
+                request, response.status_code, duration_ms,
+                error="服务端异常", raw_body=raw_body,
+            )
         else:
-            await self._log(request, response.status_code, duration_ms)
+            await self._log(
+                request, response.status_code, duration_ms, raw_body=raw_body,
+            )
         response.headers["X-Process-Time"] = str(duration_ms)
         return response
 
     async def _log(
-        self, request: Request, status_code: int, duration_ms: int, error: str = ""
+        self, request: Request, status_code: int, duration_ms: int,
+        error: str = "", raw_body: bytes = b"",
     ) -> None:
         if not settings.LOG_TO_DB:
             return
@@ -68,21 +99,19 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
             params: Dict[str, Any] = dict(request.query_params)
             body: Any = None
-            if request.method in ("POST", "PUT", "PATCH", "DELETE"):
-                raw = await request.body()
-                if raw:
-                    try:
-                        body = json.loads(raw)
-                        if isinstance(body, dict):
-                            for k in ("password", "new_password", "old_password"):
-                                if k in body:
-                                    body[k] = "******"
-                            body = {
-                                k: v for k, v in body.items()
-                                if k not in ("content", "stem", "analysis")
-                            }
-                    except (ValueError, UnicodeDecodeError):
-                        body = "<binary>"
+            if raw_body:
+                try:
+                    body = json.loads(raw_body)
+                    if isinstance(body, dict):
+                        for k in ("password", "new_password", "old_password"):
+                            if k in body:
+                                body[k] = "******"
+                        body = {
+                            k: v for k, v in body.items()
+                            if k not in ("content", "stem", "analysis")
+                        }
+                except (ValueError, UnicodeDecodeError):
+                    body = "<binary>"
 
             ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
                 request.client.host if request.client else ""

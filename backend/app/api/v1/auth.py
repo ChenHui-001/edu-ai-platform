@@ -106,6 +106,7 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
 @router.get("/registrations", summary="注册申请列表（管理员）")
 def list_registrations(
     status: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None, description="按账号 / 姓名模糊搜索"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -114,6 +115,13 @@ def list_registrations(
     stmt = select(Registration)
     if status:
         stmt = stmt.where(Registration.status == status)
+    if keyword:
+        # 待审批列表常年累积，没有搜索只能逐页翻（前端原本也没有搜索框）
+        kw = f"%{keyword.strip()}%"
+        matched = select(User.id).where(
+            (User.username.like(kw)) | (User.real_name.like(kw))
+        )
+        stmt = stmt.where(Registration.user_id.in_(matched))
     total = db.scalar(select(__import__("sqlalchemy").func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
         stmt.order_by(Registration.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
@@ -139,7 +147,10 @@ def audit_registration(
     user = auth_service.audit_registration(
         db, payload.registration_id, payload.approved, admin.id, payload.reason
     )
-    return ok(dictify(user), message="审批通过" if payload.approved else "已驳回")
+    # 不能直接 dictify(user)：会把 password（PBKDF2 哈希）回传给前端。
+    _u = dictify(user)
+    _u.pop("password", None)
+    return ok(_u, message="审批通过" if payload.approved else "已驳回")
 
 
 # ---------------------------------------------------------------- 登录

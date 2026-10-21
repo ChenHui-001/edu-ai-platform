@@ -18,8 +18,12 @@
           </el-select>
         </el-form-item>
         <el-form-item label="学科">
-          <el-select v-model="query.subject_id" placeholder="全部" clearable style="width:130px">
-            <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
+          <!-- 学科按年级配置，(grade_id,name) 唯一，直接铺全量会出现 7 个「数学」。
+               这里按当前选的年级做去重：选了年级就只剩该年级的学科；没选年级则
+               按名称去重展示，并在查询时把学科名映射回「年级+学科」对应 id。 -->
+          <el-select v-model="query.subject_id" placeholder="全部" clearable
+                     style="width:130px" @change="onSubjectChange">
+            <el-option v-for="s in querySubjects" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="关键词">
@@ -111,6 +115,15 @@ const query = reactive({ grade_id: null, subject_id: null, keyword: '' })
 const form = reactive({ id: null, name: '', code: '', grade_id: null, subject_id: null,
   parent_id: null, sort_order: 0, description: '' })
 
+// 筛选栏的学科下拉：选了年级就只列该年级；未选年级则按名称去重（每科一条代表）
+const querySubjects = computed(() => {
+  const list = subjects.value
+  if (query.grade_id) return list.filter(s => s.grade_id === query.grade_id)
+  const seen = new Map()
+  for (const s of list) if (!seen.has(s.name)) seen.set(s.name, s)
+  return [...seen.values()]
+})
+
 const formSubjects = computed(() => {
   if (!form.grade_id) return subjects.value
   return subjects.value.filter(s => !s.grade_id || s.grade_id === form.grade_id)
@@ -127,7 +140,13 @@ function buildOptions(nodes, excludeId = null) {
 async function load() {
   loading.value = true
   try {
-    const res = await eduApi.knowledge(query)
+    // 未选年级 + 选了学科 → 按名称查（覆盖各年级同名学科）
+  const params = { ...query }
+  if (!query.grade_id && query.subject_id) {
+    params.subject_name = subjects.value.find(s => s.id === query.subject_id)?.name
+    delete params.subject_id
+  }
+  const res = await eduApi.knowledge(params)
     // /edu/knowledge 返回平铺数组
     tree.value = Array.isArray(res.data) ? res.data : (res.data?.data || [])
   } finally {
@@ -140,7 +159,18 @@ function reset() {
   load()
 }
 
-function onGradeChange() { load() }
+function onGradeChange() {
+  // 换了年级，原学科 id 可能不属于新年级，必须清掉以免查出空列表
+  if (query.subject_id) {
+    const still = subjects.value.some(
+      s => s.id === query.subject_id && s.grade_id === query.grade_id)
+    if (!still) query.subject_id = null
+  }
+  load()
+}
+// 未选年级时选学科：按学科名过滤（后端 subject_name 覆盖全部年级的同名学科），
+// 否则拿代表 id（一年级数学）过滤会把其他年级的数学知识点全部漏掉。
+function onSubjectChange() { load() }
 function onFormGradeChange() { form.subject_id = null }
 
 function openDialog(row, parent) {

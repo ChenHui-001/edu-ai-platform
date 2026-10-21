@@ -112,6 +112,14 @@ app.include_router(api_router, prefix=settings.API_PREFIX)
 
 @app.get("/api/v1/health", tags=["系统"], summary="健康检查")
 def health():
+    # llm_enabled 必须走 is_available()（sys_config 优先于 .env）。
+    # 原来只看 settings.LLM_ENABLED/LLM_API_KEY，管理员在「AI 配置」页填好密钥后，
+    # 健康检查与系统配置页仍显示 llm_enabled=false，看起来像配置没生效。
+    try:
+        from app.agents.llm import is_available as _llm_available
+        llm_on = _llm_available()
+    except Exception:  # noqa: BLE001  健康检查不能被 AI 模块拖垮
+        llm_on = bool(settings.LLM_ENABLED and settings.LLM_API_KEY)
     return {
         "code": 200, "success": True,
         "data": {
@@ -119,7 +127,7 @@ def health():
             "version": settings.APP_VERSION,
             "status": "healthy",
             "database": settings.DATABASE_URL.split("://")[0],
-            "llm_enabled": bool(settings.LLM_ENABLED and settings.LLM_API_KEY),
+            "llm_enabled": llm_on,
         },
     }
 

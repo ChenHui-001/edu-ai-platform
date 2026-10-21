@@ -123,7 +123,8 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import EChart from '@/components/EChart.vue'
 import { Refresh, Download } from '@element-plus/icons-vue'
-import { reportApi, eduApi } from '@/api'
+import { reportApi } from '@/api'
+import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
 const overview = ref(null)
 const trend = ref([])
@@ -182,18 +183,30 @@ async function loadOverview() {
   overview.value = res.data
 }
 
+/**
+ * 学科筛选的真实 id。
+ * 下拉里放的是 distinct 去重后的代表记录（指向最低年级的那条），
+ * 直接把它的 id 传给报表接口，七年级学生的成绩/错题会全部查空。
+ */
+function realSubjectId() {
+  return resolveSubjectId(subjects.value, subjectId.value, currentGradeId())
+}
+
 async function loadTrend() {
-  const res = await reportApi.scoreTrend(subjectId.value ? { subject_id: subjectId.value } : {})
+  const sid = realSubjectId()
+  const res = await reportApi.scoreTrend(sid ? { subject_id: sid } : {})
   trend.value = res.data || []
 }
 
 async function loadRadar() {
-  const res = await reportApi.knowledgeRadar(subjectId.value ? { subject_id: subjectId.value } : {})
+  const sid = realSubjectId()
+  const res = await reportApi.knowledgeRadar(sid ? { subject_id: sid } : {})
   radar.value = res.data || []
 }
 
 async function loadWrong() {
-  const res = await reportApi.wrongAnalysis(subjectId.value ? { subject_id: subjectId.value } : {})
+  const sid = realSubjectId()
+  const res = await reportApi.wrongAnalysis(sid ? { subject_id: sid } : {})
   wrong.value = res.data || {}
 }
 
@@ -224,9 +237,9 @@ async function exportExcel() {
 }
 
 onMounted(async () => {
+  // 先取学科再 loadAll：三个报表接口都要把去重代表 id 还原成年级精确 id
+  subjects.value = await fetchSubjects({ gradeId: currentGradeId() })
   await loadAll()
-  const s = await eduApi.subjects()
-  subjects.value = s.data || []
 })
 </script>
 

@@ -147,6 +147,26 @@ def export_logs(
 jobs_router = APIRouter(prefix="/jobs", tags=["定时任务"])
 
 
+@jobs_router.get("/handlers", summary="可用的执行逻辑清单")
+def list_job_handlers(_: User = Depends(get_current_admin)):
+    """返回 JOB_HANDLERS 的可用项，供前端下拉选择。
+
+    此前前端把「任务标识」当成自由文本（placeholder 写「英文标识，如 wrong_remind」），
+    实际后端校验的是 `func_path` 且必须命中 JOB_HANDLERS 白名单 ——
+    用户不可能凭界面猜出 `app.services.task_jobs.clean_expired_exams` 这种模块路径，
+    所以「新增任务」100% 失败。清单交给后端下发才是唯一可行的做法。
+    """
+    from app.services.task_jobs import JOB_HANDLERS
+
+    items = []
+    for path, fn in JOB_HANDLERS.items():
+        # 用函数 docstring 首句当中文名，避免前后端各维护一份标签表
+        doc = (fn.__doc__ or "").strip().splitlines()
+        label = doc[0].split("：")[0].split("。")[0] if doc else path.rsplit(".", 1)[-1]
+        items.append({"path": path, "label": label})
+    return ok(items)
+
+
 @jobs_router.get("", summary="任务列表")
 def list_jobs(
     params: PageParams = Depends(), is_active: Optional[bool] = None,
@@ -177,6 +197,9 @@ def create_job(
         )
     if not _valid_cron(data["cron_expression"]):
         raise BusinessException("Cron 表达式格式错误（需 5 段：分 时 日 月 周）")
+    # name 是唯一约束：不先查一次会抛 IntegrityError → 500 + 前端只看到「服务器错误」
+    if db.scalar(select(ScheduledJob).where(ScheduledJob.name == data["name"])):
+        raise BusinessException(f"任务名称「{data['name']}」已存在，请换一个")
 
     job = ScheduledJob(
         name=data["name"], description=data.get("description"),

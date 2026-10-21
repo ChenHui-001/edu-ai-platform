@@ -27,24 +27,38 @@ def run():
         s3 = s1
 
     hit = None
-    for i in range(14):
+    # ⚠️ 限流窗口是「自然分钟」(epoch//60)：不能假设连续 N 次调用必落在同一窗口。
+    # 回归整跑时服务端变慢，单次 study-planner 约 2s，14 次要 30s，跨分钟边界后
+    # 计数从 1 重新开始 → 两个窗口各 10/4 次，永远到不了 12，用例假失败。
+    # 因此给足 3 个窗口的余量（36 次），仍以「命中限流文案」为唯一判据。
+    for i in range(36):
         p, _, sc = s3.post("/agent/study-planner", {"days": 1}, timeout=LONG)
         msg = str(p.get("message") or "")
         if "频繁" in msg:
             hit = (i + 1, msg)
+            s3._hit_window = int(time.time() // 60)
             break
 
     check("★ 连续调用触发 DB 限流（每分钟 12 次）",
           hit is not None,
-          f"第 {hit[0] if hit else '-'} 次被拒：{hit[1][:40] if hit else '未触发'}")
+          f"第 {hit[0]} 次被拒：{hit[1][:40]}" if hit else "36 次内未触发")
 
-    # 换一个 client 实例（新连接）验证计数是共享的而非连接级
+    # 换一个 client 实例（新连接）验证计数是共享的而非连接级。
+    # 若上一轮恰好跨到新的分钟窗口，新窗口计数会从 1 开始，此时「同一连接」也
+    # 不会被拒 —— 那样测的就不是「跨连接共享」。所以先确认仍在限流窗口内，
+    # 已经跨窗口就跳过（ENV），而不是让它变成假失败。
     if hit:
-        s3b = Client("s3b"); s3b.login("stu733", "Student@123")
-        p, _, _ = s3b.post("/agent/study-planner", {"days": 1}, timeout=LONG)
-        check("★ 限流计数跨连接共享（DB 存储生效）",
-              "频繁" in str(p.get("message") or ""),
-              f"新连接请求返回：{str(p.get('message'))[:40]}")
+        import time as _t
+
+        hit_window = getattr(s3, "_hit_window", None)
+        if hit_window is not None and int(_t.time() // 60) != hit_window:
+            R.env("限流计数跨连接共享", "触发限流后已进入新的分钟窗口，跳过")
+        else:
+            s3b = Client("s3b"); s3b.login("stu733", "Student@123")
+            p, _, _ = s3b.post("/agent/study-planner", {"days": 1}, timeout=LONG)
+            check("★ 限流计数跨连接共享（DB 存储生效）",
+                  "频繁" in str(p.get("message") or ""),
+                  f"新连接请求返回：{str(p.get('message'))[:40]}")
 
     # ============================================================
     # 2. 异步任务 + 轮询

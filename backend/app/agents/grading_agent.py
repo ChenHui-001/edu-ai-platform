@@ -3,6 +3,7 @@ import difflib
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
@@ -46,9 +47,19 @@ class GradingAgent(BaseAgent):
         results: List[Dict[str, Any]] = []
         subjective_queue: List[Tuple[Dict[str, Any], Question]] = []
 
+        # 一次性把本题涉及的题目全部取出。
+        # 原来在循环里 db.get(Question, ...)，22 道题的练习就是 22 次查询；
+        # 交卷是学生端最热的路径，串行 N+1 会直接放大大卷面的响应时间
+        # （实测 22 题交卷 24s，其中主观题 LLM 往返占大头，查询也贡献了一部分）。
+        qids = [it.get("question_id") for it in items if it.get("question_id")]
+        qmap: Dict[int, Question] = {}
+        if qids:
+            qmap = {q.id: q for q in db.scalars(
+                select(Question).where(Question.id.in_(set(qids)))).all()}
+
         # 1. 客观题本地精确判分
         for it in items:
-            q = db.get(Question, it.get("question_id")) if it.get("question_id") else None
+            q = qmap.get(it.get("question_id")) if it.get("question_id") else None
             if q is None:
                 results.append({**it, "grader_type": "auto", "is_correct": False,
                                 "score": 0.0, "comment": "题目不存在"})
@@ -64,7 +75,16 @@ class GradingAgent(BaseAgent):
                 subjective_queue.append((it, q))
 
         # 2. 主观题 AI 批改
+        # 串行调用的代价：评分一次 LLM 往返 1.5~7s，6 道简答题就是 9~42s，
+        # 交卷接口直接被拖到前端 30s 超时（实测 32 题卷子 116s）。
+        # 改为**并发**：主观题之间互不依赖，用线程池同时发出。
+        # 注意不能共用一个 Session（SQLAlchemy Session 非线程安全），
+        # 所以并发只做「纯 LLM 计算」，结果回到主线程再写库。
         ai_used = False
+        graded: Dict[int, Optional[Dict[str, Any]]] = {}   # q.id -> ai_res
+        blanks: Dict[int, str] = {}                        # q.id -> 未作答
+
+        pending: List[Tuple[Dict[str, Any], Question, str]] = []
         for it, q in subjective_queue:
             raw_answer = it.get("student_answer")
             # 主观题作答可能是 list（异常提交），统一转字符串再判空
@@ -72,26 +92,34 @@ class GradingAgent(BaseAgent):
                 raw_answer = " ".join(str(x) for x in raw_answer)
             raw_answer = (raw_answer or "").strip()
             if not raw_answer:
+                blanks[q.id] = "未作答"
+                continue
+            pending.append((it, q, raw_answer))
+
+        if pending:
+            graded = self._grade_subjective_batch(db, pending, user_id)
+            ai_used = any(v for v in graded.values())
+
+        for it, q in subjective_queue:
+            fs = it.get("full_score", q.score)
+            if q.id in blanks:
                 results.append({
                     "question_id": q.id, "grader_type": "auto", "is_correct": False,
-                    "score": 0.0, "full_score": it.get("full_score", q.score),
-                    "question_type": q.type, "comment": "未作答",
+                    "score": 0.0, "full_score": fs,
+                    "question_type": q.type, "comment": blanks[q.id],
                 })
                 continue
-            ai_res = self._grade_subjective(
-                db, q, raw_answer, it.get("full_score", q.score), user_id
-            )
+            ai_res = graded.get(q.id)
             if ai_res:
-                ai_used = True
                 results.append({
                     "question_id": q.id, "grader_type": "ai",
-                    "full_score": it.get("full_score", q.score),
+                    "full_score": fs,
                     "question_type": q.type, **ai_res,
                 })
             else:
                 results.append({
                     "question_id": q.id, "grader_type": "auto", "is_correct": False,
-                    "score": 0.0, "full_score": it.get("full_score", q.score),
+                    "score": 0.0, "full_score": fs,
                     "question_type": q.type,
                     "comment": "待教师手动批改",
                 })
@@ -177,6 +205,61 @@ class GradingAgent(BaseAgent):
         }
 
     # ---------------- 主观题 ----------------
+    def _grade_subjective_batch(
+        self, db: Session, pending: List[Tuple[Dict[str, Any], Question, str]],
+        user_id: Optional[int],
+    ) -> Dict[int, Optional[Dict[str, Any]]]:
+        """并发批改一批主观题，返回 {question_id: 判分结果 or None}。
+
+        只做纯计算（LLM 往返 + 解析），**不在子线程里碰 Session**。
+        并发度受题目数与 8 上限约束：再高对本机 SQLite 写日志没好处。
+        首题若命中熔断（密钥无效/配额耗尽），其余题立即放弃 —— 此时再发
+        请求只会把交卷时间继续拉长，而结果注定相同。
+        """
+        if not pending:
+            return {}
+
+        out: Dict[int, Optional[Dict[str, Any]]] = {}
+
+        def one(q: Question, ans: str, fs: float) -> Optional[Dict[str, Any]]:
+            return self._grade_subjective(db, q, ans, fs, user_id)
+
+        # 先跑第一题：用于探测配置是否可用（熔断后 get_client 立即返回 None，
+        # 后续调用毫秒级失败，不会产生网络等待）。
+        first_it, first_q, first_ans = pending[0]
+        out[first_q.id] = one(first_q, first_ans, first_it.get("full_score", first_q.score))
+
+        rest = pending[1:]
+        if not rest:
+            return out
+
+        # 首题就失败（且不是「答得不对」而是调用失败）→ 直接返回，
+        # 让其余题走「待教师手动批改」，避免无谓的多轮重试。
+        from app.agents.llm import is_available as _llm_ok
+        if out[first_q.id] is None and not _llm_ok():
+            for it, q, _a in rest:
+                out[q.id] = None
+            return out
+
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(8, len(rest))) as pool:
+                futs = {
+                    pool.submit(one, q, a, it.get("full_score", q.score)): q.id
+                    for it, q, a in rest
+                }
+                for fut, qid in futs.items():
+                    try:
+                        out[qid] = fut.result(timeout=60)
+                    except Exception:  # noqa: BLE001  单题失败不影响整卷
+                        out[qid] = None
+        except Exception:  # noqa: BLE001  线程池不可用时退化为串行
+            for it, q, a in rest:
+                if q.id not in out:
+                    out[q.id] = one(q, a, it.get("full_score", q.score))
+        return out
+
     def _grade_subjective(
         self, db: Session, q: Question, student_answer: str, full_score: float, user_id: Optional[int]
     ) -> Optional[Dict[str, Any]]:

@@ -45,19 +45,35 @@ def run():
 
     # 学生单元（stu732）避免与其它用例互相干扰
     s2 = Client("s2"); s2.login("stu732", "Student@123")
+    # ⚠️ 限流窗口是「自然分钟」(epoch//60)，**不能假设连续 N 次调用都落在同一窗口**。
+    # 回归跑满 33 分钟时服务端明显变慢，单次 study-planner 约 2s，14 次要 30s，
+    # 一旦跨过分钟边界，计数会从 1 重新开始 → 两个窗口各 7/9 次，永远不到 12。
+    # 实测全量回归里 stu732 落在 29876087(7 次) + 29876088(9 次) 两个窗口，
+    # 用例因此假失败。正确做法：按「窗口内计数」判定，跨窗口就把计数累加继续打，
+    # 直到命中限流或总请求数达到 2 个窗口的容量上限。
+    import time as _t
+
     codes = []
-    for _ in range(14):   # 默认上限 12/分钟
+    limited_at = None
+    prev_window = None
+    window_calls = 0
+    # 上限 12/分钟，留出一个窗口的余量：最多打 3 个窗口的量
+    for i in range(36):
         p, _, sc = s2.post("/agent/study-planner", {"days": 1}, timeout=LONG)
         codes.append(sc)
-        if p.get("success") is not True and "频繁" in str(p.get("message", "")):
+        cur_window = int(_t.time() // 60)
+        if cur_window != prev_window:
+            prev_window = cur_window
+            window_calls = 0
+        window_calls += 1
+        if "频繁" in str(p.get("message", "")):
+            limited_at = (i + 1, window_calls)
             break
-    hit_limit = any("频繁" in str(c) for c in [codes]) or codes.count(429) > 0
-    # 以消息判定（限流抛 BusinessException → 400 带文案）
-    p2, _, _ = s2.post("/agent/study-planner", {"days": 1}, timeout=LONG)
-    limited = "频繁" in str(p2.get("message", ""))
     check("★ 学生连续调用触发每分钟限流",
-          limited,
-          f"第 {len(codes)} 次后返回：{p2.get('message', '')[:40]} | 状态码序列={codes[-4:]}")
+          limited_at is not None,
+          f"第 {limited_at[0]} 次被拒（当窗口第 {limited_at[1]} 次）"
+          if limited_at else
+          f"36 次内未触发 | 状态码尾部={codes[-4:]}")
 
     # ============================================================
     # 3. 写库审计（save=True 落 OperationLog）

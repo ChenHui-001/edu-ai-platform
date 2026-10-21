@@ -69,8 +69,23 @@ difficulty 取值：easy / medium / hard"""
         context: List[str] = []
         if knowledge_point_id:
             kp = db.get(KnowledgePoint, knowledge_point_id)
-            if kp:
-                context.append(f"目标知识点：{kp.name}（{kp.description or '无描述'}）")
+            if not kp:
+                # 原来这里只是 if kp: 静默跳过，知识点 id 错的会被忽略并继续出题，
+                # 之后题目落到一个不属于本学科的 knowledge_point_id 上，
+                # 掌握图谱/复习计划按知识点统计时全部错位。必须显式拦截。
+                raise BusinessException("知识点不存在，请重新选择")
+            if kp.subject_id and kp.subject_id != subject_id:
+                # 知识点必须属于所选学科。前端若传了跨年级的学科 id
+                # （Subject 唯一键是 (grade_id, name)，代表 id 永远指向最低年级），
+                # 就会走到这里 —— 实测产生过「七年级一元一次方程的题
+                # 挂在一年级『20以内加减法』知识点上」的脏数据。
+                other = db.get(Subject, kp.subject_id)
+                raise BusinessException(
+                    f"知识点「{kp.name}」属于"
+                    f"{other.name if other else '其他学科'}，与所选学科「{subject.name}」不匹配，"
+                    f"请重新选择年级与学科"
+                )
+            context.append(f"目标知识点：{kp.name}（{kp.description or '无描述'}）")
         else:
             kps = db.scalars(
                 select(KnowledgePoint).where(

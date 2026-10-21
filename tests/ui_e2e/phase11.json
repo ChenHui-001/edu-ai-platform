@@ -1,0 +1,105 @@
+[
+ {
+  "no": 1,
+  "module": "用户管理",
+  "title": "删除用户",
+  "steps": [
+   "新增用户",
+   "搜索定位",
+   "删除并确认",
+   "接口回查"
+  ],
+  "expected": "用户从数据库消失",
+  "actual": "用户 uie2e093611 已删除，接口回查为空",
+  "verdict": "PASS",
+  "evidence": "[netfail] GET /api/v1/auth/captcha :: net::ERR_ABORTED ; [netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED ; [console.error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "shot": "shots/001_删除用户.png"
+ },
+ {
+  "no": 2,
+  "module": "用户管理",
+  "title": "取消删除不生效",
+  "steps": [
+   "新增用户",
+   "点删除后取消",
+   "接口回查"
+  ],
+  "expected": "用户仍存在",
+  "actual": "取消后用户仍在（正确），已清理",
+  "verdict": "PASS",
+  "evidence": "[netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED ; [console.error] [app error] cancel component event handler",
+  "shot": "shots/002_取消删除不生效.png"
+ },
+ {
+  "no": 3,
+  "module": "用户管理",
+  "title": "内置 admin 保护",
+  "steps": [
+   "搜索 admin",
+   "尝试删除并确认"
+  ],
+  "expected": "admin 不可删除",
+  "actual": "admin 未被删除（接口仍存在：['admin']）",
+  "verdict": "PASS",
+  "evidence": "[HTTP 400] DELETE /api/v1/system/users/1 ; [netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED ; [console.warning] Invalid prop: validation failed for prop \"type\". Expected one of [\"primary\", \"success\", \"info\", \"warning\", \"danger\"], got value \"\". Proxy(Object) at <ElTag>\nat <TableTdWrapper>\nat <ElTableBody>\nat <ElScrollbar>\nat <ElTable>\nat <ElCard>\nat <UserManage>\nat <BaseTransition>\nat <Transition>\nat <RouterVi ; [console.warning] Invalid prop: custom validator check failed for prop \"type\". Proxy(Object) at <ElTag>\nat <TableTdWrapper>\nat <ElTableBody>\nat <ElScrollbar>\nat <ElTable>\nat <ElCard>\nat <UserManage>\nat <BaseTransition>\nat <Transition>\nat <RouterView>\nat <ElMain>\nat <ElContainer>\nat <ElContainer>\nat <MainLayout>\nat <R ; [console.error] Failed to load resource: the server responded with a status of 400 (Bad Request) ; [console.warning] [app error][已忽略:业务错误] Request failed with status code 400 component event handler",
+  "shot": "shots/003_内置_admin_保护.png"
+ },
+ {
+  "no": 4,
+  "module": "角色管理",
+  "title": "新增并删除角色",
+  "steps": [
+   "新增角色",
+   "选中",
+   "删除并确认"
+  ],
+  "expected": "角色回查消失",
+  "actual": "角色 ui_role_093611 已删除（6→5）",
+  "verdict": "PASS",
+  "evidence": "[netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED",
+  "shot": "shots/004_新增并删除角色.png"
+ },
+ {
+  "no": 5,
+  "module": "角色管理",
+  "title": "内置角色保护",
+  "steps": [
+   "对 sys_admin 调删除接口"
+  ],
+  "expected": "拒绝删除",
+  "actual": "内置角色「系统管理员」删除被拒绝：内置角色不可删除，可选择停用",
+  "verdict": "PASS",
+  "evidence": "",
+  "shot": "shots/005_内置角色保护.png"
+ },
+ {
+  "no": 6,
+  "module": "题库",
+  "title": "删除题目",
+  "steps": [
+   "建题",
+   "搜索定位",
+   "删除并确认",
+   "回查"
+  ],
+  "expected": "题目回查消失",
+  "actual": "题目已删除，按关键词回查 total=0",
+  "verdict": "PASS",
+  "evidence": "[netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED",
+  "shot": "shots/006_删除题目.png"
+ },
+ {
+  "no": 7,
+  "module": "题库",
+  "title": "搜索无匹配",
+  "steps": [
+   "输入不存在题干",
+   "查询"
+  ],
+  "expected": "收敛为 0 行",
+  "actual": "搜索无匹配 → 页面 0 行 / 接口 total=0（全量 11）",
+  "verdict": "PASS",
+  "evidence": "[netfail] GET /node_modules/.vite/deps/chunk-CKQJYXTN.js?v=4395236b :: net::ERR_ABORTED",
+  "shot": "shots/007_搜索无匹配.png"
+ }
+]

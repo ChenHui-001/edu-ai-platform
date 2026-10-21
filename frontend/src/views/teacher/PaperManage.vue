@@ -45,7 +45,7 @@
                     {{ it.knowledge_point_name }}
                   </el-tag>
                 </p>
-                <p class="stem" v-html="it.stem"></p>
+                <p class="stem" v-html="safeStem(it.stem)"></p>
                 <p v-if="it.options?.length" class="opts">
                   <span v-for="o in it.options" :key="o.key" class="opt">{{ o.key }}. {{ o.text }}</span>
                 </p>
@@ -106,7 +106,8 @@
         <el-row :gutter="12">
           <el-col :span="8">
             <el-form-item label="年级">
-              <el-select v-model="form.grade_id" clearable style="width:100%">
+              <el-select v-model="form.grade_id" clearable style="width:100%"
+                         @change="onFormGradeChange">
                 <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
               </el-select>
             </el-form-item>
@@ -278,7 +279,7 @@
         </p>
         <div v-for="(it, idx) in detailItems" :key="idx" class="q-item">
           <p><b>{{ idx + 1 }}. [{{ it.type_label }}] {{ it.score }} 分</b></p>
-          <p class="stem" v-html="it.stem"></p>
+          <p class="stem" v-html="safeStem(it.stem)"></p>
           <p v-if="it.options?.length" class="opts">
             <span v-for="o in it.options" :key="o.key" class="opt">{{ o.key }}. {{ o.text }}</span>
           </p>
@@ -296,6 +297,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, DocumentCopy, MagicStick } from '@element-plus/icons-vue'
 import { questionApi, eduApi, agentApi } from '@/api'
 import TYPE_LABEL from '@/constants/question'
+import { sanitizeHtml } from '@/utils/sanitize'
+
+// 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
+// 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
+function safeStem(s) { return sanitizeHtml(s) }
+
 
 const DIFF = { easy: '简单', medium: '中等', hard: '困难' }
 
@@ -449,6 +456,26 @@ function openAI() {
 
 // subjects 是 distinct 后的去重列表（同一条目带 same_name_grade_ids），
 // 而后端入库要的是某具体年级的 subject_id。切换年级时必须同步换。
+//
+// 手动组卷与 AI 组卷共用同一套映射：此前手动组卷没做同步，
+// 选「数学」拿到的是 sort 最小那条（一年级数学），题库按该 subject_id
+// 过滤必为空 —— 表现为「题库勾选」区域永远「暂无数据」，且无任何提示。
+function syncFormSubjectByGrade() {
+  if (!form.subject_id) return
+  const s = subjects.value.find((x) =>
+    x.id === form.subject_id ||
+    (x.same_name_ids || []).includes(form.subject_id))
+  if (!s) return
+  if (!form.grade_id) { form.subject_id = s.id; return }
+  const idx = (s.same_name_grade_ids || []).indexOf(form.grade_id)
+  if (idx >= 0) form.subject_id = s.same_name_ids[idx]
+}
+
+function onFormGradeChange() {
+  syncFormSubjectByGrade()
+  loadQuestions()
+}
+
 function syncAiSubjectByGrade() {
   if (!aiForm.subject_id) return
   const s = subjects.value.find((x) =>
@@ -570,7 +597,7 @@ async function remove(row) {
 
 onMounted(async () => {
   await load()
-  const [s, g] = await Promise.all([eduApi.subjects(), eduApi.grades()])
+  const [s, g] = await Promise.all([eduApi.subjects({ distinct: true }), eduApi.grades()])
   subjects.value = s.data || []
   grades.value = g.data || []
   // 出题人下拉：用人员简表（/system/users 为 admin 专属，教师必 403）

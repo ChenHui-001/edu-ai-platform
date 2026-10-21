@@ -91,7 +91,8 @@
           </el-col>
           <el-col :span="12">
             <el-form-item label="试卷">
-              <el-select v-model="form.paper_id" filterable placeholder="选择试卷" style="width:100%">
+              <el-select v-model="form.paper_id" filterable placeholder="选择试卷" style="width:100%"
+                         @change="onPaperChange">
                 <el-option v-for="p in papers" :key="p.id"
                            :label="`${p.name}（${p.item_count}题/ ${p.total_score}分）`" :value="p.id" />
               </el-select>
@@ -120,7 +121,7 @@
           </el-col>
           <el-col :span="12">
             <el-form-item label="及格分">
-              <el-input-number v-model="form.pass_score" :min="0" :max="100" style="width:100%" />
+              <el-input-number v-model="form.pass_score" :min="0" :max="paperTotal" style="width:100%" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -279,6 +280,21 @@ const form = reactive({
 })
 
 const subStats = ref(null)
+const paperTotal = computed(() => {
+  const p = papers.value.find((x) => x.id === form.paper_id)
+  return Number(p?.total_score ?? 100)
+})
+
+// 及格分默认 60 是百分制假设。选中 5 分的随堂练习时后端会直接 400
+// 「及格分应在 0~5.0 之间，当前 60.0」，表现为「换张小卷就发不出去」。
+// 后端仅在**未传** pass_score 时才按总分折算，所以前端必须在选卷时主动收敛。
+function onPaperChange() {
+  const total = paperTotal.value
+  if (!(Number(form.pass_score) > 0) || Number(form.pass_score) > total) {
+    form.pass_score = Math.round(total * 0.6 * 100) / 100
+  }
+}
+
 const subCards = computed(() => subStats.value ? [
   { label: '应交人数', value: subStats.value.total ?? 0 },
   { label: '已提交', value: subStats.value.submitted ?? 0 },
@@ -429,8 +445,13 @@ onMounted(async () => {
   await load()
   const p = await questionApi.papers({ page: 1, page_size: 100 })
   papers.value = p.data?.items || []
-  const c = await eduApi.classes({ page_size: 100 })
-  classes.value = c.data?.items || []
+  // mine=true 只返回本人任教的班级：后端发布时会校验「只能给自己任教的
+  // 班级下发」，全量列出只会让教师选中后收到 400。
+  const c = await eduApi.classes({ page_size: 100, mine: true })
+  // /edu/classes 返回数组（非分页 items）—— 只读 data.items 会得到 undefined，
+  // 班级下拉恒为空且没有任何报错，教师因此完全无法发布作业/考试。
+  const _cd = c.data
+  classes.value = Array.isArray(_cd) ? _cd : (_cd?.items || [])
 })
 </script>
 

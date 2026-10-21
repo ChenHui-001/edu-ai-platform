@@ -83,6 +83,7 @@ import { ElMessage } from 'element-plus'
 import { Refresh, MagicStick } from '@element-plus/icons-vue'
 import TYPES, { questionTypeLabel } from '@/constants/question'
 import { learningApi, eduApi, taskApi } from '@/api'
+import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
 const router = useRouter()
 const subjects = ref([])
@@ -99,14 +100,24 @@ const form = reactive({
 })
 
 async function loadData() {
-  const [s, g] = await Promise.all([eduApi.subjects(), eduApi.grades()])
-  subjects.value = s.data || []
+  // 学生的学科下拉只列本年级的：Subject 唯一键是 (grade_id, name)，
+  // 全量拉会得到 7 个「数学」，且代表 id 指向最低年级，组出来的卷子是低年级题。
+  const gid = currentGradeId()
+  const [s, g] = await Promise.all([
+    fetchSubjects({ gradeId: gid }), eduApi.grades()
+  ])
+  subjects.value = s
   grades.value = g.data || []
+  // 年级默认对齐学生所在年级，避免「学科是七年级、年级留空回落成别的年级」
+  if (!form.grade_id && gid) form.grade_id = gid
 }
 
 async function onSubjectChange() {
   if (!form.subject_id) { kps.value = []; return }
-  const res = await eduApi.knowledgeList({ subject_id: form.subject_id, page_size: 200 })
+  // 知识点挂在具体 subject_id 上，必须用「学科 + 年级」配套的那条 id，
+  // 否则「数学 + 七年级」会去查一年级数学的知识点，下拉一片空白。
+  const sid = resolveSubjectId(subjects.value, form.subject_id, form.grade_id || currentGradeId())
+  const res = await eduApi.knowledgeList({ subject_id: sid, page_size: 200 })
   kps.value = res.data?.items || res.data || []
 }
 
@@ -124,7 +135,12 @@ async function generate() {
   generating.value = true
   result.value = null
   try {
-    const res = await learningApi.customPaper(form)
+    const gradeId = form.grade_id || currentGradeId()
+    const res = await learningApi.customPaper({
+      ...form,
+      grade_id: gradeId,
+      subject_id: resolveSubjectId(subjects.value, form.subject_id, gradeId)
+    })
     result.value = res.data
     ElMessage.success(res.message)
   } catch (e) {

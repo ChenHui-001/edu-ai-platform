@@ -97,7 +97,9 @@
         </div>
 
         <el-divider content-position="left">笔记正文</el-divider>
-        <div class="note-content" v-html="current?.content"></div>
+        <!-- 笔记内容由学生自由输入、后端原样存储，必须净化后再 v-html：
+             否则 <script>/<img onerror> 可存储并执行（存储型 XSS） -->
+        <div class="note-content" v-html="safeContent"></div>
       </div>
       <template #footer>
         <el-button :icon="MagicStick" @click="organize(current)">AI 整理</el-button>
@@ -135,14 +137,18 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, MagicStick, StarFilled } from '@element-plus/icons-vue'
-import { learningApi, eduApi } from '@/api'
+import { learningApi } from '@/api'
+import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
+import { sanitizeHtml } from '@/utils/sanitize'
 
 const list = ref([])
 const subjects = ref([])
 const current = ref(null)
+// 详情抽屉里的正文：必须先净化再交给 v-html（存储型 XSS 防护）
+const safeContent = computed(() => sanitizeHtml(current.value?.content))
 const total = ref(0)
 const loading = ref(false)
 const saving = ref(false)
@@ -157,7 +163,10 @@ const form = reactive({ id: null, title: '', subject_id: null, content: '', tags
 async function load() {
   loading.value = true
   try {
-    const res = await learningApi.notes(query)
+    // 学科下拉是 distinct 去重后的代表 id（指向最低年级），
+    // 直接拿去过滤会查不到本年级笔记，必须先还原成年级精确 id。
+    const sid = resolveSubjectId(subjects.value, query.subject_id, currentGradeId())
+    const res = await learningApi.notes({ ...query, subject_id: sid })
     const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
@@ -195,6 +204,11 @@ async function save() {
   saving.value = true
   try {
     form.tags = tagList.value.join(',')
+    // 新建时若从筛选条件带入学科，同样需要还原成年级精确 id，
+    // 否则笔记会挂到「一年级数学」上，之后按本年级筛选就看不到。
+    if (!form.id && form.subject_id) {
+      form.subject_id = resolveSubjectId(subjects.value, form.subject_id, currentGradeId())
+    }
     if (form.id) await learningApi.updateNote(form.id, form)
     else await learningApi.createNote(form)
     ElMessage.success('保存成功')
@@ -233,9 +247,8 @@ async function remove(n) {
 }
 
 onMounted(async () => {
+  subjects.value = await fetchSubjects({ gradeId: currentGradeId() })
   await load()
-  const s = await eduApi.subjects()
-  subjects.value = s.data || []
 })
 </script>
 

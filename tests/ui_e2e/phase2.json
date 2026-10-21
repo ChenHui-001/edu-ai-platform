@@ -1,0 +1,71 @@
+{
+ "result": {
+  "new_user": "uistu162059",
+  "new_pwd": "UiTest@2026"
+ },
+ "rows": [
+  {
+   "no": 1,
+   "module": "登录",
+   "title": "验证码错误",
+   "steps": [
+    "访问 /login",
+    "填 admin / 正确密码",
+    "验证码填 ZZZZ（故意错）",
+    "点击登录"
+   ],
+   "expected": "提示验证码错误，不发放令牌",
+   "actual": "验证码错误被拒：「验证码错误或已过期」，仍停留 http://localhost:5173/login",
+   "verdict": "PASS",
+   "evidence": "[HTTP 400] POST /api/v1/auth/login ; [console.error] Failed to load resource: the server responded with a status of 400 (Bad Request)",
+   "shot": "shots/001_验证码错误.png"
+  },
+  {
+   "no": 2,
+   "module": "登录",
+   "title": "密码错误",
+   "steps": [
+    "访问 /login",
+    "填 admin / 错误密码",
+    "填入正确验证码",
+    "点击登录"
+   ],
+   "expected": "提示账号或密码错误",
+   "actual": "错误密码被拒：「账号或密码错误」",
+   "verdict": "PASS",
+   "evidence": "[HTTP 401] POST /api/v1/auth/login ; [console.error] Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "shot": "shots/002_密码错误.png"
+  },
+  {
+   "no": 3,
+   "module": "登录",
+   "title": "未审批账号登录（注册闭环）",
+   "steps": [
+    "用刚注册的 uistu162059 登录",
+    "填正确密码与验证码",
+    "点击登录"
+   ],
+   "expected": "提示账号正在审批中，拒绝登录",
+   "actual": "未审批账号被正确拦截：「账号正在审批中，请耐心等待管理员审核」",
+   "verdict": "PASS",
+   "evidence": "[HTTP 401] POST /api/v1/auth/login ; [console.error] Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "shot": "shots/003_未审批账号登录_注册闭环_.png"
+  },
+  {
+   "no": 4,
+   "module": "登录",
+   "title": "管理员正常登录",
+   "steps": [
+    "访问 /login",
+    "admin / Admin@123456",
+    "填正确验证码",
+    "点击登录"
+   ],
+   "expected": "登录成功并进入工作台",
+   "actual": "登录成功，跳转 http://localhost:5173/dashboard",
+   "verdict": "PASS",
+   "evidence": "",
+   "shot": "shots/004_管理员正常登录.png"
+  }
+ ]
+}

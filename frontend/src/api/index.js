@@ -53,6 +53,8 @@ export const eduApi = {
   deleteKnowledge: (id) => request.delete(`/edu/knowledge/${id}`),
   reindex: () => request.post('/edu/knowledge/reindex'),
   classes: (params) => request.get('/edu/classes', { params }),
+  // 注册页专用：匿名可读的班级简表（注册页不能调用需登录的 /edu/classes）
+  classesPublic: () => request.get('/edu/classes/public'),
   // 人员简表（教师端下拉专用；/system/users 是 admin 专属，教师调用必 403）
   peopleBrief: (params) => request.get('/edu/people/brief', { params }),
   masteryOverview: (classId) => request.get('/edu/knowledge/mastery-overview',
@@ -219,6 +221,9 @@ export const logApi = {
   error: (params) => request.get('/logs/error', { params }),
   exportUrl: (type) => `/api/v1/logs/export?log_type=${type}`,
   jobs: (params) => request.get('/jobs', { params }),
+  // 可用的执行逻辑（func_path 白名单）：任务标识必须从这里选，
+  // 自由文本填不进后端白名单。
+  jobHandlers: () => request.get('/jobs/handlers'),
   createJob: (data) => request.post('/jobs', data),
   updateJob: (id, data) => request.put(`/jobs/${id}`, data),
   toggleJob: (id) => request.put(`/jobs/${id}/toggle`),
@@ -231,6 +236,10 @@ export const logApi = {
 // ---------------- 附件 ----------------
 export const attachmentApi = {
   upload: (formData) => request.post('/attachments/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  // 注册页专用：匿名上传证明材料（后端仅接受图片，5MB 内）
+  publicUpload: (formData) => request.post('/attachments/public-upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
   batchUpload: (formData) => request.post('/attachments/batch', formData, {

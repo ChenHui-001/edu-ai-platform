@@ -74,6 +74,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { authApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import { validatePassword } from '@/utils/password'
 
 const userStore = useUserStore()
 const user = ref({})
@@ -93,7 +94,7 @@ const pwdRules = {
   old_password: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
   new_password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, message: '密码至少 6 位', trigger: 'blur' }
+    { validator: validatePassword, trigger: 'blur' }
   ],
   confirm_password: [
     { required: true, message: '请再次输入新密码', trigger: 'blur' },
@@ -121,7 +122,9 @@ async function saveProfile() {
 }
 
 async function changePassword() {
-  await pwdRef.value.validate()
+  // 校验失败会 reject；未 catch 时冒泡到 app.config.errorHandler，
+  // 用户看到的是「页面出错」而不是表单红字提示
+  if (!(await pwdRef.value.validate().catch(() => false))) return
   changing.value = true
   try {
     await authApi.changePassword({

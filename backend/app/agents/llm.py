@@ -4,6 +4,7 @@
 """
 import json
 import re
+import threading
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
@@ -38,14 +39,30 @@ PROVIDERS = {
 
 
 def is_available() -> bool:
-    """LLM 是否可用。未配置 Key 时走规则引擎。"""
+    """LLM 是否可用。未配置 Key 或已熔断时走规则引擎。"""
+    # 熔断中：对外统一声称不可用，避免健康检查/状态接口继续报 llm_enabled=true。
+    # 直接读模块级单例（而不是调 get_llm()）—— is_available 定义在 get_llm 之前，
+    # 且单例为 None 时无需构造（构造本身会读库，形成不必要的开销）。
+    if _llm_singleton is not None and _llm_singleton._disabled_reason:
+        return False
     enabled = _get_db_value("llm_enabled", "bool", settings.LLM_ENABLED)
     api_key = _get_db_value("llm_api_key", "string", settings.LLM_API_KEY)
     return bool(enabled and api_key)
 
+# sys_config 里的值优先级高于 settings，但部分参数有**硬上限**（成本/稳定性约束）。
+# 典型场景：v1.0.38 把 LLM_MAX_TOKENS 默认值 4096→2048，老环境 DB 里仍残留 4096，
+# 会继续覆盖新默认值 → 优化静默失效。因此在**读取处**统一收敛，
+# 保证 DB 残留值不能突破当前代码允许的上限（与 ai_config_service.get_ai_config 保持一致）。
+_CAPS: Dict[str, int] = {"llm_max_tokens": int(settings.LLM_MAX_TOKENS or 0)}
+
+# 进程级单例，声明必须在 is_available() 之前：函数体在调用时才求值，
+# 但保持在定义前声明可避免「先使用后声明」的阅读困惑与静态工具告警。
+_llm_singleton: Optional["LLMClient"] = None
+
 
 def _get_db_value(key: str, value_type: str, default: Any) -> Any:
     """从 sys_config 表读取配置值，优先级高于 settings。失败则回退到 settings。"""
+    val: Any = default
     try:
         from app.core.database import SessionLocal
         from app.models import SysConfig
@@ -53,40 +70,84 @@ def _get_db_value(key: str, value_type: str, default: Any) -> Any:
 
         with SessionLocal() as db:
             row = db.scalar(select(SysConfig).where(SysConfig.key == key))
-            if row is None or row.value is None or row.value == "":
-                return default
-            val = row.value
+            raw = row.value if row is not None else None
+            if raw is None or raw == "":
+                return _apply_cap(key, default)
             if value_type == "bool":
-                return val.lower() in ("true", "1", "yes", "on")
-            if value_type == "int":
+                val = raw.lower() in ("true", "1", "yes", "on")
+            elif value_type == "int":
                 try:
-                    return int(val)
+                    val = int(raw)
                 except ValueError:
-                    return default
-            if value_type == "float":
+                    val = default
+            elif value_type == "float":
                 try:
-                    return float(val)
+                    val = float(raw)
                 except ValueError:
-                    return default
-            return val
+                    val = default
+            else:
+                val = raw
     except Exception:
-        return default
+        val = default
+    return _apply_cap(key, val)
+
+
+def _apply_cap(key: str, value: Any) -> Any:
+    """对配置值施加上限收敛；未配置上限的 key 原样返回。"""
+    cap = _CAPS.get(key)
+    if cap and isinstance(value, int) and not isinstance(value, bool) and value > cap:
+        logger.warning(f"配置 {key}={value} 超过上限 {cap}，已收敛")
+        return cap
+    return value
 
 
 class LLMClient:
-    """OpenAI 兼容协议客户端，懒加载 langchain-openai。"""
+    """OpenAI 兼容协议客户端，懒加载 langchain-openai。
+
+    认证失败熔断：密钥无效（401/403）属于**配置错误**，不是瞬时故障，
+    重试同一个无效密钥不可能成功。此前没有熔断，交一份 6 道简答题的卷子
+    会连续发起 6 次 LLM 往返，每次都要等 5~6 秒才拿到 401
+    → 单次交卷从 0.5s 涨到 33s，直接超过前端 30s 超时（实测 P1）。
+    现在首个 401 即记下原因并短路，后续调用直接走规则引擎降级，
+    直到管理员改配置（`_reload` 清空熔断状态）。
+    """
+
+    # 触发熔断的错误特征。
+    # 401/403 是鉴权失败，429 是配额/限流——这两类都**不是瞬时抖动**：
+    # 同一个密钥、同一时刻重试必然还是同样的结果，继续重试只会白等网络往返。
+    # 实测：无效密钥返回 429 RATE_LIMITED，一次往返 1.5s；
+    # 一份 6 道简答题的卷子 = 6 次串行往返，交卷从 0.5s 涨到 116s（前端超时）。
+    # 真正的网络抖动（超时/连接重置）不在熔断范围，那些是有可能恢复的。
+    _AUTH_ERROR_MARKS = ("401", "403", "429", "UNAUTHORIZED", "Unauthorized",
+                         "invalid_api_key", "Incorrect API key", "authentication",
+                         "RATE_LIMITED", "rate limit", "配额", "quota")
 
     def __init__(self):
         self._client = None
         self._fallback_reason = ""
+        # 熔断状态：非空表示已判定配置不可用，跳过真实网络调用
+        self._disabled_reason = ""
 
     @property
     def provider_cfg(self) -> Dict[str, Any]:
         provider = _get_db_value("llm_provider", "string", settings.LLM_PROVIDER)
         return PROVIDERS.get(provider, PROVIDERS["deepseek"])
 
+    def _is_auth_error(self, exc: Exception) -> bool:
+        msg = str(exc)
+        return any(m in msg for m in self._AUTH_ERROR_MARKS)
+
     def get_client(self):
-        """获取 LangChain ChatOpenAI 实例（失败返回 None）。"""
+        """获取 LangChain ChatOpenAI 实例（失败返回 None）。
+
+        检查顺序很重要：**熔断判断必须在返回缓存客户端之前**。
+        反过来的话，进程里已有 `_client` 时永远查不到熔断标记，
+        熔断形同虚设（实测：写入无效密钥后交卷仍耗时 105s）。
+        """
+        # 熔断优先级最高：已确认配置无效，连缓存客户端也不能用
+        if self._disabled_reason:
+            self._fallback_reason = self._disabled_reason
+            return None
         if self._client is not None:
             return self._client
         if not is_available():
@@ -181,6 +242,13 @@ class LLMClient:
         except Exception as exc:
             duration = int((time.perf_counter() - start) * 1000)
             logger.error(f"LLM 调用失败 [{agent_name}]: {exc}")
+            # 鉴权失败立即熔断：同一份无效密钥重试必然还是失败，
+            # 不熔断就会让「一份 6 道主观题的卷子」白等 6 轮网络往返。
+            if self._is_auth_error(exc):
+                self._disabled_reason = (
+                    f"LLM 密钥无效或已过期（{str(exc)[:80]}），已暂停真实调用，"
+                    "请到「系统管理 → AI 配置」更新密钥后重试")
+                logger.warning(self._disabled_reason)
             log_agent_call(
                 agent_name=agent_name, user_id=user_id, input_text=user_prompt[:2000],
                 duration_ms=duration, status="failed", is_fallback=True,
@@ -244,15 +312,17 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001
             duration = int((time.perf_counter() - start) * 1000)
             logger.error("LLM 流式调用失败 [%s]: %s", agent_name, exc)
+            if self._is_auth_error(exc):
+                self._disabled_reason = (
+                    f"LLM 密钥无效或已过期（{str(exc)[:80]}），已暂停真实调用，"
+                    "请到「系统管理 → AI 配置」更新密钥后重试")
+                logger.warning(self._disabled_reason)
             log_agent_call(
                 agent_name=agent_name, user_id=user_id, input_text=user_prompt[:2000],
                 duration_ms=duration, status="failed", is_fallback=True,
                 error_msg=str(exc)[:1000],
             )
             yield {"type": "error", "message": f"模型调用失败：{exc}"}
-
-
-_llm_singleton: Optional["LLMClient"] = None
 
 
 def get_llm() -> "LLMClient":
@@ -278,23 +348,54 @@ def log_agent_call(
     biz_type: Optional[str] = None,
     biz_id: Optional[int] = None,
 ) -> None:
-    """写入 AI 调用日志。"""
-    try:
+    """写入 AI 调用日志（**后台线程异步落库**，绝不阻塞调用方）。
+
+    为什么必须异步：交卷流程里 `save_answers()` 先 `db.flush()` 写 Answer，
+    此时业务事务已经持有 SQLite 的 RESERVED 写锁，直到 `finalize_submission()`
+    的 `db.commit()` 才释放。而 AI 调用日志发生在两者之间（主观题判分阶段），
+    若在这里同步写库，会用**另一个 Session** 去抢同一把写锁 —— 必然抢不到，
+    于是等满 `busy_timeout`（5s）抛 `database is locked`，重试 3 次再等 3×5s。
+
+    实测代价：一道简答题就固定 +16.5s（3 次重试 + 退避），32 题卷子交卷
+    16.4s 全部耗在这里，前端 30s 超时直接判失败。日志是旁路数据，没有理由
+    让主流程为它等锁。
+
+    改为 daemon 线程 + 单独连接：主流程立即返回，写成功与否都不再影响响应时间。
+    """
+    payload = dict(
+        agent_name=agent_name, user_id=user_id,
+        input_text=input_text, output_text=output_text,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        duration_ms=duration_ms, status=status, error_msg=error_msg,
+        is_fallback=is_fallback, biz_type=biz_type, biz_id=biz_id,
+    )
+
+    def _write() -> None:
+        import time as _time
+
         from app.core.database import SessionLocal
 
-        with SessionLocal() as db:
-            db.add(
-                AgentCallLog(
-                    agent_name=agent_name, user_id=user_id,
-                    input_text=input_text, output_text=output_text,
-                    input_tokens=input_tokens, output_tokens=output_tokens,
-                    duration_ms=duration_ms, status=status, error_msg=error_msg,
-                    is_fallback=is_fallback, biz_type=biz_type, biz_id=biz_id,
-                )
-            )
-            db.commit()
-    except Exception as exc:  # 日志失败不影响主流程
-        logger.warning(f"Agent 调用日志写入失败: {exc}")
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                with SessionLocal() as db:
+                    db.add(AgentCallLog(**payload))
+                    db.commit()
+                return
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                    break  # 非锁冲突，重试无意义
+                _time.sleep(0.1 * (attempt + 1))
+        logger.warning(f"Agent 调用日志写入失败: {last_exc}")
+
+    try:
+        threading.Thread(
+            target=_write, name="agent-call-log", daemon=True
+        ).start()
+    except Exception as exc:  # noqa: BLE001  线程都起不来时降级为同步写
+        logger.warning(f"日志线程启动失败，改为同步写入: {exc}")
+        _write()
 
 
 # ---------------------------------------------------------------- JSON 解析

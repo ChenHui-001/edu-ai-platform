@@ -57,3 +57,18 @@ temp/
 # 数据库备份
 *.bak
 dump.sql
+
+# UI E2E 运行时产物（脚本、用例结果与报告要入库；以下是跑出来的东西）
+tests/ui_e2e/shots/
+tests/ui_e2e/__pycache__/
+tests/ui_e2e/session_*.json
+tests/ui_e2e/captcha_*.json
+tests/ui_e2e/captcha_*.png
+tests/ui_e2e/result.json
+# 侦察/探针脚本：一次性排查用，结论已沉淀进 REPORT.md
+tests/ui_e2e/probe*.py
+tests/ui_e2e/probe*.json
+# 截图过程中产生的零散图（c0.png / cap_1.png / p3_0.png 等）
+tests/ui_e2e/c*.png
+tests/ui_e2e/cap_*.png
+tests/ui_e2e/p3_*.png

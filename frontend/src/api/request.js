@@ -63,6 +63,23 @@ function ensureRefresh() {
   return refreshing
 }
 
+/**
+ * 给「已由拦截器提示过用户」的错误打标记。
+ *
+ * 业务错误（4xx/5xx、code≠200、网络中断）在拦截器里已经 ElMessage 过一次，
+ * 但组件里 await 未 try/catch 时，rejection 会冒泡到 main.js 的
+ * app.config.errorHandler，被当成运行时异常再报一次：
+ *   「页面出错：Request failed with status code 400」
+ * 并在顶部插一条红条。用户看到的是「一句业务提示 + 一句看不懂的英文」，
+ * 且红条会一直挂着不消失。打标记后全局兜底可据此跳过。
+ */
+function markHandled(err) {
+  try {
+    if (err && typeof err === 'object') err.__handled = true
+  } catch { /* 冻结对象等极端情况忽略 */ }
+  return err
+}
+
 // 响应拦截：统一错误处理
 service.interceptors.response.use(
   (response) => {
@@ -71,11 +88,13 @@ service.interceptors.response.use(
     const res = response.data
     if (res.code !== 200) {
       ElMessage.error(res.message || '请求失败')
-      return Promise.reject(new Error(res.message || '请求失败'))
+      return Promise.reject(markHandled(new Error(res.message || '请求失败')))
     }
     return res
   },
   async (error) => {
+    // 进门先标记：本拦截器所有出口都自带用户提示
+    markHandled(error)
     const { response, config } = error
 
     // 登录接口自身返回 401 不应触发刷新循环
@@ -83,6 +102,14 @@ service.interceptors.response.use(
       || (config?.url || '').includes('/auth/refresh')
 
     if (response?.status === 401 && !isAuthRequest) {
+      // 公共页（/login、/register）上的 401 不能当成「登录已过期」：
+      // 未登录用户访问注册页时，页面内任何一个需登录的辅助接口（班级下拉、
+      // 附件上传）返回 401，都会把用户直接弹回登录页 —— 注册入口彻底打不开。
+      // 公共页只把错误抛给调用方，由页面自己降级处理。
+      const onPublicPage = router.currentRoute.value?.meta?.public === true
+      if (onPublicPage) {
+        return Promise.reject(error)
+      }
       if (!config?._retried) {
         config._retried = true
         try {

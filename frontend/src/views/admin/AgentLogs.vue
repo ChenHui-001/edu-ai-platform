@@ -20,8 +20,9 @@
     <el-card shadow="never" class="filter-card">
       <el-form :inline="true" :model="query">
         <el-form-item label="Agent">
-          <el-select v-model="query.agent_code" placeholder="全部" clearable style="width:180px">
-            <el-option v-for="a in agents" :key="a.code" :label="a.name" :value="a.code" />
+          <el-select v-model="query.agent_name" placeholder="全部" clearable style="width:180px">
+            <el-option v-for="a in agents" :key="a.name"
+                       :label="a.display_name || a.name" :value="a.name" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
@@ -86,14 +87,18 @@
         <el-descriptions-item label="Agent">{{ current.agent_name || current.agent_code }}</el-descriptions-item>
         <el-descriptions-item label="意图">{{ current.intent || '-' }}</el-descriptions-item>
         <el-descriptions-item label="耗时">{{ current.duration_ms }} ms</el-descriptions-item>
-        <el-descriptions-item label="Token">{{ current.token_usage || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="Token">
+          <!-- 后端给的是 input_tokens / output_tokens，没有 token_usage 字段 -->
+          {{ (current.input_tokens ?? 0) + (current.output_tokens ?? 0) || '-' }}
+        </el-descriptions-item>
         <el-descriptions-item label="时间">{{ current.created_at }}</el-descriptions-item>
         <el-descriptions-item label="模型">{{ current.model || '-' }}</el-descriptions-item>
       </el-descriptions>
       <el-divider content-position="left">输入</el-divider>
       <pre class="code-box">{{ current?.input_text || '-' }}</pre>
       <el-divider content-position="left">输出</el-divider>
-      <pre class="code-box">{{ current?.output_preview || '-' }}</pre>
+      <!-- 明细字段是 output_text（完整输出），output_preview 只在列表里 -->
+      <pre class="code-box">{{ current?.output_text || current?.output_preview || '-' }}</pre>
       <el-divider v-if="current?.error_msg" content-position="left">错误</el-divider>
       <pre v-if="current?.error_msg" class="code-box error">{{ current.error_msg }}</pre>
     </el-dialog>
@@ -122,8 +127,9 @@
 
       <el-divider content-position="left">已注册 Agent（{{ agents.length }}）</el-divider>
       <el-table :data="agents" border size="small">
-        <el-table-column prop="name" label="名称" width="120" />
-        <el-table-column prop="code" label="标识" width="130" />
+        <!-- 后端字段是 name（标识）/ display_name（中文名），没有 code -->
+        <el-table-column prop="display_name" label="名称" width="150" />
+        <el-table-column prop="name" label="标识" width="150" />
         <el-table-column prop="description" label="说明" show-overflow-tooltip />
       </el-table>
     </el-drawer>
@@ -145,7 +151,7 @@ const statusDrawer = ref(false)
 const current = ref(null)
 const dateRange = ref([])
 
-const query = reactive({ page: 1, page_size: 20, agent_code: '', status: '', is_fallback: null })
+const query = reactive({ page: 1, page_size: 20, agent_name: '', status: '', is_fallback: null })
 
 const cards = computed(() => {
   if (!list.value.length) return []
@@ -175,7 +181,7 @@ async function load() {
 }
 
 function reset() {
-  Object.assign(query, { page: 1, agent_code: '', status: '', is_fallback: null })
+  Object.assign(query, { page: 1, agent_name: '', status: '', is_fallback: null })
   dateRange.value = []
   load()
 }
@@ -188,7 +194,10 @@ function detail(row) {
 onMounted(async () => {
   await load()
   const [l, s] = await Promise.all([agentApi.list(), agentApi.status()])
-  agents.value = l.data || []
+  // /agent/list 返回的是对象 {agents: [...], orchestrator_mode, llm_enabled}，
+  // 不是数组。原先直接 `l.data || []` 拿到对象，el-select 的 v-for 遍历对象值，
+  // 下拉选项全空、抽屉里的 Agent 表格也是空的。
+  agents.value = l.data?.agents || (Array.isArray(l.data) ? l.data : [])
   engine.value = s.data
 })
 </script>

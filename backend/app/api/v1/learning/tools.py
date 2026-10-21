@@ -325,6 +325,20 @@ def create_custom_paper(
         raise BusinessException("question_ids 必须是整数数组")
     if len(question_ids) > 50:
         raise BusinessException("自主组卷最多选择 50 道题")
+
+    # 目标年级：请求 → 学生年级。学科必须与它配套（Subject 唯一键是
+    # (grade_id, name)，「数学」在 1-9 年级各一条）；前端若传了去重后的
+    # 代表 id（指向最低年级），会拼出「一年级数学 + 七年级」这种组合，
+    # 抽出来的是低年级题。这里按学科名回查目标年级那条。
+    target_grade = data.get("grade_id") or user.grade_id
+    subject_id = int(subject_id)
+    subj = db.get(Subject, subject_id)
+    if subj and target_grade and subj.grade_id != target_grade:
+        same = db.scalar(select(Subject).where(
+            Subject.name == subj.name, Subject.grade_id == target_grade))
+        if same:
+            subject_id = same.id
+
     if question_ids:
         # 手动选题模式
         qs = db.scalars(select(Question).where(
@@ -341,6 +355,10 @@ def create_custom_paper(
             stmt = stmt.where(Question.difficulty == data["difficulty"])
         if data.get("question_types"):
             stmt = stmt.where(Question.type.in_(data["question_types"]))
+        # 年级过滤此前被完全忽略：data.get("grade_id") 只在最后给 Paper 赋值时
+        # 用到，抽题语句里没有它，界面上的「年级」下拉是个摆设。
+        if target_grade:
+            stmt = stmt.where(Question.grade_id == target_grade)
         try:
             count = int(data.get("count", 10))
         except (TypeError, ValueError):
@@ -352,7 +370,7 @@ def create_custom_paper(
         raise BusinessException("没有符合条件的题目")
 
     # grade_id 解析：请求 → 首题 → 学生年级（非空外键不接受 0）
-    grade_id = (data.get("grade_id") or next(
+    grade_id = (target_grade or next(
         (q.grade_id for q in qs if q.grade_id), None) or user.grade_id)
     total_score = sum(q.score for q in qs)
     paper = Paper(name=name, creator_id=user.id, subject_id=subject_id,

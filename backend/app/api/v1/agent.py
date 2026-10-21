@@ -75,18 +75,33 @@ def list_agents(user: User = Depends(get_current_user)):
 
 @router.get("/status", summary="AI 引擎状态")
 def agent_status(_: User = Depends(get_current_user)):
-    orch = get_orchestrator()
     from app.agents.rag import get_collection
+    from app.services.scheduler import scheduler_status
 
+    orch = get_orchestrator()
     col = get_collection()
+    sched = scheduler_status()
+    if not is_available():
+        tip = "未配置 LLM_API_KEY，所有 Agent 将使用规则引擎降级运行"
+    else:
+        tip = ""
     return ok({
         "llm_enabled": is_available(),
         "provider": settings.LLM_PROVIDER,
         "model": settings.LLM_MODEL,
+        # 前端「引擎状态」抽屉按 llm_provider/llm_model 渲染，字段名不一致会
+        # 恒显示「未配置（规则引擎）」—— 已配置也看不出来。两套键一起下发。
+        "llm_provider": settings.LLM_PROVIDER if is_available() else None,
+        "llm_model": settings.LLM_MODEL if is_available() else None,
         "orchestrator_mode": orch.mode,
-        "vector_db": "ChromaDB" if col else "SQL 降级检索",
+        # rag.get_collection 返回集合对象，不是字符串 "chroma"；
+        # 前端按 vector_db === 'chroma' 判断，这里显式给出标识
+        "vector_db": "chroma" if col else "sql",
         "agents": len(AGENT_REGISTRY),
-        "tip": "" if is_available() else "未配置 LLM_API_KEY，所有 Agent 将使用规则引擎降级运行",
+        # 调度器状态此前只有 /jobs/status（仅 admin 可看），管理员打开
+        # 「AI 引擎状态」时调度器恒显示「已停止」，与事实不符
+        "scheduler_running": bool(sched.get("running")),
+        "tip": tip,
     })
 
 
@@ -564,7 +579,8 @@ def list_jobs(
 @router.get("/logs", summary="AI 调用日志")
 def agent_logs(
     params: PageParams = Depends(), agent_name: Optional[str] = None,
-    status: Optional[str] = None, db: Session = Depends(get_db),
+    status: Optional[str] = None, is_fallback: Optional[bool] = None,
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     # 权限：管理员看全部，学生只看自己的
@@ -574,6 +590,9 @@ def agent_logs(
         stmt = stmt.where(AgentCallLog.user_id == user.id)
     if agent_name:
         stmt = stmt.where(AgentCallLog.agent_name == agent_name)
+    # 「降级」下拉此前没有对应入参，FastAPI 静默忽略 → 选什么都不影响结果
+    if is_fallback is not None:
+        stmt = stmt.where(AgentCallLog.is_fallback.is_(is_fallback))
     if status:
         stmt = stmt.where(AgentCallLog.status == status)
 
