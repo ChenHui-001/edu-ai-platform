@@ -274,6 +274,42 @@ def image_embedded_commit(image):
     return None, "镜像未烧入 commit 指纹（旧镜像，构建时未传 --build-arg GIT_COMMIT）"
 
 
+# 真正会被 COPY 进镜像的路径（见 Dockerfile）。只有这些的改动会改变镜像内容；
+# docs/、.github/、*.md 之类改了也只是让 commit 换个 sha，镜像字节不变。
+IMAGE_AFFECTING_PREFIXES = (
+    "backend/app/",
+    "backend/requirements.txt",
+    "backend/.env.example",
+    "frontend/",
+    "deploy/",
+    "VERSION",
+    "Dockerfile",
+    ".dockerignore",
+)
+
+
+def commits_missing_from_image(sha, head):
+    """判断 (sha..head) 之间是否有**影响镜像内容**的改动。
+
+    返回 (是否有影响, 影响文件列表)。
+
+    ## 为什么不能一律要求 commit 完全相等
+
+    提交一份文档后 HEAD 就变了，镜像立刻「代码不一致」——但镜像里一个
+    字节都没变。要求必须重建既浪费十几分钟，也会诱使人用
+    `--skip-test` 之类的手段绕开流程，反而降低可靠性。
+
+    一致性的本质是「**镜像内容 == 代码内容**」，对不影响镜像的提交而言
+    两者本就是等价的。所以这里按「改动是否落在会被 COPY 的路径」判定。
+    """
+    code, out, _ = sh(["git", "diff", "--name-only", f"{sha}..{head}"])
+    if code != 0:
+        return True, []          # 拿不到差异就按「有影响」保守处理
+    files = [f.strip() for f in out.splitlines() if f.strip()]
+    affecting = [f for f in files if f.startswith(IMAGE_AFFECTING_PREFIXES)]
+    return bool(affecting), affecting
+
+
 def check_local_image(rep, version, repo, mode, head=None):
     """本地镜像里的版本**和代码**都必须等于 VERSION / HEAD。
 
@@ -315,10 +351,21 @@ def check_local_image(rep, version, repo, mode, head=None):
     # 允许残缺 sha（abbrev）：只要能唯一对应 HEAD 前缀即视为一致
     if head.startswith(sha) or sha.startswith(head):
         rep.ok("本地镜像内 commit == HEAD", f"{tag} -> {sha[:7]}")
-    else:
-        rep.fail("本地镜像内 commit == HEAD",
-                 f"镜像出自 {sha[:7]}，当前代码是 {head[:7]}；"
-                 "镜像里**不是**当前这份代码 —— 版本号相同也会骗人，必须重建")
+        return
+
+    # commit 不同，但若差异全在不进镜像的路径（docs/、.github/、*.md），
+    # 镜像内容并未改变 —— 这不算漂移。
+    affecting, files = commits_missing_from_image(sha, head)
+    if not affecting:
+        rep.ok("本地镜像内 commit 与 HEAD 等价",
+               f"镜像出自 {sha[:7]}，HEAD 是 {head[:7]}，"
+               f"但 {sha[:7]}..{head[:7]} 无影响镜像内容的改动（仅文档/CI）")
+        return
+
+    rep.fail("本地镜像内 commit == HEAD",
+             f"镜像出自 {sha[:7]}，当前代码是 {head[:7]}；"
+             f"差异文件（影响镜像）：{files[:3]}{'...' if len(files) > 3 else ''}；"
+             "镜像里**不是**当前这份代码 —— 版本号相同也会骗人，必须重建")
 
 
 # ================================================================ 远程镜像核对
