@@ -1,4 +1,7 @@
 """认证相关接口：注册、审批、登录、验证码、密码。"""
+import random
+import threading
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Request
@@ -10,11 +13,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import (
     bearer_scheme, get_client_ip, get_current_admin, get_current_user, get_user_agent,
 )
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException
 from app.core.security import (
     create_access_token, decode_token, generate_captcha, hash_password,
-    revoke_token, store_captcha, verify_captcha,
+    revoke_token, store_captcha, validate_password_strength, verify_captcha,
 )
 from app.core.logger import get_logger
 from app.models import Registration, User
@@ -275,53 +279,111 @@ def logout(
 
 # ---------------------------------------------------------------- 找回密码
 _RESET_CODE_STORE: Dict[str, tuple] = {}  # {email/phone: (code, expire_at)}
+_RESET_RATE_LOCK = threading.Lock()
+_RESET_RATE_STORE: Dict[str, list] = {}  # {target: [request_time, ...]}
+
+
+def _check_reset_request_rate(target: str) -> None:
+    """按目标账号限制找回密码请求频率（10 分钟最多 5 次）。"""
+    now = datetime.now()
+    with _RESET_RATE_LOCK:
+        bucket = _RESET_RATE_STORE.setdefault(target, [])
+        bucket[:] = [t for t in bucket if (now - t).total_seconds() < 600]
+        if len(bucket) >= 5:
+            raise BusinessException("请求过于频繁，请 10 分钟后再试")
+        bucket.append(now)
+
+
+def _send_reset_code_email(db: Session, target: str, code: str) -> bool:
+    """通过 sys_config 中配置的 SMTP 发送验证码；未配置或发送失败返回 False。"""
+    if "@" not in target:
+        return False  # 当前仅支持邮箱通道；短信通道未实现
+    from app.models import SysConfig
+
+    cfg = {c.key: (c.value or "") for c in db.scalars(select(SysConfig)).all()}
+    host = cfg.get("smtp_host", "").strip()
+    sender = (cfg.get("smtp_from") or cfg.get("smtp_user") or "").strip()
+    if not host or not sender:
+        return False
+    try:
+        port = int(cfg.get("smtp_port") or 465)
+    except (TypeError, ValueError):
+        port = 465
+    smtp_user = cfg.get("smtp_user", "").strip()
+    smtp_pwd = cfg.get("smtp_password", "")
+    try:
+        import smtplib
+        from email.message import EmailMessage
+
+        msg = EmailMessage()
+        msg["Subject"] = "找回密码验证码"
+        msg["From"] = sender
+        msg["To"] = target
+        msg.set_content(
+            f"你的找回密码验证码是：{code}，5 分钟内有效。\n"
+            "如非本人操作，请忽略本邮件。"
+        )
+        if port == 465:
+            server = smtplib.SMTP_SSL(host, port, timeout=10)
+        else:
+            server = smtplib.SMTP(host, port, timeout=10)
+            server.starttls()
+        with server:
+            if smtp_user and smtp_pwd:
+                server.login(smtp_user, smtp_pwd)
+            server.send_message(msg)
+        return True
+    except Exception as exc:  # noqa: BLE001 邮件通道失败不暴露内部细节
+        logger.error(f"找回密码邮件发送失败: {exc}")
+        return False
 
 
 @router.post("/forgot-password", summary="找回密码（发送验证码）")
 def forgot_password(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
-    """通过邮箱/手机号找回密码：
-    - 账号存在则生成 6 位验证码
-    - 若系统配置了 SMTP（sys_config.smtp_host）则发邮件，否则返回提示联系管理员
-    - 验证码 5 分钟有效
+    """通过邮箱找回密码：
+    - 账号存在且系统配置了 SMTP 时发送 6 位验证码（5 分钟有效）
+    - 未配置邮件通道时明确提示联系管理员，且**不生成/记录验证码**
+    - 响应文案不泄露账号是否存在
     """
-    import random
-    from datetime import datetime, timedelta
     target = (payload.get("email") or payload.get("phone") or "").strip()
     if not target:
         raise BusinessException("请提供邮箱或手机号")
+    _check_reset_request_rate(target)
     user = db.scalar(
         select(User).where((User.email == target) | (User.phone == target))
     )
     if not user:
         # 安全考虑：不泄露账号是否存在
-        return ok(message="若该账号存在，验证码已发送")
+        return ok({"sent": True}, message="若该账号存在，验证码已发送")
+
     code = f"{random.randint(0, 999999):06d}"
+    if not _send_reset_code_email(db, target, code):
+        # 不落库、不写日志、不返回验证码：避免"假发送"与验证码进日志。
+        return ok(
+            {"sent": False},
+            message="验证码已发送（若系统已配置邮件服务）。"
+                    "当前未检测到可用的邮件配置，请联系管理员重置密码",
+        )
+
     _RESET_CODE_STORE[target] = (code, datetime.now() + timedelta(minutes=5))
-    # 清理过期项
     now = datetime.now()
     for k in [k for k, (_, exp) in _RESET_CODE_STORE.items() if exp < now]:
         _RESET_CODE_STORE.pop(k, None)
-    # SMTP 发送（若配置）——这里仅记录，真实发送需配置 SMTP
-    # 生产环境应在 sys_config 配置 smtp_host/smtp_password
-    logger.info(f"找回密码验证码已生成：账号 {target}，code={code}")
-    return ok({"sent": True, "target": target},
-              message="验证码已发送，5 分钟内有效")
+    return ok({"sent": True}, message="验证码已发送，5 分钟内有效")
 
 
 @router.post("/reset-password", summary="重置密码（验证码）")
 def reset_password(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
     """用验证码重置密码（无需登录）：
-    - 接收 email/phone、code、new_password
-    - 校验验证码通过后重置密码并标记强制改密
+    - 校验验证码通过后重置密码
+    - 与修改密码接口共用同一强度策略，禁止 123456 这类弱口令绕过
     """
-    from datetime import datetime
     target = (payload.get("email") or payload.get("phone") or "").strip()
     code = (payload.get("code") or "").strip()
     new_pwd = (payload.get("new_password") or "").strip()
     if not target or not code or not new_pwd:
         raise BusinessException("请提供邮箱/手机号、验证码和新密码")
-    if len(new_pwd) < 6:
-        raise BusinessException("新密码长度不能少于 6 位")
+    validate_password_strength(new_pwd, min_length=settings.PASSWORD_MIN_LENGTH)
     item = _RESET_CODE_STORE.pop(target, None)
     if not item or item[0] != code or item[1] < datetime.now():
         raise BusinessException("验证码错误或已过期")
