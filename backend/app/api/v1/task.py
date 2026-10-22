@@ -3,7 +3,7 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -745,16 +745,29 @@ def my_scores(
         d["total_score"] = task.total_score if task else None
         items.append(d)
 
-    scored = list(rows)
+    # 汇总必须对「全量已评分记录」做 SQL 聚合：此前直接统计当前页 rows，
+    # 翻到第 2 页后平均分/最高分/及格率会变成当页的统计（与 total 矛盾）。
+    count, avg_score, max_score, min_score, passed = db.execute(
+        select(
+            func.count(Submission.id),
+            func.avg(Submission.score),
+            func.max(Submission.score),
+            func.min(Submission.score),
+            func.sum(case((Submission.is_passed.is_(True), 1), else_=0)),
+        ).where(
+            Submission.student_id == user.id,
+            Submission.score.isnot(None),
+        )
+    ).one()
+    count = int(count or 0)
     return ok({
         "items": items, "total": total, "page": params.page,
         "summary": {
-            "count": len(scored),
-            "avg_score": round(sum(s.score for s in scored) / len(scored), 2) if scored else 0,
-            "max_score": max((s.score for s in scored), default=0),
-            "min_score": min((s.score for s in scored), default=0),
-            "pass_rate": round(sum(1 for s in scored if s.is_passed) / len(scored) * 100, 2)
-            if scored else 0,
+            "count": count,
+            "avg_score": round(float(avg_score or 0), 2),
+            "max_score": float(max_score or 0),
+            "min_score": float(min_score or 0),
+            "pass_rate": round(float(passed or 0) / count * 100, 2) if count else 0,
         },
     })
 
