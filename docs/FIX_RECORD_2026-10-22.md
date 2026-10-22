@@ -212,3 +212,61 @@
 - **改动**：`e2e_framework.py` 收紧为 401/403（或显式 allow_statuses），FAIL 输出实际状态码与响应；`test_learning_hub.py` 显式 method 映射；`test_requirements.py` 修正路径、学生上传改为真实文件并断言 401/403；`test_learning.py`/`test_analysis.py` 适配真实 404/400 语义。
 - **验证**：全量 E2E 851 项 / 通过 837 / 失败 0 / 环境跳过 14，收紧后未出现假绿掩盖。
 
+---
+
+## P2
+
+### P2-1 编辑任务缺少参数校验
+
+- **状态**：✅ 已修复
+- **改动**：`task.py` `update_task` 复用创建时的范围校验：标题/说明长度、时长 >0、作答次数 ≥1、及格分 ≤ 试卷总分、时间格式与先后关系、布尔字段类型；非法输入 400 而非 500/脏数据。
+- **验证**：`py_compile`；全量 E2E 中「教师可编辑任务」「非法参数」用例 0 失败。
+
+### P2-2 成绩中心汇总只统计当前页
+
+- **状态**：✅ 已修复
+- **改动**：`task.py` `my_scores` 的 count/avg/max/min/pass_rate 改为对全量已评分记录做 SQL 聚合（`count/avg/max/min/sum(case)`），不再用当前页 rows。
+- **验证**：`py_compile`；E2E 成绩中心/排序用例通过。
+
+### P2-3 内置角色初始化覆盖管理员定制
+
+- **状态**：✅ 已修复
+- **改动**：`init_db.py` `init_roles` 只新建时写种子元数据；已有角色只补缺失权限、不删除新增权限、不覆盖 `is_active/data_scope/name`，重启不再静默回滚定制。
+- **验证**：`py_compile`；E2E 角色保护/权限矩阵用例通过。
+
+### P2-4 CORS 通配来源 + credentials 无效组合
+
+- **状态**：✅ 已修复
+- **改动**：`main.py` 当 `CORS_ORIGINS` 含 `*` 时 `allow_credentials=False`（本项目鉴权走 Bearer，无 Cookie），避免浏览器拒绝该组合。
+- **验证**：`py_compile`；E2E 不受影响。
+
+### P2-5 切换 PostgreSQL 时轻量迁移静默失效
+
+- **状态**：✅ 已修复
+- **改动**：`db_migrations.py` 非 SQLite 环境显式跳过 PRAGMA 补列并提示使用 Alembic（依赖已内置），不再逐列报错/制造「已迁移」假象。
+- **验证**：`py_compile`；SQLite 启动迁移日志正常。
+
+### P2-6 AI 配置缺少范围校验、清空 Key 不生效
+
+- **状态**：✅ 已修复
+- **改动**：`ai_config_service.py` 对 temperature 0~2、max_tokens 64~8192、timeout 5~600 与 provider 白名单做入口校验；`llm.py` `_get_db_value` 对 `llm_api_key` 的显式空串返回空（关闭 AI），不再回落到 .env 旧密钥。
+- **验证**：`py_compile`；E2E AI 配置脱敏/保存用例通过。
+
+### P2-7 前端 ECharts 全量引入
+
+- **状态**：✅ 已修复
+- **改动**：新增 `frontend/src/utils/echarts.js` 按需注册折线/柱状/饼图/雷达及必要组件；`EChart.vue`、`MasteryMap.vue` 改用该入口；`vite.config.js` 移除 `echarts-for-react` 分包引用、告警阈值恢复为 800KB。
+- **验证**：`npm run build` 成功；charts 分包 1036KB→667KB、gzip 343KB→225KB；构建仅提示 element 1.09MB 超阈值（已知待按需化）。
+
+### P2-8 前端日期/时区处理不统一
+
+- **状态**：✅ 已修复
+- **改动**：新增 `frontend/src/utils/date.js`（`parseServerDate` 把空格转 T 兼容 Safari，`formatLocalDate` 按本地时区取日期）；`StudyGoals.vue` 打卡日历不再用 `toISOString()`（修复东八区 0-8 点错格）；`MyFavorites.vue` 「最近一周」不再因 Safari Invalid Date 恒为 0。
+- **验证**：`npm run build` 成功。
+
+### P2-9 生产环境播种已知口令演示账号
+
+- **状态**：✅ 已修复
+- **改动**：新增 `SEED_DEMO_DATA` 配置（默认 true 保留本地体验）；`init_db.init_demo_data` 关闭时跳过；compose/`.env.example` 暴露该开关，生产可设为 false 只保留 admin 与基础数据。
+- **验证**：`py_compile`；默认 true 时全量 E2E 种子数据正常。
+
