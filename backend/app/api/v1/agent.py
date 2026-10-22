@@ -1,6 +1,6 @@
 """AI Agent 中心接口：统一编排 + 6 个专属 Agent + 调用日志。"""
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy import desc, func, select
@@ -28,6 +28,45 @@ router = APIRouter(prefix="/agent", tags=["AI Agent 中心"])
 
 # 单次 Agent 调用超过该耗时记 warning，便于运维定位模型变慢/网络抖动
 SLOW_CALL_MS = 20_000
+
+# 入参上限（P1）：单请求会被放大成 N 次 LLM 往返 / 超大 prompt 打爆上下文与成本。
+# 取值远大于正常使用（正常出题 ≤20、批改一份卷子 ≤50 题、需求描述几十字），
+# 只拦截明显异常或恶意入参，不影响 E2E 与前端既有调用。
+MAX_AGENT_ITEMS = 50
+MAX_TEXT_CHARS = 8000
+
+
+def _limited_text(value: Any, field: str, limit: int = MAX_TEXT_CHARS) -> str:
+    """读取文本入参并校验长度，超限抛 BusinessException。"""
+    text = str(value or "").strip()
+    if len(text) > limit:
+        raise BusinessException(
+            f"{field}过长（{len(text)} 字符），请控制在 {limit} 字符以内")
+    return text
+
+
+def _limited_items(value: Any, field: str, limit: int = MAX_AGENT_ITEMS) -> List[Any]:
+    """读取列表入参并校验元素数量，超限抛 BusinessException。"""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise BusinessException(f"{field}必须是数组")
+    if len(value) > limit:
+        raise BusinessException(f"{field}最多 {limit} 条，当前 {len(value)} 条")
+    return value
+
+
+def _limited_count(
+    value: Any, default: int, limit: int = MAX_AGENT_ITEMS, field: str = "数量",
+) -> int:
+    """读取数量入参并校验范围 [1, limit]。"""
+    try:
+        count = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        raise BusinessException(f"{field}必须是整数") from None
+    if count < 1 or count > limit:
+        raise BusinessException(f"{field}应在 1~{limit} 之间")
+    return count
 
 
 def _audit_write(db: Session, user: User, action: str, detail: str) -> None:
@@ -112,7 +151,7 @@ def chat(
     user: User = Depends(get_current_user),
 ):
     """一句话需求，自动路由到最合适的 Agent。"""
-    request = data.get("message") or data.get("request")
+    request = _limited_text(data.get("message") or data.get("request"), "需求内容")
     if not request:
         raise BusinessException("请输入你的需求")
     check_agent_rate(db, user.id)
@@ -176,7 +215,7 @@ def chat_stream(
     """
     from fastapi.responses import StreamingResponse
 
-    request = data.get("message") or data.get("request")
+    request = _limited_text(data.get("message") or data.get("request"), "需求内容")
     if not request:
         raise BusinessException("请输入你的需求")
     check_agent_rate(db, user.id)
@@ -285,13 +324,14 @@ def question_generator(
 ):
     from app.agents.question_agent import QuestionGeneratorAgent
 
+    count = _limited_count(data.get("count", 5), 5, field="出题数量")
     check_agent_rate(db, user.id)
     res = QuestionGeneratorAgent().run(
         db, user_id=user.id,
         grade_id=data.get("grade_id"), subject_id=int(data.get("subject_id", 0)),
         knowledge_point_id=data.get("knowledge_point_id"),
         question_type=data.get("type", "single"),
-        count=int(data.get("count", 5)),
+        count=count,
         difficulty=data.get("difficulty", "medium"),
         save=bool(data.get("save", False)),
     )
@@ -314,9 +354,10 @@ def paper_composer(
 ):
     from app.agents.paper_agent import PaperComposerAgent
 
+    request = _limited_text(data.get("request"), "组卷要求")
     check_agent_rate(db, user.id)
     res = PaperComposerAgent().run(
-        db, user_id=user.id, request=data.get("request", ""),
+        db, user_id=user.id, request=request,
         grade_id=data.get("grade_id"), subject_id=data.get("subject_id"),
         total_score=float(data.get("total_score", 100)),
         difficulty_ratio=data.get("difficulty_ratio"),
@@ -342,8 +383,9 @@ def agent_grading(
 ):
     from app.agents.grading_agent import GradingAgent
 
+    items = _limited_items(data.get("items"), "批改题目列表")
     check_agent_rate(db, user.id)
-    res = GradingAgent().run(db, user_id=user.id, items=data.get("items", []))
+    res = GradingAgent().run(db, user_id=user.id, items=items)
     _warn_if_slow(res, "grading")
     if not res.get("success"):
         return fail(res.get("message", "批改失败"))
@@ -364,11 +406,13 @@ def study_planner(
     if is_staff and data.get("student_id"):
         target_sid = int(data["student_id"])
 
+    # 参数校验先于限流计数：非法入参不应该消耗用户额度
+    days = _limited_count(data.get("days", 7), 7, limit=90, field="规划天数")
     check_agent_rate(db, user.id)
     res = StudyPlannerAgent().run(
         db, user_id=user.id,
         student_id=target_sid,
-        days=int(data.get("days", 7)),
+        days=days,
         daily_minutes=int(data.get("daily_minutes", 90)),
     )
     _warn_if_slow(res, "study_planner")
@@ -384,14 +428,15 @@ def tutor(
 ):
     from app.agents.tutor_agent import TutorAgent
 
-    check_agent_rate(db, user.id)
     # 兼容 message / question / question_text 三种入参：
     # 前端 AgentChat 与文档示例用 question，历史调用用 message，
     # 只认 message 会把问题整体丢弃，Agent 直接返回「请描述你的问题」。
-    question = (
+    question = _limited_text(
         data.get("message") or data.get("question")
-        or data.get("question_text") or data.get("content") or ""
-    ).strip()
+        or data.get("question_text") or data.get("content") or "",
+        "问题内容",
+    )
+    check_agent_rate(db, user.id)
 
     res = TutorAgent().run(
         db, user_id=user.id, request=question,
@@ -433,9 +478,12 @@ def note_organizer(
                 raise PermissionException("管理员不可覆写他人笔记")
 
     check_agent_rate(db, user.id)
+    content = data.get("content")
+    if content is not None:
+        content = _limited_text(content, "笔记内容")
     res = NoteOrganizerAgent().run(
         db, user_id=user.id,
-        note_id=note_id, content=data.get("content"),
+        note_id=note_id, content=content,
         title=data.get("title"), save=save,
     )
     _warn_if_slow(res, "note_organizer")
@@ -526,6 +574,16 @@ def create_job(
     params = data.get("params") or {}
     if not isinstance(params, dict):
         raise BusinessException("params 必须是对象")
+    # 异步任务入口同样要受限：否则 /agent/grading、/agent/paper-composer 的
+    # 入参上限可被 /agent/jobs 绕过（后台线程会照常发起 N 次 LLM 调用）。
+    for key, label in (("request", "组卷要求"), ("topic", "教学主题"),
+                       ("message", "需求内容")):
+        if key in params:
+            _limited_text(params.get(key), label)
+    if "count" in params:
+        _limited_count(params.get("count"), 5, field="出题数量")
+    if "items" in params:
+        _limited_items(params.get("items"), "批改题目列表")
     check_agent_rate(db, user.id)
 
     job = AgentJob(user_id=user.id, agent=agent, status="pending",

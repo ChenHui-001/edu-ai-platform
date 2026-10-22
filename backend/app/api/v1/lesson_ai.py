@@ -45,6 +45,12 @@ PROGRESS_HINTS: List[tuple] = [
     (100, "生成完成"),
 ]
 
+# 入参上限（P1）：教案 prompt 直接拼接这些文本，超长入参会把单次请求放大成
+# 巨额 token 成本（甚至打爆模型上下文）。正常教案「课题」十几个字、
+# 「教学目标/补充要求」几百字，上限只拦截异常入参。
+MAX_TOPIC_CHARS = 200
+MAX_TEXT_CHARS = 8000
+
 # 任务超时判定：超过该时长仍是 running，视为僵尸任务。
 # daemon 线程在进程重启后不会恢复，没有这个判定会让前端永久转圈。
 JOB_TIMEOUT_SECONDS = 300
@@ -180,10 +186,24 @@ def generate_lesson(
           textbook_version / difficulty / extra_requirements
     """
     topic = (data.get("topic") or "").strip()
-    grade_id = data.get("grade_id")
-    subject_id = data.get("subject_id")
     if not topic:
         raise BusinessException("教学主题不能为空")
+    if len(topic) > MAX_TOPIC_CHARS:
+        raise BusinessException(f"教学主题最长 {MAX_TOPIC_CHARS} 字符")
+
+    # 长文本入参在提交时就校验（而不是等异步任务里 LLM 失败）
+    objectives = (data.get("objectives") or "").strip()
+    extra_requirements = (data.get("extra_requirements") or "").strip()
+    if len(objectives) > MAX_TEXT_CHARS:
+        raise BusinessException(
+            f"教学目标过长（{len(objectives)} 字符），请控制在 {MAX_TEXT_CHARS} 字符以内")
+    if len(extra_requirements) > MAX_TEXT_CHARS:
+        raise BusinessException(
+            f"补充要求过长（{len(extra_requirements)} 字符），"
+            f"请控制在 {MAX_TEXT_CHARS} 字符以内")
+
+    grade_id = data.get("grade_id")
+    subject_id = data.get("subject_id")
     if not grade_id:
         raise BusinessException("请选择年级")
     if not subject_id:
@@ -225,10 +245,10 @@ def generate_lesson(
         "knowledge_point_id": int(kp_id) if kp_id else None,
         "duration_minutes": minutes,
         "period": (data.get("period") or "").strip() or None,
-        "objectives": (data.get("objectives") or "").strip(),
+        "objectives": objectives,
         "textbook_version": (data.get("textbook_version") or "").strip() or None,
         "difficulty": (data.get("difficulty") or "").strip(),
-        "extra_requirements": (data.get("extra_requirements") or "").strip(),
+        "extra_requirements": extra_requirements,
     }
 
     job = AgentJob(
