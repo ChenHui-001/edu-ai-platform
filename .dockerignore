@@ -38,8 +38,19 @@ exports/
 .idea/
 .DS_Store
 Thumbs.db
+.workbuddy/
 
-# 文档杂项
+# 测试、截图、工具与本地生成的 API 快照：均不参与镜像构建
+# （Dockerfile 只 COPY backend/app、backend/requirements.txt、
+#   backend/.env.example、frontend/、deploy/、VERSION，下列路径都不在其中）
+tests/
+ui_shots/
+docs/
+tools/
+openapi.json
+
+# 文档杂项（根目录 Markdown 不进镜像；VERSION 是构建必需，不要排除）
+*.md
 *.log
 *.tmp
 *.bak

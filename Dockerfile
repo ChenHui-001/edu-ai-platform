@@ -47,8 +47,9 @@ FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app
 
-COPY frontend/package.json ./
-RUN npm install --registry=https://registry.npmmirror.com --no-audit --no-fund
+# 用 package-lock.json + npm ci 保证依赖可复现（npm install 会按 ^ 漂移版本）
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --registry=https://registry.npmmirror.com --no-audit --no-fund
 
 COPY frontend/ ./
 RUN npm run build
@@ -112,6 +113,16 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; \
 
 WORKDIR /app
 
+# ---- 运行用户：固定 UID/GID，避免非 root 运行依赖镜像外账号 ----
+# 降权目标只针对 uvicorn：supervisord 与 nginx master 仍需 root ——
+# nginx 要绑定特权端口 80 并写 /var/log/nginx，root 降权后无法完成。
+# 因此镜像级别**不**写 `USER app`（否则 supervisord 起不来），
+# 真正的降权点在 deploy/supervisord.conf 的 [program:backend] user=app。
+ARG APP_UID=10001
+ARG APP_GID=10001
+RUN groupadd -g "${APP_GID}" app \
+    && useradd -u "${APP_UID}" -g app -m -d /home/app -s /usr/sbin/nologin app
+
 COPY backend/app ./app
 # 版本号单一真源：根目录 VERSION 文件；缺失时才回退到 APP_VERSION build-arg
 COPY VERSION ./VERSION
@@ -138,8 +149,13 @@ RUN printf 'version=%s\ncommit=%s\nbuilt_at=%s\n' \
 # hf-mirror 返回 308 重定向）。任一成功即可；
 # 都失败时只告警不中断构建 —— 运行时 ChromaDB 仍会自行下载，
 # 配合 REINDEX_TIMEOUT_SEC 硬超时不会拖死调用方。
+#
+# 缓存目录必须放在 app 用户可读的位置：降权后 uvicorn 的 HOME=/home/app，
+# 若仍预置在 /root/.cache/chroma，app 用户根本读不到（/root 是 0700），
+# 预热等于白做、首次向量检索仍要现场下载。同时导出 CHROMA_CACHE_DIR，
+# 兼容不同 chromadb 版本「读环境变量 / 用 Path.home() 推导」两种实现。
 ARG ONNX_URL="https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/onnx.tar.gz"
-ENV CHROMA_CACHE_DIR=/root/.cache/chroma
+ENV CHROMA_CACHE_DIR=/home/app/.cache/chroma
 RUN mkdir -p "$CHROMA_CACHE_DIR/onnx_models/all-MiniLM-L6-v2" \
     && ONNX_DIR="$CHROMA_CACHE_DIR/onnx_models/all-MiniLM-L6-v2" \
     && for u in "$ONNX_URL" \
@@ -162,11 +178,18 @@ COPY --from=frontend-builder /app/dist /usr/share/nginx/html
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma
+# 运行目录属主交给 app：降权后的 uvicorn 要在这里写 SQLite / 附件 / 日志。
+# 注意 docker-compose 用 ./data:/app/data 绑定挂载会**盖掉**这里的属主，
+# 由下面 CMD 在启动时（仍以 root）对挂载目录再做一次 chown。
+RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma \
+    && chown -R app:app /app/data /home/app/.cache
 
 EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost/api/v1/health || exit 1
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# 容器以 root 启动（supervisord 需要），启动前先修正 data 目录属主，
+# 再 exec 成 supervisord —— 避免 PID1 退化成 shell 导致信号收不到。
+# supervisord 内部：nginx 以 root 运行，backend 以 app 运行（见 deploy/supervisord.conf）。
+CMD ["/bin/sh", "-c", "mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma && chown -R app:app /app/data 2>/dev/null || true; exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"]

@@ -45,6 +45,14 @@ services:
       - ./data:/app/data
       # 日志
       - ./logs:/app/data/logs
+    # 最小加固：禁止进程通过 setuid/setgid 二进制提权（容器内 root 仍可
+    # 主动 setuid 降权给 app 用户，nginx master 照常绑定 80）。
+    # 刻意**不**加 cap_drop: [ALL]：supervisord 需要 CHOWN/SETUID/SETGID
+    # 才能 chown data 目录并降权拉起 uvicorn，nginx 需要 NET_BIND_SERVICE
+    # 才能监听 80；逐个放开反而更容易漏掉某条 capability 导致启动失败，
+    # 且当前无法在 CI 里做 docker build/run 验证，故只保留无风险项。
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/api/v1/health"]
       interval: 30s
