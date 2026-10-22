@@ -96,11 +96,14 @@ app = FastAPI(
 )
 
 # 中间件
+# CORS：allow_credentials=True 与 allow_origins=["*"] 组合会被浏览器拒绝生效，
+# 本项目鉴权走 Authorization 头（无 Cookie），故通配来源时关闭 credentials。
+_allow_cors_credentials = "*" not in settings.CORS_ORIGINS
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=_allow_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-Process-Time", "Content-Disposition"],
