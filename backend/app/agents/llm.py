@@ -78,6 +78,11 @@ def _get_db_value(key: str, value_type: str, default: Any) -> Any:
         with SessionLocal() as db:
             row = db.scalar(select(SysConfig).where(SysConfig.key == key))
             raw = row.value if row is not None else None
+            # 显式清空 API Key 必须生效：管理员在配置页把密钥清空，
+            # 语义是「关闭 AI」；此前空串会回落到 .env 的 LLM_API_KEY，
+            # 导致 UI 显示已清空、实际旧 Key 仍在使用。
+            if key == "llm_api_key" and row is not None and raw == "":
+                return ""
             if raw is None or raw == "":
                 return _apply_cap(key, default)
             if value_type == "bool":

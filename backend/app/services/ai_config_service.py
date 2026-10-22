@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.exception import BusinessException
 from app.core.logger import get_logger
 from app.models import SysConfig
 
@@ -162,6 +163,32 @@ def get_ai_config(db: Session) -> Dict[str, Any]:
 
 def save_ai_config(db: Session, data: Dict[str, Any], admin_id: int) -> Dict[str, Any]:
     """保存 AI 配置到 sys_config 表，并触发 LLM 客户端重载。"""
+    # 数值范围校验：temperature=0/负数、max_tokens=0、timeout=0 会让 LLM
+    # 调用直接异常且难以定位；在入口统一拒绝（掩码回传值跳过）。
+    ranges = {
+        "llm_temperature": (0.0, 2.0, "温度参数"),
+        "llm_max_tokens": (64, 8192, "最大输出长度"),
+        "llm_timeout": (5, 600, "超时时间(秒)"),
+    }
+    for key, (low, high, label) in ranges.items():
+        raw = data.get(key, data.get(key.upper()))
+        if raw is None:
+            continue
+        text_value = str(raw)
+        if "****" in text_value:
+            continue
+        try:
+            number = float(text_value)
+        except (TypeError, ValueError):
+            raise BusinessException(f"{label}必须是数字") from None
+        if not (low <= number <= high):
+            raise BusinessException(f"{label}应在 {low}~{high} 之间，当前 {number}")
+    provider = data.get("llm_provider", data.get("LLM_PROVIDER"))
+    if provider is not None and str(provider) not in set(PROVIDER_PRESETS) | {"custom"}:
+        raise BusinessException(
+            f"不支持的模型提供商 {provider!r}，可选：{'/'.join(sorted(PROVIDER_PRESETS))}/custom"
+        )
+
     updated = []
     for key, spec in _FIELDS.items():
         # 接收字段名不区分大小写（前端传 llm_provider 或 LLM_PROVIDER 均可）。
