@@ -238,13 +238,17 @@ async function handleCommand(cmd) {
     router.push('/profile')
   } else if (cmd === 'logout') {
     await ElMessageBox.confirm('确定要退出登录吗？', '提示', { type: 'warning' })
-    userStore.logout()
+    // 走 store.logout：它会先调用后端 /auth/logout 注销令牌，再清理本地状态与 Pinia
+    await userStore.logout()
     ElMessage.success('已退出登录')
     router.push('/login')
   }
 }
 
 onMounted(async () => {
+  // 启动时同步一次最新用户/权限（管理员改权限后无需重登即可生效）。
+  // 失败静默：登录时的本地快照仍在，且 request.js 已统一提示错误。
+  userStore.fetchProfile().catch(() => {})
   loadNotifications()
   try {
     const res = await agentApi.status()

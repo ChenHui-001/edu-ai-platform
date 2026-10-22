@@ -57,7 +57,26 @@ export const useUserStore = defineStore('user', {
       return p.includes('*') || p.includes(code)
     },
 
-    logout() {
+    /**
+     * 同步最新权限快照（令牌刷新、启动时 fetchProfile 共用）。
+     * request.js 的刷新分支不能顶层 import 本 store（request ← api ← store 循环依赖），
+     * 由它动态 import 后调用本 action，保证 Pinia 与 localStorage 不会各说各话。
+     */
+    applyPermission(permission, user) {
+      if (user) this.userInfo = { ...this.userInfo, ...user }
+      if (permission) this.permissions = permission
+      localStorage.setItem('user', JSON.stringify({
+        ...this.userInfo, permissions: this.permissions
+      }))
+    },
+
+    async logout() {
+      // 先通知后端注销：后端需 refresh_token 才能连带吊销刷新令牌，
+      // 否则「退出登录」后旧令牌在过期前仍可继续调用接口。
+      // 令牌可能已失效、网络也可能不可达，失败不阻断本地清理。
+      const refreshToken = localStorage.getItem('refresh_token')
+      await authApi.logout(refreshToken ? { refresh_token: refreshToken } : undefined)
+        .catch(() => {})
       localStorage.removeItem('access_token')
       localStorage.removeItem('refresh_token')
       localStorage.removeItem('user')

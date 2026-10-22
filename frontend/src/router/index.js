@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useUserStore } from '@/store/user'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
@@ -139,15 +140,24 @@ router.beforeEach((to, from, next) => {
     return next({ path: '/login', query: { redirect: to.fullPath } })
   }
 
-  // 权限校验
+  // 权限校验：优先读 Pinia 内存态（启动 fetchProfile / 刷新令牌都会同步最新权限），
+  // localStorage 仅作兜底 —— 刷新页面瞬间 Pinia 可能还没完成初始化，
+  // 此时直接读空内存态会让已登录用户误跳 403。
   const user = JSON.parse(localStorage.getItem('user') || '{}')
-  const roles = user.permissions?.roles || []
+  let storePerms = null
+  try {
+    // pinia 在 main.js 里先于 router 安装，守卫内可安全取 store
+    storePerms = useUserStore().permissions
+  } catch { /* pinia 未就绪（极早期导航/单测）时走 localStorage 兜底 */ }
+  const roles = (storePerms?.roles?.length ? storePerms.roles : user.permissions?.roles) || []
+  const perms = (storePerms?.permissions?.length
+    ? storePerms.permissions
+    : user.permissions?.permissions) || []
 
   if (to.meta.roles && !to.meta.roles.some((r) => roles.includes(r))) {
     return next('/403')
   }
   if (to.meta.perm) {
-    const perms = user.permissions?.permissions || []
     if (!perms.includes('*') && !perms.includes(to.meta.perm)) {
       return next('/403')
     }

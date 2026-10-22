@@ -51,6 +51,14 @@ async function refreshAccessToken() {
       if (data.data.user) stored.userInfo = { ...stored.userInfo, ...data.data.user }
       localStorage.setItem('user', JSON.stringify(stored))
     } catch { /* 本地存储异常不阻断令牌刷新 */ }
+    // 只写 localStorage 不够：路由守卫/按钮权限读的是 Pinia 内存态，
+    // 不同步会出现「权限已刷新、界面仍是旧权限」。
+    // 必须动态 import：request.js ← api ← store/user.js 存在循环依赖，
+    // 顶层 import store 会在模块初始化阶段踩到未定义。
+    try {
+      const { useUserStore } = await import('@/store/user')
+      useUserStore().applyPermission(data.data.permission, data.data.user)
+    } catch { /* Pinia 尚未安装（极早期刷新）时忽略，下次启动会重新同步 */ }
   }
   return data.data.access_token
 }
