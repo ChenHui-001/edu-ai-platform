@@ -204,7 +204,23 @@ const progress = computed(() =>
 
 let timer = null
 let heartbeatTimer = null
+let endTs = 0            // 答题截止时间戳（墙钟倒计时的基准）
 const start = ref(0)
+
+/**
+ * 按墙钟重算剩余秒数并驱动自动交卷。
+ * Math.ceil 让进入时显示「duration:00」；后台恢复后第一次调用即可追上真实剩余时间。
+ */
+function syncRemain() {
+  if (state.value !== 'answering') return
+  remain.value = Math.max(0, Math.ceil((endTs - Date.now()) / 1000))
+  if (remain.value <= 0) {
+    clearInterval(timer)
+    timer = null
+    ElMessage.warning('考试时间到，系统自动交卷')
+    doSubmit(true)
+  }
+}
 
 /** 当前可视题目同步到题号导航。
  * 内容区是 .el-main 内部滚动，普通 window scroll 监听收不到；
@@ -304,24 +320,18 @@ async function load() {
 
     remain.value = (task.value.duration || 60) * 60
     start.value = Date.now()
-
-    // 倒计时
-    timer = setInterval(() => {
-      remain.value--
-      if (remain.value <= 0) {
-        clearInterval(timer)
-        ElMessage.warning('考试时间到，系统自动交卷')
-        doSubmit(true)
-      }
-    }, 1000)
+    // 倒计时改为「墙钟」：后台标签页/系统休眠会暂停 setInterval，
+    // 原先每秒 remain-- 会让考试时间被无限延长（切后台挂机即可绕过）。
+    // 记录截止时间戳，每秒只做「截止时间 - 当前时间」的重算。
+    endTs = Date.now() + (task.value.duration || 60) * 60 * 1000
+    syncRemain()
+    timer = setInterval(syncRemain, 1000)
 
     // 心跳：保存时长 + 切屏检测
     heartbeatTimer = setInterval(() => sendHeartbeat(false), 30000)
 
-    // 防切屏（仅在开启防作弊时监听）
-    if (task.value.anti_cheat) {
-      document.addEventListener('visibilitychange', onVisibility)
-    }
+    // 始终监听可见性：后台恢复时立即按墙钟重算（防作弊记录逻辑在 onVisibility 内）
+    document.addEventListener('visibilitychange', onVisibility)
     // 进入即保存一次，让顶栏「已保存」指示灯即时可用
     saveDraft()
     // 进入即保存一次，让顶栏「已保存」指示灯即时可用
@@ -337,10 +347,17 @@ async function load() {
 }
 
 function onVisibility() {
-  if (document.hidden && state.value === 'answering') {
-    sendHeartbeat(true)
-    ElMessage.warning('检测到切换页面，已记录本次操作')
+  if (state.value !== 'answering') return
+  if (document.hidden) {
+    // 防切屏记录仍只在开启防作弊时执行（保持原行为）
+    if (task.value.anti_cheat) {
+      sendHeartbeat(true)
+      ElMessage.warning('检测到切换页面，已记录本次操作')
+    }
+    return
   }
+  // 从后台恢复：立即按墙钟重算，不等下一秒的 interval，避免多出「暂停」时段
+  syncRemain()
 }
 
 async function sendHeartbeat(isSwitch) {
