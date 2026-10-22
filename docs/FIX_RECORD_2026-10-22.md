@@ -68,3 +68,70 @@
 - **验证**：`py_compile` 通过；P0 批次全量 E2E 覆盖交卷/自动判分/错题收录链路（LLM 关闭场景），确认行为不变。
 - **回归风险**：作答与判分不再原子提交；若判分阶段进程崩溃，答卷保留为未交卷态可由学生重试，优于原先全站写入阻塞。
 
+---
+
+## P1
+
+### P1-1 批改详情越权读取他人答卷
+
+- **状态**：✅ 已修复
+- **问题**：`grading_detail` 只校验登录态与教师角色，不校验任务归属，遍历自增 `submission_id` 可读取全校学生答卷、标准答案与 AI 评语。
+- **改动**：`backend/app/api/v1/grading.py` 增加 `DataScope` 依赖，非超管且 `task.creator_id != user.id` 时返回 403，与批改/打回/发布接口口径一致。
+- **验证**：`py_compile` 通过；P1 批次末动态越权矩阵验证 teacher2 读取 teacher1 提交被 403。
+
+### P1-2 附件预览/下载按 id 越权
+
+- **状态**：✅ 已修复
+- **问题**：`/attachments/{id}/preview|download` 仅校验登录，任意用户可枚举下载他人附件（注册证明材料、教案课件）。
+- **改动**：`backend/app/api/v1/attachment.py` 新增 `_assert_attachment_visible`：上传者本人 / `sys_admin` / 共享教案的同科教师（按 TeachingAssignment）/ 匿名上传仅管理端可读；授权通过后才累加下载次数。
+- **验证**：`py_compile` 通过；P1 批次末动态验证学生下载他人附件 403、上传者本人 200。
+
+### P1-3 报表导出越权
+
+- **状态**：✅ 已修复
+- **问题**：`/report/export/excel` 统一用 `get_current_user`，学生传 `report_type=admin_overview` 即可导出全校统计（内部直接调用 `admin_overview` 绕过了其依赖）。
+- **改动**：`backend/app/api/v1/report.py` 按报表类型分别校验：个人报表任意登录用户（仅本人）；班级报表需教师；系统报表需 `sys_admin/grade_admin`；非法 report_type 返回 400。
+- **验证**：`py_compile` 通过；P1 批次末动态验证学生导出 admin_overview 返回 403。
+
+### P1-4 移出班级越权
+
+- **状态**：✅ 已修复
+- **问题**：`remove_student` 的 `class_id` 参数完全未使用，任意教师可把任意班级学生 `class_id` 置空。
+- **改动**：`backend/app/api/v1/edu.py` 校验班级存在、班级在 `DataScope.class_ids()` 内、学生确实属于该班级。
+- **验证**：`py_compile` 通过；P1 批次末动态验证 teacher2 操作非任教班级被 403。
+
+### P1-5 年级管理员数据范围失效
+
+- **状态**：✅ 已修复
+- **问题**：`DataScope.class_ids()` 对 grade_admin 直接返回 `None`（视为全校），用户列表也可拉全校 PII。
+- **改动**：`backend/app/api/deps.py`：grade_admin 的班级按 `grade_admin_grade_id`（缺省 grade_id）查本年级；无管辖年级返回空列表（拒绝）；`grade_ids` 不再用 None 表示"无授权"；`student_ids` 同步收敛。`backend/app/api/v1/system.py` 用户列表对 grade_admin 追加年级过滤。
+- **验证**：`py_compile` 通过；E2E 三端权限矩阵在批次末回归。
+
+### P1-6 审计日志无操作人 + 密钥明文
+
+- **状态**：✅ 已修复
+- **问题**：中间件读取 `request.state.user` 但全仓无赋值，16k+ 条操作日志 `user_id` 全为 NULL；脱敏只认 password 三键，`llm_api_key` 明文入库且 grade_admin 可读。
+- **改动**：`backend/app/api/deps.py` 在 `get_current_user` 中写入 `request.state.user`；`backend/app/middleware/audit.py` 新增按关键字递归脱敏（password/secret/token/api_key/authorization 等），查询参数与请求体统一处理。
+- **验证**：`py_compile` 通过；P1 批次末动态验证新写操作日志带 user_id、ai-config 请求体 `llm_api_key` 落库为 `******`。
+
+### P1-7 Token 生命周期
+
+- **状态**：✅ 已修复（后端；前端登出传 refresh_token 在 P1-16 接入）
+- **问题**：JWT 过期时间戳用 UTC 却与本地时间比较，12h token 实际 4h 失效；refresh token 无 jti，登出后仍可换新 access token。
+- **改动**：`backend/app/api/deps.py` 两侧统一 UTC 比较；`backend/app/core/security.py` refresh token 增加 jti；`backend/app/api/v1/auth.py` logout 支持同时吊销请求体中的 refresh token。
+- **验证**：`py_compile` 通过；P1 批次末动态验证 `exp=+1h` token 可用、登出后 refresh 被拒。
+
+### P1-8 找回密码安全缺陷
+
+- **状态**：✅ 已修复
+- **问题**：验证码直接写入应用日志；未真实发送邮件却提示已发送；重置接口只校验 ≥6 位，可把密码改成 `123456` 绕过强度策略；无请求频率限制。
+- **改动**：`backend/app/api/v1/auth.py`：接入 `sys_config` 的 SMTP 发送（smtp_host/port/user/password/from），未配置时失败关闭且不生成/记录验证码；移除验证码日志；按目标账号 10 分钟 5 次限流；重置密码复用 `validate_password_strength`。
+- **验证**：`py_compile` 通过；动态验证未配置邮件时响应 `sent=false` 且日志无验证码；弱口令重置返回 400。
+
+### P1-17 审计写放大与日志无界增长
+
+- **状态**：✅ 已修复
+- **问题**：审计中间件对每个 GET（含轮询）都同步写库；操作/错误/任务/AI 日志与已读通知无保留策略。
+- **改动**：`backend/app/middleware/audit.py` 读请求（GET/HEAD/OPTIONS）不再写操作日志（5xx 仍落错误日志）；`backend/app/services/task_jobs.py` 新增 `clean_old_logs` 按保留期清理；`backend/app/services/init_db.py` 注册每日 04:30 清理任务。
+- **验证**：`py_compile` 通过；E2E 日志审计用例仍可读；P1 批次末确认健康检查/轮询不再产生操作日志行。
+
