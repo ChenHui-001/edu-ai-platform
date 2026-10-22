@@ -241,30 +241,48 @@ curl -s http://localhost/api/v1/health | jq .version
 | 项 | 值 |
 |---|---|
 | VERSION | `1.0.41` |
-| commit | `dbc152d` |
+| commit | `85cff22` |
 | 本地镜像 | `nanpo/edu-ai-platform:1.0.41`，镜像内 commit `6bac8a6`（等价） |
 | ghcr | `ghcr.io/chenhui-001/edu-ai-platform:1.0.41` ✓ 四闸门全通过 |
-| Docker Hub | `nanpo/edu-ai-platform:1.0.41` 推送中（受限：本机 `auth.docker.io` 不通） |
-| 发布前校验 | 7 通过 / 0 失败 / 1 警告（"尚未发布该版本"，发布前正常） |
+| Docker Hub | `nanpo/edu-ai-platform:1.0.41` ✓ 已推送，digest `sha256:8305b358…` |
+| latest | ✓ 与 `1.0.41` digest 完全相同 |
+| 发布后校验 | **10 通过 / 0 失败 / 0 警告 / 0 跳过**（EXIT=0） |
 | CI | 两个 run 全 success（`6bac8a6`、`67e7e3e`，含 postflight） |
 
 ### 关于 `commit` 与 `镜像内 commit` 不完全相同
 
-这是**预期状态**，不是漂移。`6bac8a6..dbc152d` 之间的提交只改了
+这是**预期状态**，不是漂移。`6bac8a6..85cff22` 之间的提交只改了
 `docs/`、`.github/`、`tools/` —— 这些路径**不进镜像**，镜像字节未变。
 
 工具据此判定"等价"：
 
 ```
 [PASS] 本地镜像内 commit 与 HEAD 等价
-       镜像出自 6bac8a6，HEAD 是 dbc152d，
-       但 6bac8a6..dbc152d 无影响镜像内容的改动（仅文档/CI）
+       镜像出自 6bac8a6，HEAD 是 85cff22，
+       但 6bac8a6..85cff22 无影响镜像内容的改动（仅文档/CI）
 ```
 
 若差异落在 `backend/app/`、`frontend/`、`deploy/`、`requirements.txt`、
 `VERSION`、`Dockerfile` 等会被 `COPY` 的路径，则**立即判 FAIL 并要求重建**。
 
-> **部署端注意**：CI 产物在 `ghcr.io/chenhui-001/edu-ai-platform`，
-> 本地脚本产物在 `nanpo/edu-ai-platform`。拉取时确认用的是哪个。
-> 如需统一，设仓库变量 `IMAGE_NAME=nanpo/edu-ai-platform` 即可把 CI 切回 Docker Hub
-> （但需先配好 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`）。
+### 两条发布通道
+
+| 通道 | 目标 | 凭据 | 触发 |
+|---|---|---|---|
+| CI（`docker-publish.yml`） | `ghcr.io/chenhui-001/edu-ai-platform` | `GITHUB_TOKEN`（自动） | push master / `v*` tag / 手动 |
+| 本地（`push_dockerhub.sh`） | `nanpo/edu-ai-platform` | `docker login` 本地凭据 | 手工执行 / `auto_ship.sh --push` |
+
+部署端拉取时确认用的是哪个。如需统一到 Docker Hub，设仓库变量
+`IMAGE_NAME=nanpo/edu-ai-platform` 即可（须先配好 `DOCKERHUB_USERNAME` /
+`DOCKERHUB_TOKEN` 两个 secret）。
+
+### 已知网络限制
+
+本机到 Docker Hub 的 `auth.docker.io` 经常超时（`curl` 返回 `000`），
+而 `registry-1.docker.io` 返回 `401` 属正常。表现为 `docker push` 长时间
+停在 `Waiting`（实测一次耗时 43 分钟才完成）。
+
+应对：`docker push` 支持断点续传——已上传的分层会命中
+`Layer already exists`，中断后直接重跑即可，不必从头开始。
+若某次推送后远端只见 `latest` 不见版本号标签，单独补推版本号即可
+（分层已全部就位，通常数秒完成）。
