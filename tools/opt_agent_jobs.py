@@ -31,7 +31,7 @@ def _run_job(job_id: int) -> None:
         if not job:
             return
         job.status = "running"
-        job.started_at = utcnow()
+        job.started_at = now_local()
         db.commit()
 
         params = json.loads(job.params or "{}")
@@ -74,7 +74,7 @@ def _run_job(job_id: int) -> None:
             job.status = "failed"
             job.error = str(exc)[:500]
     finally:
-        job.finished_at = utcnow()
+        job.finished_at = now_local()
         try:
             db.commit()
         except Exception:  # noqa: BLE001
@@ -150,12 +150,12 @@ ANCHOR = "# ---------------------------------------------------------------- 调
 assert ANCHOR in s
 s = s.replace(ANCHOR, JOBS_API.strip("\n") + "\n\n\n" + ANCHOR, 1)
 
-# 依赖导入：json / utcnow / SessionLocal
+# 依赖导入：json / now_local / SessionLocal
 if "import json" not in s:
     s = s.replace("from typing import Any, Dict, List, Optional",
                   "import json\nfrom typing import Any, Dict, List, Optional")
 s = s.replace("from app.utils.common import PageParams, dictify, fail, ok",
-              "from app.utils.common import PageParams, dictify, fail, ok, utcnow")
+              "from app.utils.common import PageParams, dictify, fail, now_local, ok")
 
 io.open(f, "w", encoding="utf-8", newline="\n").write(s)
 print("异步任务接口已添加")

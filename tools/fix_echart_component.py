@@ -2,7 +2,6 @@
 """全站替换 echarts-for-react(React) -> components/EChart.vue(Vue3)。
 涉及 8 个页面；组件名两种大小写（ReactEcharts / ReactECharts）都要换。"""
 import io
-import glob
 
 FILES = [
     "frontend/src/views/admin/AdminReport.vue",

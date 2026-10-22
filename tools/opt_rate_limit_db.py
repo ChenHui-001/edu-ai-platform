@@ -30,7 +30,7 @@ class AgentRate(Base):
     window_minute: Mapped[int] = mapped_column(Integer, primary_key=True,
                                                comment="epoch 分钟数，作窗口键")
     count: Mapped[int] = mapped_column(Integer, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
 
 class AgentJob(Base):
@@ -50,7 +50,7 @@ class AgentJob(Base):
     params: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="请求参数 JSON")
     result: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="结果 JSON")
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 '''

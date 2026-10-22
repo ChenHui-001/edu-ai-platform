@@ -10,7 +10,6 @@
 
 用法：python tools/fix_bat_encoding.py
 """
-import io
 import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

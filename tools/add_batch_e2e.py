@@ -4,7 +4,6 @@
 注入位置：test_student.py 的 3c 段之后（有真实 submission 数据）。
 """
 import io
-import re
 
 f = "tests/test_student.py"
 s = io.open(f, encoding="utf-8").read()
