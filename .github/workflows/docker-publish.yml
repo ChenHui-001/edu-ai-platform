@@ -21,6 +21,10 @@ name: Docker 镜像发布
 #   - 曾用 `${{ github.repository }}` 作镜像名 → 推到 ChenHui-001/ 而非 nanpo/，
 #     与手工推送的镜像分成两个仓库，导致「仓库里有新版、线上拉到的还是旧版」
 #   - 曾有一个只 echo 不推送的「额外推送 latest」死步骤
+#   - 曾依赖 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 两个手工 secret。
+#     工作流第一次真正触发就失败在「登录 Docker Hub：Username and password
+#     required」——仓库里这两个 secret 从未配置过。**改用 ghcr + GITHUB_TOKEN，
+#     消除这个外部依赖**：凭据由 Actions 运行时注入，配不出错也漏不了。
 # ============================================================================
 
 on:
