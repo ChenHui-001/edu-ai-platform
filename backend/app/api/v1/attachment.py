@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_client_ip, get_current_user
+from app.api.deps import get_client_ip, get_current_teacher, get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
@@ -124,8 +124,20 @@ async def public_upload(
 async def upload(
     file: UploadFile = File(...), category: str = Form("common"),
     biz_type: Optional[str] = Form(None), biz_id: Optional[int] = Form(None),
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
+    # 上传属于教师/管理端能力：此前只校验登录，学生账号也能上传任意文件，
+    # 与学生端「只能提交文本作答/学习数据」的权限模型不符。
+    # 绑定教案附件时必须校验教案归属，避免绕过 lesson.py 的专用端点
+    # 把附件挂到他人教案下（列表按 biz_type+biz_id 聚合，会直接暴露）。
+    if biz_type == "lesson_plan" and biz_id:
+        from app.models import LessonPlan
+
+        plan = db.get(LessonPlan, biz_id)
+        if not plan:
+            raise BusinessException("教案不存在")
+        if plan.creator_id != user.id and "sys_admin" not in user.role_codes:
+            raise PermissionException("只能给自己教案上传附件")
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in settings.ALLOWED_UPLOAD_TYPES:
         raise BusinessException(
@@ -172,7 +184,7 @@ async def upload(
 @router.post("/batch", summary="批量上传")
 async def batch_upload(
     files: List[UploadFile] = File(...), category: str = Form("common"),
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
     results = []
     for f in files:
