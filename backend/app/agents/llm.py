@@ -170,6 +170,9 @@ class LLMClient:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 timeout=timeout,
+                # 显式限制重试：langchain-openai 默认 max_retries=2，
+                # 配合 60s 超时会把单次交卷放大到最坏 180s。
+                max_retries=1,
             )
             logger.info(f"LLM 客户端就绪: {provider} / {model}")
             return self._client

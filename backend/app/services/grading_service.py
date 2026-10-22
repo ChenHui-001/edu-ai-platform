@@ -94,72 +94,84 @@ def save_answers(
 
     db.flush()
 
-    if auto_grade:
-        grading = GradingAgent()
-        grade_items = [
-            {"question_id": item.question_id, "student_answer": content,
-             "full_score": item.score}
-            for item_id, content in [(a["paper_item_id"], a.get("content")) for a in answers]
-            for item in [items.get(item_id)] if item
-        ]
-        res = grading.run(db, user_id=submission.student_id, items=grade_items)
-        # Agent.run() 返回 AgentResult 包装层，业务数据在 data 字段
-        graded = res.get("data") or {}
-        summary = graded.get("summary") or {
-            "total": len(grade_items), "correct_count": 0, "accuracy": 0.0,
-            "total_score": 0.0, "full_score": sum(i.get("full_score", 0) for i in grade_items),
-            "score_rate": 0.0, "pending_manual": 0, "objective_count": 0,
-            "subjective_count": 0, "ai_graded": 0,
-        }
-        if not res.get("success"):
-            # Agent 执行异常时不阻断答题流程，按未判分处理，交由教师批改
-            db.flush()
-            return summary
+    if not auto_grade:
+        return {}
 
-        for r in graded.get("results", []):
-            ans = db.scalar(
-                select(Answer).where(
-                    Answer.submission_id == submission.id,
-                    Answer.question_id == r["question_id"],
-                )
-            )
-            if not ans:
-                continue
-            ans.is_correct = r.get("is_correct")
-            ans.score = r.get("score")
-            ans.grader_type = r.get("grader_type", "auto")
-            ans.teacher_comment = r.get("comment")
-            if r.get("error_points"):
-                ans.ai_error_points = json.dumps(r["error_points"], ensure_ascii=False)
+    # 关键：调用 LLM 批改前先提交作答，主动释放 SQLite 写锁。
+    # GradingAgent 主观题批改是网络调用（最坏分钟级），若事务仍持有写锁，
+    # 审计中间件、心跳、AI 调用日志、其他学生交卷都会等满 busy_timeout(5s)
+    # 后抛 database is locked。提前提交同时保证「作答已落库、判分可重试」。
+    db.commit()
+    return _auto_grade_answers(db, submission, answers, items)
 
-        results = graded.get("results", [])
-        submission.objective_score = sum(
-            r.get("score") or 0 for r in results if r.get("grader_type") != "ai"
-        )
-        submission.score = summary["total_score"]
-        submission.status = "auto_graded" if summary["pending_manual"] == 0 else "not_graded"
 
-        # 错题收录 + 知识点掌握度更新
-        for r in results:
-            # 只有「已判定为错」的客观题才收录错题。
-            # 待教师人工批改的主观题虽然 is_correct 也是 False，但那是「尚未判定」
-            # 而不是「做错」，若一并收录会导致学生答对却出现在错题本里。
-            pending_manual = (
-                r.get("question_type") not in OBJECTIVE_TYPES
-                and r.get("grader_type") != "ai"
-            )
-            if r.get("is_correct") is False and r.get("grader_type") != "ai" \
-                    and not pending_manual:
-                _collect_wrong_question(db, submission, r)
-            elif r.get("is_correct"):
-                _update_mastery(db, submission.student_id, r["question_id"], True)
-
-        _record_study(db, submission)
+def _auto_grade_answers(
+    db: Session, submission: Submission, answers: List[Dict[str, Any]],
+    items: Dict[int, Any],
+) -> Dict[str, Any]:
+    """对已提交的作答执行自动判分并写回结果（事务短、无长网络等待持锁）。"""
+    grading = GradingAgent()
+    grade_items = [
+        {"question_id": item.question_id, "student_answer": content,
+         "full_score": item.score}
+        for item_id, content in [(a["paper_item_id"], a.get("content")) for a in answers]
+        for item in [items.get(item_id)] if item
+    ]
+    res = grading.run(db, user_id=submission.student_id, items=grade_items)
+    # Agent.run() 返回 AgentResult 包装层，业务数据在 data 字段
+    graded = res.get("data") or {}
+    summary = graded.get("summary") or {
+        "total": len(grade_items), "correct_count": 0, "accuracy": 0.0,
+        "total_score": 0.0, "full_score": sum(i.get("full_score", 0) for i in grade_items),
+        "score_rate": 0.0, "pending_manual": 0, "objective_count": 0,
+        "subjective_count": 0, "ai_graded": 0,
+    }
+    if not res.get("success"):
+        # Agent 执行异常时不阻断答题流程，按未判分处理，交由教师批改
         db.flush()
         return summary
 
+    for r in graded.get("results", []):
+        ans = db.scalar(
+            select(Answer).where(
+                Answer.submission_id == submission.id,
+                Answer.question_id == r["question_id"],
+            )
+        )
+        if not ans:
+            continue
+        ans.is_correct = r.get("is_correct")
+        ans.score = r.get("score")
+        ans.grader_type = r.get("grader_type", "auto")
+        ans.teacher_comment = r.get("comment")
+        if r.get("error_points"):
+            ans.ai_error_points = json.dumps(r["error_points"], ensure_ascii=False)
+
+    results = graded.get("results", [])
+    submission.objective_score = sum(
+        r.get("score") or 0 for r in results if r.get("grader_type") != "ai"
+    )
+    submission.score = summary["total_score"]
+    submission.status = "auto_graded" if summary["pending_manual"] == 0 else "not_graded"
+
+    # 错题收录 + 知识点掌握度更新
+    for r in results:
+        # 只有「已判定为错」的客观题才收录错题。
+        # 待教师人工批改的主观题虽然 is_correct 也是 False，但那是「尚未判定」
+        # 而不是「做错」，若一并收录会导致学生答对却出现在错题本里。
+        pending_manual = (
+            r.get("question_type") not in OBJECTIVE_TYPES
+            and r.get("grader_type") != "ai"
+        )
+        if r.get("is_correct") is False and r.get("grader_type") != "ai" \
+                and not pending_manual:
+            _collect_wrong_question(db, submission, r)
+        elif r.get("is_correct"):
+            _update_mastery(db, submission.student_id, r["question_id"], True)
+
+    _record_study(db, submission)
     db.flush()
-    return {}
+    return summary
 
 
 def _collect_wrong_question(db: Session, submission: Submission, result: Dict[str, Any]) -> None:

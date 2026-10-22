@@ -232,17 +232,27 @@ class GradingAgent(BaseAgent):
 
         try:
             from concurrent.futures import ThreadPoolExecutor
+            import time
 
-            with ThreadPoolExecutor(max_workers=min(8, len(rest))) as pool:
+            # 整批共享一个截止时间：逐题 fut.result(timeout=60) 会让总耗时
+            # 变成 60×N（第一题就超时后面仍继续等），交卷接口必然被打爆。
+            deadline = time.monotonic() + max(30.0, float(settings.LLM_TIMEOUT) * 2)
+            pool = ThreadPoolExecutor(max_workers=min(8, len(rest)))
+            try:
                 futs = {
                     pool.submit(one, q, a, it.get("full_score", q.score)): q.id
                     for it, q, a in rest
                 }
                 for fut, qid in futs.items():
                     try:
-                        out[qid] = fut.result(timeout=60)
-                    except Exception:  # noqa: BLE001  单题失败不影响整卷
+                        remaining = max(0.001, deadline - time.monotonic())
+                        out[qid] = fut.result(timeout=remaining)
+                    except Exception:  # noqa: BLE001  单题失败/超时不影响整卷
                         out[qid] = None
+                        fut.cancel()
+            finally:
+                # 不等待未完成任务：到点即返回，避免持线程/持请求到 3 分钟
+                pool.shutdown(wait=False, cancel_futures=True)
         except Exception:  # noqa: BLE001  线程池不可用时退化为串行
             for it, q, a in rest:
                 if q.id not in out:

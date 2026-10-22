@@ -57,3 +57,14 @@
   - 新建空学科后删除 → 成功（不误伤正常清理）。
 - **回归风险**：E2E 资源管理用例只删除无引用的新建实体，预期不受影响；P0 批次末全量确认。
 
+### P0-4 交卷 AI 批改持有 SQLite 写事务
+
+- **状态**：✅ 已修复
+- **问题**：`save_answers` 先 flush 作答即持有写锁，随后同步调用 LLM 批改（可能分钟级），期间全站其他写操作等满 `busy_timeout(5s)` 后报 `database is locked`；LLM 客户端默认重试 2 次，进一步放大耗时。
+- **改动**：
+  - `backend/app/services/grading_service.py`：作答 `flush` 后立即 `commit` 释放写锁，再进入 `_auto_grade_answers` 执行判分与短事务写回；判分失败时作答仍已保存、可重试。
+  - `backend/app/agents/llm.py`：`ChatOpenAI(max_retries=1)`，避免 60s×3 的最坏耗时。
+  - `backend/app/agents/grading_agent.py`：主观题并发批改改为整批共享截止时间，`fut.cancel()` + `shutdown(wait=False, cancel_futures=True)`，超时不再等待全部任务。
+- **验证**：`py_compile` 通过；P0 批次全量 E2E 覆盖交卷/自动判分/错题收录链路（LLM 关闭场景），确认行为不变。
+- **回归风险**：作答与判分不再原子提交；若判分阶段进程崩溃，答卷保留为未交卷态可由学生重试，优于原先全站写入阻塞。
+
