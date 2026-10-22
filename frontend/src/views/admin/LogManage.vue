@@ -128,6 +128,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { logApi } from '@/api'
+import { downloadBlob } from '@/utils/download'
 
 const tab = ref('login')
 const list = ref([])
@@ -167,8 +168,10 @@ function reset() {
   load()
 }
 
-function exportExcel() {
-  window.open(logApi.exportUrl(tab.value), '_blank')
+async function exportExcel() {
+  // 裸 URL 下载不带 Authorization（必 401）；统一走 blob + 本地 objectURL
+  const label = { login: '登录日志', operation: '操作日志', error: '错误日志' }[tab.value] || '日志'
+  await downloadBlob(logApi.exportExcel(tab.value), `${label}.xlsx`)
 }
 
 onMounted(load)

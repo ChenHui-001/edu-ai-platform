@@ -236,6 +236,7 @@ import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, MagicStick, Download, Check } from '@element-plus/icons-vue'
 import { lessonAiApi } from '@/api'
+import { downloadBlob } from '@/utils/download'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -461,28 +462,14 @@ function applyResult(data) {
 }
 
 // ------------------------------------------------------------ 导出 / 保存
-function doExport() {
+async function doExport() {
   if (!job.jobId) return
-  // 带 token 下载：直接 window.open 不会带 Authorization 头
-  const token = window.localStorage.getItem('token') || ''
-  fetch(lessonAiApi.exportUrl(job.jobId), {
-    headers: token ? { Authorization: `Bearer ${token}` } : {}
-  }).then(async (resp) => {
-    if (!resp.ok) {
-      ElMessage.error('导出失败：' + resp.status)
-      return
-    }
-    const blob = await resp.blob()
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${edit.value.title || edit.value.topic || '教案'}.md`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    window.URL.revokeObjectURL(url)
-    ElMessage.success('已导出 Markdown')
-  }).catch((e) => ElMessage.error('导出失败：' + (e?.message || e)))
+  // 此前用 fetch + localStorage.getItem('token') 手拼请求头：全站 token 键名
+  // 是 access_token，取到的永远是空串 → 导出必 401。
+  // 统一走 axios（拦截器注入 Authorization）+ blob 本地下载。
+  await downloadBlob(lessonAiApi.exportBlob(job.jobId),
+    `${edit.value.title || edit.value.topic || '教案'}.md`)
+  ElMessage.success('已导出 Markdown')
 }
 
 async function doSave() {

@@ -84,7 +84,8 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="previewDlg" title="附件预览" width="70%" top="5vh">
+    <el-dialog v-model="previewDlg" title="附件预览" width="70%" top="5vh"
+               @closed="revokePreviewUrl">
       <iframe v-if="previewUrl" :src="previewUrl" style="width:100%;height:70vh;border:0;border-radius:6px" />
       <el-empty v-else description="该文件类型不支持在线预览，请下载后查看" />
     </el-dialog>
@@ -92,10 +93,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Upload, UploadFilled, Search, Refresh } from '@element-plus/icons-vue'
 import { attachmentApi } from '@/api'
+import { downloadBlob, fetchBlobUrl } from '@/utils/download'
 
 const list = ref([])
 const total = ref(0)
@@ -103,7 +105,6 @@ const loading = ref(false)
 const uploading = ref(false)
 const uploadDlg = ref(false)
 const previewDlg = ref(false)
-const previewUrl = ref('')
 const uploadRef = ref(null)
 const files = ref([])
 
@@ -155,14 +156,35 @@ async function doUpload() {
   }
 }
 
-function preview(row) {
-  if (!row.previewable) return ElMessage.warning('该文件类型不支持在线预览')
-  previewUrl.value = attachmentApi.previewUrl(row.id)
-  previewDlg.value = true
+// 预览不能把 /attachments/{id}/preview 直接塞 iframe：iframe 顶层导航不带
+// Authorization，后端必 401。改为先 axios 拉 blob，再用本地 objectURL 给 iframe。
+// objectURL 不会自动释放，切换预览/关闭弹窗/页面卸载时都要 revoke。
+const previewUrl = ref('')
+let previewObjectUrl = ''
+
+function revokePreviewUrl() {
+  if (previewObjectUrl) {
+    URL.revokeObjectURL(previewObjectUrl)
+    previewObjectUrl = ''
+  }
+  previewUrl.value = ''
 }
 
-function download(row) {
-  window.open(attachmentApi.downloadUrl(row.id), '_blank')
+async function preview(row) {
+  if (!row.previewable) return ElMessage.warning('该文件类型不支持在线预览')
+  revokePreviewUrl()
+  previewDlg.value = true
+  try {
+    const url = await fetchBlobUrl(attachmentApi.preview(row.id))
+    previewObjectUrl = url
+    previewUrl.value = url
+  } catch {
+    // 请求拦截器已提示具体错误；这里保持空占位，避免旧附件继续显示
+  }
+}
+
+async function download(row) {
+  await downloadBlob(attachmentApi.download(row.id), row.filename || '附件')
 }
 
 async function remove(row) {
@@ -173,6 +195,8 @@ async function remove(row) {
 }
 
 onMounted(load)
+
+onBeforeUnmount(revokePreviewUrl)
 </script>
 
 <style scoped>

@@ -94,6 +94,7 @@ import { ref, computed, onMounted } from 'vue'
 import EChart from '@/components/EChart.vue'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import { reportApi } from '@/api'
+import { downloadBlob } from '@/utils/download'
 
 const overview = ref(null)
 const grades = ref([])
@@ -157,8 +158,11 @@ async function load() {
   }
 }
 
-function exportExcel() {
-  window.open(reportApi.exportUrl({ scope: 'admin' }), '_blank')
+async function exportExcel() {
+  // 后端 /report/export/excel 的 report_type 是必填 Query（缺省 422），
+  // 且裸 URL 不带 Authorization → 必须走 blob 请求再本地下载。
+  await downloadBlob(reportApi.exportExcel({ report_type: 'admin_overview' }),
+    '系统总览报表.xlsx')
 }
 
 onMounted(load)

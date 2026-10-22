@@ -281,7 +281,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Refresh, RefreshLeft, Search, Delete, CopyDocument, UploadFilled,
@@ -289,6 +289,7 @@ import {
 } from '@element-plus/icons-vue'
 import { lessonApi, lessonAiApi, attachmentApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import { downloadBlob, fetchBlobUrl } from '@/utils/download'
 import AiLessonDialog from './AiLessonDialog.vue'
 
 const { can } = useUserStore()
@@ -468,11 +469,24 @@ async function doUploadAttachment({ file }) {
   }
 }
 
-function previewAtt(a) {
-  window.open(a.preview_url, '_blank')
+// 附件预览/下载：a.preview_url / a.download_url 是后端返回的裸 URL，
+// window.open 不带 Authorization（后端只认 Bearer），必 401。
+// 改为鉴权 blob 请求 + 本地 objectURL。
+const previewUrls = []
+async function previewAtt(a) {
+  // await 之后再 window.open 会被浏览器弹窗拦截，先同步开一个空白页占位
+  const win = window.open('', '_blank')
+  try {
+    const url = await fetchBlobUrl(attachmentApi.preview(a.id))
+    previewUrls.push(url)
+    if (win) win.location.href = url
+    else window.open(url, '_blank')
+  } catch {
+    if (win) win.close()
+  }
 }
-function downloadAtt(a) {
-  window.open(a.download_url, '_blank')
+async function downloadAtt(a) {
+  await downloadBlob(attachmentApi.download(a.id), a.filename || '教案附件')
 }
 async function removeAtt(a) {
   await ElMessageBox.confirm(`确定删除附件「${a.filename}」吗？`, '提示', { type: 'warning' })
@@ -531,6 +545,9 @@ function viewHistoryJob(row) {
   aiResumeJobId.value = row.job_id
   aiVisible.value = true
 }
+
+// objectURL 给新标签页使用时不能提前释放，页面卸载时统一回收
+onBeforeUnmount(() => previewUrls.forEach(u => URL.revokeObjectURL(u)))
 
 onMounted(async () => {
   const [g, s] = await Promise.all([

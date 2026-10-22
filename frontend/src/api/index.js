@@ -8,7 +8,7 @@ export const authApi = {
   profile: () => request.get('/auth/profile'),
   updateProfile: (data) => request.put('/auth/profile', data),
   changePassword: (data) => request.put('/auth/password', data),
-  logout: () => request.post('/auth/logout'),
+  logout: (data) => request.post('/auth/logout', data || {}),
   registrations: (params) => request.get('/auth/registrations', { params }),
   auditRegistration: (data) => request.post('/auth/registrations/audit', data)
 }
@@ -220,6 +220,9 @@ export const logApi = {
   operation: (params) => request.get('/logs/operation', { params }),
   error: (params) => request.get('/logs/error', { params }),
   exportUrl: (type) => `/api/v1/logs/export?log_type=${type}`,
+  // blob 下载：window.open 无法携带 Authorization，导出会 401
+  exportExcel: (logType) => request.get('/logs/export',
+    { params: { log_type: logType }, responseType: 'blob' }),
   jobs: (params) => request.get('/jobs', { params }),
   // 可用的执行逻辑（func_path 白名单）：任务标识必须从这里选，
   // 自由文本填不进后端白名单。
@@ -248,6 +251,9 @@ export const attachmentApi = {
   list: (params) => request.get('/attachments', { params }),
   previewUrl: (id) => `/api/v1/attachments/${id}/preview`,
   downloadUrl: (id) => `/api/v1/attachments/${id}/download`,
+  // 鉴权预览 / 下载：裸 URL 放 iframe、window.open 都不带 Authorization，必然 401
+  preview: (id) => request.get(`/attachments/${id}/preview`, { responseType: 'blob' }),
+  download: (id) => request.get(`/attachments/${id}/download`, { responseType: 'blob' }),
   bind: (id, data) => request.put(`/attachments/${id}/bind`, data),
   remove: (id) => request.delete(`/attachments/${id}`)
 }
@@ -281,5 +287,8 @@ export const lessonAiApi = {
   jobs: (limit) => request.get('/lesson/ai/jobs', { params: { limit: limit || 20 } }),
   save: (id, data) => request.post(`/lesson/ai/jobs/${id}/save`, data || {}),
   // 导出是二进制下载，不走统一的 JSON 拦截器，直接用 blob
-  exportUrl: (id) => `/api/v1/lesson/ai/jobs/${id}/export`
+  exportUrl: (id) => `/api/v1/lesson/ai/jobs/${id}/export`,
+  // 带 token 的 blob 导出（裸 URL 打开 / 前端 fetch 手拼 token 都不可靠）
+  exportBlob: (id) => request.get(`/lesson/ai/jobs/${id}/export`,
+    { responseType: 'blob' })
 }

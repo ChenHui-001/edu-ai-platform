@@ -108,7 +108,9 @@
 import { ref, computed, onMounted } from 'vue'
 import EChart from '@/components/EChart.vue'
 import { Download, Refresh } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { reportApi, eduApi, taskApi } from '@/api'
+import { downloadBlob } from '@/utils/download'
 
 const classes = ref([])
 const tasks = ref([])
@@ -177,8 +179,13 @@ async function loadEffect() {
   }
 }
 
-function exportExcel() {
-  window.open(reportApi.exportUrl({ scope: 'teacher', class_id: classId.value || '' }), '_blank')
+async function exportExcel() {
+  // 教学报表按班级导出：report_type=class_overview 必须配 class_id，
+  // 否则后端会落到全站总览分支（教师无权查看）；裸 URL 还带不上 token。
+  if (!classId.value) return ElMessage.warning('请先选择班级再导出')
+  await downloadBlob(
+    reportApi.exportExcel({ report_type: 'class_overview', class_id: classId.value }),
+    '教学报表.xlsx')
 }
 
 onMounted(async () => {
