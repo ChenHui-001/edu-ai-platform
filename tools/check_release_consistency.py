@@ -434,7 +434,19 @@ def check_latest_pointer(rep, version, repo, mode):
                      f"{version}={str(ver_digest)[:19]}... 不一致；"
                      "latest 未更新，或指向了别的版本")
     else:
-        rep.warn("latest 指向校验", "digest 缺失，跳过")
+        # Docker Hub API 偶发不返回 digest（不是错误）。退一步比 last_updated：
+        # 两者同为本次发布（时间差在 1 小时内）即可判定 latest 已跟上本版本。
+        # ⚠️ 不要直接 skip —— 那等于「查不到就放行」，latest 指错也发现不了。
+        lu_latest = str(d.get("last_updated") or "")
+        lu_ver = str(dv.get("last_updated") or "")
+        if lu_latest and lu_ver and lu_latest[:13] == lu_ver[:13]:
+            rep.ok("latest 指向本次发布版本",
+                   f"digest 缺失，按更新时间判定：latest={lu_latest[:19]} "
+                   f"≈ {version}={lu_ver[:19]}")
+        else:
+            rep.warn("latest 指向校验",
+                     f"digest 缺失且更新时间不一致（latest={lu_latest[:19] or '?'}，"
+                     f"{version}={lu_ver[:19] or '?'}），请手工核对")
 
 
 # ================================================================ 主流程
