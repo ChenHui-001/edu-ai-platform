@@ -14,7 +14,7 @@ from app.api.deps import (
     get_current_user, get_data_scope,
 )
 from app.core.database import get_db
-from app.core.exception import BusinessException, NotFoundException
+from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
     AgentCallLog, Answer, Class, ErrorLog, Grade, KnowledgeMastery, KnowledgePoint,
     Note, Paper, Question, StudyRecord, Submission, Subject, Task, User, WrongQuestion,
@@ -730,7 +730,14 @@ def export_excel(
     ws = wb.active
     ws.title = "报表"
 
+    # 权限按报表类型分别校验：此前统一 get_current_user，
+    # 学生可传 report_type=admin_overview 导出全校统计（依赖被内部函数调用绕过）。
+    codes = set(user.role_codes or [])
+    is_manager = bool({"sys_admin", "grade_admin"} & codes)
+    is_teacher = bool({"teacher", "grade_admin", "sys_admin"} & codes)
+
     if report_type == "student_overview":
+        # 个人报表：任何登录用户只能导出自己的（内部按当前 user 取数）
         data = student_overview(db, user)["data"]
         ws.append(["个人学习总览"])
         ws.append([])
@@ -740,6 +747,8 @@ def export_excel(
                   "wrong_mastered", "note_count", "exam_count", "avg_score", "pass_count"):
             ws.append([k, data.get(k)])
     elif report_type == "class_overview" and class_id:
+        if not is_teacher:
+            raise PermissionException("需要教师权限才能导出班级报表")
         data = class_overview(class_id, db=db, user=user, scope=_scope_for(user, db))["data"]
         ws.append([f"班级学情报表 - {data['class']['name']}"])
         ws.append([])
@@ -748,8 +757,10 @@ def export_excel(
                 ws.append([k, json_dumps(v)])
             else:
                 ws.append([k, v])
-    else:
-        data = admin_overview(db, user=_as_admin(user))["data"]
+    elif report_type == "admin_overview":
+        if not is_manager:
+            raise PermissionException("需要系统管理员或年级管理员权限才能导出系统报表")
+        data = admin_overview(db, user=user)["data"]
         ws.append(["系统总览报表"])
         ws.append([])
         for section, vals in data.items():
@@ -760,6 +771,10 @@ def export_excel(
             else:
                 ws.append([section, vals])
             ws.append([])
+    else:
+        raise BusinessException(
+            "无效的报表类型，可选：student_overview / class_overview / admin_overview"
+        )
 
     buf = io.BytesIO()
     wb.save(buf)
