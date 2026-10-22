@@ -504,6 +504,21 @@ def submit_answers(
     if task.start_at and task.start_at > now_local():
         raise BusinessException("任务尚未开始")
 
+    # 服务端兜底校验单次作答时长：前端倒计时可被绕过（改系统时钟 / 直接调
+    # 接口），这里按 task.duration（分钟）换算并留 300 秒容差，拦截明显超时
+    # 的提交。duration_seconds 缺省或非法时不限制，保持对老客户端宽容。
+    raw_duration = data.get("duration_seconds")
+    try:
+        submitted_duration = float(raw_duration) if raw_duration is not None else None
+    except (TypeError, ValueError):
+        submitted_duration = None
+    if (
+        submitted_duration is not None and submitted_duration > 0
+        and task.duration and task.duration > 0
+        and submitted_duration > task.duration * 60 + 300
+    ):
+        raise BusinessException("作答时长超出考试时长限制，无法提交")
+
     # attempt 一律由服务端判定：此前直接信任客户端传入值，
     # 学生传 attempt=99 即可绕过 allow_retake=1 无限重考。
     last = db.scalar(
