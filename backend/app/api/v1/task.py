@@ -529,10 +529,10 @@ def submit_answers(
     max_attempt = max(int(task.allow_retake or 1), 1)
     if last and last.submit_time:
         if last.attempt >= max_attempt:
-            # 被教师打回（reject 置 status=not_graded 且清空 score）时允许复用
-            # 同一 attempt 覆盖重做；否则报「次数已用完」，打回重做闭环不可用。
-            # 仅凭 status=not_graded 不够：含待人工主观题的卷子也是该状态但
-            # score 非空，必须用 score is None 区分，避免绕过 allow_retake 限制。
+            # 被教师打回（reject_submission 置 status=not_graded 且清空 score）：
+            # 允许复用同一 attempt 覆盖重做，而不是报「次数已用完」，否则学生
+            # 永远无法重新提交。交卷时仅因主观题待批而 not_graded 的卷子 score
+            # 非空，不在放行范围，避免借此绕过 allow_retake 次数限制。
             if last.status == "not_graded" and last.score is None:
                 attempt = last.attempt
             else:
@@ -543,8 +543,23 @@ def submit_answers(
         # 未交卷的草稿沿用其 attempt，保证覆盖同一份而不是新建
         attempt = last.attempt if last else 1
 
-    sub = grading_service.get_student_submission(db, task_id, user.id, attempt)
     answers = data.get("answers", [])
+    if not isinstance(answers, list):
+        raise BusinessException("答题数据格式错误")
+
+    # 单次交卷会按主观题数量放大 LLM 调用（每题一次往返）。限流必须放在
+    # 任何业务写库之前（get_student_submission 会 flush 草稿、save_answers
+    # 会 flush 作答记录，事务已开始后无法回滚这次调用成本）。
+    # 仅在 LLM 真实可用时计数：纯客观题交卷不需要 AI，LLM 关闭时不应额外限流，
+    # 否则「AI 未配置」的正常交卷会被学员的其它 AI 调用挤占额度。
+    from app.agents.llm import is_available as _llm_available
+
+    if _llm_available():
+        from app.core.rate_limit import check_agent_rate
+
+        check_agent_rate(db, user.id, cost=max(1, min(len(answers) // 3 + 1, 20)))
+
+    sub = grading_service.get_student_submission(db, task_id, user.id, attempt)
     summary = grading_service.save_answers(db, sub, answers, auto_grade=True)
     result = grading_service.finalize_submission(
         db, sub, duration_seconds=data.get("duration_seconds")
