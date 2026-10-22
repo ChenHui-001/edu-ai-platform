@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     PASS_SCORE: float = 60.0
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 200
+    # 空库是否播种演示班级/教师/学生（teacher1/Teacher@123 等已知口令账号）。
+    # 生产环境建议设为 false，只保留 admin 与基础年级学科数据。
+    SEED_DEMO_DATA: bool = True
 
     @model_validator(mode="after")
     def _resolve_secret_key(self) -> "Settings":

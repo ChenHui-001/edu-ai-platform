@@ -39,6 +39,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-50}
+      # 演示数据：本地体验保留默认 true；生产建议在 .env 设为 false
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
       TZ: Asia/Shanghai
     volumes:
       # 数据持久化

@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.security import hash_password, verify_password
 from app.models import (
@@ -409,9 +410,16 @@ def init_jobs(db: Session) -> None:
 
 
 def init_demo_data(db: Session) -> None:
-    """创建演示用班级、教师、学生，便于快速体验。"""
+    """创建演示用班级、教师、学生，便于快速体验。
+
+    生产部署可通过 SEED_DEMO_DATA=false 关闭，避免空库自动生成
+    teacher1/Teacher@123、stu731/Student@123 等已知口令账号。
+    """
     from app.models import Class, TeachingAssignment
 
+    if not settings.SEED_DEMO_DATA:
+        logger.info("SEED_DEMO_DATA=false，跳过演示数据初始化")
+        return
     if db.scalar(select(func.count()).select_from(Class)) > 0:
         return
 
