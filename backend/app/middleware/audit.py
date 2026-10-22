@@ -32,6 +32,36 @@ def _jsonable(obj: Any) -> str:
         return str(obj)[:2000]
 
 
+# 审计日志落库前的脱敏关键字：按 key 递归匹配，覆盖 llm_api_key、
+# smtp_password、Authorization、refresh_token 等（原先只认 password 三个键，
+# AI 配置里的 llm_api_key 会以明文写进操作日志，且 grade_admin 可读取/导出）。
+_SENSITIVE_KEY_MARKS = (
+    "password", "passwd", "secret", "token", "api_key", "apikey",
+    "authorization", "credential",
+)
+# 这些字段虽含 token 字样但只是类型说明，不需要脱敏
+_SAFE_KEYS = {"token_type"}
+# 大字段不落审计日志，避免日志表膨胀
+_IGNORED_BODY_KEYS = {"content", "stem", "analysis"}
+
+
+def _redact(value: Any) -> Any:
+    """递归脱敏：命中敏感关键字的键统一替换为 ******。"""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            key = str(k)
+            if key.lower() not in _SAFE_KEYS and any(
+                    m in key.lower() for m in _SENSITIVE_KEY_MARKS):
+                out[k] = "******"
+            else:
+                out[k] = _redact(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_redact(v) for v in value]
+    return value
+
+
 class AuditMiddleware(BaseHTTPMiddleware):
     """请求级审计：记录操作日志、错误日志、性能耗时。"""
 
@@ -97,18 +127,15 @@ class AuditMiddleware(BaseHTTPMiddleware):
             user_id = getattr(user, "id", None)
             username = getattr(user, "username", None)
 
-            params: Dict[str, Any] = dict(request.query_params)
+            params: Dict[str, Any] = _redact(dict(request.query_params))
             body: Any = None
             if raw_body:
                 try:
-                    body = json.loads(raw_body)
+                    body = _redact(json.loads(raw_body))
                     if isinstance(body, dict):
-                        for k in ("password", "new_password", "old_password"):
-                            if k in body:
-                                body[k] = "******"
                         body = {
                             k: v for k, v in body.items()
-                            if k not in ("content", "stem", "analysis")
+                            if k not in _IGNORED_BODY_KEYS
                         }
                 except (ValueError, UnicodeDecodeError):
                     body = "<binary>"

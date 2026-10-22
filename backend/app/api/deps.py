@@ -79,6 +79,9 @@ def get_current_user(
         for w in _FORCE_PWD_WHITELIST
     ):
         raise PermissionException("首次登录或密码已被重置，请先修改密码")
+    # 供审计中间件记录操作人：此前中间件读取 request.state.user 但全仓无赋值，
+    # 导致 sys_operation_log 的 user_id/username 恒为 NULL，操作无法追溯。
+    request.state.user = user
     return user
 
 
