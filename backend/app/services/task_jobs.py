@@ -163,6 +163,51 @@ def push_review_reminders() -> Dict[str, Any]:
         db.close()
 
 
+def clean_old_logs() -> Dict[str, Any]:
+    """清理过期运维数据：日志表/通知/任务执行记录无界增长会拖慢 SQLite。
+
+    - 操作日志/登录日志：保留 90 天
+    - 错误日志/AI 调用日志：保留 90 天
+    - 任务执行日志：保留 30 天
+    - 已读站内通知：保留 30 天（未读通知不清理）
+    """
+    from app.models import (
+        AgentCallLog, ErrorLog, JobExecutionLog, LoginLog, Notification,
+        OperationLog,
+    )
+
+    db = SessionLocal()
+    try:
+        now = now_local()
+        cut90 = now - timedelta(days=90)
+        cut30 = now - timedelta(days=30)
+        removed: Dict[str, int] = {}
+        for name, model, column, cutoff in (
+            ("operation_log", OperationLog, OperationLog.created_at, cut90),
+            ("login_log", LoginLog, LoginLog.login_at, cut90),
+            ("error_log", ErrorLog, ErrorLog.created_at, cut90),
+            ("agent_call_log", AgentCallLog, AgentCallLog.created_at, cut90),
+            ("job_execution_log", JobExecutionLog, JobExecutionLog.started_at, cut30),
+        ):
+            count = db.query(model).filter(column < cutoff).delete(
+                synchronize_session=False
+            )
+            if count:
+                removed[name] = count
+        notifications = db.query(Notification).filter(
+            Notification.is_read.is_(True),
+            Notification.created_at < cut30,
+        ).delete(synchronize_session=False)
+        if notifications:
+            removed["notifications"] = notifications
+        db.commit()
+        if removed:
+            logger.info(f"运维数据清理完成: {removed}")
+        return removed
+    finally:
+        db.close()
+
+
 def publish_scheduled_tasks() -> Dict[str, Any]:
     """定时发布：把 publish_at 已到期的草稿任务激活并补发学生通知。
 
@@ -241,6 +286,7 @@ JOB_HANDLERS = {
     "app.services.task_jobs.push_review_reminders": push_review_reminders,
     "app.services.task_jobs.generate_weekly_report": generate_weekly_report,
     "app.services.task_jobs.publish_scheduled_tasks": publish_scheduled_tasks,
+    "app.services.task_jobs.clean_old_logs": clean_old_logs,
 }
 
 

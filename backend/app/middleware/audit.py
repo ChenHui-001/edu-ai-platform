@@ -103,6 +103,12 @@ class AuditMiddleware(BaseHTTPMiddleware):
             raise
 
         duration_ms = int((time.perf_counter() - start) * 1000)
+        # 读接口不写操作日志：日志只用于「谁改了什么」的审计追溯，
+        # 而 GET（尤其是前端轮询 /agent/status、通知列表）按请求写库会
+        # 在 SQLite 单写者下形成写放大；5xx 仍要落错误日志便于排查。
+        if request.method in ("GET", "HEAD", "OPTIONS") and response.status_code < 500:
+            response.headers["X-Process-Time"] = str(duration_ms)
+            return response
         if response.status_code >= 500:
             await self._log(
                 request, response.status_code, duration_ms,

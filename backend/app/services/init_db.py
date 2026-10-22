@@ -266,6 +266,7 @@ DEFAULT_JOBS = [
     ("复习提醒推送", "app.services.task_jobs.push_review_reminders", "0 8 * * *", "按艾宾浩斯计划推送今日复习清单"),
     ("周报生成", "app.services.task_jobs.generate_weekly_report", "0 8 * * 1", "生成上周学情周报"),
     ("定时发布任务", "app.services.task_jobs.publish_scheduled_tasks", "* * * * *", "激活 publish_at 到期的草稿任务并补发学生通知"),
+    ("清理过期运维日志", "app.services.task_jobs.clean_old_logs", "30 4 * * *", "清理过期日志/任务执行记录/已读通知，防止数据库无界增长"),
 ]
 
 
