@@ -304,19 +304,28 @@ def init_permissions(db: Session) -> None:
 
 
 def init_roles(db: Session) -> None:
-    """初始化 5 种预置角色及权限分配。"""
+    """初始化 5 种预置角色及权限分配（幂等、只增不删）。
+
+    管理员可在「角色权限」页调整内置角色的名称/权限/启停状态；此前每次启动
+    都会把 name/data_scope/is_active 覆盖回种子值并删除非种子权限，
+    导致定制静默丢失。这里改为：
+    - 仅新建角色时写入种子元数据；
+    - 已有角色只补「缺失的种子权限」，不删除管理员新增的权限；
+    - 不覆盖 is_active（尊重管理员停用）。
+    """
     for rdef in ROLES:
         role = db.scalar(select(Role).where(Role.code == rdef["code"]))
         if not role:
-            role = Role(code=rdef["code"])
+            role = Role(
+                code=rdef["code"], name=rdef["name"],
+                description=rdef["description"], data_scope=rdef["data_scope"],
+                is_builtin=True, is_active=True, sort=rdef["sort"],
+            )
             db.add(role)
-        role.name = rdef["name"]
-        role.description = rdef["description"]
-        role.data_scope = rdef["data_scope"]
-        role.is_builtin = True
-        role.is_active = True
-        role.sort = rdef["sort"]
-        db.flush()
+            db.flush()
+        else:
+            # 已存在：只确保内置标记，其余元数据/状态保留管理员定制
+            role.is_builtin = True
 
         if "*" in rdef["perms"]:
             # 超级管理员：关联全部权限，使 role.permissions 直接可用，
@@ -331,13 +340,6 @@ def init_roles(db: Session) -> None:
             for p in db.scalars(select(Permission)).all():
                 if p.code in codes and p.code not in current:
                     db.add(RolePermission(role_id=role.id, permission_id=p.id))
-                elif p.code not in codes and p.code in current:
-                    db.execute(
-                        RolePermission.__table__.delete().where(
-                            RolePermission.role_id == role.id,
-                            RolePermission.permission_id == p.id,
-                        )
-                    )
     db.commit()
     logger.info("预置角色初始化完成（5 种）")
 
