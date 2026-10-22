@@ -14,6 +14,8 @@ from typing import List, Tuple
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # (表名, 列名, 列类型 DDL)。新加模型字段若老库可能缺列，登记到这里。
@@ -38,6 +40,15 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
 def run_column_migrations(db: Session) -> List[str]:
     """幂等补列，返回本次实际新增的列（用于日志）。"""
     applied: List[str] = []
+    # 本迁移基于 SQLite 的 PRAGMA table_info；切 PostgreSQL 时 PRAGMA 不存在，
+    # 逐个失败并静默跳过会让「模型加列、老库缺列」问题在切库后重新出现。
+    # 明确跳过并提示使用 Alembic，避免给出"已迁移"的假象。
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        logger.warning(
+            "当前数据库非 SQLite，已跳过轻量补列迁移；"
+            "请使用 Alembic（requirements 已内置）管理结构变更"
+        )
+        return applied
     for table, column, ddl in MIGRATION_COLUMNS:
         try:
             rows = db.execute(
