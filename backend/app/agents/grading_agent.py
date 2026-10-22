@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.models import Question
+from app.utils.answer import answers_match, normalize_answer
 
 OBJECTIVE_TYPES = {"single", "multiple", "judge", "blank"}
 
@@ -169,7 +170,11 @@ class GradingAgent(BaseAgent):
 
     @classmethod
     def _grade_objective(cls, q: Question, student_answer: Any) -> Dict[str, Any]:
-        """客观题本地判分（不依赖 LLM，保证性能与准确）。"""
+        """客观题本地判分（不依赖 LLM，保证性能与准确）。
+
+        答案比较统一走 `app.utils.answer`：判断题的「正确/错误/对/错/T/F」
+        与选项 key A/B 等价；多选题兼容 JSON 数组与 "A,C" 字符串。
+        """
         import json
 
         try:
@@ -177,31 +182,15 @@ class GradingAgent(BaseAgent):
         except json.JSONDecodeError:
             std = q.answer
 
-        def norm(v: Any) -> str:
-            s = str(v if v is not None else "").strip().upper()
-            # 去掉标点与多余空白
-            s = re.sub(r"[、,，\s]", "", s)
-            return s
-
-        if isinstance(std, list):
-            std_set = cls._norm_answer_set(std)
-            stu_set = cls._norm_answer_set(student_answer)
-            is_correct = std_set == stu_set and bool(stu_set)
-            score = float(q.score) if is_correct else 0.0
-            return {
-                "is_correct": is_correct, "score": score,
-                "comment": "回答正确" if is_correct else f"正确答案：{'/'.join(sorted(std_set))}",
-            }
-
-        # 填空/单选/判断等标量答案：学生答案可能是 list（异常提交），
-        # 统一用 _norm_answer_set 归一化后比较，避免 list 无 .strip() 报错。
-        sa_norm = cls._norm_answer_set(student_answer)
-        stu_scalar = next(iter(sa_norm), "")
-        if stu_scalar and stu_scalar == norm(std):
+        is_correct = answers_match(q.type, std, student_answer)
+        if is_correct:
             return {"is_correct": True, "score": float(q.score), "comment": "回答正确"}
+
+        std_set = normalize_answer(q.type, std)
+        shown = "/".join(sorted(std_set)) if std_set else str(std or "")
         return {
             "is_correct": False, "score": 0.0,
-            "comment": f"答案错误，正确答案：{std}" if std else "答案错误",
+            "comment": f"答案错误，正确答案：{shown}" if shown else "答案错误",
         }
 
     # ---------------- 主观题 ----------------

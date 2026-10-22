@@ -30,3 +30,15 @@
   - `python -m py_compile` 通过；前端 `npm run build` 待本批结束统一验证。
 - **回归风险**：自动化 E2E 以 `DEBUG=true` 启动，不受影响；生产 compose 用户必须提供 `.env`（已写入 README）。
 
+### P0-2 客观题答案口径不统一（判断题/导入多选系统性误判）
+
+- **状态**：✅ 已修复
+- **问题**：判分只对 JSON 数组做集合比较；页面建判断题标准答案存「正确」而学生提交选项 key「A」；导入的多选题答案常为 `"A,C"` 字符串，均被精确字符串比较判错。
+- **改动**：
+  - 新增 `backend/app/utils/answer.py`：`to_token_set` / `normalize_answer` / `answers_match`，支持判断题 `正确/错误/对/错/T/F/true/false/A/B` 互认、多选题 JSON 数组与 `A,C`/`A、C`/`AC` 归一化、空答案判错。
+  - `backend/app/agents/grading_agent.py`：`_grade_objective` 改用统一比较器，错误提示输出归一化后的标准答案。
+  - `backend/app/api/v1/question.py`：创建/编辑/导入判断题时若缺选项自动补齐 A（正确）/B（错误），导入的判断题不再无可点选项。
+  - 新增 `tests/verify_answer_normalization.py`（stdlib 断言脚本，无 pytest 依赖）。
+- **验证**：`python tests/verify_answer_normalization.py` 全部通过（判断题 5 种标准写法 × 4 种学生写法、多选题 4 种写法、单选/填空边界）；改动文件 `py_compile` 通过。
+- **回归风险**：历史判断题的「正确/错误」数据无需迁移即可正确判分；E2E 现有 `T/F` + JSON 数组用例保持通过（将在 P0 批次末跑全量确认）。
+

@@ -34,6 +34,11 @@ QUESTION_TYPE_ALIAS = {
 }
 DIFFICULTY_LABEL = {"easy": "简单", "medium": "中等", "hard": "困难"}
 
+# 判断题固定选项：历史数据/导入模板的答案是「正确/错误」，
+# 但答题页提交的是选项 key（A/B）。建题/导题时补齐标准选项，
+# 避免导入的判断题没有可点选项；判分侧由 app.utils.answer 做等价映射。
+DEFAULT_JUDGE_OPTIONS = [{"key": "A", "text": "正确"}, {"key": "B", "text": "错误"}]
+
 
 def normalize_question_type(raw: Any, *, strict: bool = True) -> str:
     """把外部传入的题型归一化为合法枚举值。
@@ -135,12 +140,16 @@ def create_question(
 ):
     if not data.get("stem"):
         raise BusinessException("题干不能为空")
+    qtype = normalize_question_type(data.get("type", "single"))
+    options = data.get("options")
+    if qtype == "judge" and not options:
+        options = DEFAULT_JUDGE_OPTIONS
     q = Question(
         # 校验题型合法性：此前直接透传，任何字符串都能入库，
         # 会导致前端题型下拉框匹配不到、显示原始英文（如 subjective）
-        type=normalize_question_type(data.get("type", "single")),
+        type=qtype,
         stem=data["stem"],
-        options=_dump(data.get("options")), answer=_dump(data.get("answer")),
+        options=_dump(options), answer=_dump(data.get("answer")),
         analysis=data.get("analysis"), score=float(data.get("score", 5)),
         difficulty=data.get("difficulty", "medium"),
         grade_id=data.get("grade_id", 0), subject_id=data["subject_id"],
@@ -181,6 +190,9 @@ def update_question(
             setattr(q, f, v)
     if data.get("stem"):
         q.fingerprint = _fingerprint(data["stem"])
+    # 题型切到判断题但没传选项时补齐标准选项，保证答题页可作答
+    if q.type == "judge" and not q.options:
+        q.options = _dump(DEFAULT_JUDGE_OPTIONS)
     db.commit()
     index_question(q)
     return ok(dictify(q), message="题目已更新")
@@ -308,6 +320,9 @@ async def import_questions(
         if any(opts.values()):
             options = [{"key": k, "text": str(v)} for k, v in opts.items() if v]
             options = json.dumps(options, ensure_ascii=False)
+        # 导入模板的判断题没有选项列：补齐 A/B，否则答题页无选项可点
+        if qtype == "judge" and not options:
+            options = json.dumps(DEFAULT_JUDGE_OPTIONS, ensure_ascii=False)
         fp = _fingerprint(str(stem))
         if db.scalar(select(Question).where(Question.fingerprint == fp)):
             skipped.append({"line": line_no, "reason": "题目重复", "stem": str(stem)[:40]})
