@@ -212,6 +212,26 @@ def check_git_tag(rep, version, head):
 
 
 # ================================================================ 逻辑点 ③/⑤：镜像内版本
+def read_build_info(image):
+    """一次读出镜像内 /app/BUILD_INFO 的全部字段。返回 dict（可能为空）。
+
+    **这是首选来源**：BUILD_INFO 由 `cat /app/VERSION` + 构建参数在镜像内
+    生成，版本与 commit 同源同批写入，不会出现「label 有 revision 但
+    version 为空」这种半残状态 —— 后者只在漏传 ARG APP_VERSION 时出现，
+    而 LABEL 无法从文件取值，只能靠构建命令自觉。
+    """
+    code, out, _ = sh(["docker", "run", "--rm", "--entrypoint", "cat",
+                       image, "/app/BUILD_INFO"], timeout=180)
+    if code != 0 or not out:
+        return {}
+    info = {}
+    for line in out.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            info[k.strip()] = v.strip()
+    return info
+
+
 def image_embedded_version(image):
     """读镜像内 /app/VERSION。返回 (版本号, 来源说明)。
 
@@ -223,7 +243,11 @@ def image_embedded_version(image):
                          image, "/app/VERSION"], timeout=180)
     if code == 0 and out:
         return out.splitlines()[0].strip(), "镜像内 /app/VERSION"
-    # ② OCI label（仅当 Dockerfile 设置了 LABEL，作为兜底）
+    # ② BUILD_INFO 里的 version 字段
+    info = read_build_info(image)
+    if info.get("version") and info["version"] != "unknown":
+        return info["version"], "镜像内 /app/BUILD_INFO"
+    # ③ OCI label（仅当 Dockerfile 设置了 LABEL，作为兜底）
     code, out, _ = sh(["docker", "inspect", "--format",
                        '{{index .Config.Labels "org.opencontainers.image.version"}}',
                        image])
@@ -236,24 +260,17 @@ def image_embedded_commit(image):
     """读镜像构建时烧入的 commit。返回 (sha 或 None, 说明)。
 
     **这是判定「代码一致」的唯一硬依据。**
-    沿用 image_embedded_version 的镜像内 /app/BUILD_INFO 与 OCI label
-    双路径：前者是容器内可自查的文本快照，后者可 docker inspect 直读。
+    优先 BUILD_INFO（与版本同源写入），再退 OCI label。
     """
+    info = read_build_info(image)
+    if info.get("commit") and info["commit"] != "unknown":
+        return info["commit"], "镜像内 /app/BUILD_INFO"
+
     code, out, _ = sh(["docker", "inspect", "--format",
                        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
                        image])
     if code == 0 and out and out not in ("<no value>", ""):
         return out.strip(), "OCI label"
-
-    # 兜底：某些构建路径可能没传 label，但 BUILD_INFO 里有记录
-    code, out, _ = sh(["docker", "run", "--rm", "--entrypoint", "cat",
-                       image, "/app/BUILD_INFO"], timeout=180)
-    if code == 0 and out:
-        for line in out.splitlines():
-            if line.startswith("commit="):
-                val = line.split("=", 1)[1].strip()
-                if val and val != "unknown":
-                    return val, "镜像内 /app/BUILD_INFO"
     return None, "镜像未烧入 commit 指纹（旧镜像，构建时未传 --build-arg GIT_COMMIT）"
 
 
