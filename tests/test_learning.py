@@ -14,7 +14,7 @@
 """
 import time
 
-from e2e_framework import R, Client, check, data_of, rows_of, total_of, expect_denied, is_down
+from e2e_framework import R, Client, check, data_of, rows_of, total_of, expect_denied
 
 STU_PWD = "Student@123"
 
@@ -71,7 +71,9 @@ def run():
                 "answer": "A", "subject_id": subj_id, "grade_id": stu_grade,
                 "knowledge_point_id": None, "bank_type": "public",
             })
-        check(f"前置题目已自建（年级 {stu_grade} / 学科 {subj_id}）", True, tag)
+        # 已进入此分支说明自建请求已发出且拿到响应，这里仅记录规模信息；
+        # 真正的判据是后续"随机练习能否出卷"，故允许 info-only。
+        check(f"前置题目已自建（年级 {stu_grade} / 学科 {subj_id}）", True, tag)  # allow-info-only
     else:
         check("题库已有题目（复用现有数据）",
               True, f"total={have} 年级={stu_grade} 学科={subj_id}")
@@ -89,11 +91,36 @@ def run():
     SID = R.context.get("stu_subject_id") or 1
     # 顺带守住跨年级防护：拿**别年级**的学科 id 请求，必须明确拒绝而不是
     # 悄悄抽出一堆该学生做不了的题（这正是曾经的真实缺陷）。
+    #
+    # ⚠️ 但「拒绝」并非唯一正确结果 —— 后端 `create_practice` 现在的做法是
+    # **按学科名回查学生本年级的同名学科并自动纠正**（review.py:219-223），
+    # 这样前端传了 distinct 代表 id（指向最低年级）也能正常出卷。所以本用例
+    # 不能只认 `success is False`：
+    #   - 返回成功 → 必须校验**抽出来的题确实是学生本年级的**（防串题）
+    #   - 返回失败 → 必须是明确的「暂无题目」类提示，不能是 500
+    # 曾因只认「失败」而在有题的数据集上假失败（CI 全新库里七年级语文有题，
+    # 接口正确纠正后返回 200 生成练习 → 用例判 FAIL）。
     other_subj = 1 if SID != 1 else 2
-    p, _, _ = stu.post("/learning/practice", {"subject_id": other_subj, "count": 3})
-    check("★ 跨年级学科 id 被拒（不返回别年级题目）",
-          p.get("success") is False or (data_of(p) or {}).get("total") == 0,
-          f"{p.get('code')} {p.get('message', '')[:40]}")
+    p, _, sc = stu.post("/learning/practice", {"subject_id": other_subj, "count": 3})
+    _d = data_of(p) or {}
+    if p.get("success") is True:
+        # 纠正成功：拿返回的 task 取题，再用教师端题库按 id 反查 grade_id，
+        # 必须全部是学生自己的年级（防「卷面标七年级、实抽一年级题」串题）。
+        _tid = _d.get("task_id")
+        _pp, _, _ = stu.get(f"/learning/practice/{_tid}") if _tid else ({}, 0, 0)
+        _qids = {it.get("question_id")
+                 for it in ((data_of(_pp) or {}).get("items") or [])}
+        _qp, _, _ = tea.get("/question/questions", params={"page_size": 200})
+        _grades = {q.get("grade_id") for q in rows_of(_qp)
+                   if q.get("id") in _qids and q.get("grade_id") is not None}
+        _mine = R.context.get("stu_grade_id")
+        check("★ 跨年级学科 id 被纠正到本年级（不返回别年级题目）",
+              bool(_grades) and _grades <= {_mine},
+              f"抽到的题年级={sorted(_grades)}，学生年级={_mine}")
+    else:
+        check("★ 跨年级学科 id 被拒（不返回别年级题目）",
+              sc != 500 and "题目" in str(p.get("message", "")),
+              f"{p.get('code')} {p.get('message', '')[:40]}")
 
     p, _, _ = stu.post("/learning/practice", {"subject_id": SID, "count": -5})
     d1 = data_of(p) or {}

@@ -13,12 +13,9 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
-import traceback
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import sync_playwright
 
 BASE = "http://localhost:5173"
 API = "http://localhost:8000/api/v1"

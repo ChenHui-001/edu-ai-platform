@@ -35,7 +35,7 @@ def run():
     subjects = rows_of(p)
     assert subjects, "本年级没有学科，无法测试"
     assert grades and subjects, "环境缺基础数据"
-    g1, s_math = grades[0], subjects[1]  # 一年级数学（数学在 distinct 列表里通常排第 2）
+    g1 = grades[0]  # 后续用例统一用一年级（subject 取 subjects[1]，即数学）
 
     # ============================================================
     # 1. 列表 + 共享开关

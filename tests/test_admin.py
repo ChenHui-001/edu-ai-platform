@@ -14,6 +14,7 @@
 - Agent 状态
 """
 import time
+from datetime import datetime
 
 from e2e_framework import (R, Client, check, data_of, rows_of, total_of,
                            expect_denied, is_down, BASE)
@@ -34,6 +35,18 @@ def run():
     h = data_of(p) or {}
     check("服务健康", h.get("status") == "healthy",
           f"{BASE} -> {h.get('status')} db={h.get('database')} llm={h.get('llm_enabled')}")
+    # ⚠️ `server_time` 是 e2e 时间窗用例的唯一时间基准，删掉它会让
+    # `server_now()` 静默降级到本地时间 —— 本地全绿、CI（UTC runner vs
+    # Asia/Shanghai 容器）成片红的根因。这里把契约锁死，字段消失立刻失败，
+    # 而不是等到 8 条时间用例在 CI 上离奇超时/提前开考才被发现。
+    _st = str(h.get("server_time") or "")
+    _ok_fmt = False
+    try:
+        _ok_fmt = bool(datetime.strptime(_st, "%Y-%m-%d %H:%M:%S"))
+    except ValueError:
+        _ok_fmt = False
+    check("★ health 暴露服务端时间 server_time（e2e 时间基准契约）",
+          _ok_fmt, f"server_time={_st!r}")
     R.context["health"] = h
 
     # ---------------------------------------------------------- 1 认证
@@ -141,6 +154,7 @@ def run():
                 R.context["kp_id"] = d["id"]
                 R.context["kp_subject_id"] = sid
                 R.context["kp_grade_id"] = gid
+                # allow-info-only：已进入 success 分支，此处仅记录耗时与 id
                 check("知识点可创建（管理员可写教学接口）", True,
                       f"id={d['id']} {d.get('name')} 耗时 {ms}ms")
                 if ms > 3000:
@@ -519,7 +533,6 @@ def run():
     if jobs:
         jid = jobs[0]["id"]
         p, _, _ = admin.get(f"/jobs/{jid}/executions")
-        ex = data_of(p) or {}
         check("任务执行记录可查", p.get("success"),
               f"job={jobs[0].get('name')} 记录 {total_of(p)} 条")
 
@@ -542,7 +555,6 @@ def run():
     R.set_phase("阶段一 · 管理员视角 | 7. 附件、配置与通知")
 
     p, _, _ = admin.get("/attachments")
-    atts = data_of(p) or {}
     check("附件列表", p.get("success"), f"{total_of(p)} 个附件")
 
     p, _, _ = admin.get("/system/config")
@@ -586,7 +598,6 @@ def run():
                       body={"key": "hacked", "value": "1"})
 
     p, _, _ = admin.get("/system/notifications")
-    nf = data_of(p) or {}
     check("通知列表", p.get("success"), f"{total_of(p)} 条通知")
 
     p, _, _ = admin.get("/agent/status")

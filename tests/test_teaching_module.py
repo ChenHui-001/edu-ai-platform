@@ -8,7 +8,6 @@
 
 所有创建的资源在测试末尾清理（含 [E2E-TM- 前缀自愈清扫）。
 """
-import datetime as _dt
 import sys
 import time
 
@@ -361,7 +360,7 @@ def run():
     _cleanup(t1, admin)
     R.env("教学管理", f"任务 {len(rows_of(t1.get('/task/tasks', params={'page_size': 50})[0]))} 条 / "
                    f"教案 {total_of(t1.get('/lesson/plans', params={'page_size': 50})[0])} 份")
-    print(f"\n[完成] 教学管理模块专项")
+    print("\n[完成] 教学管理模块专项")
 
 
 def _cleanup(t1, admin):

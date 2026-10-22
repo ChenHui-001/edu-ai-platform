@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """AI 智能模块权限与功能实测（管理员视角）。"""
 import sys
-import time
 
 sys.path.insert(0, "tests")
 from e2e_framework import Client  # noqa: E402

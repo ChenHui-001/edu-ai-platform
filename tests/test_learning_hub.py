@@ -5,11 +5,10 @@
 本阶段聚焦**角色权限矩阵**与**数据隔离**，并补充若干净链路的快速冒烟。
 """
 import sys
-import time
 
 sys.path.insert(0, "tests")
 from e2e_framework import (  # noqa: E402
-    R, Client, check, data_of, expect_denied, is_down, rows_of, total_of,
+    R, Client, check, data_of, is_down, rows_of, total_of,
 )
 
 TAG = "[E2E-LH]"

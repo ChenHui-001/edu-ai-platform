@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, "tests")
 from e2e_framework import (  # noqa: E402
-    R, Client, check, data_of, expect_denied,
+    R, Client, check, data_of,
 )
 
 LONG = 180

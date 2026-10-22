@@ -25,7 +25,7 @@ def main():
     t1 = Client("t1"); t1.login("teacher1", "Teacher@123")
     s1 = Client("s1"); s1.login("stu731", "Student@123")
     suffix = str(int(time.time()))[-6:]
-    print(f"admin/teacher/student 已登录\n")
+    print("admin/teacher/student 已登录\n")
 
     # ============ 1. 登录安全 ============
     print("== 1. 登录 ==")

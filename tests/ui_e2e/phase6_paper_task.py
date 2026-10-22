@@ -353,7 +353,7 @@ def t_task_type_filter():
     e.click_text("查询")
     e.page.wait_for_timeout(1800)
     types = [x.inner_text().strip() for x in e.page.query_selector_all(".el-table__row td:nth-child(2)")]
-    if types and set(types) == {"考试"}:
+    if picked and types and set(types) == {"考试"}:
         return "PASS", f"选「考试」后 {before}→{len(types)} 行，类型列全为考试", ""
     return "P1", f"类型筛选未生效：{set(types)}", "任务类型筛选失效"
 

@@ -106,7 +106,6 @@ def t_users_create_weak_pwd():
     errs = [x.inner_text().strip() for x in e.page.query_selector_all(".el-form-item__error")]
     blocked = ("8" in toast or "8" in str(errs) or "简单" in toast
                or "字母" in toast or "强度" in toast)
-    dlg_open = e.page.locator(".el-dialog").first.is_visible()
     # 用接口核实是否真的建出了账号
     r = api("GET", f"/system/users?keyword={uname}", ADMIN["token"])
     items = (r.get("data") or {}).get("items") if isinstance(r.get("data"), dict) else None
@@ -146,7 +145,6 @@ def t_users_reset_pwd():
             break
     e.page.wait_for_timeout(2200)
     toast = e.toast_text()
-    html = e.text()
     if "密码" in toast and ("已重置" in toast or "生成" in toast):
         return "PASS", f"重置成功：「{toast[:80]}」", ""
     if "422" in toast or "校验" in toast:

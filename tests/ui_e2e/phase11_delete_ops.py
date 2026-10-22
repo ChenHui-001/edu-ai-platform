@@ -138,7 +138,7 @@ def t_user_delete_cancel():
     if still:
         api("DELETE", f"/system/users/{still[0]['id']}", A["token"])
     if still:
-        return "PASS", f"取消后用户仍在（正确），已清理", ""
+        return "PASS", "取消后用户仍在（正确），已清理", ""
     return "P1", f"点「取消」后用户 {UNAME2} 被删除", "取消按钮等于确认，误删风险极高"
 
 
@@ -149,7 +149,6 @@ def t_user_delete_builtin_guard():
     inp.fill("admin")
     e.click_text("查询")
     e.page.wait_for_timeout(2200)
-    btns = e.page.get_by_role("button", name="删除")
     # 找 admin 行上的删除按钮
     row = e.page.locator(".el-table__body tr", has_text="admin").first
     if not row.count():
@@ -254,7 +253,6 @@ def t_question_delete():
     inp.fill(stem)
     e.click_text("查询")
     e.page.wait_for_timeout(2400)
-    row = e.page.locator(".el-table__body tr").first
     n_rows = e.page.locator(".el-table__body tr").count()
     if n_rows == 0:
         api("DELETE", f"/question/questions/{qid}", T["token"])
@@ -274,7 +272,7 @@ def t_question_delete():
     if left:
         api("DELETE", f"/question/questions/{qid}", T["token"])
         return "P1", f"删除后仍能查到该题（total={left}）", "题目未真正删除"
-    return "PASS", f"题目已删除，按关键词回查 total=0", ""
+    return "PASS", "题目已删除，按关键词回查 total=0", ""
 
 
 def t_question_search_empty():
@@ -286,7 +284,6 @@ def t_question_search_empty():
     e.click_text("查询")
     e.page.wait_for_timeout(2400)
     rows = e.page.locator(".el-table__body tr").count()
-    empty = e.empty_hint()
     d, _ = api_data("GET", "/question/questions?page=1&page_size=10&keyword=zzz不存在题干9999", T["token"])
     api_total = (d or {}).get("total")
     if rows == 0 and api_total == 0:

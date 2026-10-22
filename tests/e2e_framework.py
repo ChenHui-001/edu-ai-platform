@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 
 BASE_HOST = os.environ.get("E2E_BASE", "http://localhost")
 
@@ -113,7 +114,6 @@ class Result:
         self.issues.append({
             "severity": severity, "title": title, "detail": detail, "repro": repro
         })
-        color = {"高": "\033[91m", "中": "\033[93m", "低": "\033[90m"}.get(severity, "")
         print(f"  \033[95m[ISSUE:{severity}]\033[0m {title}")
 
     def set_phase(self, phase):
@@ -281,6 +281,59 @@ def total_of(payload):
 # ================================================================
 def check(name, condition, detail=""):
     return R.add(name, bool(condition), detail)
+
+
+# ---------------------------------------------------------------- 服务器时间
+def server_now():
+    """取**服务端**当前时间（naive datetime），用于构造/校验时间窗参数。
+
+    ⚠️ 绝对不要用 `datetime.now()`（测试进程本地时区）去拼 `start_at` /
+    `publish_at` / `deadline`：
+
+    - 本地跑：测试进程和容器都在 Asia/Shanghai，碰巧一致，看不出问题；
+    - CI 跑：GitHub runner 是 **UTC**，而镜像里 `TZ=Asia/Shanghai`，
+      两边差 8 小时。于是 `now + 1h`（UTC）= 北京时间「7 小时前」，
+      服务端判定已经到点 → 定时发布任务被**立即发布**（用例期望「存为草稿」）；
+      「未开考」用例同理翻成「已开始」。
+
+    这类失败的特征是「本机全绿、CI 必红」，且只有时间相关用例成片倒下。
+    统一从服务端 `/health` 的 `server_time` 取时间，彻底消除时区依赖。
+    """
+    payload = {}
+    try:
+        # ⚠️ `BASE` / `_detect_base()` 返回的**已包含** `/api/v1` 前缀
+        # （见本文件第 42/66 行），这里只能拼 `/health`。
+        # 曾经写成 `_detect_base() + "/api/v1/health"` → 实际请求
+        # `/api/v1/api/v1/health` 必然 404 → 静默落到下面的 `datetime.now()`
+        # 兜底。本地因测试进程与容器同时区，兜底值恰好正确，问题被完全掩盖；
+        # 一旦到了 CI（runner UTC / 容器 Asia/Shanghai）就退回旧的坏行为。
+        # 这类「兜底掩盖主逻辑失效」的写法必须靠**断言走的是主路径**来防。
+        req = urllib.request.Request(BASE + "/health", method="GET")
+        # 绕开系统代理：本机有 https_proxy 时 urllib 会把 localhost 也代理走
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=5) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        payload = {}
+    raw = (payload.get("data") or {}).get("server_time")
+    if raw:
+        try:
+            return datetime.strptime(str(raw)[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            pass
+    # 兜底：接口未回时间时退回本地时间（至少与旧行为一致，不会更差）
+    #
+    # ⚠️ 兜底必须**吵**：静默降级正是上一次时区 bug 在本地全绿的原因。
+    # 一旦走了这条路，说明 CI 上时间相关问题会重新出现，日志必须一眼可见。
+    print(f"[WARN] 未能从服务端取到 server_time（{BASE}/health），"
+          f"回退到本地时间 {datetime.now():%Y-%m-%d %H:%M:%S}；"
+          f"CI 与容器时区不一致时，时间窗用例会假失败。")
+    return datetime.now()
+
+
+def dt_str(dt):
+    """格式化成后端 `_parse_dt` 唯一接受的格式（**不支持 ISO 的 T 分隔**）。"""
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def expect_denied(name, client, method, path, body=None, params=None):

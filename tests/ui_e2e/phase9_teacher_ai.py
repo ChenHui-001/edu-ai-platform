@@ -448,7 +448,6 @@ def t_class_analysis_switch():
         except Exception as exc:
             return "ENV", f"切换班级失败：{exc}", ""
     call = e.last_call("GET", "/class-analysis") or e.last_call("GET", "/analysis")
-    txt = e.page.locator(".page-container").first.inner_text().replace("\n", " ")
     return "PASS", f"切到「{picked[:14]}」：{before}→{e.row_count()} 行，请求 {call.get('path', '')[:50]}", ""
 
 

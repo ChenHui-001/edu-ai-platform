@@ -207,7 +207,6 @@ def t_log_tabs():
         e.click_text(tab)
         e.page.wait_for_timeout(1800)
         results.append((tab, e.row_count(), (e.empty_hint() or "")[:12]))
-    ok = all(n >= 0 for _, n, _ in results)
     if any(n > 0 for _, n, _ in results):
         return "PASS", f"三个 tab 均可切换：{results}", ""
     return "P2", f"三个 tab 都是空表：{results}", "日志可能未落库"
@@ -222,8 +221,9 @@ def t_log_filter_select():
     e.page.wait_for_timeout(2000)
     after = e.row_count()
     txt = e.text()
+    # 筛选「成功」后页面不应再出现「失败」字样——原先算出来没进判据
     bad = "失败" in txt.split("操作")[0] if txt else False
-    if picked and after >= 0:
+    if picked and after >= 0 and not bad:
         return "PASS", f"结果筛选「{picked}」：{before}→{after} 行", ""
     return "P2", "结果下拉无法选择", "日志筛选不可用"
 

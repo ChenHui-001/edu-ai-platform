@@ -356,7 +356,6 @@ def t_favorites_search():
     inp = e.page.locator(".filter-card input.el-input__inner, input[placeholder]").first
     if not inp.count():
         return "ENV", "找不到搜索输入框", ""
-    ph = inp.get_attribute("placeholder") or ""
     inp.fill("zzz不存在题目9999")
     e.click_text("查询")
     e.page.wait_for_timeout(2000)
@@ -444,7 +443,6 @@ def t_wrong_search_empty():
     inp = e.page.locator(".filter-card input.el-input__inner, input[placeholder]").first
     if not inp.count():
         return "ENV", "找不到搜索输入框", ""
-    ph = inp.get_attribute("placeholder") or ""
     inp.fill("zzz不存在的错题9999")
     e.click_text("查询")
     e.page.wait_for_timeout(2000)

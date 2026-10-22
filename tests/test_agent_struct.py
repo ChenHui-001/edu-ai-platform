@@ -133,16 +133,20 @@ def run():
     import urllib.error
     import urllib.request
 
-    api_base = None
-    for probe in ("http://localhost:8099/api/v1", "http://localhost:8080/api/v1",
-                  "http://localhost:8000/api/v1"):
-        try:
-            with urllib.request.urlopen(probe + "/health", timeout=3) as r:
-                if r.status == 200:
-                    api_base = probe
-                    break
-        except Exception:  # noqa: BLE001
-            continue
+    # ⚠️ 地址必须优先取 `BASE`（已按 E2E_BASE / HOST_PORT 探测好，含 /api/v1），
+    # 不能写死端口列表。以前这里只探 8099/8080/8000：一旦回归跑在其他端口
+    # （手动隔离库时的 8001/8002、CI 自定义端口），就会连到**另一个库的实例**，
+    # 于是本次登录拿到的 Token 在那边无效 → 401，用例报「SSE 接口不可访问」，
+    # 而实际接口完全正常。这类「连错服务」的假失败特别难查，因为症状像鉴权 bug。
+    from e2e_framework import BASE as _BASE
+
+    api_base = _BASE
+    try:
+        with urllib.request.urlopen(api_base + "/health", timeout=3) as r:
+            if r.status != 200:
+                api_base = None
+    except Exception:  # noqa: BLE001
+        api_base = None
 
     if api_base:
         req = urllib.request.Request(

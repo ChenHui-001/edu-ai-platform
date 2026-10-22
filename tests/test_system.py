@@ -365,7 +365,7 @@ def run():
         p, _, sc = admin.get(path, params={"page_size": 3})
         check(f"{path} 可读", p.get("success") is True, f"{sc}")
 
-    R.env("系统管理", f"登录/权限/密码策略/用户角色/密钥脱敏/审批 验证完成")
+    R.env("系统管理", "登录/权限/密码策略/用户角色/密钥脱敏/审批 验证完成")
     print("\n[完成] 系统管理模块专项")
 
 

@@ -9,10 +9,9 @@ import json
 import os
 import sys
 import time
-import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import API, E2E, api, api_login  # noqa: E402
+from harness import E2E, api_login  # noqa: E402
 
 STAMP = time.strftime("%H%M%S")
 NEW_USER = f"uistu{STAMP}"

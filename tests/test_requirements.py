@@ -10,18 +10,23 @@
 """
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timedelta
 
 from e2e_framework import (
-    R, Client, check, expect_denied, rows_of, total_of, BASE,
+    R, Client, check, expect_denied, rows_of, total_of, server_now, dt_str,
 )
 
 def run():
     admin = Client("admin"); admin.login("admin", "Admin@123456")
     tea1 = Client("teacher1"); tea1.login("teacher1", "Teacher@123")
     stu731 = Client("stu731"); stu731.login("stu731", "Student@123")
+
+    # ⚠️ 时间窗基准必须取**服务端**时间。
+    # CI runner 是 UTC、镜像 TZ=Asia/Shanghai，用 datetime.now() 拼出的
+    # publish_at 会比服务端早 8 小时 → 「定时发布」被立即执行（期望存草稿）、
+    # 「未开考」被当成已开始。详见 e2e_framework.server_now() 的说明。
+    now = server_now()
 
 
 # ============================================================
@@ -126,7 +131,7 @@ def run():
     else:
         paper_id = mine[0]["id"]
     # 未来 1 小时发布（_parse_dt 仅接受空格分隔格式，不支持 ISO T）
-        publish_at = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+        publish_at = dt_str(now + timedelta(hours=1))
         p, _, _ = tea1.post("/task/tasks", {
             "paper_id": paper_id, "type": "homework",
             # 定时发布同样需要下发对象：到期激活后学生才看得到，
@@ -164,13 +169,13 @@ def run():
     papers, _, _ = tea1.get("/question/papers")
     mine = rows_of(papers)
     if mine:
-        future_start = (datetime.now() + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+        future_start = dt_str(now + timedelta(hours=2))
         stu_uid = stu731.user.get("id") if stu731.user else None
         body = {
             "paper_id": mine[0]["id"], "type": "exam",
             "title": "未开考考试-测试", "class_ids": [],
             "start_at": future_start,
-            "end_at": (datetime.now() + timedelta(hours=4)).strftime("%Y-%m-%d %H:%M:%S"),
+            "end_at": dt_str(now + timedelta(hours=4)),
         }
         if stu_uid:
             body["student_ids"] = [stu_uid]
@@ -357,7 +362,6 @@ def run():
 # 知识点树多级（用平铺列表接口，参数可选）
     kps, _, _ = admin.get("/edu/knowledge/list")
     kp_rows = rows_of(kps)
-    has_parent = any(k.get("parent_id") for k in kp_rows)
     has_level = any(k.get("level") for k in kp_rows)
     check("★ 知识点库非空", len(kp_rows) > 0, f"kps={len(kp_rows)}")
 # 演示知识点可能均为顶级（parent_id=null），但模型支持多级，字段存在即满足需求

@@ -8,10 +8,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import API, E2E, api, api_login  # noqa: E402
+from harness import E2E  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 POOL = json.load(open(os.path.join(HERE, "captcha_pool.json"), encoding="utf-8"))

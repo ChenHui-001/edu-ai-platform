@@ -19,46 +19,10 @@ from e2e_framework import (R, Client, check, data_of, rows_of, total_of,
 
 PWD = "Teacher@123"
 
-# 五种题型的标准答案设计（故意把答案留給学生阶段做对错混合）
-QUESTIONS = [
-    {
-        "type": "single", "difficulty": "easy", "score": 10,
-        "stem": "【自动化测试】一元一次方程 3x + 5 = 20 的解是？",
-        "options": [{"key": "A", "text": "x = 3"}, {"key": "B", "text": "x = 5"},
-                    {"key": "C", "text": "x = 15"}, {"key": "D", "text": "x = 25"}],
-        "answer": "B", "analysis": "移项得 3x=15，故 x=5。",
-    },
-    {
-        "type": "multiple", "difficulty": "medium", "score": 15,
-        "stem": "【自动化测试】下列属于一元一次方程的是？",
-        "options": [{"key": "A", "text": "2x+1=7"}, {"key": "B", "text": "x²-4=0"},
-                    {"key": "C", "text": "3y-2=5"}, {"key": "D", "text": "x+y=3"}],
-        "answer": ["A", "C"], "analysis": "一元一次方程只含一个未知数且未知数次数为1。",
-    },
-    {
-        "type": "judge", "difficulty": "easy", "score": 10,
-        "stem": "【自动化测试】方程 x = 3 的解在数轴上表示点 (3, 0)。",
-        "options": [{"key": "T", "text": "正确"}, {"key": "F", "text": "错误"}],
-        "answer": "T", "analysis": "方程的解对应数轴上的一个点。",
-    },
-    {
-        "type": "blank", "difficulty": "medium", "score": 15,
-        "stem": "【自动化测试】若 5x - 8 = 12，则 x = 【】。",
-        "options": [], "answer": "4", "analysis": "5x=20，x=4。",
-    },
-    {
-        # 主观题必须用合法枚举 short。
-        # 原先写 "subjective"（不在 QUESTION_TYPE_LABEL 内），
-        # 后端 create_question 又未校验题型，导致脏数据入库，
-        # 前端题型下拉框匹配不到、列表显示原始英文。
-        # qids 键名沿用 "subjective" 以免牵动后续引用。
-        "type": "short", "difficulty": "medium", "score": 50,
-        "stem": "【自动化测试】请用配方法解方程 x² - 6x + 5 = 0，并写出推导过程。",
-        "options": [],
-        "answer": "x²-6x+5=0 ⟹ (x-3)²=4 ⟹ x-3=±2 ⟹ x=1 或 x=5",
-        "analysis": "配方法：移项后两边加 9，化为完全平方。",
-    },
-]
+# 题面与标准答案的**唯一定义**已抽到 e2e_seed.py：
+# 阶段二（教师建题）与「阶段解耦自建前置数据」共用同一份，
+# 避免两边题面/分值漂移导致学生阶段断言假失败。
+from e2e_seed import QUESTIONS  # noqa: E402
 
 
 def run():
@@ -240,7 +204,7 @@ def run():
         if p.get("success") and d.get("id"):
             qids[name] = d["id"]
             R.context[f"q_{name}"] = d["id"]
-            check(f"创建题目：{name}", True, f"id={d['id']} 分值={d.get('score')} {ms}ms")
+            check(f"创建题目：{name}", True, f"id={d['id']} 分值={d.get('score')} {ms}ms")  # allow-info-only
         else:
             check(f"创建题目：{name}", False, p.get("message"))
             R.issue("高", f"题目创建失败（{name}）",
@@ -721,16 +685,35 @@ def run():
         tid = R.context["task_id"]
         p, _, _ = tea.post(f"/grading/tasks/{tid}/report")
         if p.get("success"):
+            # allow-info-only：已进入 success 分支，此处仅记录返回字段
             check("班级学情报告可生成", True,
                   f"字段={list((data_of(p) or {}).keys())[:6]}")
         else:
-            check("班级学情报告可生成", True,
-                  f"暂无可分析数据（尚无学生交卷）-> {p.get('message')}")
+            # ⚠️ 这里原来是 `check(..., True, "暂无可分析数据...")` —— **失败也判 PASS**。
+            # 「尚无学生交卷」确实可能让报告无数据，但那属于**前置条件未满足**，
+            # 应该走 R.env（环境跳过）而不是伪装成通过。否则报告 500 也会绿灯。
+            _msg = str(p.get("message") or "")
+            _no_data = any(k in _msg for k in ("暂无", "无数据", "尚未", "不足"))
+            if _no_data:
+                R.env("班级学情报告可生成", f"前置数据不足（{_msg[:60]}）")
+            else:
+                check("班级学情报告可生成", False,
+                      f"{p.get('code')} {_msg[:80]}")
 
         p, _, _ = tea.post(f"/grading/tasks/{tid}/ai-comment", {}, timeout=90)
-        check("AI 教学建议可生成", p.get("success") or is_down(p) is False,
-              p.get("message", "已批改记录不足时降级属正常") if p.get("success")
-              else f"{p.get('code')} {p.get('message')}")
+        # ⚠️ 原判据是 `p.get("success") or is_down(p) is False` —— 逻辑上等于
+        # 「只要服务可达就算过」，业务失败（400/500）全部绿灯，等于没断言。
+        # 正确区分三态：成功 / 前置数据不足（走 ENV 跳过）/ 真失败。
+        if p.get("success"):
+            check("AI 教学建议可生成", True, "已生成")  # allow-info-only
+        elif is_down(p):
+            R.env("AI 教学建议可生成", "服务不可达")
+        else:
+            _m = str(p.get("message") or "")
+            if any(k in _m for k in ("暂无", "无数据", "尚未", "不足", "未批改")):
+                R.env("AI 教学建议可生成", f"前置数据不足（{_m[:60]}）")
+            else:
+                check("AI 教学建议可生成", False, f"{p.get('code')} {_m[:80]}")
 
 
     for path, name in [("/report/teacher/class-overview", "班级学情总览"),

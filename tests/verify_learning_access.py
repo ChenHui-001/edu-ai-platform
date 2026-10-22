@@ -6,7 +6,6 @@
 - 学生数据隔离（笔记/收藏/练习按 id 越权读取）
 - 接口契约与边界
 """
-import json
 import sys
 
 sys.path.insert(0, "tests")

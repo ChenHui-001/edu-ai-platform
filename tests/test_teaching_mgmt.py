@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from e2e_framework import (  # noqa: F401
     R, Client, BASE,
     check, expect_denied, rows_of, total_of,
-    data_of, is_down,
+    data_of, is_down, server_now, dt_str,
 )
 
 
@@ -298,8 +298,14 @@ def run():
 
 
 def _fmt_now(delta_hours: float) -> str:
-    """容器 TZ=Asia/Shanghai，datetime.now() 与后端一致。"""
-    return (datetime.now() + timedelta(hours=delta_hours)).strftime("%Y-%m-%d %H:%M:%S")
+    """以**服务端**时间为基准偏移，返回后端 _parse_dt 可解析的格式。
+
+    ⚠️ 原来注释写「容器 TZ=Asia/Shanghai，datetime.now() 与后端一致」——
+    本地成立，**CI 不成立**：GitHub runner 是 UTC，与容器差 8 小时。
+    于是 `+1h` 的服务端视角变成「7 小时前」，定时发布立刻执行、
+    「未开考」用例翻成「已开始」。统一取服务端时间后两边都与时区无关。
+    """
+    return dt_str(server_now() + timedelta(hours=delta_hours))
 
 
 def _make_paper(tea) -> tuple:

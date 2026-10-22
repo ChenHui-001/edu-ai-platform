@@ -10,7 +10,6 @@
 - 越权矩阵：教师/学生对 4 个资源写接口的拒绝
 """
 import datetime as _dt
-import re
 import time
 
 from e2e_framework import (  # noqa: F401
@@ -116,10 +115,18 @@ def run():
 
         # 阶段过滤
         p, _, _ = admin.get("/edu/grades", params={"stage": "primary"})
-        names = {g["name"] for g in rows_of(p)}
-        check("按 stage 过滤生效",
-              "primary" in p.get("message", "").lower() or len(rows_of(p)) >= 1,
-              f"返回 {len(rows_of(p))} 条 primary")
+        filtered = rows_of(p)
+        # 断言必须按**每条记录的 stage 字段**判定，不能按年级名白名单：
+        # 回归自己刚建了 `[E2E-RS-xxx] 年级`（stage=primary），按名字比会被
+        # 判成越界 —— 那是把「种子数据的具体名称」写死，跑几轮必然假失败。
+        # 正确判据：① 非空；② 每条 stage 都是 primary；
+        #          ③ 与全量列表相比确实收敛了（防止参数被忽略、返回全量也绿）。
+        all_grades = rows_of(admin.get("/edu/grades")[0])
+        bad_stage = [g.get("name") for g in filtered if g.get("stage") != "primary"]
+        check("★ 按 stage 过滤生效（每条记录 stage 均为 primary 且结果收敛）",
+              bool(filtered) and not bad_stage and len(filtered) <= len(all_grades),
+              f"过滤后 {len(filtered)}/{len(all_grades)} 条，非 primary 的 "
+              f"{len(bad_stage)} 条{bad_stage[:3]}")
 
     # ============================================================
     # 2. 学科 CRUD

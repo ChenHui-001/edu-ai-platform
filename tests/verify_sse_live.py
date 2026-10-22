@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """真实 LLM 环境下的 SSE 流式验证（逐 token 与时序）。"""
 import json
-import sys
 import time
 import urllib.request
 

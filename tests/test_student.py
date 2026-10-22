@@ -13,6 +13,7 @@
 """
 from e2e_framework import (R, Client, check, data_of, rows_of, total_of,
                            expect_denied, is_down)
+from e2e_seed import ensure_exam_chain
 
 PWD = "Student@123"
 
@@ -54,6 +55,40 @@ def run():
     check("stu731 角色为 student", "student" in (stu.permission or {}).get("roles", []),
           f"class_id={stu.user.get('class_id')}")
 
+    # ------------------------------------------------- 1b 前置考试（解耦点）
+    # 本阶段原本**强依赖阶段二**：阶段二建题组卷后把 task_id 写进
+    # R.context，这里取不到就直接 return，`run_all.py student` 单跑
+    # 只剩「任务不存在」的红条。现改为「有则复用、无则自建」：
+    # R.context 降级成纯缓存，前置数据由 e2e_seed 在缺失时就地补齐。
+    R.set_phase("阶段三 · 学生视角 | 1b. 前置考试（缺失则自建）")
+    p, _, _ = stu.get("/task/my/tasks", params={"page_size": 50})
+    tasks = rows_of(p)
+    usable = {t["id"] for t in tasks if t.get("status") in ("published", "ongoing")}
+    cached = R.context.get("task_id") or R.context.get("cross_task_id")
+    if cached in usable:
+        R.context["task_id"] = cached
+        # 已进入复用分支，说明缓存命中，此处仅记录来源，判据在后续取卷断言
+        check("复用已下发的考试（全量链路）", True,  # allow-info-only
+              f"task_id={cached} 可作答任务 {len(usable)} 个")
+    else:
+        seed_tea = Client("seed-teacher1")
+        ok_t, det_t = seed_tea.login("teacher1", "Teacher@123")
+        if not ok_t:
+            # 登录都失败说明环境/账号问题，不是学生阶段的业务缺陷
+            R.env("阶段三前置考试自建", f"teacher1 登录失败：{det_t}")
+            return
+        seed = ensure_exam_chain(seed_tea, stu)
+        # 前置数据建不出来 = 整阶段无法执行，必须**硬失败**，
+        # 不能用 R.env 滑过去（那正是「假绿」的来源）。
+        check("★ 自建前置考试成功（阶段二未执行时可独立跑）",
+              bool(seed.get("task_id")),
+              f"task_id={seed.get('task_id')} paper={seed.get('paper_id')} "
+              f"{seed.get('error') or ''}")
+        if not seed.get("task_id"):
+            return
+        tasks = rows_of(stu.get("/task/my/tasks", params={"page_size": 50})[0])
+
+    # 通知检查放在前置考试之后：自建场景下通知也是随后才产生的
     p, _, _ = stu.get("/system/notifications")
     check("学生可收到通知", p.get("success"), f"{total_of(p)} 条通知")
     nf = rows_of(p)
@@ -71,15 +106,15 @@ def run():
 
     p, _, _ = stu.get("/task/my/tasks", params={"page_size": 50})
     tasks = rows_of(p)
-    check("我的任务列表", p.get("success"), f"{total_of(p)} 个任务")
+    check("我的任务列表", p.get("success") is True, f"{total_of(p)} 个任务")
 
-    # 优先选教师阶段创建的正向考试；否则退回任意可用任务
-    task_id = R.context.get("task_id") or R.context.get("cross_task_id")
-    avail = [t for t in tasks if t.get("status") in ("published", "ongoing")]
-    if task_id not in [t["id"] for t in avail]:
-        if avail:
-            task_id = avail[0]["id"]
-            print(f"  \033[93m[INFO]\033[0m 教师阶段任务不可用，改用任务 {task_id}")
+    # 优先选缓存里的正向考试；失效则退回任意可作答任务
+    usable = {t["id"] for t in tasks if t.get("status") in ("published", "ongoing")}
+    task_id = R.context.get("task_id")
+    if task_id not in usable:
+        if usable:
+            task_id = sorted(usable)[0]
+            print(f"  \033[93m[INFO]\033[0m 缓存任务不可用，改用任务 {task_id}")
     found = next((t for t in tasks if t["id"] == task_id), None)
     check("考试任务已下发给 stu731", found is not None,
           f"task_id={task_id} status={(found or {}).get('status')}")
@@ -227,8 +262,7 @@ def run():
     try:
         from e2e_framework import Client as _C
         tea1 = _C("ct1"); ok_login, _ = tea1.login("teacher1", "Teacher@123")
-        if ok_login and R.context.get("task_id"):
-            tid = R.context["task_id"]
+        if ok_login and task_id:
             pd, _, _ = tea1.get("/grading/pending", params={"page_size": 10})
             pend = (data_of(pd) or {}).get("items") or []
             mine = next((x for x in pend if x.get("student_id") == stu.user.get("id")), None)
@@ -266,7 +300,7 @@ def run():
             else:
                 check("教师批改契约守护", False, f"pending 中未找到本学生提交（共 {len(pend)} 条）")
         else:
-            check("教师批改契约守护", False, f"教师登录或 task_id 缺失")
+            check("教师批改契约守护", False, "教师登录或 task_id 缺失")
     except Exception as exc:  # noqa: BLE001
         check("教师批改契约守护", False, f"用例异常: {exc}")
 
@@ -276,7 +310,7 @@ def run():
     try:
         from e2e_framework import Client as _C2
         tea1b = _C2("ct1b"); tea1b.login("teacher1", "Teacher@123")
-        if R.context.get("task_id") and sub_id:
+        if task_id and sub_id:
             sid = sub_id
 
             def _in_queue():
@@ -323,7 +357,7 @@ def run():
             # 4) 学生端可见
             ps, _, _ = stu.get("/task/my/tasks", params={"page_size": 50})
             mine = (data_of(ps) or {}).get("items") or []
-            hit = next((x for x in mine if x.get("id") == R.context["task_id"]), None)
+            hit = next((x for x in mine if x.get("id") == task_id), None)
             check("★ 发布后学生任务状态可见",
                   hit is not None,
                   f"my_submission={bool((hit or {}).get('my_submission'))}")
@@ -599,9 +633,20 @@ def run():
     # ---------------------------------------------------------- 8 学习中心
     R.set_phase("阶段三 · 学生视角 | 8. 笔记、随机练习与数据隔离")
 
+    # 学科/年级必须取**学生自己年级**的精确 id：`Subject` 唯一键是
+    # `(grade_id, name)`，硬编码 34/7 只在特定种子库碰巧命中，
+    # 单跑或换库时会抽不到题，随机练习直接失败。
+    _my_grade = stu.user.get("grade_id") or R.context.get("grade_id") or 7
+    _subs = rows_of(stu.get("/edu/subjects", params={"grade_id": _my_grade})[0])
+    _my_subj = (R.context.get("subject_id")
+                if R.context.get("grade_id") == _my_grade
+                and R.context.get("subject_id")
+                else (next((s["id"] for s in _subs if s.get("name") == "数学"), None)
+                      or (_subs[0]["id"] if _subs else None)))
+
     p, _, _ = stu.post("/learning/notes", {
         "title": f"E2E 笔记 {task_id}", "content": "配方法解一元二次方程的步骤整理。",
-        "subject_id": R.context.get("subject_id") or 34, "tags": ["E2E", "数学"],
+        "subject_id": _my_subj, "tags": ["E2E", "数学"],
     })
     nd = data_of(p) or {}
     note_id = nd.get("id")
@@ -621,8 +666,8 @@ def run():
         check("笔记可删除", p.get("success"), p.get("message", ""))
 
     p, _, _ = stu.post("/learning/practice", {
-        "subject_id": R.context.get("subject_id") or 34,
-        "grade_id": R.context.get("grade_id") or 7, "count": 3,
+        "subject_id": _my_subj,
+        "grade_id": _my_grade, "count": 3,
     }, timeout=90)
     prd = data_of(p) or {}
     check("随机练习可创建", p.get("success") and bool(prd.get("task_id")),

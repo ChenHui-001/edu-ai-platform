@@ -48,7 +48,7 @@ def main():
         d = p.get("data") or {}
         leaked = bool(d.get("items"))
         record("高", "任意教师可查看他人任务的提交情况（含学生姓名/分数/切屏次数）",
-               sc == 200 and p.get("success"),
+               sc == 200 and p.get("success") and leaked,
                f"teacher4 请求 teacher1 任务 {tid} 提交列表 -> HTTP {sc}, "
                f"success={p.get('success')}, 返回 {len(d.get('items') or [])} 条提交, "
                f"assigned={d.get('assigned')}")
