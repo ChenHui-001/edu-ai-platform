@@ -267,6 +267,6 @@
 ### P2-9 生产环境播种已知口令演示账号
 
 - **状态**：✅ 已修复
-- **改动**：新增 `SEED_DEMO_DATA` 配置（默认 true 保留本地体验）；`init_db.init_demo_data` 关闭时跳过；compose/`.env.example` 暴露该开关，生产可设为 false 只保留 admin 与基础数据。
-- **验证**：`py_compile`；默认 true 时全量 E2E 种子数据正常。
+- **改动**：新增 `SEED_DEMO_DATA` 配置（默认 true 保留本地体验）；`init_db.init_demo_data` 关闭时跳过；compose/`.env.example` 暴露该开关，生产建议设为 false，只保留 admin 与基础数据。
+- **验证**：`py_compile`；默认 true 时全量 E2E 种子数据正常；README 与 `.env.example` 的演示账号说明已同步。
 
