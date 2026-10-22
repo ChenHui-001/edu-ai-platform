@@ -44,9 +44,15 @@ def list_users(
     grade_id: Optional[int] = None,
     class_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_manager),
+    user: User = Depends(get_current_manager),
 ):
     stmt = select(User)
+    # 年级管理员只能看到本年级用户；此前仅靠 get_current_manager 放行，
+    # 实际上可拉全校用户手机号/邮箱/学校等 PII。未配置管辖年级时拒绝。
+    codes = set(user.role_codes or [])
+    if "sys_admin" not in codes and "grade_admin" in codes:
+        gid = user.grade_admin_grade_id or user.grade_id
+        stmt = stmt.where(User.grade_id == gid) if gid else stmt.where(User.id == -1)
     if keyword:
         like = f"%{keyword}%"
         stmt = stmt.where(or_(User.username.like(like), User.real_name.like(like),

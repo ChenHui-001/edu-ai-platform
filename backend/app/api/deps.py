@@ -157,7 +157,11 @@ class DataScope:
         return ROLE_STUDENT in self.codes
 
     def grade_ids(self) -> Optional[List[int]]:
-        """可访问的年级 ID 列表；None 表示不受限。"""
+        """可访问的年级 ID 列表；None 表示不受限。
+
+        非超管一律返回显式列表（可能为空）：空列表表示无授权，
+        绝不能用 None 表示"无年级"，否则会被消费方当成全校放行。
+        """
         if self.is_super:
             return None
         ids: List[int] = []
@@ -165,17 +169,25 @@ class DataScope:
             ids.append(self.user.grade_admin_grade_id)
         if self.user.grade_id:
             ids.append(self.user.grade_id)
-        return ids or None
+        return sorted(set(ids))
 
     def class_ids(self) -> Optional[List[int]]:
         """可访问的班级 ID 列表；None 表示不受限。
 
-        教师仅能查看自己授课班级；学生仅本人所在班级。
+        教师仅能查看自己授课班级；学生仅本人所在班级；
+        年级管理员仅本年级班级（未配置管辖年级时返回空列表＝拒绝）。
         """
         if self.is_super:
             return None
         if self.is_grade_admin:
-            return None  # 年级管理员：本年级所有数据
+            from app.models import Class
+
+            grade_id = self.user.grade_admin_grade_id or self.user.grade_id
+            if not grade_id:
+                return []
+            return list(self.db.scalars(
+                select(Class.id).where(Class.grade_id == grade_id)
+            ).all())
         if self.is_teacher:
             from app.models import TeachingAssignment
 
@@ -194,8 +206,17 @@ class DataScope:
 
     def student_ids(self) -> Optional[List[int]]:
         """可访问的学生 ID 列表；None 表示不受限。"""
-        if self.is_super or self.is_grade_admin:
+        if self.is_super:
             return None
+        if self.is_grade_admin:
+            class_ids = self.class_ids() or []
+            if not class_ids:
+                return []
+            from app.models import User as U
+
+            return list(
+                self.db.scalars(select(U.id).where(U.class_id.in_(class_ids))).all()
+            )
         if self.is_teacher:
             class_ids = self.class_ids() or []
             if not class_ids:
