@@ -8,11 +8,71 @@
 >
 > ```bash
 > echo "1.0.9" > VERSION
-> docker build --target unified -t nanpo/edu-ai-platform:1.0.9 .
-> ./push_dockerhub.sh nanpo          # 标签默认读 VERSION 文件
+> ./tools/auto_ship.sh --bump patch    # 会改 VERSION、跑回归、提交、推送、构建、校验
+> ./tools/auto_ship.sh --push          # 再推 Docker Hub
 > ```
 >
 > 如需覆盖（如 CI 用 `ci-<sha>`），用 `--build-arg APP_VERSION=x.y.z`。
+
+---
+
+## 〇、发版一致性契约（改动发布链路前必读）
+
+版本号与代码在发布链路上有**五个独立落点**，每一次复制都可能与源头脱节，
+而且**每一步都不会自己报错**：
+
+| # | 落点 | 失效方式 | 为何不报错 |
+|---|---|---|---|
+| ① | 根目录 `VERSION` | 唯一真源，其余全部由它派生 | — |
+| ② | `commit -> origin/master` | 改了代码没提交/没推送 | git 不校验推送状态 |
+| ③ | 镜像内 `/app/VERSION` + `/app/BUILD_INFO` | 镜像里的代码快照 | docker build 只看工作区 |
+| ④ | 镜像标签 `repo:x.y.z` | 标签是自由文本，不复核内容 | 打错标签不报错 |
+| ⑤ | `/api/v1/health` 的 `version` | 运行时读 `settings.APP_VERSION` | `_resolve_version` 静默回落 |
+
+### 为什么必须校验 commit 指纹，而不是只校验版本号
+
+**版本号相同 ≠ 代码相同。** `1.0.40` 可以被构建十次，每次内容都不同。
+实测就出现过：镜像 `1.0.40` 构建于 10-20，`HEAD` 已是 10-22，
+版本号完全一致、代码差两天 —— 只看版本号的校验会判为「通过」。
+
+因此镜像构建时把 commit 烧进两处：
+
+```dockerfile
+ARG GIT_COMMIT=""
+LABEL org.opencontainers.image.revision=${GIT_COMMIT}
+RUN printf 'version=%s\ncommit=%s\nbuilt_at=%s\n' \
+      "$(cat /app/VERSION)" "${GIT_COMMIT}" "${BUILD_TIME}" > /app/BUILD_INFO
+```
+
+校验工具据此断言「镜像里装的到底是不是当前这份代码」：
+
+```bash
+python tools/check_release_consistency.py --pre    # 发布前：干净、已推送、tag 自洽
+python tools/check_release_consistency.py --post   # 发布后：回查 registry 里的版本与 commit
+python tools/check_release_consistency.py          # 静态：不联网
+```
+
+退出码：`0` 通过 / `1` 不一致 / `2` 环境缺失。
+
+### 三处一致性的判定标准
+
+一致性成立的**充分条件**是这三条同时为真：
+
+1. `git rev-parse HEAD` == 远端 `origin/master`（本地 == 远程）
+2. 镜像 label `org.opencontainers.image.revision` == `HEAD`
+3. 镜像 label `org.opencontainers.image.version` == `VERSION` 文件内容
+
+只满足第 3 条是**最常见的假一致**（版本号对、代码不对）。
+
+### 常见漂移与修正
+
+| 现象 | 原因 | 修正 |
+|---|---|---|
+| 镜像落后但版本号相同 | 改了代码没重建镜像 | 带 `--build-arg GIT_COMMIT=$(git rev-parse HEAD)` 重建 |
+| `v1.0.41` tag 打出 `:1.0.40` 镜像 | 改 tag 时忘改 VERSION | `echo 1.0.41 > VERSION` 后重新提交 |
+| 线上拉到的还是旧版 | 推到了 `ChenHui-001/` 而非 `nanpo/` | 统一 `nanpo/edu-ai-platform` |
+| latest 指向旧代码 | 补发旧版本 tag 时覆盖了 latest | 补发时勾选 `skip_latest` |
+| `--bump` 后镜像仍是旧版号 | 构建命令没有 `--build-arg APP_VERSION` | 改用 `auto_ship.sh`，勿手打 |
 
 ---
 

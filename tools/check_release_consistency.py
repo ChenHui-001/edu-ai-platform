@@ -286,7 +286,14 @@ def check_local_image(rep, version, repo, mode, head=None):
         return
     sha, how = image_embedded_commit(tag)
     if sha is None:
-        rep.warn("本地镜像内 commit == HEAD", how)
+        # ⚠️ 不能降级为 WARN：那等于给「docker build 不传 --build-arg」开一条
+        # 免检通道 —— 谁绕过了注入，谁就绕过了整个代码一致性校验。
+        # 严格模式（pre/post）下必须硬失败，逼其带指纹重建。
+        strict = mode in ("pre", "post")
+        (rep.fail if strict else rep.warn)(
+            "本地镜像内 commit == HEAD",
+            how + ("；无法证明镜像出自当前代码，请带 --build-arg GIT_COMMIT 重建"
+                   if strict else ""))
         return
     # 允许残缺 sha（abbrev）：只要能唯一对应 HEAD 前缀即视为一致
     if head.startswith(sha) or sha.startswith(head):
