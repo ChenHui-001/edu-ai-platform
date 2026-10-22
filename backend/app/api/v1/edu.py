@@ -13,7 +13,7 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exception import BusinessException, NotFoundException
+from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
     Class, ClassRequest, Grade, KnowledgeMastery, KnowledgePoint, Notification,
     Subject, User,
@@ -564,11 +564,21 @@ def import_students(
 @router.delete("/classes/{class_id}/students/{student_id}", summary="移出班级")
 def remove_student(
     class_id: int, student_id: int, db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    user: User = Depends(get_current_teacher),
+    scope: DataScope = Depends(get_data_scope),
 ):
+    klass = db.get(Class, class_id)
+    if not klass:
+        raise NotFoundException("班级不存在")
+    # 此前 class_id 参数完全未使用：任意教师可把任意班级的学生置空（水平越权）。
+    allowed = scope.class_ids()
+    if allowed is not None and class_id not in allowed:
+        raise PermissionException("无权管理该班级")
     u = db.get(User, student_id)
     if not u:
         raise NotFoundException("学生不存在")
+    if u.class_id != class_id:
+        raise BusinessException("该学生不属于该班级")
     u.class_id = None
     db.commit()
     return ok(message="学生已移出班级")
