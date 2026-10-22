@@ -24,8 +24,11 @@ services:
       APP_VERSION: ${IMAGE_TAG:-}
       # 数据库
       DATABASE_URL: sqlite:////app/data/edu_platform.db
-      # 安全（生产务必修改）
-      SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_IN_PRODUCTION_please_use_a_long_random_string}
+      # 安全：必须显式提供随机 SECRET_KEY（缺失时 compose 直接报错并中止，
+      # 避免用公开占位符签发 JWT 导致任何人都能伪造管理员令牌）。
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY 未配置，请先在 .env 中设置至少 32 位随机字符}
+      # 生产默认关闭 DEBUG；应用会据此拒绝弱 SECRET_KEY
+      DEBUG: ${DEBUG:-false}
       # 大模型（留空则使用规则引擎降级）
       LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
       LLM_API_KEY: ${LLM_API_KEY:-}

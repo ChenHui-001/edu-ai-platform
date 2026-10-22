@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.models import (
     Grade, KnowledgePoint, Permission, Role, RolePermission, ScheduledJob, Subject,
     User, UserRole,
@@ -508,6 +508,21 @@ def init_knowledge_points(db: Session) -> None:
         logger.info(f"知识点初始化完成（新增 {count} 条）")
 
 
+def warn_default_admin_password(db: Session) -> None:
+    """默认管理员口令仍在运行时给出醒目安全告警。
+
+    若直接放开「首次登录强制改密」，会把存量本地体验环境与自动化测试全部锁死；
+    这里采用最小侵入方案：不改变登录行为，但每次启动把风险打到日志里，
+    配合登录页隐藏演示口令、文档明确「部署后立即改密」。
+    """
+    admin = db.scalar(select(User).where(User.username == "admin"))
+    if admin and verify_password("Admin@123456", admin.password):
+        logger.warning(
+            "安全告警：管理员账号仍在使用默认口令 Admin@123456，"
+            "请立即登录修改密码（生产环境必须修改！）"
+        )
+
+
 def init_all(db: Session) -> None:
     """按依赖顺序执行全部初始化。"""
     init_permissions(db)
@@ -517,3 +532,4 @@ def init_all(db: Session) -> None:
     init_admin(db)
     init_jobs(db)
     init_demo_data(db)
+    warn_default_admin_password(db)

@@ -53,7 +53,10 @@
 
           <div class="login-footer">
             <router-link to="/register" class="link">注册账号</router-link>
-            <el-dropdown trigger="click" @command="fillDemo">
+            <!-- 演示账号默认不展示：登录页公网可达，明文列出 admin 口令等于公开
+                 默认管理员凭据。仅在显式设置 VITE_SHOW_DEMO_ACCOUNTS=true 时显示
+                 （本地体验/演示环境），生产构建保持隐藏。 -->
+            <el-dropdown v-if="showDemoAccounts" trigger="click" @command="fillDemo">
               <el-link type="primary" :underline="false" class="link">
                 演示账号<el-icon><ArrowDown /></el-icon>
               </el-link>
@@ -91,6 +94,8 @@ const loading = ref(false)
 const captchaImg = ref('')
 const captchaKey = ref('')
 const mustChange = ref(false)
+// 演示账号下拉默认关闭，避免公网部署时自动暴露 admin 默认口令。
+const showDemoAccounts = import.meta.env.VITE_SHOW_DEMO_ACCOUNTS === 'true'
 
 const form = ref({ username: '', password: '', captcha: '' })
 

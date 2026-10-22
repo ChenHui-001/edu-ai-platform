@@ -1,6 +1,7 @@
 """应用配置管理：所有配置通过环境变量注入，无需修改代码。"""
 import os
 import re
+import secrets
 from functools import lru_cache
 from typing import List, Optional
 
@@ -61,7 +62,11 @@ class Settings(BaseSettings):
     SQLITE_CHECK_SAME_THREAD: bool = False
 
     # ---------------- 安全 ----------------
-    SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION_please_use_a_long_random_string"
+    # 默认留空，由 _resolve_secret_key 校验/生成：
+    # - 开发态（DEBUG=true）生成进程内随机密钥并告警，保证本地开箱即用；
+    # - 生产态（DEBUG=false）未配置或仍是公开占位符时直接拒绝启动。
+    # 绝不能再用公开默认值签发 JWT——那等于把 admin token 的签发权交给所有人。
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -124,6 +129,31 @@ class Settings(BaseSettings):
     PASS_SCORE: float = 60.0
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 200
+
+    @model_validator(mode="after")
+    def _resolve_secret_key(self) -> "Settings":
+        """校验 SECRET_KEY：生产环境 fail-closed，开发环境生成临时随机密钥。"""
+        raw = (self.SECRET_KEY or "").strip()
+        weak = (
+            not raw
+            or raw == "CHANGE_ME_IN_PRODUCTION_please_use_a_long_random_string"
+            or len(raw) < 32
+        )
+        if not weak:
+            self.SECRET_KEY = raw
+            return self
+        if not self.DEBUG:
+            raise ValueError(
+                "SECRET_KEY 未配置或过于简单（至少 32 位随机字符）。"
+                "请先在 .env 或环境变量中设置 SECRET_KEY；"
+                "本地开发可设置 DEBUG=true 让系统生成临时密钥。"
+            )
+        self.SECRET_KEY = secrets.token_urlsafe(48)
+        print(
+            "[config] SECRET_KEY 未配置或过弱，已生成进程内临时密钥；"
+            "重启后令牌会失效。生产环境必须显式设置 SECRET_KEY。"
+        )
+        return self
 
     @model_validator(mode="after")
     def _resolve_version(self) -> "Settings":
