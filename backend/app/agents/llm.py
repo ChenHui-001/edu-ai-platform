@@ -5,6 +5,7 @@
 import json
 import re
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
@@ -38,12 +39,19 @@ PROVIDERS = {
 
 
 def is_available() -> bool:
-    """LLM 是否可用。未配置 Key 或已熔断时走规则引擎。"""
-    # 熔断中：对外统一声称不可用，避免健康检查/状态接口继续报 llm_enabled=true。
-    # 直接读模块级单例（而不是调 get_llm()）—— is_available 定义在 get_llm 之前，
-    # 且单例为 None 时无需构造（构造本身会读库，形成不必要的开销）。
-    if _llm_singleton is not None and _llm_singleton._disabled_reason:
-        return False
+    """LLM 是否可用。未配置 Key 或**鉴权已熔断**时走规则引擎。
+
+    限流冷却（429/quota）**不改变本函数语义**：冷却只让 get_client() 短路，
+    「已配置密钥」这一事实仍然成立。否则一次限流就会让状态接口/健康检查
+    长期报 llm_enabled=false，看起来像配置丢失。鉴权失败（401/403）属于
+    配置错误，必须持久反映为不可用，直到管理员改配置触发重载。
+    """
+    # 鉴权熔断：对外统一声称不可用，避免健康检查/状态接口继续报 llm_enabled=true。
+    # 进程里存在两个实例（模块级 llm_client 与 get_llm() 单例），任一鉴权熔断
+    # 都视为不可用——base.py 的 Agent 走 llm_client，其它调用可能走单例。
+    for inst in (_llm_singleton, llm_client):
+        if inst is not None and inst._disabled_reason:
+            return False
     enabled = _get_db_value("llm_enabled", "bool", settings.LLM_ENABLED)
     api_key = _get_db_value("llm_api_key", "string", settings.LLM_API_KEY)
     return bool(enabled and api_key)
@@ -109,23 +117,35 @@ class LLMClient:
     → 单次交卷从 0.5s 涨到 33s，直接超过前端 30s 超时（实测 P1）。
     现在首个 401 即记下原因并短路，后续调用直接走规则引擎降级，
     直到管理员改配置（`_reload` 清空熔断状态）。
+
+    限流冷却（P1）：429 / RATE_LIMITED / quota 是**暂态**故障 —— 配额按分钟
+    或按日恢复，长时间永久熔断会让 AI 一整天不可用，只能等管理员手动保存配置。
+    因此改「永久熔断」为**指数退避冷却**：30s → 60s → 120s → 240s → 300s（上限）。
+    冷却期内 `get_client()` 返回 None 并写入 `_fallback_reason`（含剩余秒数），
+    到期后自动恢复真实调用；只要有一次调用成功，退避计数与冷却立即清零。
     """
 
-    # 触发熔断的错误特征。
-    # 401/403 是鉴权失败，429 是配额/限流——这两类都**不是瞬时抖动**：
-    # 同一个密钥、同一时刻重试必然还是同样的结果，继续重试只会白等网络往返。
-    # 实测：无效密钥返回 429 RATE_LIMITED，一次往返 1.5s；
-    # 一份 6 道简答题的卷子 = 6 次串行往返，交卷从 0.5s 涨到 116s（前端超时）。
-    # 真正的网络抖动（超时/连接重置）不在熔断范围，那些是有可能恢复的。
-    _AUTH_ERROR_MARKS = ("401", "403", "429", "UNAUTHORIZED", "Unauthorized",
-                         "invalid_api_key", "Incorrect API key", "authentication",
-                         "RATE_LIMITED", "rate limit", "配额", "quota")
+    # 鉴权失败特征：401/403、密钥无效。命中 → 永久熔断（直到管理员改配置）。
+    _AUTH_ERROR_MARKS = ("401", "403", "UNAUTHORIZED", "Unauthorized",
+                         "invalid_api_key", "Incorrect API key", "authentication")
+    # 限流/配额特征：命中 → 冷却退避（可自动恢复），**不**写 _disabled_reason。
+    _RATE_LIMIT_MARKS = ("429", "RATE_LIMITED", "rate limit", "Rate limit",
+                         "too many requests", "Too Many Requests",
+                         "配额", "quota")
+
+    # 冷却退避：30 * 2^(n-1)，上限 300s，避免一次 429 导致全天不可用
+    _COOLDOWN_BASE_SECONDS = 30
+    _COOLDOWN_MAX_SECONDS = 300
 
     def __init__(self):
         self._client = None
         self._fallback_reason = ""
-        # 熔断状态：非空表示已判定配置不可用，跳过真实网络调用
+        # 鉴权熔断状态：非空表示已判定**配置**不可用，跳过真实网络调用
         self._disabled_reason = ""
+        # 限流冷却状态：_cooldown_until 为 time.monotonic() 时间戳；
+        # streak 为连续限流次数，用于计算指数退避
+        self._cooldown_until = 0.0
+        self._rate_limit_streak = 0
 
     @property
     def provider_cfg(self) -> Dict[str, Any]:
@@ -136,16 +156,68 @@ class LLMClient:
         msg = str(exc)
         return any(m in msg for m in self._AUTH_ERROR_MARKS)
 
+    def _is_rate_limit_error(self, exc: Exception) -> bool:
+        msg = str(exc)
+        return any(m in msg for m in self._RATE_LIMIT_MARKS)
+
+    def _cooldown_remaining(self) -> int:
+        """剩余冷却秒数（向上取整）；0 表示未处于冷却期。"""
+        if self._cooldown_until <= 0:
+            return 0
+        left = self._cooldown_until - time.monotonic()
+        if left <= 0:
+            # 冷却自然到期：清掉时间戳，退避计数保留到下一次成功再清零
+            self._cooldown_until = 0.0
+            return 0
+        return int(left + 0.999)
+
+    def _mark_disabled(self, exc: Exception) -> None:
+        """鉴权失败：永久熔断，直到管理员改配置（_reload 复位）。"""
+        self._disabled_reason = (
+            f"LLM 密钥无效或已过期（{str(exc)[:80]}），已暂停真实调用，"
+            "请到「系统管理 → AI 配置」更新密钥后重试")
+        # 鉴权错误优先于限流：清掉冷却，避免下次误报「冷却中」
+        self._cooldown_until = 0.0
+        self._rate_limit_streak = 0
+        logger.warning(self._disabled_reason)
+
+    def _start_rate_limit_cooldown(self, exc: Exception) -> None:
+        """限流/配额不足：进入指数退避冷却，到期自动恢复。"""
+        self._rate_limit_streak += 1
+        backoff = min(
+            self._COOLDOWN_MAX_SECONDS,
+            self._COOLDOWN_BASE_SECONDS * (2 ** (self._rate_limit_streak - 1)),
+        )
+        self._cooldown_until = time.monotonic() + backoff
+        logger.warning(
+            f"LLM 限流/配额不足（{str(exc)[:80]}），进入冷却退避 {backoff}s"
+            f"（连续第 {self._rate_limit_streak} 次），冷却期内走规则引擎降级")
+
+    def _reset_rate_limit(self) -> None:
+        """调用成功后清空限流冷却与退避计数。"""
+        if self._rate_limit_streak or self._cooldown_until:
+            logger.info("LLM 调用成功，限流冷却与退避计数已清零")
+        self._rate_limit_streak = 0
+        self._cooldown_until = 0.0
+
     def get_client(self):
         """获取 LangChain ChatOpenAI 实例（失败返回 None）。
 
-        检查顺序很重要：**熔断判断必须在返回缓存客户端之前**。
+        检查顺序很重要：**熔断/冷却判断必须在返回缓存客户端之前**。
         反过来的话，进程里已有 `_client` 时永远查不到熔断标记，
         熔断形同虚设（实测：写入无效密钥后交卷仍耗时 105s）。
         """
-        # 熔断优先级最高：已确认配置无效，连缓存客户端也不能用
+        # 鉴权熔断优先级最高：已确认配置无效，连缓存客户端也不能用
         if self._disabled_reason:
             self._fallback_reason = self._disabled_reason
+            return None
+        # 限流冷却：暂态故障，冷却期内短路；到期后自动恢复真实调用
+        remaining = self._cooldown_remaining()
+        if remaining > 0:
+            self._fallback_reason = (
+                f"LLM 限流冷却中，约 {remaining}s 后自动恢复"
+                f"（连续第 {self._rate_limit_streak} 次退避，期间使用规则引擎）")
+            logger.warning(self._fallback_reason)
             return None
         if self._client is not None:
             return self._client
@@ -225,6 +297,9 @@ class LLMClient:
             resp = client.invoke(
                 [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
             )
+            # 真实调用成功 → 限流冷却与退避计数清零（此前可能因 429 处于冷却，
+            # 恢复后要立刻回到正常路径，不能继续按旧退避成长）
+            self._reset_rate_limit()
             duration = int((time.perf_counter() - start) * 1000)
             usage = getattr(resp, "usage_metadata", None) or {}
             log_agent_call(
@@ -244,13 +319,13 @@ class LLMClient:
         except Exception as exc:
             duration = int((time.perf_counter() - start) * 1000)
             logger.error(f"LLM 调用失败 [{agent_name}]: {exc}")
-            # 鉴权失败立即熔断：同一份无效密钥重试必然还是失败，
+            # 鉴权失败立即永久熔断：同一份无效密钥重试必然还是失败，
             # 不熔断就会让「一份 6 道主观题的卷子」白等 6 轮网络往返。
+            # 限流/配额是暂态故障，改为冷却退避：到期自动恢复，不再永久禁用。
             if self._is_auth_error(exc):
-                self._disabled_reason = (
-                    f"LLM 密钥无效或已过期（{str(exc)[:80]}），已暂停真实调用，"
-                    "请到「系统管理 → AI 配置」更新密钥后重试")
-                logger.warning(self._disabled_reason)
+                self._mark_disabled(exc)
+            elif self._is_rate_limit_error(exc):
+                self._start_rate_limit_cooldown(exc)
             log_agent_call(
                 agent_name=agent_name, user_id=user_id, input_text=user_prompt[:2000],
                 duration_ms=duration, status="failed", is_fallback=True,
@@ -302,6 +377,8 @@ class LLMClient:
                     chunks.append(text)
                     yield {"type": "delta", "text": text}
             duration = int((time.perf_counter() - start) * 1000)
+            # 流式调用完整成功 → 同步清空限流冷却
+            self._reset_rate_limit()
             log_agent_call(
                 agent_name=agent_name, user_id=user_id,
                 input_text=user_prompt[:2000],
@@ -314,11 +391,11 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001
             duration = int((time.perf_counter() - start) * 1000)
             logger.error("LLM 流式调用失败 [%s]: %s", agent_name, exc)
+            # 与 chat() 一致：鉴权失败永久熔断；限流/配额改为冷却退避
             if self._is_auth_error(exc):
-                self._disabled_reason = (
-                    f"LLM 密钥无效或已过期（{str(exc)[:80]}），已暂停真实调用，"
-                    "请到「系统管理 → AI 配置」更新密钥后重试")
-                logger.warning(self._disabled_reason)
+                self._mark_disabled(exc)
+            elif self._is_rate_limit_error(exc):
+                self._start_rate_limit_cooldown(exc)
             log_agent_call(
                 agent_name=agent_name, user_id=user_id, input_text=user_prompt[:2000],
                 duration_ms=duration, status="failed", is_fallback=True,

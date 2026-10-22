@@ -234,7 +234,11 @@ def _reload_llm_client() -> None:
             c._client = None
             c._fallback_reason = ""
             c._disabled_reason = ""
-        logger.info(f"LLM 客户端已重载（{len(targets)} 个实例，含熔断复位）")
+            # 管理员改配置意味着「限流冷却」也应立即失效：
+            # 新密钥/新配额下没有理由继续退避等待。
+            c._cooldown_until = 0.0
+            c._rate_limit_streak = 0
+        logger.info(f"LLM 客户端已重载（{len(targets)} 个实例，含熔断/冷却复位）")
     except Exception as exc:
         logger.warning(f"重载 LLM 客户端失败: {exc}")
 
