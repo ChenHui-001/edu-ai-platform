@@ -4,6 +4,11 @@
 > 结论先行：**这不是"修不完的 bug"，而是回归体系本身缺少三道防线**——时区基准、
 > 环境隔离、判据强度。修复的是症状，体系缺陷没补，所以每轮都能"发现新问题"。
 
+> **本轮收尾状态（2026-10-22 12:40）**：三项遗留的「高/中」待办已全部落地，
+> 全量回归 **824 项 / 代码失败 0**，CI **4 个 job 全绿**（含新增的 F 类缺陷与
+> 时间契约门禁）。这是多轮以来首次「本地全绿 + CI 全绿」同时成立。
+
+
 ---
 
 ## 一、失败序列复盘
@@ -373,17 +378,44 @@ python tools/check_weak_assertion.py                # 新增
 | 统一回归入口 | `tools/run_e2e.sh` | agent_struct 15/15、admin 98/98 |
 | CI 接入两项扫描 | `.github/workflows/ci.yml` | backend job 新增一步 |
 | 增量阶段选择 | `tools/auto_ship.sh --stages` | `--stages auto` 按影响半径选 |
+| **阶段解耦（R3.1）** | `tests/e2e_seed.py` | `student` 单跑 92/92 PASS，日志确认走自建分支 |
+| **ruff F 类进 CI（R3.3）** | `tools/lint_gate.py` + `pyproject.toml` | 存量 122 条 → 0；反向注入缺陷 EXIT=1 |
+| **`utcnow` 改名（R1.2）** | `tools/check_time_contract.py` | 27 文件/69 处替换；旧名调用 0 残留 |
 
 ### 待办（按优先级）
 
 | 优先级 | 项 | 说明 |
 |---|---|---|
-| **高** | 阶段解耦（R3.1） | `test_student` 仍依赖 `R.context["task_id"]`，无法真正单阶段跑 |
-| **高** | `ruff --select F` 进 CI | 需先装机并清存量告警 |
-| 中 | 时区偏移探针（R1.2） | `/health` 加 `tz_offset_minutes`，让时区配错第一秒就炸 |
-| 中 | `utcnow()` 改名 | 名字与实现不符，是 P0-1 的认知根源 |
-| 低 | 8 个 `verify_*.py` 纳入或归档 | 目前游离于门禁之外 |
+| 中 | 时区偏移探针 | `/health` 加 `tz_offset_minutes`，让时区配错第一秒就炸 |
+| 中 | 8 个 `verify_*.py` 纳入或归档 | 目前游离于门禁之外（硬编码地址仅 WARN） |
 | 低 | 10 处 `len(x) > 0` 弱断言复核 | 若用于清理逻辑需回读 |
+| 低 | `alembic` 初始化 | 表结构变更仍靠 `create_all`，无法平滑迁移 |
+
+### 本轮新增：阶段解耦与时间契约
+
+**阶段解耦**（原待办「高」→ 已完成）
+
+15 个阶段原为有状态串联，`test_student` 依赖阶段二写入的
+`R.context["task_id"]`，缺失时直接 `return`，单跑只剩红条。
+新增 `tests/e2e_seed.py` 提供 `ensure_exam_chain()`，缺失时就地自建
+「建题 → 组卷 → 按 `student_ids` 精确下发」完整链路，`R.context` 降级为
+纯缓存。题面定义抽到 `e2e_seed.QUESTIONS`，阶段二与自建共用同一份，
+避免分值/题面漂移。
+
+**时间契约**（原待办「中」→ 已完成）
+
+`utcnow()` 改名 `now_local()`（27 文件 / 69 处），保留兼容别名。
+`tools/check_time_contract.py` 守三重契约：不得再调用旧名、名字与实现
+语义必须一致、`/health` 必须暴露 `server_time` 且 e2e 不得拼出
+`/api/v1/api/v1/health`。第三条来自真实事故——拼错时静默落兜底，
+本地同时区掩盖、CI 上成套假失败。
+
+**ruff F 类进 CI**（原待办「高」→ 已完成）
+
+存量 122 条清零（F401/F541 自动修 91 条；F841 人工核 28 条，其中 6 处
+实为「算出来却没进断言」的弱检测，已补成真断言）。刻意**不**纳入
+E501/I001 等风格规则：一次接入就产生几百条纯风格告警，团队会直接关掉。
+
 
 
 ---
@@ -405,6 +437,12 @@ python tools/check_weak_assertion.py                # 新增
 | `tools/check_hardcoded_host.py` | **新增**：硬编码地址扫描 | P0-2 |
 | `tools/check_weak_assertion.py` | **新增**：弱断言/恒真断言扫描 | P1-5 |
 | `tools/auto_ship.sh` | 新增 `--stages` / `--stages auto`；接入静态门禁 | R3.2 |
-| `.github/workflows/ci.yml` | backend job 新增两项扫描 | R3.3 |
+| `.github/workflows/ci.yml` | backend job 新增四项扫描（含 ruff / 时间契约） | R3.3 |
 | `.gitignore` | 忽略 `.partial.md` | P2-9 |
+| `tests/e2e_seed.py` | **新增**：单阶段前置数据自建（建题→组卷→下发） | R3.1 |
+| `tools/lint_gate.py` | **新增**：ruff --select F,E9 门禁，缺工具时给可执行安装提示 | R3.3 |
+| `tools/check_time_contract.py` | **新增**：时间函数命名/语义/`server_time` 三重契约 | R1.2 |
+| `pyproject.toml` | **新增**：ruff 配置（只启 F/E9，排除风格规则） | R3.3 |
+| `backend/app/utils/common.py` | `utcnow` → `now_local`，保留兼容别名 | R1.2 |
+| 27 个后端文件 | 69 处 `utcnow()` 调用点替换 | R1.2 |
 
