@@ -126,6 +126,7 @@ npm run dev
 > **安全提示（v1.0.42 起）**：
 > - 生产环境必须在 `.env` 中显式设置至少 32 位随机 `SECRET_KEY`，否则应用会拒绝启动；`DEBUG` 请保持 `false`。
 > - 默认账号仅用于本地体验/首次初始化，部署后请立即修改管理员口令；登录页默认不再展示演示账号口令（`VITE_SHOW_DEMO_ACCOUNTS=false`）。
+> - 生产环境请设置 `SEED_DEMO_DATA=false`：空库不会创建 teacher1/stu731 等已知口令演示账号，只保留 admin 与基础数据。
 > - 详细修复记录见 [docs/FIX_RECORD_2026-10-22.md](docs/FIX_RECORD_2026-10-22.md)。
 
 ---
