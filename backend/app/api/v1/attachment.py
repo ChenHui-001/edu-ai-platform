@@ -27,6 +27,41 @@ PREVIEW_TYPES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"}
 OFFICE_TYPES = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
 
 
+def _assert_attachment_visible(db: Session, att: Attachment, user: User) -> None:
+    """附件读取授权：上传者本人 / 管理端 / 共享教案的同科教师。
+
+    此前预览与下载只校验登录态，遍历自增 id 即可下载任意附件
+    （包括匿名上传的注册证明材料、他人教案课件），属于水平越权。
+    """
+    codes = set(user.role_codes or [])
+    if "sys_admin" in codes:
+        return
+    if att.uploader_id is not None and att.uploader_id == user.id:
+        return
+
+    if att.biz_type == "lesson_plan" and att.biz_id:
+        from app.models import LessonPlan, TeachingAssignment
+
+        plan = db.get(LessonPlan, att.biz_id)
+        if plan:
+            if plan.creator_id == user.id:
+                return
+            if plan.is_shared:
+                subject_ids = set(db.scalars(
+                    select(TeachingAssignment.subject_id).where(
+                        TeachingAssignment.teacher_id == user.id,
+                        TeachingAssignment.is_active.is_(True),
+                    )
+                ).all())
+                if plan.subject_id in subject_ids:
+                    return
+
+    # 匿名上传（注册证明材料等）与无法归属的业务附件：仅管理端可读
+    if att.uploader_id is None and ({"sys_admin", "grade_admin"} & codes):
+        return
+    raise PermissionException("无权查看该附件")
+
+
 @router.post("/public-upload", summary="注册证明材料上传（匿名，仅图片）")
 async def public_upload(
     file: UploadFile = File(...), db: Session = Depends(get_db),
@@ -217,11 +252,12 @@ def list_attachments(
 
 @router.get("/{att_id}/preview", summary="在线预览")
 def preview(
-    att_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user),
+    att_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
     att = db.get(Attachment, att_id)
     if not att:
         raise NotFoundException("附件不存在")
+    _assert_attachment_visible(db, att, user)
     if not os.path.exists(att.file_path):
         raise NotFoundException("文件已被清理")
     att.download_count += 1
@@ -240,11 +276,12 @@ def preview(
 
 @router.get("/{att_id}/download", summary="下载附件")
 def download(
-    att_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user),
+    att_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
     att = db.get(Attachment, att_id)
     if not att:
         raise NotFoundException("附件不存在")
+    _assert_attachment_visible(db, att, user)
     if not os.path.exists(att.file_path):
         raise NotFoundException("文件已被清理")
     att.download_count += 1
