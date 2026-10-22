@@ -7,7 +7,7 @@
 > 均由它派生。发版时改这一个文件即可：
 >
 > ```bash
-> echo "1.0.9" > VERSION
+> echo "1.0.43" > VERSION
 > ./tools/auto_ship.sh --bump patch    # 会改 VERSION、跑回归、提交、推送、构建、校验
 > ./tools/auto_ship.sh --push          # 再推 Docker Hub
 > ```
@@ -52,7 +52,7 @@ python tools/check_release_consistency.py --post   # 发布后：回查 registry
 python tools/check_release_consistency.py          # 静态：不联网
 ```
 
-退出码：`0` 通过 / `1` 不一致 / `2` 环境缺失。
+退出码：`0` 通过 / `1` 不一致（含 VERSION 缺失、git 或 docker 等环境不可用导致校验无法完成的情况）。
 
 ### 三处一致性的判定标准
 
@@ -69,8 +69,8 @@ python tools/check_release_consistency.py          # 静态：不联网
 | 现象 | 原因 | 修正 |
 |---|---|---|
 | 镜像落后但版本号相同 | 改了代码没重建镜像 | 带 `--build-arg GIT_COMMIT=$(git rev-parse HEAD)` 重建 |
-| `v1.0.41` tag 打出 `:1.0.40` 镜像 | 改 tag 时忘改 VERSION | `echo 1.0.41 > VERSION` 后重新提交 |
-| 线上拉到的还是旧版 | 推到了 `ChenHui-001/` 而非 `nanpo/` | 统一 `nanpo/edu-ai-platform` |
+| `v1.0.42` tag 打出 `:1.0.41` 镜像 | 改 tag 时忘改 VERSION | `echo 1.0.42 > VERSION` 后重新提交 |
+| 线上拉到的还是旧版 | CI 发布到 `ghcr.io/chenhui-001/`、本地手工推 `nanpo/`，部署端拉错了仓库 | 按发布通道确认地址：CI → `ghcr.io/chenhui-001/edu-ai-platform`，本地 → `nanpo/edu-ai-platform` |
 | latest 指向旧代码 | 补发旧版本 tag 时覆盖了 latest | 补发时勾选 `skip_latest` |
 | `--bump` 后镜像仍是旧版号 | 构建命令没有 `--build-arg APP_VERSION` | 改用 `auto_ship.sh`，勿手打 |
 
@@ -115,8 +115,11 @@ systemctl restart docker
 ### 2.2 部署应用
 
 ```bash
-# 拉取镜像
-docker pull <your-dockerhub-user>/edu-ai-platform:latest
+# 拉取镜像（两处发布通道二选一：
+#   本地发布 → Docker Hub nanpo/edu-ai-platform
+#   CI 发布   → ghcr.io/chenhui-001/edu-ai-platform）
+docker pull nanpo/edu-ai-platform:1.0.42
+# 或：docker pull ghcr.io/chenhui-001/edu-ai-platform:1.0.42
 
 # 创建数据目录
 mkdir -p /opt/edu-platform/data/{uploads,exports,logs,chroma}

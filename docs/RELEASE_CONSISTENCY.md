@@ -14,7 +14,7 @@
 | ① | `VERSION`（仓库根目录） | **唯一真源**，单行 `x.y.z` | 人工 / `auto_ship.sh --bump` | 一切下游取值的源头 |
 | ② | `commit -> origin/master` | 代码离开本机的唯一通道 | `git commit` + `git push` | 镜像对应 commit 在远端不存在 → 无法溯源、无法复现 |
 | ③ | 镜像内 `/app/VERSION` + `/app/BUILD_INFO` | 镜像内的版本与 commit 快照 | `Dockerfile` 的 `COPY VERSION` + `RUN printf` | 镜像里的代码与标签不符 |
-| ④ | 镜像标签 `repo:1.0.41` | 人为命名的自由文本 | `docker build -t` / metadata-action | 标签指向错误内容，且**不会报错** |
+| ④ | 镜像标签 `repo:1.0.42` | 人为命名的自由文本 | `docker build -t` / metadata-action | 标签指向错误内容，且**不会报错** |
 | ⑤ | `/api/v1/health` 的 `version` | 运行时可观测值 | `config.py:_resolve_version()` | 线上显示的版本与实际不符 |
 
 `_resolve_version()` 的优先级：显式 `APP_VERSION`（须匹配 `^v?\d+\.\d+`）→ `/app/VERSION` → `"dev"`。
@@ -147,7 +147,7 @@ bash tools/auto_ship.sh --bump patch --push
 bash tools/auto_ship.sh --no-push
 ```
 
-退出码：`0` 成功 / `1` 测试失败 / `2` 提交或推送失败 / `3` 构建失败 / `4` 无改动。
+退出码：`0` 成功 / `1` 测试或环境失败 / `2` git 提交或推送失败 / `3` 构建或镜像推送失败 / `4` 无改动（发布后核对未通过也返回 `4`）。
 
 ### 单独跑一致性校验
 
@@ -158,7 +158,7 @@ python tools/check_release_consistency.py           # 静态，不联网
 python tools/check_release_consistency.py --no-image  # 跳过 docker
 ```
 
-退出码：`0` 通过 / `1` 不一致 / `2` 环境缺失。
+退出码：`0` 通过 / `1` 不一致（含 VERSION 缺失、git 或 docker 等环境不可用导致校验无法完成的情况）。
 
 ### 手工发版（不推荐，仅在必要时）
 
@@ -182,7 +182,7 @@ python tools/check_release_consistency.py --post
 | **CI 缺凭据必失败** | 依赖 2 个从未配置的 secret → 首次运行即 `Username and password required` | 改用 `GITHUB_TOKEN`，无需任何手工 secret |
 | **代码从不自动推送** | `auto_ship.sh` 只有 `git commit`，没有 `git push` | 补 `2b/5` 步骤，失败即中止（阶段解耦） |
 | **版本号相同但代码不同** | 无任何检测手段 | commit 指纹比对，严格模式硬失败 |
-| **tag 与 VERSION 脱钩** | `v1.0.41` 会静默产出 `:1.0.40` 镜像 | `preflight` + `push_dockerhub.sh` 双重校验 |
+| **tag 与 VERSION 脱钩** | `v1.0.42` 会静默产出 `:1.0.41` 镜像 | `preflight` + `push_dockerhub.sh` 双重校验 |
 | **补发旧版本回退 latest** | 无保护 | 手动发布时可勾 `skip_latest` |
 
 ---
@@ -236,20 +236,24 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（1.0.41）
+## 八、当前状态（1.0.42）
 
 | 项 | 值 |
 |---|---|
-| VERSION | `1.0.41` |
-| commit | `85cff22` |
-| 本地镜像 | `nanpo/edu-ai-platform:1.0.41`，镜像内 commit `6bac8a6`（等价） |
-| ghcr | `ghcr.io/chenhui-001/edu-ai-platform:1.0.41` ✓ 四闸门全通过 |
-| Docker Hub | `nanpo/edu-ai-platform:1.0.41` ✓ 已推送，digest `sha256:8305b358…` |
-| latest | ✓ 与 `1.0.41` digest 完全相同 |
-| 发布后校验 | **10 通过 / 0 失败 / 0 警告 / 0 跳过**（EXIT=0） |
-| CI | 两个 run 全 success（`6bac8a6`、`67e7e3e`，含 postflight） |
+| VERSION | `1.0.42` |
+| commit | 以本次 P1 修复合并后的 `git rev-parse HEAD` 为准（1.0.42 尚未发布） |
+| 本地镜像 | 待 1.0.42 发布后重建并核对（上一份记录为 `1.0.41`） |
+| ghcr | 待核对：本文档上一记录为 `1.0.41`；1.0.42 是否已发布以 `check_release_consistency.py --post` 结果为准 |
+| Docker Hub | 待核对：上一记录为 `1.0.41`（digest `sha256:8305b358…`） |
+| latest | 待核对：上一记录指向 `1.0.41` |
+| 发布后校验 | 待 1.0.42 推送后执行 `python tools/check_release_consistency.py --post` |
+| CI | 待 1.0.42 推送到 master 后触发（preflight / build-push / postflight） |
 
-### 关于 `commit` 与 `镜像内 commit` 不完全相同
+> 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：
+> 发布后校验 **10 通过 / 0 失败 / 0 警告 / 0 跳过**（EXIT=0），
+> CI 两个 run 全 success（`6bac8a6`、`67e7e3e`，含 postflight）。
+
+### 关于 `commit` 与 `镜像内 commit` 不完全相同（1.0.41 发布时实例）
 
 这是**预期状态**，不是漂移。`6bac8a6..85cff22` 之间的提交只改了
 `docs/`、`.github/`、`tools/` —— 这些路径**不进镜像**，镜像字节未变。
