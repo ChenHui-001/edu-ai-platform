@@ -167,9 +167,11 @@ def _auto_grade_answers(
                 and not pending_manual:
             _collect_wrong_question(db, submission, r)
         elif r.get("is_correct"):
-            _update_mastery(db, submission.student_id, r["question_id"], True)
+            # 第三个参数是「知识点 id」占位，真正的知识点由 helper 按
+            # question_id 反查题目关联得出。此前直接把题目 id 当知识点 id
+            # 传入，导致掌握度记到了错误的（甚至不存在的）知识点上。
+            _update_mastery(db, submission.student_id, 0, True, question_id=r["question_id"])
 
-    _record_study(db, submission)
     db.flush()
     return summary
 
@@ -193,13 +195,25 @@ def _collect_wrong_question(db: Session, submission: Submission, result: Dict[st
         exists.mastered_at = None
         exists.source_id = submission.id
     else:
+        # 错题本要留存学生原答案。GradingAgent 的结果此前不含 student_answer
+        # 键，导致 wrong_answer 恒为空串；权威来源是 Answer.content，按
+        # (submission_id, question_id) 直接查库并截 500 字，结果字段仅作兜底。
+        raw = db.scalar(
+            select(Answer.content).where(
+                Answer.submission_id == submission.id,
+                Answer.question_id == q.id,
+            ).limit(1)
+        )
+        if raw is None:
+            raw = result.get("student_answer")
+        wrong_answer = str(raw)[:500] if raw is not None else ""
         db.add(
             WrongQuestion(
                 student_id=submission.student_id,
                 question_id=q.id,
                 subject_id=q.subject_id,
                 knowledge_point_id=q.knowledge_point_id,
-                wrong_answer=str(result.get("student_answer", ""))[:500],
+                wrong_answer=wrong_answer,
                 source_type=(task.type if task else "practice"),
                 source_id=submission.id,
                 source_name=(task.title if task else "随机练习"),
@@ -246,8 +260,14 @@ def _update_mastery(
     row.last_practice_at = now_local()
 
 
-def _record_study(db: Session, submission: Submission) -> None:
-    """记录当日学习行为。"""
+def _record_study(
+    db: Session, submission: Submission, duration_seconds: Optional[int] = None
+) -> None:
+    """记录当日学习行为（题量 / 正确数 / 学习时长）。
+
+    只在 finalize_submission 中调用一次：此前 _auto_grade_answers 末尾也调了
+    一次，同一场作答被统计两遍（题数、正确数翻倍），且 study_seconds 从未累加。
+    """
     today = now_local().strftime("%Y-%m-%d")
     row = db.scalar(
         select(StudyRecord).where(
@@ -261,6 +281,11 @@ def _record_study(db: Session, submission: Submission) -> None:
         db.flush()
     row.question_count += submission.answers.__len__()
     row.correct_count += sum(1 for a in submission.answers if a.is_correct)
+    try:
+        row.study_seconds += int(duration_seconds or 0)
+    except (TypeError, ValueError):
+        # 非法时长（异常上报/老客户端）不阻断交卷，也不污染时长统计
+        pass
 
 
 def finalize_submission(
@@ -281,9 +306,23 @@ def finalize_submission(
     submission.duration_seconds = duration_seconds or submission.duration_seconds
     submission.submit_time = now_local()
     submission.is_passed = submission.score >= (task.pass_score if task else settings.PASS_SCORE)
-    # 主观题 AI 判分完成同样属于「自动判分完成」；
-    # 人工复核 / 改分经批改中心接口把状态推进为 fully_graded。
-    submission.status = "auto_graded"
+    # 主观题（short/calc/material/composition）里仍为 grader_type=="auto"
+    # 的 Answer 表示「待教师人工批改」：此时不能算自动判分完成，否则既可按
+    # 0 分误发布，状态也与真实进度矛盾。全部人工/AI 批完才是 auto_graded。
+    subjective_types = {"short", "calc", "material", "composition"}
+    pending_qids = {a.question_id for a in answers if a.grader_type == "auto"}
+    qtypes: Dict[int, Optional[str]] = {}
+    if pending_qids:
+        qtypes = {
+            qid: qtype for qid, qtype in db.execute(
+                select(Question.id, Question.type).where(Question.id.in_(pending_qids))
+            ).all()
+        }
+    pending_manual = sum(
+        1 for a in answers
+        if a.grader_type == "auto" and qtypes.get(a.question_id) in subjective_types
+    )
+    submission.status = "not_graded" if pending_manual else "auto_graded"
 
     db.flush()
 
@@ -292,7 +331,8 @@ def finalize_submission(
 
     # 班级排名
     submission.class_rank = _calc_rank(db, submission)
-    _record_study(db, submission)
+    # 学习记录只在这里记一次（题数/正确数/时长），避免与 _auto_grade_answers 重复计数
+    _record_study(db, submission, duration_seconds=submission.duration_seconds)
     db.commit()
     db.refresh(submission)
     return {

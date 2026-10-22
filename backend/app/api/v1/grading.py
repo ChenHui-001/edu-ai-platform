@@ -25,6 +25,9 @@ from .learning import learning_router  # noqa: F401  兼容旧导出路径
 
 grading_router = APIRouter(prefix="/grading", tags=["智能批改"])
 
+# 主观题题型集合。与交卷 finalize / 详情接口的判定口径保持一致。
+SUBJECTIVE_TYPES = {"short", "calc", "material", "composition"}
+
 @grading_router.get("/pending", summary="待批改列表")
 def pending_submissions(
     params: PageParams = Depends(), task_id: Optional[int] = None,
@@ -237,15 +240,24 @@ def publish_score(
         raise BusinessException("该提交尚未完成批改，无法发布成绩")
     # 服务端必须自己复核「是否还有待人工的题」：前端 canPublish 只是提示层，
     # 直接调接口一样能发。发布含未批主观题的卷子 → 学生拿到的总分少算大题分值。
-    # 主观题判定与详情接口一致：题型属于主观题集合，且尚未给分。
+    # 未批改口径与交卷状态一致：主观题且（尚未给分 或 仍为 auto 未被教师
+    # 采纳/手动批改过）都算未批改，一律阻断。
     from app.models import Question
-    subjective_types = {"short", "calc", "material", "composition"}
-    ungraded = 0
-    for a in db.scalars(select(Answer).where(
-            Answer.submission_id == sub.id, Answer.score.is_(None))).all():
-        q = db.get(Question, a.question_id)
-        if q and q.type in subjective_types:
-            ungraded += 1
+    answers = db.scalars(
+        select(Answer).where(Answer.submission_id == sub.id)).all()
+    qids = {a.question_id for a in answers}
+    qtypes: Dict[int, Optional[str]] = {}
+    if qids:
+        qtypes = {
+            qid: qtype for qid, qtype in db.execute(
+                select(Question.id, Question.type).where(Question.id.in_(qids))
+            ).all()
+        }
+    ungraded = sum(
+        1 for a in answers
+        if qtypes.get(a.question_id) in SUBJECTIVE_TYPES
+        and (a.score is None or a.grader_type == "auto")
+    )
     if ungraded:
         raise BusinessException(f"还有 {ungraded} 道主观题未批改，无法发布成绩")
     sub.status = "published"
@@ -286,6 +298,20 @@ def batch_grade(
             continue
         answers = db.scalars(
             select(Answer).where(Answer.submission_id == sid)).all()
+        # 快速采纳：主观题若仍是 auto（AI 未成功或未配置时按 0 分待批），
+        # 教师批量采纳即视为确认当前分数，改标 manual，保证随后的批量发布
+        # 不再被判为「未批改」（考试 E2E 依赖此行为）。
+        from app.models import Question
+        qids = {a.question_id for a in answers}
+        if qids:
+            qtypes = {
+                qid: qtype for qid, qtype in db.execute(
+                    select(Question.id, Question.type).where(Question.id.in_(qids))
+                ).all()
+            }
+            for a in answers:
+                if a.grader_type == "auto" and qtypes.get(a.question_id) in SUBJECTIVE_TYPES:
+                    a.grader_type = "manual"
         objective = sum(a.score or 0 for a in answers if a.grader_type == "auto")
         subjective = sum(a.score or 0 for a in answers if a.grader_type in ("ai", "manual"))
         sub.objective_score = objective

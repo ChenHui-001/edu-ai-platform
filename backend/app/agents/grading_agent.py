@@ -66,11 +66,14 @@ class GradingAgent(BaseAgent):
                                 "score": 0.0, "comment": "题目不存在"})
                 continue
             if q.type in OBJECTIVE_TYPES:
-                res = self._grade_objective(q, it.get("student_answer"))
+                fs = it.get("full_score", q.score)
+                res = self._grade_objective(q, it.get("student_answer"), full_score=fs)
                 results.append({
                     "question_id": q.id, "grader_type": "auto",
-                    "full_score": it.get("full_score", q.score),
-                    "question_type": q.type, **res,
+                    "full_score": fs,
+                    "question_type": q.type,
+                    "student_answer": it.get("student_answer"),
+                    **res,
                 })
             else:
                 subjective_queue.append((it, q))
@@ -108,6 +111,7 @@ class GradingAgent(BaseAgent):
                     "question_id": q.id, "grader_type": "auto", "is_correct": False,
                     "score": 0.0, "full_score": fs,
                     "question_type": q.type, "comment": blanks[q.id],
+                    "student_answer": it.get("student_answer"),
                 })
                 continue
             ai_res = graded.get(q.id)
@@ -115,7 +119,9 @@ class GradingAgent(BaseAgent):
                 results.append({
                     "question_id": q.id, "grader_type": "ai",
                     "full_score": fs,
-                    "question_type": q.type, **ai_res,
+                    "question_type": q.type,
+                    "student_answer": it.get("student_answer"),
+                    **ai_res,
                 })
             else:
                 results.append({
@@ -123,6 +129,7 @@ class GradingAgent(BaseAgent):
                     "score": 0.0, "full_score": fs,
                     "question_type": q.type,
                     "comment": "待教师手动批改",
+                    "student_answer": it.get("student_answer"),
                 })
 
         total_full = sum(float(r.get("full_score") or 0) for r in results)
@@ -169,11 +176,18 @@ class GradingAgent(BaseAgent):
         return {norm(x) for x in raw if norm(x)}
 
     @classmethod
-    def _grade_objective(cls, q: Question, student_answer: Any) -> Dict[str, Any]:
+    def _grade_objective(
+        cls, q: Question, student_answer: Any, full_score: Optional[float] = None
+    ) -> Dict[str, Any]:
         """客观题本地判分（不依赖 LLM，保证性能与准确）。
 
         答案比较统一走 `app.utils.answer`：判断题的「正确/错误/对/错/T/F」
         与选项 key A/B 等价；多选题兼容 JSON 数组与 "A,C" 字符串。
+
+        full_score：试卷项分值。得分口径应是**试卷项 full_score**，而不是
+        题库里 Question.score（两者可能不同，如组卷时统一给了更高的分值）。
+        不传时保持旧行为，取 q.score（tests/verify_answer_normalization.py
+        仍以两参调用）。
         """
         import json
 
@@ -184,7 +198,8 @@ class GradingAgent(BaseAgent):
 
         is_correct = answers_match(q.type, std, student_answer)
         if is_correct:
-            return {"is_correct": True, "score": float(q.score), "comment": "回答正确"}
+            score = full_score if full_score is not None else q.score
+            return {"is_correct": True, "score": float(score or 0.0), "comment": "回答正确"}
 
         std_set = normalize_answer(q.type, std)
         shown = "/".join(sorted(std_set)) if std_set else str(std or "")
