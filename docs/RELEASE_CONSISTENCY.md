@@ -241,12 +241,28 @@ curl -s http://localhost/api/v1/health | jq .version
 | 项 | 值 |
 |---|---|
 | VERSION | `1.0.41` |
-| commit | `67e7e3e` |
-| 本地镜像 | `nanpo/edu-ai-platform:1.0.41`（commit 已烧入） |
+| commit | `dbc152d` |
+| 本地镜像 | `nanpo/edu-ai-platform:1.0.41`，镜像内 commit `6bac8a6`（等价） |
 | ghcr | `ghcr.io/chenhui-001/edu-ai-platform:1.0.41` ✓ 四闸门全通过 |
-| Docker Hub | `nanpo/edu-ai-platform:1.0.41` 本地推送中 |
+| Docker Hub | `nanpo/edu-ai-platform:1.0.41` 推送中（受限：本机 `auth.docker.io` 不通） |
 | 发布前校验 | 7 通过 / 0 失败 / 1 警告（"尚未发布该版本"，发布前正常） |
-| CI | 两个 run 全 success（`6bac8a6`、`67e7e3e`） |
+| CI | 两个 run 全 success（`6bac8a6`、`67e7e3e`，含 postflight） |
+
+### 关于 `commit` 与 `镜像内 commit` 不完全相同
+
+这是**预期状态**，不是漂移。`6bac8a6..dbc152d` 之间的提交只改了
+`docs/`、`.github/`、`tools/` —— 这些路径**不进镜像**，镜像字节未变。
+
+工具据此判定"等价"：
+
+```
+[PASS] 本地镜像内 commit 与 HEAD 等价
+       镜像出自 6bac8a6，HEAD 是 dbc152d，
+       但 6bac8a6..dbc152d 无影响镜像内容的改动（仅文档/CI）
+```
+
+若差异落在 `backend/app/`、`frontend/`、`deploy/`、`requirements.txt`、
+`VERSION`、`Dockerfile` 等会被 `COPY` 的路径，则**立即判 FAIL 并要求重建**。
 
 > **部署端注意**：CI 产物在 `ghcr.io/chenhui-001/edu-ai-platform`，
 > 本地脚本产物在 `nanpo/edu-ai-platform`。拉取时确认用的是哪个。
