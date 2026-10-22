@@ -257,13 +257,71 @@ def update_task(
         raise NotFoundException("任务不存在")
     if task.creator_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("无权限编辑该任务")
-    for f in ("title", "description", "duration", "allow_retake", "show_answer",
-              "anti_cheat", "pass_score"):
-        if f in data:
-            setattr(task, f, data[f])
-    for f in ("start_at", "end_at"):
-        if data.get(f):
-            setattr(task, f, _parse_dt(data[f]))
+
+    # 编辑接口此前直接 setattr：null/字符串可写进非空列、duration=0、
+    # pass_score 超过总分、end_at 早于 start_at 都能落库（create 校验形同虚设）。
+    # 这里与 create_task 使用同一套范围校验，非法输入返回 400 而不是 500。
+    updates: Dict[str, Any] = {}
+    if "title" in data:
+        title = str(data.get("title") or "").strip()
+        if not title:
+            raise BusinessException("标题不能为空")
+        if len(title) > 128:
+            raise BusinessException("标题不能超过 128 个字符")
+        updates["title"] = title
+    if "description" in data:
+        description = str(data.get("description") or "")
+        if len(description) > 20000:
+            raise BusinessException("任务说明不能超过 20000 个字符")
+        updates["description"] = description
+    if "duration" in data:
+        try:
+            duration = int(data["duration"])
+        except (TypeError, ValueError):
+            raise BusinessException("考试时长必须是整数分钟") from None
+        if duration <= 0:
+            raise BusinessException("考试时长必须大于 0 分钟")
+        updates["duration"] = duration
+    if "allow_retake" in data:
+        try:
+            allow_retake = int(data["allow_retake"])
+        except (TypeError, ValueError):
+            raise BusinessException("允许作答次数必须是整数") from None
+        if allow_retake < 1:
+            raise BusinessException("允许作答次数至少为 1")
+        updates["allow_retake"] = allow_retake
+    for flag in ("show_answer", "anti_cheat"):
+        if flag in data:
+            if not isinstance(data[flag], bool):
+                raise BusinessException(f"{flag} 必须是布尔值")
+            updates[flag] = data[flag]
+    if "pass_score" in data:
+        try:
+            pass_score = float(data["pass_score"])
+        except (TypeError, ValueError):
+            raise BusinessException("及格分必须是数字") from None
+        total = float(task.total_score or 100)
+        if not (0 < pass_score <= total):
+            raise BusinessException(f"及格分应在 0~{total} 之间，当前 {pass_score}")
+        updates["pass_score"] = pass_score
+
+    start_at = task.start_at
+    end_at = task.end_at
+    if data.get("start_at"):
+        start_at = _parse_dt(data["start_at"])
+        if start_at is None:
+            raise BusinessException("开始时间格式不正确")
+    if data.get("end_at"):
+        end_at = _parse_dt(data["end_at"])
+        if end_at is None:
+            raise BusinessException("截止时间格式不正确")
+    if start_at and end_at and end_at <= start_at:
+        raise BusinessException("截止时间必须晚于开始时间")
+
+    for key, value in updates.items():
+        setattr(task, key, value)
+    task.start_at = start_at
+    task.end_at = end_at
     db.commit()
     return ok(message="任务已更新")
 
