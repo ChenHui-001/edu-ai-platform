@@ -529,8 +529,16 @@ def submit_answers(
     max_attempt = max(int(task.allow_retake or 1), 1)
     if last and last.submit_time:
         if last.attempt >= max_attempt:
-            raise BusinessException(f"最多允许作答 {max_attempt} 次，已用完次数")
-        attempt = last.attempt + 1
+            # 被教师打回（reject 置 status=not_graded 且清空 score）时允许复用
+            # 同一 attempt 覆盖重做；否则报「次数已用完」，打回重做闭环不可用。
+            # 仅凭 status=not_graded 不够：含待人工主观题的卷子也是该状态但
+            # score 非空，必须用 score is None 区分，避免绕过 allow_retake 限制。
+            if last.status == "not_graded" and last.score is None:
+                attempt = last.attempt
+            else:
+                raise BusinessException(f"最多允许作答 {max_attempt} 次，已用完次数")
+        else:
+            attempt = last.attempt + 1
     else:
         # 未交卷的草稿沿用其 attempt，保证覆盖同一份而不是新建
         attempt = last.attempt if last else 1
