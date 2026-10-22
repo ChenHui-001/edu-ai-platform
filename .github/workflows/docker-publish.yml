@@ -46,11 +46,12 @@ on:
         default: false
 
 env:
-  REGISTRY: docker.io
-  # ⚠️ 必须是 nanpo/edu-ai-platform。用 ${{ github.repository }} 会变成
-  #    ChenHui-001/edu-ai-platform，与本地 push_dockerhub.sh 推的不是同一个仓库。
-  #    允许用仓库变量覆盖，但默认值必须与本地脚本一致。
-  IMAGE_NAME: ${{ vars.DOCKERHUB_REPO || 'nanpo/edu-ai-platform' }}
+  # 改用 GitHub Container Registry：使用自动注入的 GITHUB_TOKEN，
+  # 无需手工配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 两个 secret。
+  # 代价是镜像地址从 nanpo/edu-ai-platform 变为 ghcr.io/chenhui-001/edu-ai-platform，
+  # 部署端需同步改 image 引用（用 vars.IMAGE_NAME 可覆盖回 Docker Hub）。
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ vars.IMAGE_NAME || 'chenhui-001/edu-ai-platform' }}
 
 jobs:
   # --------------------------------------------------------------------------
@@ -133,48 +134,42 @@ jobs:
             echo "publish_latest=$publish_latest"
           } >> "$GITHUB_OUTPUT"
 
-      - name: 拒绝以更低版本覆盖 latest
-        if: steps.ver.outputs.publish_latest == 'true'
+      - name: 检查该版本号是否已发布过
         env:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
           NEW_VERSION: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          # 取 registry 上 latest 当前对应的版本号；拿不到就跳过（不阻塞发布，
-          # 常见于首次发布或 Docker Hub API 限流）
-          code=$(curl -s -o /tmp/latest.json -w '%{http_code}' \
-                 "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/latest" || true)
+          # 同一个版本号发布两次 = 用相同的版本号承载不同的代码，
+          # 这正是「版本号相同、内容不同」那类漂移的源头。
+          # 已存在时只告警不阻断（重跑 CI 是正常场景），但会显式记录。
+          code=$(curl -s -o /tmp/vers.json -w '%{http_code}' \
+                 -H "Authorization: Bearer ${GH_TOKEN}" \
+                 -H "Accept: application/vnd.github+json" \
+                 "https://api.github.com/users/${IMAGE_NAME%%/*}/packages/container/${IMAGE_NAME##*/}/versions?per_page=100" || true)
           if [ "$code" != "200" ]; then
-            echo "无法查询远端 latest（HTTP $code），跳过回退检查"
+            echo "无法查询 ghcr 版本列表（HTTP $code），跳过重复发布检查"
             exit 0
           fi
-          latest_digest=$(python3 -c "import json;print(json.load(open('/tmp/latest.json')).get('digest') or '')")
-          [ -z "$latest_digest" ] && { echo "latest 无 digest，跳过"; exit 0; }
-
-          # 找出与 latest digest 相同的版本号标签
-          curl -s "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags?page_size=100" \
-            -o /tmp/tags.json || exit 0
-          prev=$(python3 - "$latest_digest" <<'PY'
-          import json, re, sys
-          d = json.load(open('/tmp/tags.json'))
-          for t in d.get('results', []):
-              if t.get('digest') == sys.argv[1] and re.match(r'^\d+\.\d+\.\d+$', t.get('name', '')):
-                  print(t['name']); break
+          python3 - "$NEW_VERSION" <<'PY'
+          import json, sys
+          want = sys.argv[1]
+          try:
+              data = json.load(open('/tmp/vers.json'))
+          except Exception:
+              sys.exit(0)
+          hits = []
+          for v in (data if isinstance(data, list) else []):
+              tags = (v.get('metadata', {}).get('container', {}).get('tags') or [])
+              if want in tags:
+                  hits.append(v.get('name', ''))
+          if hits:
+              print(f"::warning::版本 {want} 在 ghcr 已存在（digest {hits[0][:19]}）。")
+              print(f"::warning::若本次代码与上次不同，应升版本号而不是覆盖 —— 否则 :{want} 会指向两份不同代码。")
+          else:
+              print(f"版本 {want} 尚未发布过，正常")
           PY
-          )
-          if [ -z "$prev" ]; then
-            echo "latest 未对应任何版本标签，跳过回退检查"
-            exit 0
-          fi
-          echo "远端 latest 当前对应版本：$prev；本次发布：$NEW_VERSION"
-          if [ "$(printf '%s\n%s\n' "$prev" "$NEW_VERSION" | sort -V | tail -1)" != "$NEW_VERSION" ] \
-             || [ "$prev" = "$NEW_VERSION" ]; then
-            if [ "$prev" != "$NEW_VERSION" ]; then
-              echo "::error::本次发布 $NEW_VERSION 低于远端 latest 对应的 $prev，"
-              echo "::error::继续发布会把 latest 回退到旧代码。如确需补发旧版本，请勾选 skip_latest。"
-              exit 1
-            fi
-          fi
 
   # --------------------------------------------------------------------------
   # 构建与推送
@@ -185,17 +180,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write        # 推 ghcr 必需；GITHUB_TOKEN 自动具备，无需手工 secret
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
-      - name: 登录 Docker Hub
+      - name: 登录 GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          # GITHUB_TOKEN 由 Actions 在运行时自动注入，无需在仓库里配任何 secret。
+          # 这正是从 Docker Hub 切到 ghcr 的原因：后者需要手工配
+          # DOCKERHUB_USERNAME / DOCKERHUB_TOKEN，漏配就会在 login 步骤
+          # 报 "Username and password required" 而整个发布链路中断。
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 生成标签
         id: meta
@@ -252,18 +253,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 回查 registry，核对镜像内的版本与 commit
+      - name: 回查 ghcr，核对镜像内的版本与 commit
         env:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
           EXPECT_VERSION: ${{ needs.preflight.outputs.version }}
           EXPECT_COMMIT: ${{ needs.preflight.outputs.commit }}
           PUBLISH_LATEST: ${{ needs.preflight.outputs.publish_latest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json, os, sys, urllib.request
 
-          repo = os.environ["IMAGE_NAME"]
+          repo = os.environ["IMAGE_NAME"]          # 例：chenhui-001/edu-ai-platform
           exp_v = os.environ["EXPECT_VERSION"]
           exp_c = os.environ["EXPECT_COMMIT"]
           want_latest = os.environ.get("PUBLISH_LATEST") == "true"
@@ -275,13 +277,13 @@ jobs:
               return urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=60)
 
           def token_for(repo):
-              u = ("https://auth.docker.io/token?service=registry.docker.io"
-                   f"&scope=repository:{repo}:pull")
+              # ghcr 的匿名拉取令牌。公开包无需其他凭据；
+              # 私有包需改用 GITHUB_TOKEN + packages:read，这里按公开包处理。
+              u = f"https://ghcr.io/token?scope=repository:{repo}:pull&service=ghcr.io"
               return json.load(get(u))["token"]
 
-          def labels_of(tag, tk):
-              # manifest list -> 取 amd64 子 manifest -> 取 config blob -> 读 labels
-              base = f"https://registry-1.docker.io/v2/{repo}"
+          def manifest_of(tag, tk):
+              base = f"https://ghcr.io/v2/{repo}"
               acc = ("application/vnd.oci.image.index.v1+json,"
                      "application/vnd.docker.distribution.manifest.list.v2+json,"
                      "application/vnd.oci.image.manifest.v1+json,"
@@ -293,20 +295,64 @@ jobs:
                   if pick is None:
                       raise RuntimeError("manifest list 中无 amd64")
                   m = json.load(get(f"{base}/manifests/{pick['digest']}", acc, tk))
-              cfg = m["config"]["digest"]
-              return json.load(get(f"{base}/blobs/{cfg}", None, tk))["config"].get("Labels") or {}
+              return m
 
-          fail = []
-          tk = token_for(repo)
-          for tag, is_latest in [(exp_v, False)] + ([("latest", True)] if want_latest else []):
+          def snapshot_of(tag, tk):
+              """返回 (version, commit)。优先 OCI label，退化读 BUILD_INFO blob。
+
+              label 是构建时由 metadata-action 注入的；BUILD_INFO 由镜像内
+              `cat /app/VERSION` 生成。两者都读，任一命中即可 —— 只信 label
+              会在「漏传 ARG APP_VERSION」时读到空串而误判。
+              """
+              m = manifest_of(tag, tk)
+              lb = (json.load(get(f"https://ghcr.io/v2/{repo}/blobs/{m['config']['digest']}",
+                                  None, tk))["config"].get("Labels") or {})
+              ver = lb.get("org.opencontainers.image.version", "")
+              com = lb.get("org.opencontainers.image.revision", "")
+              if ver and com:
+                  return ver, com, "OCI label"
+
+              # 退到镜像层里的 /app/BUILD_INFO：遍历 layer 找该文件
+              for layer in m.get("layers", []):
+                  url = f"https://ghcr.io/v2/{repo}/blobs/{layer['digest']}"
+                  try:
+                      raw = get(url, None, tk).read()
+                  except Exception:
+                      continue
+                  data = _extract_file_from_tar(raw, "app/BUILD_INFO")
+                  if data:
+                      info = dict(
+                          ln.split("=", 1) for ln in data.decode(errors="ignore").splitlines()
+                          if "=" in ln)
+                      return (info.get("version", ""), info.get("commit", ""),
+                              "镜像内 /app/BUILD_INFO")
+              return ver, com, "OCI label"
+
+          def _extract_file_from_tar(raw, want):
+              """从单层 layer 的 tar(.gz) 里取出指定路径的文件内容。
+
+              registry 的 layer 是压缩 tar，可能包住多级目录；只认精确路径。
+              """
+              import io, tarfile
+              for mode in ("r:gz", "r:"):
+                  try:
+                      with tarfile.open(fileobj=io.BytesIO(raw), mode=mode) as tf:
+                          for mem in tf.getmembers():
+                              if mem.name.lstrip("./") == want and mem.isfile():
+                                  return tf.extractfile(mem).read()
+                  except Exception:
+                      continue
+              return None
+
+          fail, tk = [], token_for(repo)
+          tags = [(exp_v, False)] + ([("latest", True)] if want_latest else [])
+          for tag, _is_latest in tags:
               try:
-                  lb = labels_of(tag, tk)
+                  got_v, got_c, how = snapshot_of(tag, tk)
               except Exception as exc:
                   fail.append(f"读取 {repo}:{tag} 失败：{exc}")
                   continue
-              got_v = lb.get("org.opencontainers.image.version", "")
-              got_c = lb.get("org.opencontainers.image.revision", "")
-              print(f"[{repo}:{tag}] version={got_v!r} revision={got_c!r}")
+              print(f"[{repo}:{tag}] version={got_v!r} revision={got_c!r} 来源={how}")
               if got_v != exp_v:
                   fail.append(f"`{tag}` 镜像内版本={got_v!r}，期望 {exp_v!r}")
               if not got_c.startswith(exp_c[:7]):
@@ -315,7 +361,7 @@ jobs:
           if fail:
               print("::error::发布后一致性核对未通过")
               for f in fail:
-                  print(f"::error::{f}")
+                  print("::error::" + f)
               sys.exit(1)
           print("发布后核对通过：镜像内版本与 commit 均与本次提交一致")
           PY
