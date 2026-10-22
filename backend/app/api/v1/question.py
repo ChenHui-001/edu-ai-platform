@@ -530,6 +530,19 @@ def delete_paper(
         raise NotFoundException("试卷不存在")
     if paper.creator_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("只能删除自己创建的试卷")
+    # 外键 edu_task.paper_id 是 ON DELETE CASCADE：直接删会连带物理删除
+    # 已发布的作业/考试及全部学生提交与成绩（实测 1 份试卷可带走 14 份提交），
+    # 因此必须先阻断，由用户显式处理任务后再删。
+    from app.models import Task
+
+    task_count = db.scalar(
+        select(func.count()).select_from(Task).where(Task.paper_id == paper_id)
+    ) or 0
+    if task_count:
+        raise BusinessException(
+            f"该试卷已被 {task_count} 个作业/考试引用，删除会连同学生作答与成绩一起丢失；"
+            "请先删除相关任务或改为停用"
+        )
     db.delete(paper)
     db.commit()
     return ok(message="试卷已删除")

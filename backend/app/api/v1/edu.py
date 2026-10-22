@@ -74,6 +74,28 @@ def delete_grade(
     grade = db.get(Grade, grade_id)
     if not grade:
         raise NotFoundException("年级不存在")
+    # 年级下挂班级/学科/知识点/题目/试卷/任务/教案，外键均为 CASCADE。
+    # 直接删除会静默清空整年级教学数据（成绩、答卷、题库不可恢复），
+    # 必须逐类检查并给出可操作的阻断原因。
+    from app.models import Paper, Question, Task
+
+    refs = []
+    for label, model, column in (
+        ("班级", Class, Class.grade_id), ("学科", Subject, Subject.grade_id),
+        ("知识点", KnowledgePoint, KnowledgePoint.grade_id),
+        ("题目", Question, Question.grade_id),
+        ("试卷", Paper, Paper.grade_id), ("作业/考试", Task, Task.grade_id),
+    ):
+        count = db.scalar(
+            select(func.count()).select_from(model).where(column == grade_id)
+        ) or 0
+        if count:
+            refs.append(f"{label} {count} 个")
+    if refs:
+        raise BusinessException(
+            f"该年级仍被以下数据引用：{'、'.join(refs)}；删除会级联清空这些教学数据，"
+            "请先清空或迁移后再删除"
+        )
     db.delete(grade)
     db.commit()
     return ok(message="年级已删除")
@@ -171,6 +193,28 @@ def delete_subject(
     subject = db.get(Subject, subject_id)
     if not subject:
         raise NotFoundException("学科不存在")
+    # 学科被题目/试卷/任务/知识点/教案引用时删学科会级联清空整科数据，
+    # 必须先阻断（此前删除学科可直接抹掉该科全部题目与考试记录）。
+    from app.models import LessonPlan, Paper, Question, Task
+
+    refs = []
+    for label, model, column in (
+        ("题目", Question, Question.subject_id),
+        ("试卷", Paper, Paper.subject_id),
+        ("作业/考试", Task, Task.subject_id),
+        ("知识点", KnowledgePoint, KnowledgePoint.subject_id),
+        ("教案", LessonPlan, LessonPlan.subject_id),
+    ):
+        count = db.scalar(
+            select(func.count()).select_from(model).where(column == subject_id)
+        ) or 0
+        if count:
+            refs.append(f"{label} {count} 个")
+    if refs:
+        raise BusinessException(
+            f"该学科仍被以下数据引用：{'、'.join(refs)}；删除会级联清空这些教学数据，"
+            "请先处理后再删除"
+        )
     db.delete(subject)
     db.commit()
     return ok(message="学科已删除")
