@@ -78,7 +78,8 @@ def pending_submissions(
 @grading_router.get("/submissions/{submission_id}", summary="批改详情")
 def grading_detail(
     submission_id: int, db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    user: User = Depends(get_current_teacher),
+    scope: DataScope = Depends(get_data_scope),
 ):
     from app.models import Question
 
@@ -86,6 +87,10 @@ def grading_detail(
     if not sub:
         raise NotFoundException("作答记录不存在")
     task = db.get(Task, sub.task_id)
+    # 与批改/打回/发布保持同一归属口径：教师只能看自己发布任务的作答，
+    # 否则遍历自增 submission_id 即可读取全校学生答卷、标准答案与 AI 评语。
+    if task and not scope.is_super and task.creator_id != user.id:
+        raise PermissionException("只能查看自己发布任务的作答详情")
 
     items = []
     for a in sub.answers:
