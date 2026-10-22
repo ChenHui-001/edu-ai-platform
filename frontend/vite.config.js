@@ -21,13 +21,15 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    chunkSizeWarningLimit: 1500,
+    // 恢复真实告警阈值：此前 1500 正好把 element/charts 两个 1MB 分包压掉。
+    // ECharts 已改按需注册（charts 分包应显著下降），Element Plus 仍全量引入。
+    chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         manualChunks: {
           vendor: ['vue', 'vue-router', 'pinia', 'axios'],
           element: ['element-plus', '@element-plus/icons-vue'],
-          charts: ['echarts', 'echarts-for-react']
+          charts: ['echarts']
         }
       }
     }

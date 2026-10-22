@@ -12,7 +12,8 @@
  * 支持 option 深度 watch 更新、容器 resize 自适应、卸载时 dispose。
  */
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import * as echarts from 'echarts'
+// 按需注册 ECharts：见 utils/echarts.js（避免把全部图表打包进 charts 分包）
+import echarts from '@/utils/echarts'
 
 const props = defineProps({
   option: { type: Object, required: true },

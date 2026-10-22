@@ -94,7 +94,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh, Edit } from '@element-plus/icons-vue'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import { learningApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
