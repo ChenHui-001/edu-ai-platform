@@ -250,11 +250,13 @@ def change_password(
 def logout(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    body: Optional[Dict[str, Any]] = Body(default=None),
 ):
-    """退出登录并吊销当前访问令牌。
+    """退出登录并吊销当前访问令牌（以及可选的刷新令牌）。
 
     只改前端状态的话，原 access_token 在过期前仍可访问任意接口，
-    一旦泄露即可被冒用，因此这里必须服务端登记吊销。
+    refresh_token 还能换出新令牌；因此这里必须服务端登记吊销。
+    前端应把 localStorage 中的 refresh_token 一并提交。
     """
     token = (
         credentials.credentials
@@ -262,6 +264,12 @@ def logout(
         else request.headers.get("Authorization", "").replace("Bearer ", "").strip()
     )
     revoked = revoke_token(decode_token(token) if token else None)
+
+    refresh_raw = (body or {}).get("refresh_token") or ""
+    if refresh_raw:
+        refresh_payload = decode_token(refresh_raw)
+        if refresh_payload and refresh_payload.get("type") == "refresh":
+            revoked = revoke_token(refresh_payload) or revoked
     return ok({"revoked": revoked}, message="已退出登录")
 
 

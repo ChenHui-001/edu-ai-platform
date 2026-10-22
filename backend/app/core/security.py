@@ -58,13 +58,18 @@ def create_access_token(subject: str | int, role: str = "", extra: Optional[Dict
 
 
 def create_refresh_token(subject: str | int) -> str:
-    """签发刷新令牌。"""
+    """签发刷新令牌。
+
+    带 jti 才能被登出吊销：此前 refresh token 无 jti，
+    用户登出后仍可用它换出新 access token（7 天内无法止损）。
+    """
     expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     payload = {
         "sub": str(subject),
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "type": "refresh",
+        "jti": secrets.token_hex(8),
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
