@@ -1,27 +1,187 @@
 name: Docker 镜像发布
 
+# ============================================================================
+# 发版一致性契约（本工作流的存在意义）
+#
+# 版本号与代码在发布链路上有五个落点，任何一个脱节都**不会自己报错**：
+#   ① 根目录 VERSION                  <- 唯一真源
+#   ② commit -> origin/master         <- 代码离开本机的唯一通道
+#   ③ 镜像内 /app/VERSION + BUILD_INFO <- 镜像里的版本与 commit 快照
+#   ④ 镜像标签 repo:x.y.z             <- 人为命名，不复核内容
+#   ⑤ /health 的 settings.APP_VERSION <- 运行时可观测值
+#
+# 本工作流的四道闸门依次锁死上述落点：
+#   [闸门1] 触发前：分支名必须是 master；tag 必须与 VERSION 自洽
+#   [闸门2] 构建前：工作区干净 + commit 与 VERSION 记录一致
+#   [闸门3] 构建时：把 github.sha 烧进镜像（OCI label + /app/BUILD_INFO）
+#   [闸门4] 推送后：回查 registry，确认镜像内的版本与 commit == 本次提交
+#
+# 历史缺陷（已修复，勿回退）：
+#   - 曾写 `branches: [main]`，而本仓库主分支是 master → 工作流从未触发过一次
+#   - 曾用 `${{ github.repository }}` 作镜像名 → 推到 ChenHui-001/ 而非 nanpo/，
+#     与手工推送的镜像分成两个仓库，导致「仓库里有新版、线上拉到的还是旧版」
+#   - 曾有一个只 echo 不推送的「额外推送 latest」死步骤
+# ============================================================================
+
 on:
   push:
     tags:
       - 'v*'
     branches:
-      - main
+      # ⚠️ 本仓库主分支是 master（不是 main）。写错会导致工作流静默不触发，
+      #    Actions 页面看起来「什么都没发生」，极易被误判为「CI 挂了」。
+      - master
     paths-ignore:
       - '**.md'
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       tag:
         description: '镜像标签（留空则用 VERSION 文件内容）'
         required: false
         default: ''
+      skip_latest:
+        description: '不更新 latest（补发旧版本时勾选）'
+        type: boolean
+        default: false
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: ${{ github.repository }}
+  # ⚠️ 必须是 nanpo/edu-ai-platform。用 ${{ github.repository }} 会变成
+  #    ChenHui-001/edu-ai-platform，与本地 push_dockerhub.sh 推的不是同一个仓库。
+  #    允许用仓库变量覆盖，但默认值必须与本地脚本一致。
+  IMAGE_NAME: ${{ vars.DOCKERHUB_REPO || 'nanpo/edu-ai-platform' }}
 
 jobs:
+  # --------------------------------------------------------------------------
+  # 闸门1/2：构建前的一致性校验。任何一项不过就不构建——
+  # 构建一个无法溯源的镜像，比不构建更糟（它会静默覆盖线上）。
+  # --------------------------------------------------------------------------
+  preflight:
+    name: 构建前一致性校验
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      commit: ${{ steps.ver.outputs.commit }}
+      publish_latest: ${{ steps.ver.outputs.publish_latest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 校验并导出发布元数据
+        id: ver
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          SKIP_LATEST: ${{ github.event.inputs.skip_latest }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          commit="$(git rev-parse HEAD)"
+
+          # ---- ① VERSION 必须合法：非法字符会让 docker build 直接失败，
+          #      而报错信息完全看不出是 VERSION 的问题
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::VERSION 内容不合法（应为 x.y.z）：'$version'"
+            exit 1
+          fi
+          echo "VERSION = $version"
+
+          # ---- ② tag 与 VERSION 自洽：v1.0.41 的 tag 绝不能产出 :1.0.40 镜像
+          if [ "$REF_TYPE" = "tag" ]; then
+            tag_ver="${REF_NAME#v}"
+            if [ "$tag_ver" != "$version" ]; then
+              echo "::error::tag '$REF_NAME' 与 VERSION '$version' 不一致。"
+              echo "::error::继续发布将打出 :$version 镜像却带 $REF_NAME 的 tag，版本漂移。"
+              echo "::error::修正：把 VERSION 改成 $tag_ver 后重新提交并打 tag。"
+              exit 1
+            fi
+            echo "tag 与 VERSION 自洽：$REF_NAME == $version"
+          fi
+
+          # ---- ③ 手动指定标签时同样必须与 VERSION 一致（除了 latest/sha 这类非版本标签）
+          if [ -n "$INPUT_TAG" ] && printf '%s' "$INPUT_TAG" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
+            input_ver="${INPUT_TAG#v}"
+            if [ "$input_ver" != "$version" ]; then
+              echo "::error::手动标签 '$INPUT_TAG' 与 VERSION '$version' 不一致，拒绝发布"
+              exit 1
+            fi
+          fi
+
+          # ---- ④ 工作区必须干净：脏工作区构建出的镜像无法与任何 commit 对应
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::工作区有未提交改动，拒绝构建无法溯源的镜像"
+            git status --porcelain
+            exit 1
+          fi
+
+          # ---- ⑤ latest 语义：只在 master（主干，版本必然最新）与手动发布时更新；
+          #      补发旧版本 tag 时**不**动 latest，否则 latest 会回退到旧代码
+          publish_latest="true"
+          if [ "$REF_TYPE" = "tag" ]; then
+            publish_latest="false"
+          fi
+          if [ "$SKIP_LATEST" = "true" ]; then
+            publish_latest="false"
+          fi
+
+          {
+            echo "version=$version"
+            echo "commit=$commit"
+            echo "publish_latest=$publish_latest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 拒绝以更低版本覆盖 latest
+        if: steps.ver.outputs.publish_latest == 'true'
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          NEW_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -uo pipefail
+          # 取 registry 上 latest 当前对应的版本号；拿不到就跳过（不阻塞发布，
+          # 常见于首次发布或 Docker Hub API 限流）
+          code=$(curl -s -o /tmp/latest.json -w '%{http_code}' \
+                 "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/latest" || true)
+          if [ "$code" != "200" ]; then
+            echo "无法查询远端 latest（HTTP $code），跳过回退检查"
+            exit 0
+          fi
+          latest_digest=$(python3 -c "import json;print(json.load(open('/tmp/latest.json')).get('digest') or '')")
+          [ -z "$latest_digest" ] && { echo "latest 无 digest，跳过"; exit 0; }
+
+          # 找出与 latest digest 相同的版本号标签
+          curl -s "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags?page_size=100" \
+            -o /tmp/tags.json || exit 0
+          prev=$(python3 - "$latest_digest" <<'PY'
+          import json, re, sys
+          d = json.load(open('/tmp/tags.json'))
+          for t in d.get('results', []):
+              if t.get('digest') == sys.argv[1] and re.match(r'^\d+\.\d+\.\d+$', t.get('name', '')):
+                  print(t['name']); break
+          PY
+          )
+          if [ -z "$prev" ]; then
+            echo "latest 未对应任何版本标签，跳过回退检查"
+            exit 0
+          fi
+          echo "远端 latest 当前对应版本：$prev；本次发布：$NEW_VERSION"
+          if [ "$(printf '%s\n%s\n' "$prev" "$NEW_VERSION" | sort -V | tail -1)" != "$NEW_VERSION" ] \
+             || [ "$prev" = "$NEW_VERSION" ]; then
+            if [ "$prev" != "$NEW_VERSION" ]; then
+              echo "::error::本次发布 $NEW_VERSION 低于远端 latest 对应的 $prev，"
+              echo "::error::继续发布会把 latest 回退到旧代码。如确需补发旧版本，请勾选 skip_latest。"
+              exit 1
+            fi
+          fi
+
+  # --------------------------------------------------------------------------
+  # 构建与推送
+  # --------------------------------------------------------------------------
   build-push:
     name: 构建并推送
+    needs: preflight
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -37,26 +197,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 读取版本号（根目录 VERSION 是唯一真源）
-        id: ver
-        run: echo "version=$(cat VERSION 2>/dev/null | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
-
       - name: 生成标签
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ github.event.inputs.tag || steps.ver.outputs.version || 'latest' }}
-            type=ref,event=tag,strip=v
+            type=raw,value=${{ needs.preflight.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.preflight.outputs.publish_latest == 'true' }}
             type=sha,format=short,prefix=build-
-          # 标签统一去掉 v 前缀，与本地手动推送的 nanpo/edu-ai-platform:1.0.x 保持一致；
+          # 标签统一去掉 v 前缀，与本地 push_dockerhub.sh 的 :1.0.x 保持一致；
           # 版本号唯一真源仍是根目录 VERSION 文件。
           flavor: latest=false
-
-      - name: 额外推送 latest（仅打 tag 或手动指定时）
-        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
-        run: echo "推送 latest 标签"
 
       - name: 构建并推送
         uses: docker/build-push-action@v6
@@ -67,19 +219,109 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 闸门3：把本次 commit 烧进镜像。没有它，「版本号相同但代码不同」
+          # 这种情况在事后完全无法识别（1.0.40 可以构建十次、内容各不相同）。
+          build-args: |
+            APP_VERSION=${{ needs.preflight.outputs.version }}
+            GIT_COMMIT=${{ needs.preflight.outputs.commit }}
+            BUILD_TIME=${{ github.event.repository.pushed_at }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # latest 单独推一次：metadata-action 的 flavor: latest=false 禁用了自动 latest，
-      # 而本地手动推送的约定是 latest 始终指向最新版本。
-      # 用 --all-instances 让 latest 复用已推送的多架构 manifest list，避免重新构建。
-      - name: 同步 latest 标签
-        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: unified
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          cache-from: type=gha
+      # 记录镜像 digest，供发布后核对与人工追溯
+      - name: 输出镜像 digest
+        run: |
+          echo "### 发布结果" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 项 | 值 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 版本 | \`${{ needs.preflight.outputs.version }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| commit | \`${{ needs.preflight.outputs.commit }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 镜像 | \`${{ env.IMAGE_NAME }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| digest | \`${{ steps.meta.outputs.digest }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| latest | \`${{ needs.preflight.outputs.publish_latest }}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------------
+  # 闸门4：发布后回查。**不能只信 build-push 的 success**——
+  # 推送成功只说明字节传上去了，不说明传上去的是不是这次的代码。
+  # --------------------------------------------------------------------------
+  postflight:
+    name: 发布后一致性核对
+    needs: [preflight, build-push]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 回查 registry，核对镜像内的版本与 commit
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          EXPECT_VERSION: ${{ needs.preflight.outputs.version }}
+          EXPECT_COMMIT: ${{ needs.preflight.outputs.commit }}
+          PUBLISH_LATEST: ${{ needs.preflight.outputs.publish_latest }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+
+          repo = os.environ["IMAGE_NAME"]
+          exp_v = os.environ["EXPECT_VERSION"]
+          exp_c = os.environ["EXPECT_COMMIT"]
+          want_latest = os.environ.get("PUBLISH_LATEST") == "true"
+
+          def get(url, accept=None, token=None):
+              h = {"Accept": accept or "application/json"}
+              if token:
+                  h["Authorization"] = f"Bearer {token}"
+              return urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=60)
+
+          def token_for(repo):
+              u = ("https://auth.docker.io/token?service=registry.docker.io"
+                   f"&scope=repository:{repo}:pull")
+              return json.load(get(u))["token"]
+
+          def labels_of(tag, tk):
+              # manifest list -> 取 amd64 子 manifest -> 取 config blob -> 读 labels
+              base = f"https://registry-1.docker.io/v2/{repo}"
+              acc = ("application/vnd.oci.image.index.v1+json,"
+                     "application/vnd.docker.distribution.manifest.list.v2+json,"
+                     "application/vnd.oci.image.manifest.v1+json,"
+                     "application/vnd.docker.distribution.manifest.v2+json")
+              m = json.load(get(f"{base}/manifests/{tag}", acc, tk))
+              if "manifests" in m:
+                  pick = next((x for x in m["manifests"]
+                               if x.get("platform", {}).get("architecture") == "amd64"), None)
+                  if pick is None:
+                      raise RuntimeError("manifest list 中无 amd64")
+                  m = json.load(get(f"{base}/manifests/{pick['digest']}", acc, tk))
+              cfg = m["config"]["digest"]
+              return json.load(get(f"{base}/blobs/{cfg}", None, tk))["config"].get("Labels") or {}
+
+          fail = []
+          tk = token_for(repo)
+          for tag, is_latest in [(exp_v, False)] + ([("latest", True)] if want_latest else []):
+              try:
+                  lb = labels_of(tag, tk)
+              except Exception as exc:
+                  fail.append(f"读取 {repo}:{tag} 失败：{exc}")
+                  continue
+              got_v = lb.get("org.opencontainers.image.version", "")
+              got_c = lb.get("org.opencontainers.image.revision", "")
+              print(f"[{repo}:{tag}] version={got_v!r} revision={got_c!r}")
+              if got_v != exp_v:
+                  fail.append(f"`{tag}` 镜像内版本={got_v!r}，期望 {exp_v!r}")
+              if not got_c.startswith(exp_c[:7]):
+                  fail.append(f"`{tag}` 镜像内 commit={got_c!r}，期望 {exp_c[:7]}")
+
+          if fail:
+              print("::error::发布后一致性核对未通过")
+              for f in fail:
+                  print(f"::error::{f}")
+              sys.exit(1)
+          print("发布后核对通过：镜像内版本与 commit 均与本次提交一致")
+          PY
+
+      - name: 汇总核对结果
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> 发布后已回查 registry：镜像内 \`org.opencontainers.image.version\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "> 与 \`revision\` 均与本次提交一致。" >> "$GITHUB_STEP_SUMMARY"

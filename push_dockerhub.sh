@@ -29,10 +29,35 @@ fi
 
 echo ">>> 版本号真源 VERSION = ${TAG}"
 
+# VERSION 可能与 git tag 不一致（tag 忘了改、或手传了别的标签）。
+# 版本漂移最隐蔽的一种就在这一步：v1.0.41 的 tag 打出 :1.0.40 的镜像。
+if command -v git >/dev/null 2>&1 && [ -d .git ]; then
+  HEAD_TAGS="$(git tag --points-at HEAD 2>/dev/null | tr '\n' ' ')"
+  if [ -n "$HEAD_TAGS" ]; then
+    for t in $HEAD_TAGS; do
+      tv="${t#v}"
+      if printf '%s' "$tv" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' && [ "$tv" != "$TAG" ]; then
+        echo "  ✘ 版本漂移：HEAD 上的 tag \`${t}\` 与 VERSION(\`${TAG}\`) 不一致"
+        echo "     继续发布会打出 :${TAG} 镜像却带 ${t} 的 tag。"
+        echo "     修正：echo ${tv} > VERSION && git commit -am 'chore: 对齐版本号' && 重试"
+        exit 1
+      fi
+    done
+  fi
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "  ⚠ 工作区有未提交改动 —— 镜像将含未入库代码，无法溯源到任何 commit"
+  fi
+fi
+
 echo ">>> 检查本地镜像 ${IMAGE}"
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "镜像不存在，开始构建..."
-  docker build --target unified -t "$IMAGE" .
+  # 必须带上溯源信息，否则这个镜像无法被 check_release_consistency.py 校验，
+  # 也无法回答「这份镜像到底出自哪个 commit」。
+  docker build --target unified -t "$IMAGE" \
+    --build-arg "GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
+    --build-arg "BUILD_TIME=$(date '+%Y-%m-%dT%H:%M:%S%z')" \
+    .
 fi
 
 REMOTE="${NAMESPACE}/edu-ai-platform:${TAG}"

@@ -71,6 +71,22 @@ COPY backend/.env.example ./.env.example
 COPY VERSION ./VERSION
 ARG APP_VERSION=""
 ENV APP_VERSION=${APP_VERSION}
+
+# ---- 构建溯源信息（发版一致性校验用）----
+# 只有版本号是**不够**的：1.0.40 可以构建十次、内容各不相同。
+# 必须把「这份镜像到底出自哪个 commit」烧进镜像，才能断言
+# 「本地代码 == 镜像代码」。写入 LABEL（可 docker inspect 直读，
+# 无需启动容器）与 /app/BUILD_INFO（容器内可自查）两处。
+ARG GIT_COMMIT=""
+ARG BUILD_TIME=""
+LABEL org.opencontainers.image.version=${APP_VERSION} \
+      org.opencontainers.image.revision=${GIT_COMMIT} \
+      org.opencontainers.image.created=${BUILD_TIME}
+RUN printf 'version=%s\ncommit=%s\nbuilt_at=%s\n' \
+        "$(cat /app/VERSION 2>/dev/null || echo unknown)" \
+        "${GIT_COMMIT:-unknown}" "${BUILD_TIME:-unknown}" \
+        > /app/BUILD_INFO
+
 RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma
 
 EXPOSE 8000
@@ -101,6 +117,17 @@ COPY backend/app ./app
 COPY VERSION ./VERSION
 ARG APP_VERSION=""
 ENV APP_VERSION=${APP_VERSION}
+
+# ---- 构建溯源信息（与 backend 阶段保持一致，见该阶段注释）----
+ARG GIT_COMMIT=""
+ARG BUILD_TIME=""
+LABEL org.opencontainers.image.version=${APP_VERSION} \
+      org.opencontainers.image.revision=${GIT_COMMIT} \
+      org.opencontainers.image.created=${BUILD_TIME}
+RUN printf 'version=%s\ncommit=%s\nbuilt_at=%s\n' \
+        "$(cat /app/VERSION 2>/dev/null || echo unknown)" \
+        "${GIT_COMMIT:-unknown}" "${BUILD_TIME:-unknown}" \
+        > /app/BUILD_INFO
 
 # ---- 预热 ChromaDB 的默认 embedding 模型（约 79MB）----
 # 不预置的话，**每个全新容器首次做向量检索时都要现场下载**，

@@ -2,12 +2,13 @@
 # ================================================================
 # 九年义务教育 AI 学习管理系统 —— 自动交付流水线
 #
-# 流程：改动检测 → 端到端回归 → git commit → 构建镜像 → (可选)推送
+# 流程：改动检测 → 端到端回归 → git commit → git push → 构建镜像 → (可选)推送
 # 设计原则：**测试不过就不提交、不构建、不推送**（fail fast，绝不带病上线）
 #
 # 用法：
-#   ./tools/auto_ship.sh                  # 全流程（不推送）
+#   ./tools/auto_ship.sh                  # 全流程（不推送镜像）
 #   ./tools/auto_ship.sh --push           # 全流程 + 推送 Docker Hub
+#   ./tools/auto_ship.sh --no-push        # 不推 git（离线/临时验证用）
 #   ./tools/auto_ship.sh --msg "xxx"      # 自定义提交信息
 #   ./tools/auto_ship.sh --skip-test      # 跳过测试（仅提交+构建，慎用）
 #   ./tools/auto_ship.sh --bump patch     # 版本号 +1（1.0.8 -> 1.0.9）后交付
@@ -39,6 +40,7 @@ REGISTRY="${DOCKERHUB_REPO:-edu-ai-platform}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --push)      PUSH=1 ;;
+    --no-push)   NO_PUSH=1 ;;
     --skip-test) SKIP_TEST=1 ;;
     --dry-run)   DRY_RUN=1; SKIP_COMMIT=1 ;;
     --msg)       MSG="$2"; shift ;;
@@ -50,6 +52,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 SKIP_COMMIT="${SKIP_COMMIT:-0}"
+NO_PUSH="${NO_PUSH:-0}"
 
 # ---------- 输出helper ----------
 c_reset=$'\033[0m'; c_ok=$'\033[92m'; c_err=$'\033[91m'; c_warn=$'\033[93m'; c_info=$'\033[96m'
@@ -327,12 +330,42 @@ else
   ok "已提交 $(git rev-parse --short HEAD)"
 fi
 
+# ---------- 2b. git push ----------
+# 代码必须离开本机，否则镜像里烧的 commit 在远端不存在 —— 镜像无法溯源，
+# 也无法在 CI 复现。这一步以前是缺失的：本地一直领先远程若干提交，
+# 而构建照常进行，「本地比远程新」这个漂移从未被发现。
+step "2b/5  推送到远程仓库"
+if [ "$NO_PUSH" -eq 1 ]; then
+  echo "  ${c_warn}已跳过（--no-push）${c_reset}"
+else
+  BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  if git push origin "$BRANCH"; then
+    ok "已推送 origin/${BRANCH}"
+  else
+    die 2 "git push 失败 —— 代码未进入远程，构建出的镜像将无法溯源"
+  fi
+fi
+
 # ---------- 3. 构建正式镜像 ----------
 step "3/5  构建镜像 ${REGISTRY}:${VERSION}"
+
+# 构建前一致性校验：确认 VERSION 已提交、已推送、tag 自洽。
+# **必须在 git commit 之后**跑 —— 此时工作区应干净，commit 已是最终的。
+# 不通过就不构建：一个无法溯源的镜像会静默覆盖线上，比不构建更糟。
+GATE_PRE_RC=0
+"$GATE_PY" tools/check_release_consistency.py --pre --no-image || GATE_PRE_RC=$?
+if [ "$GATE_PRE_RC" -ne 0 ]; then
+  die 3 "发布前一致性校验未通过（见上方明细），已中止构建"
+fi
+
 FINAL_LOCAL="edu-ai-platform:${VERSION}"
+GIT_COMMIT="$(git rev-parse HEAD)"
 if docker build --target unified -t "$FINAL_LOCAL" \
-      --build-arg "APP_VERSION=${VERSION}" -f Dockerfile . > /tmp/autoship_final.log 2>&1; then
-  ok "镜像构建完成：$FINAL_LOCAL"
+      --build-arg "APP_VERSION=${VERSION}" \
+      --build-arg "GIT_COMMIT=${GIT_COMMIT}" \
+      --build-arg "BUILD_TIME=$(date '+%Y-%m-%dT%H:%M:%S%z')" \
+      -f Dockerfile . > /tmp/autoship_final.log 2>&1; then
+  ok "镜像构建完成：$FINAL_LOCAL（commit ${GIT_COMMIT:0:7}）"
 else
   tail -30 /tmp/autoship_final.log
   die 3 "正式镜像构建失败，详见 /tmp/autoship_final.log"
@@ -351,6 +384,13 @@ if [ "$PUSH" -eq 1 ]; then
   docker tag "$FINAL_LOCAL" "$REMOTE" && docker tag "$FINAL_LOCAL" "${NAMESPACE}/${REGISTRY}:latest"
   docker push "$REMOTE" && docker push "${NAMESPACE}/${REGISTRY}:latest" \
     && ok "已推送 $REMOTE" || die 3 "推送失败"
+
+  # 推送后回查：不能只信 docker push 的退出码——它只说明字节传上去了，
+  # 不说明传上去的是不是这次的代码。这里比对远端镜像内的版本与 commit 指纹。
+  step "4b/5  发布后一致性核对"
+  if ! "$GATE_PY" tools/check_release_consistency.py --post --repo "${NAMESPACE}/${REGISTRY}"; then
+    die 4 "发布后核对未通过：远端镜像与本地代码不一致，请检查 tag/latest 指向"
+  fi
 else
   step "4/5  推送 —— 已跳过（加 --push 启用）"
   echo "  手动推送：./push_dockerhub.sh ${NAMESPACE} ${VERSION}"
