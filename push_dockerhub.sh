@@ -55,6 +55,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   # 必须带上溯源信息，否则这个镜像无法被 check_release_consistency.py 校验，
   # 也无法回答「这份镜像到底出自哪个 commit」。
   docker build --target unified -t "$IMAGE" \
+    --build-arg "APP_VERSION=${TAG}" \
     --build-arg "GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
     --build-arg "BUILD_TIME=$(date '+%Y-%m-%dT%H:%M:%S%z')" \
     .
