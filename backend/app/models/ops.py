@@ -183,9 +183,14 @@ class AgentJob(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, index=True)
-    agent: Mapped[str] = mapped_column(String(32), index=True, comment="question/paper")
+    agent: Mapped[str] = mapped_column(String(32), index=True, comment="question/paper/lesson")
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True,
                                         comment="pending/running/success/failed")
+    # 进度提示：教案生成要跑多个环节（解析条件→拟定目标→展开过程→校验补全），
+    # 前端需要在等待期给出「正在做什么」，否则 30s 空白页等同于卡死。
+    progress: Mapped[int] = mapped_column(Integer, default=0, comment="进度百分比 0-100")
+    stage: Mapped[Optional[str]] = mapped_column(String(64), nullable=True,
+                                                 comment="当前环节名称（面向用户展示）")
     params: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="请求参数 JSON")
     result: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="结果 JSON")
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

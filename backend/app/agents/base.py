@@ -277,6 +277,7 @@ def register_agent(agent: BaseAgent) -> None:
 def load_agents() -> Dict[str, BaseAgent]:
     """加载全部业务 Agent。"""
     from app.agents.grading_agent import GradingAgent
+    from app.agents.lesson_agent import LessonPlanAgent
     from app.agents.note_agent import NoteOrganizerAgent
     from app.agents.paper_agent import PaperComposerAgent
     from app.agents.question_agent import QuestionGeneratorAgent
@@ -287,7 +288,7 @@ def load_agents() -> Dict[str, BaseAgent]:
     # 缺失会导致前端 Agent 中心少显示一个，且 is_fallback 永远为 false。
     for cls in (
         RouterAgent, QuestionGeneratorAgent, PaperComposerAgent, GradingAgent,
-        StudyPlannerAgent, TutorAgent, NoteOrganizerAgent,
+        StudyPlannerAgent, TutorAgent, NoteOrganizerAgent, LessonPlanAgent,
     ):
         register_agent(cls())
     return AGENT_REGISTRY

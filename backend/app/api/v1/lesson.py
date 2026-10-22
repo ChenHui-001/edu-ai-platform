@@ -170,9 +170,13 @@ def create_plan(
         objectives=data.get("objectives") or "",
         key_points=data.get("key_points") or "",
         difficulties=data.get("difficulties") or "",
+        teaching_preparation=data.get("teaching_preparation"),
+        class_exercise=data.get("class_exercise"),
         board_design=data.get("board_design"),
         homework=data.get("homework"),
         reflection=data.get("reflection"),
+        ai_generated=1 if data.get("ai_generated") else 0,
+        ai_job_id=data.get("ai_job_id"),
         creator_id=user.id, is_shared=0,
     )
     db.add(plan)
@@ -186,6 +190,8 @@ def create_plan(
             lesson_id=plan.id, name=s["name"],
             duration_minutes=int(s.get("duration_minutes") or 5),
             content=s.get("content") or "",
+            teacher_activity=s.get("teacher_activity"),
+            student_activity=s.get("student_activity"),
             sort_order=s.get("sort_order", i),
         ))
     db.commit()
@@ -209,6 +215,7 @@ def update_plan(
     # 可改字段
     for f in ("title", "topic", "textbook_version", "period",
               "objectives", "key_points", "difficulties",
+              "teaching_preparation", "class_exercise",
               "board_design", "homework", "reflection", "is_shared"):
         if f in data:
             setattr(plan, f, data[f])
@@ -228,6 +235,8 @@ def update_plan(
                 lesson_id=plan.id, name=s["name"],
                 duration_minutes=int(s.get("duration_minutes") or 5),
                 content=s.get("content") or "",
+                teacher_activity=s.get("teacher_activity"),
+                student_activity=s.get("student_activity"),
                 sort_order=s.get("sort_order", i),
             ))
     plan.updated_at = now_local()
@@ -281,8 +290,14 @@ def copy_plan(plan_id: int, data: Dict[str, Any] = Body(default={}),
         knowledge_point_id=src.knowledge_point_id,
         duration_minutes=src.duration_minutes, period=src.period,
         objectives=src.objectives, key_points=src.key_points,
-        difficulties=src.difficulties, board_design=src.board_design,
+        difficulties=src.difficulties,
+        teaching_preparation=src.teaching_preparation,
+        class_exercise=src.class_exercise,
+        board_design=src.board_design,
         homework=src.homework, reflection=src.reflection,
+        # 副本不继承 ai_job_id（那条任务记录属于原作者，与副本无溯源关系），
+        # 但保留 ai_generated 标记，便于教案库区分内容来源
+        ai_generated=src.ai_generated, ai_job_id=None,
         creator_id=user.id, is_shared=0,
     )
     db.add(plan)
@@ -291,6 +306,8 @@ def copy_plan(plan_id: int, data: Dict[str, Any] = Body(default={}),
         db.add(LessonStage(
             lesson_id=plan.id, name=s.name,
             duration_minutes=s.duration_minutes, content=s.content,
+            teacher_activity=s.teacher_activity,
+            student_activity=s.student_activity,
             sort_order=s.sort_order,
         ))
     src.use_count += 1

@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
     # v1.0.19: Attachment 业务绑定（教案/作业等按 biz_type+biz_id 挂附件）
     ("sys_attachment", "biz_type", "VARCHAR(32)"),
+    # v1.0.42: AI 教案 —— 教案主体补齐「教学准备 / 课堂练习」与生成溯源，
+    # 教学过程补「师生活动」分列。AI 教案要求这些是独立章节，
+    # 老库没有该列时 create_all 不会补，读写即 500。
+    ("edu_lesson_plan", "teaching_preparation", "TEXT"),
+    ("edu_lesson_plan", "class_exercise", "TEXT"),
+    ("edu_lesson_plan", "ai_generated", "INTEGER DEFAULT 0"),
+    ("edu_lesson_plan", "ai_job_id", "INTEGER"),
+    ("edu_lesson_stage", "teacher_activity", "TEXT"),
+    ("edu_lesson_stage", "student_activity", "TEXT"),
+    # v1.0.42: AI 任务进度提示（前后端轮询要给出「正在做什么」）
+    ("sys_agent_job", "progress", "INTEGER DEFAULT 0"),
+    ("sys_agent_job", "stage", "VARCHAR(64)"),
 ]
 
 

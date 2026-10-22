@@ -33,7 +33,9 @@ def run():
         k in st for k in ("llm_enabled", "provider", "model", "orchestrator_mode", "agents")),
         f"llm={st.get('llm_enabled')} provider={st.get('provider')} "
         f"agents={st.get('agents')} mode={st.get('orchestrator_mode')}")
-    check("Agent 注册数为 7（Router+6 专业）", st.get("agents") == 7,
+    # 不写死具体数字：每加一个 Agent 就要改测试，是「断言写死产量」的老毛病。
+    # 断言语义 = 至少 8 个（Router + 7 个专业 Agent）。
+    check("Agent 注册数 ≥ 8（Router+7 专业）", (st.get("agents") or 0) >= 8,
           f"agents={st.get('agents')}")
 
     p, _, _ = admin.get("/agent/list")

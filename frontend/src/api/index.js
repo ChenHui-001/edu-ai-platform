@@ -269,3 +269,17 @@ export const lessonApi = {
   removeAttachment: (planId, attId) => request.delete(
     `/lesson/plans/${planId}/attachments/${attId}`)
 }
+
+// ---------------- AI 教案（异步任务 + 轮询） ----------------
+// 生成走异步任务：真实 LLM 下 20~60s，同步 HTTP 会被网关截断成 502/超时。
+export const lessonAiApi = {
+  // 表单候选（学科按年级过滤 —— 不传 grade_id 会返回 60+ 同名学科）
+  options: (gradeId) => request.get('/lesson/ai/options',
+    { params: gradeId ? { grade_id: gradeId } : {} }),
+  generate: (data) => request.post('/lesson/ai/generate', data),
+  job: (id) => request.get(`/lesson/ai/jobs/${id}`),
+  jobs: (limit) => request.get('/lesson/ai/jobs', { params: { limit: limit || 20 } }),
+  save: (id, data) => request.post(`/lesson/ai/jobs/${id}/save`, data || {}),
+  // 导出是二进制下载，不走统一的 JSON 拦截器，直接用 blob
+  exportUrl: (id) => `/api/v1/lesson/ai/jobs/${id}/export`
+}

@@ -7,7 +7,10 @@
         <el-button :icon="CopyDocument" @click="onlyMine = !onlyMine; load()">
           {{ onlyMine ? '看共享' : '只看我的' }}
         </el-button>
-        <el-button v-if="can('lesson:plan:write')" type="primary" :icon="Plus"
+        <el-button :icon="Clock" @click="openHistory">生成记录</el-button>
+        <el-button v-if="can('lesson:plan:write')" type="primary" :icon="MagicStick"
+                   @click="aiVisible = true">AI 生成教案</el-button>
+        <el-button v-if="can('lesson:plan:write')" :icon="Plus"
                    @click="openDialog()">新建教案</el-button>
       </div>
     </div>
@@ -58,6 +61,12 @@
           <template #default="{ row }">
             <el-tag v-if="row.is_shared" type="success" size="small">已共享</el-tag>
             <el-tag v-else type="info" size="small">私有</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" width="86" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.ai_generated" type="warning" size="small">AI</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">人工</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="更新时间" width="160" prop="updated_at" />
@@ -136,36 +145,59 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="教学重点">
-              <el-input v-model="form.key_points" type="textarea" :rows="4" />
+            <el-form-item label="教学准备">
+              <el-input v-model="form.teaching_preparation" type="textarea" :rows="4"
+                        placeholder="教师准备（课件/教具）与学生准备（学具/预习）" />
             </el-form-item>
           </el-col>
         </el-row>
         <el-row :gutter="10">
           <el-col :span="12">
+            <el-form-item label="教学重点">
+              <el-input v-model="form.key_points" type="textarea" :rows="4" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
             <el-form-item label="教学难点">
               <el-input v-model="form.difficulties" type="textarea" :rows="4" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
-            <el-form-item label="板书设计">
-              <el-input v-model="form.board_design" type="textarea" :rows="4" />
-            </el-form-item>
-          </el-col>
         </el-row>
+        <el-form-item label="板书设计">
+          <el-input v-model="form.board_design" type="textarea" :rows="3" />
+        </el-form-item>
         <el-divider content-position="left">教学过程</el-divider>
-        <div v-for="(stage, i) in form.stages" :key="i" class="stage-row">
-          <el-input v-model="stage.name" placeholder="阶段名（导入/新授/练习/小结/作业）"
-                    style="width:200px" class="mr8" />
-          <el-input-number v-model="stage.duration_minutes" :min="1" :max="60" :step="1"
-                           style="width:100px" class="mr8" />
-          <el-input v-model="stage.content" type="textarea" :rows="2"
-                    placeholder="教师活动 / 学生活动" />
-          <el-button :icon="Delete" link type="danger" @click="form.stages.splice(i, 1)" />
+        <div v-for="(stage, i) in form.stages" :key="i" class="stage-block">
+          <div class="stage-head">
+            <el-input v-model="stage.name" placeholder="阶段名（导入/新授/练习/小结/作业）"
+                      style="width:200px" size="small" />
+            <el-input-number v-model="stage.duration_minutes" :min="1" :max="120" :step="1"
+                             size="small" style="width:110px" />
+            <span class="stage-unit">分钟</span>
+            <span class="stage-spacer" />
+            <el-button :icon="Delete" link type="danger"
+                       @click="form.stages.splice(i, 1)">删除</el-button>
+          </div>
+          <el-row :gutter="8">
+            <el-col :span="12">
+              <el-input v-model="stage.teacher_activity" type="textarea" :rows="3"
+                        placeholder="教师活动：具体动作与关键提问" />
+            </el-col>
+            <el-col :span="12">
+              <el-input v-model="stage.student_activity" type="textarea" :rows="3"
+                        placeholder="学生活动：具体任务与预期表现" />
+            </el-col>
+          </el-row>
+          <el-input v-model="stage.content" type="textarea" :rows="2" class="mt4"
+                    placeholder="设计意图（可选）" />
         </div>
         <el-button :icon="Plus" plain size="small" @click="addStage" class="mt8">添加阶段</el-button>
 
-        <el-form-item label="作业布置" class="mt12">
+        <el-form-item label="课堂练习" class="mt12">
+          <el-input v-model="form.class_exercise" type="textarea" :rows="3"
+                    placeholder="随堂检测题，建议附参考答案" />
+        </el-form-item>
+        <el-form-item label="作业布置">
           <el-input v-model="form.homework" type="textarea" :rows="2" />
         </el-form-item>
         <el-form-item label="教学反思">
@@ -213,6 +245,38 @@
         <el-button type="primary" :loading="saving" @click="save">保存教案</el-button>
       </template>
     </el-dialog>
+
+    <!-- AI 生成教案（条件 → 进度 → 预览编辑 → 入库） -->
+    <AiLessonDialog v-model="aiVisible" :default-grade-id="query.grade_id"
+                    :default-subject-id="query.subject_id"
+                    :resume-job-id="aiResumeJobId" @saved="onAiSaved" />
+
+    <!-- 生成记录：后台跑的、失败的任务都能在这里找回 -->
+    <el-drawer v-model="historyVisible" title="AI 生成记录" size="620px">
+      <el-table v-loading="historyLoading" :data="history" size="small" border>
+        <el-table-column prop="topic" label="教学主题" min-width="160" show-overflow-tooltip />
+        <el-table-column label="状态" width="92" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'success'" type="success" size="small">已完成</el-tag>
+            <el-tag v-else-if="row.status === 'failed'" type="danger" size="small">失败</el-tag>
+            <el-tag v-else type="warning" size="small">{{ row.progress }}%</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="duration_minutes" label="课时" width="70" align="center" />
+        <el-table-column prop="created_at" label="提交时间" width="150" />
+        <el-table-column label="操作" width="110" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small"
+                       :disabled="row.status !== 'success'"
+                       @click="viewHistoryJob(row)">查看</el-button>
+            <el-button link type="danger" size="small" v-if="row.error"
+                       @click="showJobError(row)">原因</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!historyLoading && !history.length"
+                description="还没有生成记录，点右上角「AI 生成教案」开始" />
+    </el-drawer>
   </div>
 </template>
 
@@ -220,10 +284,12 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Plus, Refresh, RefreshLeft, Search, Delete, CopyDocument, UploadFilled
+  Plus, Refresh, RefreshLeft, Search, Delete, CopyDocument, UploadFilled,
+  MagicStick, Clock
 } from '@element-plus/icons-vue'
-import { lessonApi, attachmentApi, eduApi } from '@/api'
+import { lessonApi, lessonAiApi, attachmentApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import AiLessonDialog from './AiLessonDialog.vue'
 
 const { can } = useUserStore()
 const meId = (window.localStorage.getItem('user') &&
@@ -264,6 +330,7 @@ const form = reactive({
   id: null, title: '', topic: '', subject_id: null, grade_id: null,
   knowledge_point_id: null, duration_minutes: 45, period: '',
   objectives: '', key_points: '', difficulties: '',
+  teaching_preparation: '', class_exercise: '',
   board_design: '', homework: '', reflection: '',
   is_shared: false, stages: []
 })
@@ -276,7 +343,10 @@ const rules = {
 }
 
 function addStage() {
-  form.stages.push({ name: '', duration_minutes: 5, content: '' })
+  form.stages.push({
+    name: '', duration_minutes: 5, content: '',
+    teacher_activity: '', student_activity: ''
+  })
 }
 
 async function openDialog(row) {
@@ -293,11 +363,17 @@ async function openDialog(row) {
       objectives: d.objectives || '',
       key_points: d.key_points || '',
       difficulties: d.difficulties || '',
+      teaching_preparation: d.teaching_preparation || '',
+      class_exercise: d.class_exercise || '',
       board_design: d.board_design || '',
       homework: d.homework || '',
       reflection: d.reflection || '',
       is_shared: !!d.is_shared,
-      stages: (d.stages || []).map(s => ({ ...s }))
+      stages: (d.stages || []).map(s => ({
+        ...s,
+        teacher_activity: s.teacher_activity || '',
+        student_activity: s.student_activity || ''
+      }))
     })
     if (form.subject_id && form.grade_id) {
       await loadFormKnowledge(form.grade_id, form.subject_id)
@@ -309,15 +385,16 @@ async function openDialog(row) {
       grade_id: query.grade_id, knowledge_point_id: null,
       duration_minutes: 45, period: '',
       objectives: '', key_points: '', difficulties: '',
+      teaching_preparation: '', class_exercise: '',
       board_design: '', homework: '', reflection: '',
       is_shared: false, stages: []
     })
     attachments.value = []
-    form.stages.push({ name: '导入', duration_minutes: 3, content: '' })
-    form.stages.push({ name: '新课讲授', duration_minutes: 25, content: '' })
-    form.stages.push({ name: '课堂练习', duration_minutes: 10, content: '' })
-    form.stages.push({ name: '课堂小结', duration_minutes: 5, content: '' })
-    form.stages.push({ name: '布置作业', duration_minutes: 2, content: '' })
+    form.stages.push({ name: '导入', duration_minutes: 3, content: '', teacher_activity: '', student_activity: '' })
+    form.stages.push({ name: '新课讲授', duration_minutes: 25, content: '', teacher_activity: '', student_activity: '' })
+    form.stages.push({ name: '课堂练习', duration_minutes: 10, content: '', teacher_activity: '', student_activity: '' })
+    form.stages.push({ name: '课堂小结', duration_minutes: 5, content: '', teacher_activity: '', student_activity: '' })
+    form.stages.push({ name: '布置作业', duration_minutes: 2, content: '', teacher_activity: '', student_activity: '' })
   }
   dialogVisible.value = true
 }
@@ -419,6 +496,42 @@ async function remove(row) {
   load()
 }
 
+// ---------------- AI 生成教案 ----------------
+const aiVisible = ref(false)
+const aiResumeJobId = ref(null)
+const historyVisible = ref(false)
+const historyLoading = ref(false)
+const history = ref([])
+
+function onAiSaved() {
+  aiResumeJobId.value = null
+  load()
+  if (historyVisible.value) openHistory()
+}
+
+async function openHistory() {
+  historyVisible.value = true
+  historyLoading.value = true
+  try {
+    const r = await lessonAiApi.jobs(30)
+    history.value = r.data?.items || []
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+function showJobError(row) {
+  ElMessageBox.alert(row.error || '生成失败', `任务 #${row.job_id} 失败原因`,
+    { type: 'error' })
+}
+
+// 从历史记录恢复一次生成结果：交给弹窗按 jobId 拉完整正文并直接进预览
+function viewHistoryJob(row) {
+  historyVisible.value = false
+  aiResumeJobId.value = row.job_id
+  aiVisible.value = true
+}
+
 onMounted(async () => {
   const [g, s] = await Promise.all([
     eduApi.grades(),
@@ -432,7 +545,19 @@ onMounted(async () => {
 
 <style scoped>
 .filter-card { margin-bottom: 12px; }
-.stage-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.stage-block {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px; padding: 10px; margin-bottom: 10px;
+}
+.stage-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.stage-unit { font-size: 13px; color: var(--el-text-color-secondary); }
+.stage-spacer { flex: 1; }
+.mt4 { margin-top: 4px; }
+.mt8 { margin-top: 8px; }
+.mt12 { margin-top: 12px; }
+.mt16 { margin-top: 16px; }
+.mr4 { margin-right: 4px; }
+.w-full { width: 100%; }
 .att-block { width: 100%; }
 .att-list { display: flex; flex-direction: column; gap: 6px; }
 .att-item { display: flex; align-items: center; gap: 4px; font-size: 13px; }
