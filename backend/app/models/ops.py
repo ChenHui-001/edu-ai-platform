@@ -2,11 +2,11 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 
 class LoginLog(Base):
@@ -25,7 +25,7 @@ class LoginLog(Base):
     device: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, comment="浏览器/设备信息")
     os: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     is_abnormal: Mapped[bool] = mapped_column(Boolean, default=False, index=True, comment="异地登录等异常")
-    login_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    login_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
 
 class OperationLog(Base):
@@ -46,7 +46,7 @@ class OperationLog(Base):
     status: Mapped[str] = mapped_column(String(16), default="success")
     error_msg: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
 
 class ErrorLog(Base):
@@ -61,7 +61,7 @@ class ErrorLog(Base):
     message: Mapped[str] = mapped_column(Text)
     traceback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
 
 class ScheduledJob(Base):
@@ -81,7 +81,7 @@ class ScheduledJob(Base):
     last_status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     run_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
 
 class JobExecutionLog(Base):
@@ -93,7 +93,7 @@ class JobExecutionLog(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("sys_scheduled_job.id", ondelete="CASCADE"), index=True)
     job_name: Mapped[str] = mapped_column(String(128), index=True)
     status: Mapped[str] = mapped_column(String(16), default="running", index=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -117,7 +117,7 @@ class Attachment(Base):
     uploader_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
     download_count: Mapped[int] = mapped_column(Integer, default=0)
     is_temp: Mapped[bool] = mapped_column(Boolean, default=True, index=True, comment="临时附件定时清理")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
 
 class AgentCallLog(Base):
@@ -138,7 +138,7 @@ class AgentCallLog(Base):
     is_fallback: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否走了规则引擎降级")
     biz_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     biz_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
 
 class Notification(Base):
@@ -154,7 +154,7 @@ class Notification(Base):
     biz_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     biz_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
 class AgentRate(Base):
     """AI 接口限流计数（按用户 + 分钟窗口，DB 共享以支持多实例）。
@@ -169,7 +169,7 @@ class AgentRate(Base):
     window_minute: Mapped[int] = mapped_column(Integer, primary_key=True,
                                                comment="epoch 分钟数，作窗口键")
     count: Mapped[int] = mapped_column(Integer, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
 
 class AgentJob(Base):
@@ -189,6 +189,6 @@ class AgentJob(Base):
     params: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="请求参数 JSON")
     result: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="结果 JSON")
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

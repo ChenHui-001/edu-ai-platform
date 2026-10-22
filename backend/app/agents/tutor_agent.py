@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
 from app.agents.rag import build_context, search
-from app.models import KnowledgePoint, Note, Question
+from app.models import Note, Question
 
 
 class TutorAgent(BaseAgent):

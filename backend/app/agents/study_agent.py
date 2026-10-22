@@ -1,6 +1,6 @@
 """5.4 学习规划 Agent：分析学习数据，生成个性化学习与复习计划。"""
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -8,10 +8,10 @@ from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.models import (
-    Answer, KnowledgeMastery, KnowledgePoint, Question, StudyRecord, Submission,
+    Answer, KnowledgeMastery, KnowledgePoint, StudyRecord, Submission,
     WrongQuestion,
 )
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 
 class StudyPlannerAgent(BaseAgent):
@@ -121,7 +121,7 @@ class StudyPlannerAgent(BaseAgent):
         points.sort(key=lambda x: x["mastery"])
 
         # 近 7 天学习时长
-        since = (utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        since = (now_local() - timedelta(days=7)).strftime("%Y-%m-%d")
         study_minutes = (db.scalar(
             select(func.coalesce(func.sum(StudyRecord.study_seconds), 0)).where(
                 StudyRecord.student_id == student_id, StudyRecord.study_date >= since
@@ -182,7 +182,7 @@ class StudyPlannerAgent(BaseAgent):
             weak = analysis["knowledge_points"][:days] or [{"name": "综合复习", "knowledge_point_id": 0}]
             for i in range(len(daily), days):
                 p = weak[i % len(weak)]
-                date = (utcnow() + timedelta(days=i + 1)).strftime("%Y-%m-%d")
+                date = (now_local() + timedelta(days=i + 1)).strftime("%Y-%m-%d")
                 daily.append({
                     "date": date, "duration": daily_minutes,
                     "tasks": [{"type": "practice",
@@ -204,7 +204,7 @@ class StudyPlannerAgent(BaseAgent):
 
         daily_plan, review_dates = [], []
         for i in range(days):
-            date = (utcnow() + timedelta(days=i + 1)).strftime("%Y-%m-%d")
+            date = (now_local() + timedelta(days=i + 1)).strftime("%Y-%m-%d")
             p = weak[i % len(weak)]
             tasks = [
                 {"type": "review", "content": f"复习「{p['name']}」笔记与公式，5-10 分钟", "target": p["name"]},
@@ -214,7 +214,7 @@ class StudyPlannerAgent(BaseAgent):
             daily_plan.append({"date": date, "duration": daily_minutes, "tasks": tasks})
             # 艾宾浩斯间隔
             for stage, interval in enumerate(settings.REVIEW_INTERVALS[: days]):
-                d = (utcnow() + timedelta(days=interval)).strftime("%Y-%m-%d")
+                d = (now_local() + timedelta(days=interval)).strftime("%Y-%m-%d")
                 review_dates.append({
                     "knowledge_point_id": p["knowledge_point_id"], "name": p["name"],
                     "dates": [d], "stage": stage + 1,
@@ -243,7 +243,7 @@ class StudyPlannerAgent(BaseAgent):
     @staticmethod
     def _persist_review_plan(db: Session, student_id: int, plan: Dict[str, Any]) -> int:
         """将复习计划写入数据库。"""
-        from app.models import ReviewPlan, Subject, WrongQuestion
+        from app.models import ReviewPlan, WrongQuestion
 
         # 关键：把复习节点关联到具体错题。
         # 否则 /learning/review/plans/{id}/complete 里「连续完成 2 轮 → 标记错题已掌握」

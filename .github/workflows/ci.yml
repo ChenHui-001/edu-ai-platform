@@ -27,6 +27,18 @@ jobs:
         working-directory: backend
         run: python -m compileall -q app
 
+      - name: 用例静态门禁（硬编码地址 / 恒真断言 / F 类缺陷 / 时间契约）
+        # 这几类共同点：**本地默认环境下完全看不出来**，只在换端口、
+        # 换环境或走到特定分支时才炸，且症状伪装成业务 bug
+        # （401 / 报告可生成但实际失败 / NameError / 时区假失败）。
+        # 放到这里是为了把它们从「35 分钟后全量才发现」提前到「30 秒静态扫描」。
+        run: |
+          python tools/check_hardcoded_host.py
+          python tools/check_weak_assertion.py
+          python tools/check_time_contract.py
+          pip install -q ruff
+          python tools/lint_gate.py
+
       - name: 应用导入与建表检查
         working-directory: backend
         env:

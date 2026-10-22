@@ -17,7 +17,7 @@ from app.core.security import (
     revoke_token, store_captcha, verify_captcha,
 )
 from app.core.logger import get_logger
-from app.models import Registration, User, UserStatus
+from app.models import Registration, User
 from app.services import auth_service
 from app.utils.common import dictify, ok
 

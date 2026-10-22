@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Te
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 
 class Note(Base):
@@ -33,8 +33,8 @@ class Note(Base):
     view_count: Mapped[int] = mapped_column(Integer, default=0)
     is_shared: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
 
 class KnowledgeMastery(Base):
@@ -53,7 +53,7 @@ class KnowledgeMastery(Base):
     wrong_count: Mapped[int] = mapped_column(Integer, default=0)
     study_seconds: Mapped[int] = mapped_column(Integer, default=0)
     last_practice_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
     @property
     def accuracy(self) -> float:
@@ -76,7 +76,7 @@ class ReviewPlan(Base):
     is_completed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     correct_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
 
 class StudyRecord(Base):
@@ -93,7 +93,7 @@ class StudyRecord(Base):
     question_count: Mapped[int] = mapped_column(Integer, default=0)
     correct_count: Mapped[int] = mapped_column(Integer, default=0)
     note_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
 
 class QuestionFavorite(Base):
@@ -106,7 +106,7 @@ class QuestionFavorite(Base):
     question_id: Mapped[int] = mapped_column(ForeignKey("edu_question.id", ondelete="CASCADE"), index=True)
     tag: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True, comment="自定义标签：考前必看/易错/经典")
     note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="收藏备注")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
 
 class StudyGoal(Base):
@@ -125,8 +125,8 @@ class StudyGoal(Base):
     start_date: Mapped[str] = mapped_column(String(10), default="", comment="开始日期 YYYY-MM-DD")
     end_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, comment="结束日期")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
 
 class StudyCheckin(Base):
@@ -141,4 +141,4 @@ class StudyCheckin(Base):
     actual_value: Mapped[int] = mapped_column(Integer, default=0, comment="实际完成量")
     streak: Mapped[int] = mapped_column(Integer, default=1, comment="当前连续打卡天数")
     note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)

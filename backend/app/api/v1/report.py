@@ -3,10 +3,10 @@ import io
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
-from sqlalchemy import case, desc, func, or_, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -19,7 +19,7 @@ from app.models import (
     AgentCallLog, Answer, Class, ErrorLog, Grade, KnowledgeMastery, KnowledgePoint,
     Note, Paper, Question, StudyRecord, Submission, Subject, Task, User, WrongQuestion,
 )
-from app.utils.common import PageParams, dictify, ok, utcnow
+from app.utils.common import dictify, now_local, ok
 
 router = APIRouter(prefix="/report", tags=["数据报表"])
 
@@ -27,9 +27,9 @@ router = APIRouter(prefix="/report", tags=["数据报表"])
 # ================================================================ 学生端
 @router.get("/student/overview", summary="个人学习总览")
 def student_overview(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    today = utcnow().strftime("%Y-%m-%d")
-    since7 = (utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
-    since30 = (utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
+    today = now_local().strftime("%Y-%m-%d")
+    since7 = (now_local() - timedelta(days=7)).strftime("%Y-%m-%d")
+    since30 = (now_local() - timedelta(days=30)).strftime("%Y-%m-%d")
 
     def _study(days_field: str = "7"):
         return db.scalar(
@@ -160,7 +160,7 @@ def wrong_analysis(
         .limit(10)
     ).all()
 
-    since = (utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
+    since = (now_local() - timedelta(days=30)).strftime("%Y-%m-%d")
     trend = db.execute(
         select(WrongQuestion.last_wrong_at, func.count()).where(
             WrongQuestion.id.in_(select(scoped.c.id)),
@@ -550,7 +550,7 @@ def admin_overview(
 
     from app.models import Note
 
-    since7 = utcnow() - timedelta(days=7)
+    since7 = now_local() - timedelta(days=7)
     active_7d = db.scalar(
         select(func.count(func.distinct(User.id))).where(User.last_login_at >= since7)
     ) or 0
@@ -698,7 +698,7 @@ def subject_comparison(
 def system_runtime(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
     from app.services.scheduler import scheduler_status
 
-    since = utcnow() - timedelta(days=1)
+    since = now_local() - timedelta(days=1)
     return ok({
         "scheduler": scheduler_status(),
         "ai_calls_24h": db.scalar(

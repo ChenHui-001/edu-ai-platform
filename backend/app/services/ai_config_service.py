@@ -141,10 +141,8 @@ def get_ai_config(db: Session) -> Dict[str, Any]:
         if "key" in key.lower() and val:
             sv = str(val)
             config[key.upper()] = (sv if len(sv) <= 8 else f"{sv[:4]}****{sv[-4:]}")
-            meta_key = f"{key}_has_value"
         else:
             config[key.upper()] = val
-            meta_key = None
         meta[key] = {
             "label": spec["label"],
             "description": spec["description"],

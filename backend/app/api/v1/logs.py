@@ -1,6 +1,6 @@
 """日志审计与定时任务管理接口。"""
 import io
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -8,13 +8,13 @@ from openpyxl import Workbook
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_current_manager, get_current_user
+from app.api.deps import get_current_admin, get_current_manager
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import (
     ErrorLog, JobExecutionLog, LoginLog, OperationLog, ScheduledJob, User,
 )
-from app.utils.common import PageParams, dictify, ok, utcnow
+from app.utils.common import PageParams, dictify, ok
 
 router = APIRouter(prefix="/logs", tags=["日志与任务"])
 

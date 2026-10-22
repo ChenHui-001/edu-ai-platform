@@ -4,12 +4,12 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+    Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 
 class QuestionType(str, enum.Enum):
@@ -74,8 +74,8 @@ class Question(Base):
     source: Mapped[str] = mapped_column(String(32), default="manual", comment="manual/ai_import")
     usage_count: Mapped[int] = mapped_column(Integer, default=0, comment="被使用次数")
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
 
 class QuestionKnowledge(Base):
@@ -109,8 +109,8 @@ class Paper(Base):
     is_shared: Mapped[bool] = mapped_column(Boolean, default=False, comment="共享给同科教师")
     use_count: Mapped[int] = mapped_column(Integer, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
     items: Mapped[List["PaperItem"]] = relationship(
         back_populates="paper", cascade="all, delete-orphan", order_by="PaperItem.sort_order", lazy="selectin"
@@ -142,4 +142,4 @@ class PaperShare(Base):
     paper_id: Mapped[int] = mapped_column(ForeignKey("edu_paper.id", ondelete="CASCADE"), index=True)
     from_user_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id", ondelete="CASCADE"))
     to_user_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)

@@ -1,7 +1,7 @@
 """题库与试卷接口。"""
 import io
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -10,14 +10,14 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.agents.rag import index_question
-from app.api.deps import DataScope, get_current_teacher, get_current_user, get_data_scope
+from app.api.deps import get_current_teacher
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
     Grade, KnowledgePoint, Paper, PaperItem, PaperShare, Question, QuestionBankType,
     QuestionStatus, Subject, User,
 )
-from app.utils.common import PageParams, dictify, ok, utcnow
+from app.utils.common import PageParams, dictify, ok
 
 router = APIRouter(prefix="/question", tags=["题库与试卷"])
 

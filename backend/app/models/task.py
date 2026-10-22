@@ -1,13 +1,20 @@
 """作业 / 考试 / 答题 / 批改模型。"""
 import enum
 from datetime import datetime
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.utils.common import utcnow
+from app.utils.common import now_local
+
+if TYPE_CHECKING:
+    # `Mapped["Paper"]` 是 SQLAlchemy 的字符串前向引用，运行时由 registry
+    # 解析，不需要真实导入；但静态检查（ruff F821）无法识别这一点。
+    # 放在 TYPE_CHECKING 下既满足静态检查，又不引入运行时循环导入
+    # （question.py 反向引用 task 模型时会成环）。
+    from app.models.question import Paper
 
 
 class TaskType(str, enum.Enum):
@@ -58,8 +65,8 @@ class Task(Base):
     pass_score: Mapped[float] = mapped_column(Float, default=60.0)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
     paper: Mapped["Paper"] = relationship(lazy="selectin")
     assignments: Mapped[List["TaskAssignment"]] = relationship(
@@ -106,7 +113,7 @@ class Submission(Base):
     submit_count: Mapped[int] = mapped_column(Integer, default=0, comment="提交次数（防重复）")
     submit_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     grade_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
     answers: Mapped[List["Answer"]] = relationship(
         back_populates="submission", cascade="all, delete-orphan", lazy="selectin"
@@ -156,5 +163,5 @@ class WrongQuestion(Base):
 
     is_mastered: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     mastered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    last_wrong_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_wrong_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)

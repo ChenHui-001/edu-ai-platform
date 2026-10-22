@@ -3,16 +3,14 @@ from datetime import timedelta
 from typing import Any, Dict
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
 from app.models import (
-    Answer, Attachment, ReviewPlan, StudyRecord, Submission, Task, TaskAssignment,
+    Attachment, ReviewPlan, StudyRecord, Submission, Task, TaskAssignment,
     TaskStatus, User,
 )
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 logger = get_logger("jobs")
 
@@ -23,7 +21,7 @@ def clean_expired_exams() -> Dict[str, Any]:
     """清理过期考试：超过结束时间 30 天未批改的考试归档。"""
     db = SessionLocal()
     try:
-        deadline = utcnow() - timedelta(days=30)
+        deadline = now_local() - timedelta(days=30)
         rows = db.scalars(
             select(Task).where(
                 Task.type.in_(["exam", "homework"]),
@@ -44,7 +42,7 @@ def generate_daily_report() -> Dict[str, Any]:
     """生成学习日报：统计前一日学习数据。"""
     db = SessionLocal()
     try:
-        yesterday = (utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday = (now_local() - timedelta(days=1)).strftime("%Y-%m-%d")
         rows = db.scalars(select(StudyRecord).where(StudyRecord.study_date == yesterday)).all()
         active_students = len(rows)
         total_questions = sum(r.question_count for r in rows)
@@ -77,7 +75,7 @@ def generate_weekly_report() -> Dict[str, Any]:
     """生成学情周报。"""
     db = SessionLocal()
     try:
-        since = (utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        since = (now_local() - timedelta(days=7)).strftime("%Y-%m-%d")
         rows = db.scalars(select(StudyRecord).where(StudyRecord.study_date >= since)).all()
         subs = db.scalars(
             select(Submission).where(
@@ -105,7 +103,7 @@ def clean_temp_attachments() -> Dict[str, Any]:
 
     db = SessionLocal()
     try:
-        deadline = utcnow() - timedelta(days=7)
+        deadline = now_local() - timedelta(days=7)
         rows = db.scalars(
             select(Attachment).where(
                 Attachment.is_temp.is_(True),
@@ -134,7 +132,7 @@ def push_review_reminders() -> Dict[str, Any]:
 
     db = SessionLocal()
     try:
-        today = utcnow().strftime("%Y-%m-%d")
+        today = now_local().strftime("%Y-%m-%d")
         plans = db.scalars(
             select(ReviewPlan).where(
                 ReviewPlan.scheduled_date == today,
@@ -175,7 +173,7 @@ def publish_scheduled_tasks() -> Dict[str, Any]:
 
     db = SessionLocal()
     try:
-        now = utcnow()
+        now = now_local()
         due = db.scalars(
             select(Task).where(
                 Task.status == TaskStatus.DRAFT.value,

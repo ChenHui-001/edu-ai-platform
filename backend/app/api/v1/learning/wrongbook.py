@@ -12,12 +12,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
-    get_current_student, get_current_student_self, get_current_user,
+    get_current_student, get_current_student_self,
 )
 from app.core.database import get_db
 from app.core.exception import NotFoundException
 from app.models import KnowledgePoint, Question, User, WrongQuestion
-from app.utils.common import PageParams, dictify, load_json, ok, utcnow
+from app.utils.common import PageParams, dictify, load_json, now_local, ok
 
 router = APIRouter()
 
@@ -79,7 +79,7 @@ def update_wrong(
         w.error_reason = data["error_reason"]
     if "is_mastered" in data:
         w.is_mastered = bool(data["is_mastered"])
-        w.mastered_at = utcnow() if data["is_mastered"] else None
+        w.mastered_at = now_local() if data["is_mastered"] else None
     db.commit()
     return ok(message="已更新")
 

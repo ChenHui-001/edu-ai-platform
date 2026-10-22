@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uni
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 
 class Grade(Base):
@@ -53,7 +53,7 @@ class Class(Base):
     head_teacher_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True, comment="班主任")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     remark: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
     grade: Mapped[Grade] = relationship(back_populates="classes")
 
@@ -92,7 +92,7 @@ class TeachingAssignment(Base):
     grade_id: Mapped[int] = mapped_column(ForeignKey("edu_grade.id", ondelete="CASCADE"), index=True)
     school_year: Mapped[str] = mapped_column(String(16), default="2026-2027")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
 
 class ClassRequest(Base):
@@ -118,4 +118,4 @@ class ClassRequest(Base):
     review_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     review_note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     class_id: Mapped[Optional[int]] = mapped_column(ForeignKey("edu_class.id", ondelete="SET NULL"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)

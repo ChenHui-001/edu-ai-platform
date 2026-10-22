@@ -3,7 +3,7 @@
 即使未安装 langgraph，也提供等价的顺序编排降级实现。
 """
 import time
-from typing import Any, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
 from sqlalchemy.orm import Session
 

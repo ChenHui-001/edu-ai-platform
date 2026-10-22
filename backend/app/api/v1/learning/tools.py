@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
-    get_current_student, get_current_student_self, get_current_user,
+    get_current_student, get_current_student_self,
 )
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
@@ -21,7 +21,7 @@ from app.models import (
     QuestionFavorite, StudyCheckin, StudyGoal, Subject, Task, User,
     WrongQuestion,
 )
-from app.utils.common import PageParams, dictify, load_json, ok, today_str, utcnow
+from app.utils.common import PageParams, dictify, load_json, now_local, ok, today_str
 
 router = APIRouter()
 
@@ -218,7 +218,7 @@ def favorites_practice(
 
     # grade_id 为非空外键：题目未绑年级时回落学生年级（传 0 必撞 FK 500）
     grade_id = next((q.grade_id for q in valid if q.grade_id), None) or user.grade_id
-    paper = Paper(name=f"收藏专项练习 {utcnow():%m-%d}", creator_id=user.id,
+    paper = Paper(name=f"收藏专项练习 {now_local():%m-%d}", creator_id=user.id,
                   subject_id=valid[0].subject_id, grade_id=grade_id,
                   total_score=sum(q.score for q in valid))
     db.add(paper)
@@ -265,7 +265,6 @@ def wrong_variant(
         try:
             from app.agents.question_agent import QuestionGeneratorAgent
             agent = QuestionGeneratorAgent()
-            kp = db.get(KnowledgePoint, w.knowledge_point_id) if w.knowledge_point_id else None
             res = agent.execute(
                 db, user_id=user.id, subject_id=w.subject_id,
                 knowledge_point_id=w.knowledge_point_id,
@@ -281,7 +280,6 @@ def wrong_variant(
     # 无法直接组卷进练习 —— 因此实际可用题只来自题库相似题；
     # 待 AI 出题接入「先入库再引用」流程后此处可恢复合并逻辑。
     all_qs = similar[:5]
-    used_ids = {q.id for q in all_qs}
 
     if not all_qs:
         raise BusinessException("暂无可用的变式题目，请稍后重试或练习其他错题")
@@ -313,7 +311,7 @@ def create_custom_paper(
     user: User = Depends(get_current_student_self),
 ):
     """学生按知识点/难度/题型自定义练习卷，可命名保存。"""
-    name = data.get("name") or f"我的自测卷 {utcnow():%m-%d}"
+    name = data.get("name") or f"我的自测卷 {now_local():%m-%d}"
     subject_id = data.get("subject_id")
     if not subject_id:
         raise BusinessException("请选择学科")

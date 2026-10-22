@@ -1,5 +1,5 @@
 """APScheduler 调度器管理。"""
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,7 +10,7 @@ from app.core.database import SessionLocal
 from app.core.logger import get_logger
 from app.models import JobExecutionLog, ScheduledJob
 from app.services import task_jobs
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 logger = get_logger("scheduler")
 
@@ -36,7 +36,7 @@ def _execute(job_id: int, func_path: str, trigger_type: str = "auto") -> None:
     """任务执行包装：记录执行日志、失败重试通知。"""
     db = SessionLocal()
     log = None
-    started = utcnow()
+    started = now_local()
     try:
         job = db.get(ScheduledJob, job_id)
         name = job.name if job else func_path
@@ -48,7 +48,7 @@ def _execute(job_id: int, func_path: str, trigger_type: str = "auto") -> None:
         db.commit()
 
         result = task_jobs.run_job(func_path)
-        finished = utcnow()
+        finished = now_local()
         log.status = "success"
         log.finished_at = finished
         log.duration_ms = int((finished - started).total_seconds() * 1000)
@@ -64,14 +64,14 @@ def _execute(job_id: int, func_path: str, trigger_type: str = "auto") -> None:
     except Exception as exc:
         logger.opt(exception=True).error(f"任务 {func_path} 执行失败: {exc}")
         if log:
-            finished = utcnow()
+            finished = now_local()
             log.status = "failed"
             log.finished_at = finished
             log.duration_ms = int((finished - started).total_seconds() * 1000)
             log.message = str(exc)[:2000]
         job = db.get(ScheduledJob, job_id)
         if job:
-            job.last_run_at = utcnow()
+            job.last_run_at = now_local()
             job.last_status = "failed"
             job.last_error = str(exc)[:2000]
             job.run_count += 1
@@ -160,7 +160,7 @@ def run_job_now(job_id: int) -> Dict[str, Any]:
         job = db.get(ScheduledJob, job_id)
         if not job:
             raise ValueError("任务不存在")
-        started = utcnow()
+        started = now_local()
         log = JobExecutionLog(
             job_id=job_id, job_name=job.name, status="running",
             started_at=started, trigger_type="manual",
@@ -176,8 +176,8 @@ def run_job_now(job_id: int) -> Dict[str, Any]:
             log.message = str(exc)[:2000]
             raise
         finally:
-            log.finished_at = utcnow()
-            log.duration_ms = int((utcnow() - started).total_seconds() * 1000)
+            log.finished_at = now_local()
+            log.duration_ms = int((now_local() - started).total_seconds() * 1000)
             db.commit()
         return result
     finally:

@@ -1,12 +1,12 @@
 """认证服务：注册审批、登录、异常登录检测。"""
 from datetime import timedelta
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.exception import AuthException, BusinessException, PermissionException
+from app.core.exception import AuthException, BusinessException
 from app.core.security import (
     create_access_token, create_refresh_token, hash_password, verify_password,
 )
@@ -15,7 +15,7 @@ from app.models import (
     LoginLog, Notification, Permission, Registration, Role, User, UserRole,
     UserStatus,
 )
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 logger = get_logger("auth")
 
@@ -116,7 +116,7 @@ def audit_registration(
 
     reg.status = UserStatus.ACTIVE.value if approved else UserStatus.REJECTED.value
     reg.audit_user_id = audit_user_id
-    reg.audit_at = utcnow()
+    reg.audit_at = now_local()
     reg.audit_reason = reason
     user.status = reg.status
 
@@ -125,7 +125,7 @@ def audit_registration(
             user_id=user.id,
             title="注册审批结果通知",
             content=(
-                f"你的注册申请已通过审批，欢迎使用系统。"
+                "你的注册申请已通过审批，欢迎使用系统。"
                 if approved
                 else f"你的注册申请未通过审核。原因：{reason or '资料不符合要求'}"
             ),
@@ -165,7 +165,7 @@ def authenticate(
         _fail("账号或密码错误")
 
     # 锁定检查
-    if user.locked_until and user.locked_until > utcnow():
+    if user.locked_until and user.locked_until > now_local():
         _fail(f"账号已锁定，请于 {user.locked_until.strftime('%H:%M')} 后重试")
     if not user.is_active:
         if user.status == UserStatus.PENDING.value:
@@ -176,7 +176,7 @@ def authenticate(
         user.login_fail_count += 1
         abnormal = False
         if user.login_fail_count >= MAX_LOGIN_FAIL:
-            user.locked_until = utcnow() + timedelta(minutes=LOCK_MINUTES)
+            user.locked_until = now_local() + timedelta(minutes=LOCK_MINUTES)
             user.login_fail_count = 0
             abnormal = True
         db.add(
@@ -193,11 +193,11 @@ def authenticate(
         user.last_login_ip
         and user.last_login_ip != ip
         and user.last_login_at
-        and (utcnow() - user.last_login_at) < timedelta(days=1)
+        and (now_local() - user.last_login_at) < timedelta(days=1)
     )
 
     user.login_fail_count = 0
-    user.last_login_at = utcnow()
+    user.last_login_at = now_local()
     user.last_login_ip = ip
     db.add(
         LoginLog(

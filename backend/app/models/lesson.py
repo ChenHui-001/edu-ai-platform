@@ -8,12 +8,12 @@
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import ForeignKey, Index, Integer, String, Text, DateTime, func
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.edu import KnowledgePoint, Subject, Grade
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 
 class LessonPlan(Base):
@@ -52,8 +52,8 @@ class LessonPlan(Base):
     use_count: Mapped[int] = mapped_column(Integer, default=0, comment="被引用次数")
     is_shared: Mapped[bool] = mapped_column(Integer, default=0,
                                             comment="是否共享给同科教师（0/1 兼容 SQLite）")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
     # 关系
     subject: Mapped["Subject"] = relationship()

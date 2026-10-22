@@ -1,7 +1,7 @@
 """答题、判分、错题收录、知识点掌握度更新等核心教学逻辑。"""
 import json
 from datetime import timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ from app.models import (
     Answer, KnowledgeMastery, KnowledgePoint, Paper, PaperItem, Question, ReviewPlan,
     StudyRecord, Submission, Task, TaskAssignment, TaskStatus, WrongQuestion,
 )
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 
 def _content_to_db(content: Any) -> Optional[str]:
@@ -68,7 +68,6 @@ def save_answers(
     for a in answers:
         if not a.get("paper_item_id"):
             raise BusinessException("答题数据缺少 paper_item_id")
-    q_ids = [a["paper_item_id"] for a in answers]
     existing = {
         a.paper_item_id: a for a in db.scalars(
             select(Answer).where(Answer.submission_id == submission.id)
@@ -177,7 +176,7 @@ def _collect_wrong_question(db: Session, submission: Submission, result: Dict[st
     )
     if exists:
         exists.error_count += 1
-        exists.last_wrong_at = utcnow()
+        exists.last_wrong_at = now_local()
         exists.is_mastered = False
         exists.mastered_at = None
         exists.source_id = submission.id
@@ -232,12 +231,12 @@ def _update_mastery(
     else:
         row.wrong_count += 1
     row.mastery = round(row.correct_count / row.total_count * 100, 2)
-    row.last_practice_at = utcnow()
+    row.last_practice_at = now_local()
 
 
 def _record_study(db: Session, submission: Submission) -> None:
     """记录当日学习行为。"""
-    today = utcnow().strftime("%Y-%m-%d")
+    today = now_local().strftime("%Y-%m-%d")
     row = db.scalar(
         select(StudyRecord).where(
             StudyRecord.student_id == submission.student_id,
@@ -257,7 +256,6 @@ def finalize_submission(
 ) -> Dict[str, Any]:
     """交卷：完成判分、计算排名、更新错题本与掌握度、生成复习计划。"""
     task = db.get(Task, submission.task_id)
-    paper = db.get(Paper, task.paper_id) if task else None
 
     # 统一重算分数
     answers = db.scalars(
@@ -269,7 +267,7 @@ def finalize_submission(
     submission.subjective_score = subjective
     submission.score = round(objective + subjective, 2)
     submission.duration_seconds = duration_seconds or submission.duration_seconds
-    submission.submit_time = utcnow()
+    submission.submit_time = now_local()
     submission.is_passed = submission.score >= (task.pass_score if task else settings.PASS_SCORE)
     # 主观题 AI 判分完成同样属于「自动判分完成」；
     # 人工复核 / 改分经批改中心接口把状态推进为 fully_graded。
@@ -324,7 +322,7 @@ def _calc_rank(db: Session, submission: Submission) -> Optional[int]:
 def generate_review_plan_for_wrong(db: Session, wrong: WrongQuestion) -> List[ReviewPlan]:
     """按艾宾浩斯遗忘曲线为错题生成复习计划。"""
     created: List[ReviewPlan] = []
-    today = utcnow()
+    today = now_local()
     for stage, interval in enumerate(settings.REVIEW_INTERVALS, start=1):
         date = (today + timedelta(days=interval)).strftime("%Y-%m-%d")
         exists = db.scalar(
@@ -398,7 +396,7 @@ def create_practice_paper(
         raise BusinessException("该学科在该年级暂无题目，请先向老师申请添加")
 
     paper = Paper(
-        name=f"随机练习-{utcnow():%m%d%H%M}",
+        name=f"随机练习-{now_local():%m%d%H%M}",
         grade_id=grade_id, subject_id=subject_id,
         total_score=sum(q.score for q in questions),
         duration=max(10, count * 2), creator_id=creator_id, source="manual",
@@ -418,7 +416,7 @@ def create_practice_task(db: Session, student_id: int, paper: Paper) -> Task:
         title=paper.name, type="practice", paper_id=paper.id,
         subject_id=paper.subject_id, grade_id=paper.grade_id,
         creator_id=student_id, status=TaskStatus.PUBLISHED.value,
-        start_at=utcnow(), end_at=utcnow() + timedelta(days=1),
+        start_at=now_local(), end_at=now_local() + timedelta(days=1),
         duration=paper.duration, total_score=paper.total_score,
         show_answer=True,
     )

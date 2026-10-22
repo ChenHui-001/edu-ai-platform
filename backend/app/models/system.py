@@ -3,11 +3,11 @@ import enum
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.utils.common import utcnow
+from app.utils.common import now_local
 
 
 class UserStatus(str, enum.Enum):
@@ -57,8 +57,8 @@ class User(Base):
     login_fail_count: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
     roles: Mapped[List["Role"]] = relationship(
         secondary="sys_user_role", back_populates="users", lazy="selectin"
@@ -88,7 +88,7 @@ class Role(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
     users: Mapped[List[User]] = relationship(secondary="sys_user_role", back_populates="roles")
     permissions: Mapped[List["Permission"]] = relationship(
@@ -145,7 +145,7 @@ class Registration(Base):
     audit_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     audit_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
 
 class SysConfig(Base):
@@ -166,8 +166,8 @@ class SysConfig(Base):
 
     updated_by: Mapped[Optional[int]] = mapped_column(
         ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
 
 # 避免循环引用

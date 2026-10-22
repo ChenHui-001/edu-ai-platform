@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.models import AgentCallLog
-from app.utils.common import utcnow
 
 logger = get_logger("llm")
 

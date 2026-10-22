@@ -4,7 +4,6 @@ from typing import Dict, List, Tuple
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.security import hash_password
 from app.models import (
@@ -305,7 +304,6 @@ def init_permissions(db: Session) -> None:
 
 def init_roles(db: Session) -> None:
     """初始化 5 种预置角色及权限分配。"""
-    all_perms = {p.code: p for p in db.scalars(select(Permission)).all()}
     for rdef in ROLES:
         role = db.scalar(select(Role).where(Role.code == rdef["code"]))
         if not role:

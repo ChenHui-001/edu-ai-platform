@@ -18,7 +18,7 @@ from app.models import (
     Class, ClassRequest, Grade, KnowledgeMastery, KnowledgePoint, Notification,
     Subject, User,
 )
-from app.utils.common import dictify, ok, utcnow
+from app.utils.common import dictify, now_local, ok
 
 router = APIRouter(prefix="/edu", tags=["教学资源"])
 
@@ -728,7 +728,7 @@ def review_class_request(
         raise BusinessException("拒绝时请填写理由")
 
     req.review_by = user.id
-    req.review_at = utcnow()
+    req.review_at = now_local()
     req.review_note = note
 
     if action == "approve":

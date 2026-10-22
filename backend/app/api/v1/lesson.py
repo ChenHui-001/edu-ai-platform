@@ -9,11 +9,11 @@ from fastapi import APIRouter, Body, Depends, File, UploadFile
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_current_teacher, get_data_scope
+from app.api.deps import get_current_teacher
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import Grade, KnowledgePoint, LessonPlan, LessonStage, Subject, User
-from app.utils.common import PageParams, dictify, load_json, ok, utcnow
+from app.utils.common import PageParams, dictify, now_local, ok
 
 router = APIRouter(prefix="/lesson", tags=["教案管理"])
 
@@ -230,7 +230,7 @@ def update_plan(
                 content=s.get("content") or "",
                 sort_order=s.get("sort_order", i),
             ))
-    plan.updated_at = utcnow()
+    plan.updated_at = now_local()
     db.commit()
     db.refresh(plan)
     return ok(_hydrate(db, plan), message="教案已更新")
@@ -310,7 +310,7 @@ def toggle_share(plan_id: int, data: Dict[str, Any] = Body(...),
     if plan.creator_id != user.id:
         raise PermissionException("只能共享自己的教案")
     plan.is_shared = 1 if data.get("is_shared", True) else 0
-    plan.updated_at = utcnow()
+    plan.updated_at = now_local()
     db.commit()
     return ok({"is_shared": bool(plan.is_shared)},
               message="已共享" if plan.is_shared else "已取消共享")
@@ -356,7 +356,7 @@ async def upload_plan_attachment(
         raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
 
     stored_name = f"{uuid.uuid4().hex}_{hashlib.md5(content).hexdigest()[:12]}{ext}"
-    day_dir = os.path.join(settings.UPLOAD_DIR, utcnow().strftime("%Y%m%d"))
+    day_dir = os.path.join(settings.UPLOAD_DIR, now_local().strftime("%Y%m%d"))
     os.makedirs(day_dir, exist_ok=True)
     full_path = os.path.abspath(os.path.join(day_dir, stored_name))
     if not full_path.startswith(os.path.abspath(settings.UPLOAD_DIR)):
@@ -371,7 +371,7 @@ async def upload_plan_attachment(
         uploader_id=user.id, is_temp=False,
     )
     db.add(att)
-    plan.updated_at = utcnow()
+    plan.updated_at = now_local()
     db.commit()
     db.refresh(att)
     return ok({

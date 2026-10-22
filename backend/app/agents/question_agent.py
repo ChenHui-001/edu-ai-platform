@@ -1,6 +1,5 @@
 """5.1 题库生成 Agent：按知识点/题型/难度自动生成原创题目。"""
 import hashlib
-import random
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -10,7 +9,6 @@ from app.agents.base import BaseAgent
 from app.agents.rag import build_context, search
 from app.core.exception import BusinessException
 from app.models import KnowledgePoint, Question, Subject, User
-from app.utils.common import utcnow
 
 
 class QuestionGeneratorAgent(BaseAgent):

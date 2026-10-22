@@ -1,16 +1,13 @@
 """5.2 智能组卷 Agent：自然语言需求 → 平衡抽题生成试卷。"""
-import random
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
-from app.agents.llm import extract_json
-from app.agents.rag import build_context, search
 from app.core.exception import BusinessException
-from app.models import KnowledgePoint, Paper, PaperItem, Question, Subject, User
-from app.utils.common import utcnow
+from app.models import KnowledgePoint, Paper, PaperItem, Question
+from app.utils.common import now_local
 
 DIFFICULTY_WEIGHT = {"easy": 0.3, "medium": 0.5, "hard": 0.2}
 TYPE_LABEL = {
@@ -71,7 +68,6 @@ class PaperComposerAgent(BaseAgent):
             "single": 0.5, "blank": 0.2, "short": 0.3,
         }
         kp_ids = knowledge_point_ids or parsed_params.get("knowledge_point_ids") or []
-        kp_keywords = parsed_params.get("knowledge_keywords") or []
 
         if not subject_id:
             raise BusinessException("无法识别学科，请指定学科后再组卷")
@@ -95,7 +91,7 @@ class PaperComposerAgent(BaseAgent):
         paper: Optional[Paper] = None
         if save:
             paper = Paper(
-                name=paper_name or f"{self._grade_name(db, grade_id)}智能组卷-{utcnow():%Y%m%d%H%M}",
+                name=paper_name or f"{self._grade_name(db, grade_id)}智能组卷-{now_local():%Y%m%d%H%M}",
                 grade_id=grade_id, subject_id=subject_id,
                 total_score=total_score, duration=int(parsed_params.get("duration") or 60),
                 difficulty_ratio=str(difficulty_ratio),
@@ -303,7 +299,7 @@ class PaperComposerAgent(BaseAgent):
         if save:
             paper = Paper(
                 name=paper_name
-                or f"{self._grade_name(db, grade_id)}智能组卷-{utcnow():%Y%m%d%H%M}",
+                or f"{self._grade_name(db, grade_id)}智能组卷-{now_local():%Y%m%d%H%M}",
                 grade_id=grade_id, subject_id=subject_id,
                 total_score=total_score, duration=60,
                 difficulty_ratio=__import__("json").dumps(difficulty_ratio, ensure_ascii=False),

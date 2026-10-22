@@ -5,17 +5,17 @@ import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, File, Form, Query, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, Body, Depends, File, Form, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_client_ip, get_current_admin, get_current_user
+from app.api.deps import get_client_ip, get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import Attachment, User
-from app.utils.common import PageParams, dictify, ok, utcnow
+from app.utils.common import PageParams, dictify, now_local, ok
 
 router = APIRouter(prefix="/attachments", tags=["附件管理"])
 
@@ -42,7 +42,7 @@ async def public_upload(
       - 同一 IP 10 分钟内最多 10 次
     """
     ip = get_client_ip(request) if request is not None else "unknown"
-    now = utcnow()
+    now = now_local()
     with _PUBLIC_UPLOAD_LOCK:
         bucket = _PUBLIC_UPLOAD_HITS.setdefault(ip, [])
         bucket[:] = [t for t in bucket if (now - t).total_seconds() < 600]
@@ -63,7 +63,7 @@ async def public_upload(
 
     digest = hashlib.md5(content).hexdigest()[:12]
     stored_name = f"{uuid.uuid4().hex}_{digest}{ext}"
-    day_dir = utcnow().strftime("%Y%m%d")
+    day_dir = now_local().strftime("%Y%m%d")
     dir_path = os.path.join(settings.UPLOAD_DIR, day_dir)
     os.makedirs(dir_path, exist_ok=True)
     full_path = os.path.abspath(os.path.join(dir_path, stored_name))
@@ -105,7 +105,7 @@ async def upload(
     # 文件名加密存储，防路径遍历与重名覆盖
     digest = hashlib.md5(content).hexdigest()[:12]
     stored_name = f"{uuid.uuid4().hex}_{digest}{ext}"
-    day_dir = utcnow().strftime("%Y%m%d")
+    day_dir = now_local().strftime("%Y%m%d")
     dir_path = os.path.join(settings.UPLOAD_DIR, day_dir)
     os.makedirs(dir_path, exist_ok=True)
 
@@ -152,7 +152,7 @@ async def batch_upload(
                 continue
             digest = hashlib.md5(content).hexdigest()[:12]
             stored_name = f"{uuid.uuid4().hex}_{digest}{ext}"
-            day_dir = utcnow().strftime("%Y%m%d")
+            day_dir = now_local().strftime("%Y%m%d")
             dir_path = os.path.join(settings.UPLOAD_DIR, day_dir)
             os.makedirs(dir_path, exist_ok=True)
             full_path = os.path.abspath(os.path.join(dir_path, stored_name))

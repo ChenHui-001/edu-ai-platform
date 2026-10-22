@@ -2,8 +2,8 @@
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, Query
-from sqlalchemy import func, or_, select
+from fastapi import APIRouter, Body, Depends
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -17,7 +17,7 @@ from app.models import (
     TaskType, User,
 )
 from app.services import grading_service
-from app.utils.common import PageParams, dictify, ok, utcnow
+from app.utils.common import PageParams, dictify, now_local, ok
 
 router = APIRouter(prefix="/task", tags=["作业与考试"])
 
@@ -124,12 +124,12 @@ def create_task(
         raise BusinessException(
             f"无效的任务类型 {raw_type!r}，允许：{','.join(sorted(valid_types))}")
     task_type = raw_type
-    start_at = _parse_dt(data.get("start_at")) or utcnow()
+    start_at = _parse_dt(data.get("start_at")) or now_local()
     end_at = _parse_dt(data.get("end_at")) or (start_at + timedelta(days=7))
     publish_at = _parse_dt(data.get("publish_at"))
     # 定时发布：publish_at 在未来 → 草稿状态落库、暂不通知学生，
     # 由内置任务 publish_scheduled_tasks 到期激活并补发通知。
-    scheduled = bool(publish_at and publish_at > utcnow())
+    scheduled = bool(publish_at and publish_at > now_local())
 
     # 参数范围校验（此前完全不校验，可写出 pass_score=9999、
     # duration=0、end_at 早于 start_at 的脏任务）
@@ -372,7 +372,7 @@ def my_tasks(
         Task.type != TaskType.PRACTICE.value,
         # 定时发布的任务到期前对学生不可见
         Task.status != TaskStatus.DRAFT.value,
-        (Task.publish_at.is_(None)) | (Task.publish_at <= utcnow()),
+        (Task.publish_at.is_(None)) | (Task.publish_at <= now_local()),
     )
     if task_type:
         q = q.where(Task.type == task_type)
@@ -402,7 +402,7 @@ def my_tasks(
         ) or 0
         # 距截止
         if t.end_at:
-            delta = (t.end_at - utcnow()).total_seconds()
+            delta = (t.end_at - now_local()).total_seconds()
             d["remaining_seconds"] = int(delta) if delta > 0 else 0
         items.append(d)
     return ok({"items": items, "total": total, "page": params.page})
@@ -424,7 +424,7 @@ def get_task_paper(
     is_creator = task.creator_id == user.id
     # 归属校验：任务必须下发给当前用户，否则遍历 task_id 即可越权作答他人考试
     assert_task_accessible(db, task, user)
-    now = utcnow()
+    now = now_local()
     if not is_creator:
         if task.status == TaskStatus.DRAFT.value or (
             task.publish_at and task.publish_at > now
@@ -448,7 +448,7 @@ def get_task_paper(
             Submission.task_id == task_id, Submission.student_id == user.id,
         ).order_by(Submission.attempt.desc()).limit(1)
     )
-    task_finished = bool(task.end_at and task.end_at < utcnow())
+    task_finished = bool(task.end_at and task.end_at < now_local())
     reveal_answer = is_creator or (task.show_answer and (has_submitted or task_finished))
 
     items = []
@@ -496,12 +496,12 @@ def submit_answers(
     # 归属校验：未下发给当前用户的任务不允许提交（防越权交卷）
     assert_task_accessible(db, task, user)
     if task.status == TaskStatus.DRAFT.value or (
-        task.publish_at and task.publish_at > utcnow()
+        task.publish_at and task.publish_at > now_local()
     ):
         raise BusinessException("任务尚未发布，无法提交")
-    if task.end_at and task.end_at < utcnow():
+    if task.end_at and task.end_at < now_local():
         raise BusinessException("任务已截止，无法提交")
-    if task.start_at and task.start_at > utcnow():
+    if task.start_at and task.start_at > now_local():
         raise BusinessException("任务尚未开始")
 
     # attempt 一律由服务端判定：此前直接信任客户端传入值，

@@ -17,9 +17,9 @@ from app.api.deps import (
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
-from app.models import (Answer, KnowledgePoint, Paper, Submission, Task, User)
+from app.models import (Answer, KnowledgePoint, Submission, Task, User)
 from app.services import grading_service
-from app.utils.common import PageParams, dictify, load_json, ok, utcnow
+from app.utils.common import PageParams, dictify, load_json, now_local, ok
 
 from .learning import learning_router  # noqa: F401  兼容旧导出路径
 
@@ -86,7 +86,6 @@ def grading_detail(
     if not sub:
         raise NotFoundException("作答记录不存在")
     task = db.get(Task, sub.task_id)
-    paper = db.get(Paper, task.paper_id) if task else None
 
     items = []
     for a in sub.answers:
@@ -170,7 +169,7 @@ def grade_submission(
     sub.score = round(objective + subjective, 2)
     sub.is_passed = sub.score >= (task.pass_score if task else settings.PASS_SCORE)
     sub.status = "fully_graded"
-    sub.grade_time = utcnow()
+    sub.grade_time = now_local()
 
     if data.get("reject"):
         sub.status = "not_graded"
@@ -289,7 +288,7 @@ def batch_grade(
         sub.score = round(objective + subjective, 2)
         sub.is_passed = sub.score >= (task.pass_score if task else settings.PASS_SCORE)
         sub.status = "fully_graded"
-        sub.grade_time = utcnow()
+        sub.grade_time = now_local()
         done.append(sid)
     db.commit()
     return ok({"graded": done, "skipped": skipped},
@@ -358,7 +357,6 @@ def class_report(
 def ai_teaching_advice(
     task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
-    from app.agents.base import get_orchestrator
 
     task = db.get(Task, task_id)
     if not task:
@@ -372,7 +370,6 @@ def ai_teaching_advice(
         raise BusinessException("暂无已批改记录")
     report = grading_service.grade_summary(db, sub)
 
-    orch = get_orchestrator()
     from app.agents.tutor_agent import TutorAgent
 
     tutor = TutorAgent()

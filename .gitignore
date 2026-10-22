@@ -72,3 +72,6 @@ tests/ui_e2e/probe*.json
 tests/ui_e2e/c*.png
 tests/ui_e2e/cap_*.png
 tests/ui_e2e/p3_*.png
+
+# 单阶段调试跑出的报告（不覆盖交付用的全量 E2E_REPORT.md）
+tests/E2E_REPORT.partial.md

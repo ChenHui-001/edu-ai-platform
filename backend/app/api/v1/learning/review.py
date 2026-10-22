@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
-    get_current_student, get_current_student_self, get_current_user,
+    get_current_student, get_current_student_self,
 )
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
@@ -21,7 +21,7 @@ from app.models import (
     Subject, Task, TaskAssignment, User, WrongQuestion,
 )
 from app.services import grading_service
-from app.utils.common import PageParams, dictify, load_json, ok, today_str, utcnow
+from app.utils.common import PageParams, dictify, load_json, now_local, ok, today_str
 
 router = APIRouter()
 
@@ -106,7 +106,7 @@ def complete_review(
     if not p or p.student_id != user.id:
         raise NotFoundException("复习计划不存在")
     p.is_completed = True
-    p.completed_at = utcnow()
+    p.completed_at = now_local()
     p.correct_rate = data.get("correct_rate")
 
     # 艾宾浩斯闭环：同一错题累计完成 2 轮即视为掌握。
@@ -124,7 +124,7 @@ def complete_review(
             w = db.get(WrongQuestion, p.wrong_question_id)
             if w:
                 w.is_mastered = True
-                w.mastered_at = utcnow()
+                w.mastered_at = now_local()
     db.commit()
     return ok(message="复习完成")
 

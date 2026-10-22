@@ -10,12 +10,12 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
-    get_current_student, get_current_student_self, get_current_user,
+    get_current_student, get_current_student_self,
 )
 from app.core.database import get_db
 from app.core.exception import NotFoundException, PermissionException
 from app.models import Note, Subject, User
-from app.utils.common import PageParams, dictify, load_json, ok, utcnow
+from app.utils.common import PageParams, dictify, load_json, now_local, ok
 
 router = APIRouter()
 
@@ -245,6 +245,6 @@ h1{{border-bottom:2px solid #409eff;padding-bottom:8px}}
 pre{{background:#f5f7fa;padding:12px;border-radius:6px;overflow:auto;white-space:pre-wrap}}
 </style></head><body>
 <h1>{safe_title}</h1><pre>{safe_content}</pre>
-<hr><p style="color:#999">导出时间：{utcnow():%Y-%m-%d %H:%M:%S}</p>
+<hr><p style="color:#999">导出时间：{now_local():%Y-%m-%d %H:%M:%S}</p>
 </body></html>"""
     return ok({"filename": f"{note.title}.html", "html": html_doc})

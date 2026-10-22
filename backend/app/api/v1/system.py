@@ -1,7 +1,7 @@
 """系统管理接口：用户、角色、权限、通知。"""
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ from app.models import (
     Notification, Permission, Role, RolePermission, SysConfig, TeachingAssignment,
     User, UserRole,
 )
-from app.utils.common import PageParams, dictify, ok, utcnow
+from app.utils.common import PageParams, dictify, ok
 
 router = APIRouter(prefix="/system", tags=["系统管理"])
 

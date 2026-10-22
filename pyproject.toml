@@ -1,0 +1,30 @@
+[tool.ruff]
+# 与 backend/ 同级的仓库根，扫描范围由 CLI 显式指定
+target-version = "py311"
+line-length = 110
+# 排除生成物与依赖，避免把第三方告警算进「存量」
+extend-exclude = [
+    ".git",
+    "node_modules",
+    "backend/data",
+    "frontend/dist",
+    "frontend/node_modules",
+    ".venv",
+    "venv",
+]
+
+[tool.ruff.lint]
+# 只启用「一定是缺陷」的规则，不掺风格问题：
+#   F   —— Pyflakes：未定义名、未使用导入/变量、f-string 占位符缺失
+#   E9  —— 语法错误 / IO 错误（ruff 唯一的 E 类"硬错误"分组）
+# 刻意**不**启用 E501 行长、I001 导入排序等，否则一次接入就会产生
+# 几百条纯风格告警，团队会直接把它关掉，等于白做。
+select = ["F", "E9"]
+
+[tool.ruff.lint.per-file-ignores]
+# 模型聚合文件：`from app.models.x import Y  # noqa: F401` 是**必需**的副作用导入
+# （Base.metadata 注册），本身就是 F401 的定义域。已逐行 noqa 标注，
+# 这里再加整文件豁免作为兜底，防止新模型漏标注时被误删导致建表缺表。
+"backend/app/models/__init__.py" = ["F401"]
+# 验证脚本是一次性排障工具，允许保留未使用变量便于打印调试
+"tests/verify_*.py" = ["F841"]

@@ -1,9 +1,9 @@
 """AI Agent 中心接口：统一编排 + 6 个专属 Agent + 调用日志。"""
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, Query
-from sqlalchemy import desc, func, or_, select
+from fastapi import APIRouter, Body, Depends
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.agents.base import AGENT_REGISTRY, get_orchestrator
@@ -18,7 +18,7 @@ from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.core.rate_limit import check_agent_rate
 from app.models import AgentCallLog, User
-from app.utils.common import PageParams, dictify, fail, ok, utcnow
+from app.utils.common import PageParams, dictify, fail, now_local, ok
 
 import logging
 
@@ -461,7 +461,7 @@ def _run_job(job_id: int) -> None:
         if not job:
             return
         job.status = "running"
-        job.started_at = utcnow()
+        job.started_at = now_local()
         db.commit()
 
         params = json.loads(job.params or "{}")
@@ -504,7 +504,7 @@ def _run_job(job_id: int) -> None:
             job.status = "failed"
             job.error = str(exc)[:500]
     finally:
-        job.finished_at = utcnow()
+        job.finished_at = now_local()
         try:
             db.commit()
         except Exception:  # noqa: BLE001

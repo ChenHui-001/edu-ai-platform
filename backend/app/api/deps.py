@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.exception import AuthException, PermissionException
 from app.core.security import decode_token
-from app.models import User, UserRole
-from app.utils.common import utcnow
+from app.models import User
+from app.utils.common import now_local
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -60,11 +60,11 @@ def get_current_user(
     # 容器 TZ=Asia/Shanghai 时比 UTC 快 8 小时，
     # 导致 token 实际过期后近 8 小时才被判过期（且刷新时机错位）。
     #
-    # 注意：utcnow() 返回的是 naive UTC，这里用 .replace(tzinfo=None)
+    # 注意：now_local() 返回的是 naive UTC，这里用 .replace(tzinfo=None)
     # 去掉 tzinfo，保证两者类型一致可比较
     # （直接用 tz=timezone.utc 会得到 aware 对象，与 naive 比较抛
     #  TypeError: can't compare offset-naive and offset-aware datetimes）。
-    if datetime.fromtimestamp(payload["exp"], timezone.utc).replace(tzinfo=None) < utcnow():
+    if datetime.fromtimestamp(payload["exp"], timezone.utc).replace(tzinfo=None) < now_local():
         raise AuthException("令牌已过期，请重新登录")
 
     user = db.scalar(select(User).where(User.id == int(payload["sub"])))

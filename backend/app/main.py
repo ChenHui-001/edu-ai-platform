@@ -1,6 +1,7 @@
 """FastAPI 应用入口。"""
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -128,6 +129,11 @@ def health():
             "status": "healthy",
             "database": settings.DATABASE_URL.split("://")[0],
             "llm_enabled": llm_on,
+            # 服务端当前时间（服务端本地时区，naive）。供 e2e 构造时间窗参数用：
+            # CI runner 是 UTC、容器是 Asia/Shanghai，测试进程用 datetime.now()
+            # 拼 publish_at/deadline 会差 8 小时，导致「定时发布」被立即执行、
+            # 「未开考」被当成已开始。取服务端时间可彻底消除该时区耦合。
+            "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         },
     }
 
