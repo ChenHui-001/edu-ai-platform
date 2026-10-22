@@ -95,7 +95,8 @@ difficulty 取值：easy / medium / hard"""
             if kps:
                 context.append("可选知识点：" + "、".join(k.name for k in kps[:10]))
             refs = search(
-                "常见考题", db, subject_id=subject_id, top_k=3, types=["question"]
+                "常见考题", db, subject_id=subject_id, top_k=3,
+                types=["question"], student_id=user_id,
             )
             context.extend(build_context(refs, 3))
 

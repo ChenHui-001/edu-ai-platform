@@ -218,53 +218,101 @@ def search(
     grade_id: Optional[int] = None,
     subject_id: Optional[int] = None,
     types: Optional[List[str]] = None,
+    student_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """混合检索：优先向量库，不可用时降级 SQL 检索。"""
+    """混合检索：优先向量库，不可用时降级 SQL 检索。
+
+    `student_id`：发起检索的用户 id，用于**笔记**的归属过滤。笔记是学生私密
+    数据，未传 student_id（系统级检索）时必须跳过 note 类型 —— 宁可少检索
+    一种类型，也不能把他人笔记塞进 LLM 上下文（P1 跨用户泄漏）。
+    """
     top_k = top_k or settings.RAG_TOP_K
+
+    # 归一化检索类型：未指定 = 全部。note 只允许在已知归属者时参与检索。
+    effective_types = list(types) if types else ["question", "knowledge", "note"]
+    if "note" in effective_types and not student_id:
+        effective_types = [t for t in effective_types if t != "note"]
+        if not effective_types:
+            logger.warning("RAG 只请求笔记但未提供 student_id，已跳过以防越权")
+            return []
+
     col = get_collection()
     if col:
         try:
-            # ChromaDB 的 where 只接受「单个操作符」：
-            #   传扁平 dict 且有多个 key 会抛
-            #   "Expected where to have exactly one operator"
-            # 因此多条件必须用 $and 显式包裹。
-            conds: List[Dict[str, Any]] = []
-            if grade_id:
-                conds.append({"grade_id": int(grade_id)})
-            if subject_id:
-                conds.append({"subject_id": int(subject_id)})
-            if types:
-                conds.append({"type": {"$in": list(types)}})
-
-            if not conds:
-                where = None
-            elif len(conds) == 1:
-                where = conds[0]
-            else:
-                where = {"$and": conds}
-
-            res = col.query(
-                query_texts=[query], n_results=top_k, where=where,
+            return _vector_search(
+                col, query, top_k=top_k,
+                grade_id=grade_id, subject_id=subject_id,
+                types=effective_types, student_id=student_id,
             )
-            docs = (res.get("documents") or [[]])[0]
-            metas = (res.get("metadatas") or [[]])[0]
-            distances = (res.get("distances") or [[]])[0]
-            return [
-                {
-                    "content": d, "metadata": m or {}, "score": round(1 - float(dist), 4),
-                }
-                for d, m, dist in zip(docs, metas, distances)
-            ]
         except Exception as exc:
             logger.warning(f"向量检索失败，降级 SQL: {exc}")
 
-    return _sql_search(query, db, top_k, knowledge_point_id, grade_id, subject_id, types)
+    return _sql_search(
+        query, db, top_k, knowledge_point_id, grade_id, subject_id,
+        effective_types, student_id,
+    )
+
+
+def _vector_search(
+    col,
+    query: str,
+    *,
+    top_k: int,
+    grade_id: Optional[int],
+    subject_id: Optional[int],
+    types: List[str],
+    student_id: Optional[int],
+) -> List[Dict[str, Any]]:
+    """向量检索。
+
+    ChromaDB 的 where 只接受「单个操作符」：传扁平 dict 且有多个 key 会抛
+    "Expected where to have exactly one operator"，因此多条件必须用 $and 包裹。
+
+    笔记与题目/知识点在同一个 collection，但只有 note 的 metadata 带 student_id。
+    若把 student_id 条件与 type 条件写在同一个 where 里，题目/知识点会因缺少
+    该字段被一并过滤掉。因此按「非笔记」/「本人笔记」分组查询，再合并排序。
+    """
+    groups: List[tuple] = []
+    non_note = [t for t in types if t != "note"]
+    if non_note:
+        groups.append((non_note, None))
+    if "note" in types and student_id:
+        groups.append((["note"], int(student_id)))
+
+    merged: List[Dict[str, Any]] = []
+    for group_types, note_owner in groups:
+        conds: List[Dict[str, Any]] = []
+        # 笔记 metadata 没有 grade_id，硬加会过滤掉全部笔记；subject_id 两者都有
+        if grade_id and note_owner is None:
+            conds.append({"grade_id": int(grade_id)})
+        if subject_id:
+            conds.append({"subject_id": int(subject_id)})
+        conds.append({"type": {"$in": list(group_types)}})
+        if note_owner is not None:
+            conds.append({"student_id": note_owner})
+        where = conds[0] if len(conds) == 1 else {"$and": conds}
+
+        res = col.query(query_texts=[query], n_results=top_k, where=where)
+        docs = (res.get("documents") or [[]])[0]
+        metas = (res.get("metadatas") or [[]])[0]
+        distances = (res.get("distances") or [[]])[0]
+        merged.extend(
+            {
+                "content": d, "metadata": m or {},
+                "score": round(1 - float(dist), 4),
+            }
+            for d, m, dist in zip(docs, metas, distances)
+        )
+
+    merged.sort(key=lambda x: x["score"], reverse=True)
+    return merged[:top_k]
 
 
 def _sql_search(
     query: str, db: Session, top_k: int,
     knowledge_point_id: Optional[int], grade_id: Optional[int],
     subject_id: Optional[int], types: Optional[List[str]],
+    student_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """SQL LIKE 降级检索。"""
     like = f"%{query}%"
@@ -303,10 +351,14 @@ def _sql_search(
                              "subject_id": kp.subject_id},
             })
 
-    # 笔记检索（仅本人）
-    if not types or "note" in types:
+    # 笔记检索（强制本人）：必须带 student_id 过滤，否则会把别人的私密笔记
+    # 当成参考资料返回。未提供 student_id（系统级检索）时直接跳过。
+    if (not types or "note" in types) and student_id:
         for n in db.scalars(
-            select(Note).where(Note.content.like(like)).limit(top_k)
+            select(Note).where(
+                Note.content.like(like),
+                Note.student_id == int(student_id),
+            ).limit(top_k)
         ).all():
             results.append({
                 "content": f"{n.title}：{n.content[:300]}",

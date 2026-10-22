@@ -44,9 +44,11 @@ class TutorAgent(BaseAgent):
         if not request:
             return {"answer": "请描述你的问题", "related_questions": []}
 
-        # 1. RAG 检索
+        # 1. RAG 检索（笔记按 student_id 归属过滤：只检索当前学生自己的笔记，
+        #    否则会把他人私密笔记当参考资料塞进 LLM 上下文 —— P1 跨用户泄漏）
         results = search(
             request, db, grade_id=grade_id, subject_id=subject_id, top_k=5,
+            student_id=student_id or user_id,
         )
         context = build_context(results, 5)
 
@@ -68,7 +70,8 @@ class TutorAgent(BaseAgent):
         )
 
         if not result["success"]:
-            return self.fallback(db, request=request)
+            return self.fallback(db, request=request,
+                                 user_id=user_id, student_id=student_id)
 
         parsed = result.get("parsed")
         if not isinstance(parsed, dict):
@@ -89,9 +92,13 @@ class TutorAgent(BaseAgent):
             "references": self._ref_meta(results),
         }
 
-    def fallback(self, db: Session, request: str = "", **kwargs) -> Dict[str, Any]:
+    def fallback(
+        self, db: Session, request: str = "", student_id: Optional[int] = None,
+        user_id: Optional[int] = None, **kwargs,
+    ) -> Dict[str, Any]:
         """无 LLM 时的关键词检索式答疑。"""
-        results = search(request, db, top_k=5)
+        # 规则引擎同样受笔记归属约束：只检索当前学生自己的笔记
+        results = search(request, db, top_k=5, student_id=student_id or user_id)
         if not results:
             return {
                 "answer": (
