@@ -135,3 +135,80 @@
 - **改动**：`backend/app/middleware/audit.py` 读请求（GET/HEAD/OPTIONS）不再写操作日志（5xx 仍落错误日志）；`backend/app/services/task_jobs.py` 新增 `clean_old_logs` 按保留期清理；`backend/app/services/init_db.py` 注册每日 04:30 清理任务。
 - **验证**：`py_compile` 通过；E2E 日志审计用例仍可读；P1 批次末确认健康检查/轮询不再产生操作日志行。
 
+### P1-9 判分结果落库的数据一致性
+
+- **状态**：✅ 已修复
+- **问题**：掌握度错把题目 id 当知识点 id；错题本 `wrong_answer` 恒空；学习记录在 save/finalize 双计且时长从不累加；未批主观题被标 auto_graded 且可按 0 分发布；客观题得分用 `q.score` 而非试卷项分值。
+- **改动**：`grading_service.py`（掌握度按题目反查知识点、错题答案查 Answer.content、`_record_study` 只在 finalize 记一次并累加时长、按残留 auto 主观题置 not_graded）；`grading_agent.py`（`_grade_objective` 支持 `full_score`、结果补 `student_answer`）；`grading.py`（发布前按「主观题且 score=None 或 grader_type=auto」阻断；batch_grade 采纳时主观 auto→manual）。
+- **验证**：`py_compile` + 归一化脚本通过；队友用内存 SQLite 断言覆盖掌握度/错题文本/学习记录/状态流转/发布口径；全量 E2E 851 项 0 失败。
+
+### P1-10 打回后学生无法重新提交
+
+- **状态**：✅ 已修复
+- **问题**：reject 只清分数不改 attempt，`allow_retake=1` 时学生再交必报「次数已用完」。
+- **改动**：`task.py` `submit_answers`：`last.status=="not_graded"` 且 `score is None` 时复用同一 attempt 覆盖重交；含待人工主观题（score 非空）的 not_graded 不放行，避免绕过次数限制。
+- **验证**：`py_compile`；E2E 次数限制用例仍 PASS；批次末 E2E 0 失败。
+
+### P1-11 LLM 429 永久熔断与交卷入口限流缺失
+
+- **状态**：✅ 已修复
+- **问题**：429/配额被当成永久鉴权失败，一次瞬时限流导致 AI 长期不可用；交卷自动判分不计数、单请求可放大 N 次调用。
+- **改动**：`llm.py` 拆分鉴权/限流错误，限流改指数退避冷却（30→…→300s，成功即清零），`is_available` 不受冷却影响；`ai_config_service.py` 保存配置复位冷却；`task.py` 在 LLM 可用时按答题数计费限流；`agent.py`/`lesson_ai.py` 增加文本长度、列表数量、天数上限。
+- **验证**：`py_compile`；队友脚本验证冷却/熔断/入参边界；全量 E2E 0 失败。
+
+### P1-12 RAG 跨用户笔记泄漏
+
+- **状态**：✅ 已修复
+- **问题**：SQL 与向量检索的笔记分支均无 student_id 过滤，学生私密笔记可能进入他人 AI 上下文。
+- **改动**：`rag.py` 新增 `student_id` 参数，笔记强制本人过滤、无归属时跳过 note；向量按「非笔记组/本人笔记组」分组查询；`tutor_agent.py`、`question_agent.py` 调用点传当前用户。
+- **验证**：`py_compile`；队友用内存 SQLite + FakeCol 验证隔离与 where 结构；chromadb 缺失时异常自动降级 SQL。
+
+### P1-13 AI 入参无上限
+
+- **状态**：✅ 已修复
+- **问题**：AI 接口 message/topic/items/days 无上限，单账号可放大 token 成本与内存。
+- **改动**：`agent.py` 文本 ≤8000、items ≤50、count/days 范围校验（覆盖同步与异步 jobs 入口，校验先于限流与写库）；`lesson_ai.py` topic ≤200、长文本 ≤8000。
+- **验证**：`py_compile`；队友边界脚本验证超限抛业务异常、边界值放行；E2E 正常值不受影响。
+
+### P1-14 前端下载/预览/导出 401
+
+- **状态**：✅ 已修复
+- **问题**：报表/日志/附件/教案导出与预览使用裸 URL，浏览器无法携带 Authorization；AI 教案导出取错 token 键。
+- **改动**：新增 `frontend/src/utils/download.js`（axios blob + Content-Disposition 文件名 + objectURL 管理）；`AdminReport/TeacherReport/LogManage/AttachmentManage/LessonPlanManage/AiLessonDialog` 全部改走带鉴权 blob 请求（报表补 `report_type` 参数）；`api/index.js` 增加 blob helper。
+- **验证**：`npm run build` 成功（3.11MB dist）；grep 确认页面不再直开 API 裸地址；E2E 后端导出用例保持通过。
+
+### P1-15 考试计时可绕过
+
+- **状态**：✅ 已修复
+- **问题**：前端倒计时用 `setInterval` 递减，后台/休眠暂停；后端不校验单次作答时长。
+- **改动**：`ExamPaper.vue` 改为 `endTs` 墙钟 + `visibilitychange` 重算，到 0 自动交卷行为不变；`task.py` 提交时按 `task.duration*60+300s` 容差校验 `duration_seconds`。
+- **验证**：`npm run build` 成功；`py_compile`；E2E 时间窗/交卷用例 0 失败。
+
+### P1-16 会话/权限快照与登出
+
+- **状态**：✅ 已修复
+- **问题**：登出只清本地不调后端；refresh 只写 localStorage 不更新 Pinia；路由守卫只信可篡改的 localStorage。
+- **改动**：`store/user.js` 新增 `applyPermission`、`logout` 先调后端并携带 refresh_token；`request.js` 刷新后动态同步 store；`MainLayout.vue` 启动 fetchProfile、退出 await；`router/index.js` 守卫优先 Pinia、localStorage 兜底。
+- **验证**：`npm run build` 成功；动态验证后端 logout 后 refresh 返回 400；E2E 鉴权/登录链路 0 失败。
+
+### P1-18 容器与构建可复现性
+
+- **状态**：✅ 已修复
+- **问题**：容器全程 root；前端构建用 `npm install` 未使用 lock；构建上下文包含测试/截图/文档；compose 无最小加固。
+- **改动**：Dockerfile 建固定 UID/GID 的 app 用户、`npm ci`、Chroma 缓存迁到 `/home/app`、启动时修正 bind-mount 属主；supervisord 仅 uvicorn 降权（nginx master 保持 root）；compose 增加 `no-new-privileges`；`.dockerignore` 排除 tests/docs/tools/ui_shots/openapi 等。
+- **验证**：静态审查 + `py_compile`（环境无 docker，未实机 build）；不影响本地启动与 E2E。
+
+### P1-19 版本/文档/OpenAPI 对齐
+
+- **状态**：✅ 已修复
+- **问题**：VERSION=1.0.42 但前端 package 为 1.0.8、README/QUICKSTART 拉 1.0.8 镜像；openapi.json 仅 144 operations 且 version=1.0.0。
+- **改动**：前端版本与 lock 同步 1.0.42；README/QUICKSTART/DEPLOYMENT/RELEASE_CONSISTENCY 的版本号、镜像通道、退出码描述修正；重新生成 openapi.json（version=1.0.42、paths=166、operations=203）。
+- **验证**：JSON 解析通过；openapi 覆盖 `/lesson/ai` 与 `/learning` 全部端点；E2E 不受影响。
+
+### P1-20 测试断言假绿
+
+- **状态**：✅ 已修复
+- **问题**：`expect_denied` 只判 `success is not True`，500/422/405 也算拦截；一处 AI 用例对 POST 接口发 GET，405 仍 PASS；`/job/jobs` 路径笔误把 404 当拦截。
+- **改动**：`e2e_framework.py` 收紧为 401/403（或显式 allow_statuses），FAIL 输出实际状态码与响应；`test_learning_hub.py` 显式 method 映射；`test_requirements.py` 修正路径、学生上传改为真实文件并断言 401/403；`test_learning.py`/`test_analysis.py` 适配真实 404/400 语义。
+- **验证**：全量 E2E 851 项 / 通过 837 / 失败 0 / 环境跳过 14，收紧后未出现假绿掩盖。
+
