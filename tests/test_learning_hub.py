@@ -174,15 +174,25 @@ def run():
               p.get("success") and bool(d.get("task_id")),
               f"HTTP {sc} task_id={d.get('task_id')} {p.get('message', '')[:30]}")
 
-    # AI 类接口（允许降级）
-    for path, name in (("/learning/review/plan", "AI 生成复习计划"),
-                       ("/learning/path/recommend", "学习路径推荐")):
-        if "generate" in path:
-            p, _, sc = stu.post(path, body={}, timeout=90)
+    # AI 类接口（允许降级：未配置 LLM 时走规则引擎，但仍须 200 + success）
+    # 方法必须显式声明：此前用 `"generate" in path` 猜方法，
+    # /learning/review/plan 不含 generate → 实际发的是 GET，而路由只注册了 POST，
+    # 返回 405；旧断言 `p.get("success") or is_down(p) is False` 恒为真，
+    # 405 也被判 PASS。改为按端点显式映射 method，且 405/404/5xx 一律 FAIL。
+    AI_ENDPOINTS = (
+        ("POST", "/learning/review/plan", "AI 生成复习计划"),
+        ("GET", "/learning/path/recommend", "学习路径推荐"),
+    )
+    for method, path, name in AI_ENDPOINTS:
+        if method == "POST":
+            p, _, sc = stu.request("POST", path, body={}, timeout=90)
         else:
             p, _, sc = stu.get(path, params={"page_size": 3}, timeout=90)
+        if is_down(p):
+            R.env(f"{name}（允许降级）", "服务不可达，无法验证")
+            continue
         check(f"{name}（允许降级）",
-              p.get("success") or is_down(p) is False,
+              p.get("success") is True and sc == 200,
               f"HTTP {sc} {p.get('message', '')[:40]}")
 
     # ============================================================

@@ -336,20 +336,41 @@ def dt_str(dt):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def expect_denied(name, client, method, path, body=None, params=None):
-    """断言「应当被拒绝」。服务不可达不算通过——那是环境问题不是安全生效。"""
+def expect_denied(name, client, method, path, body=None, params=None,
+                  allow_statuses=()):
+    """断言「应当被拒绝」，且**必须是被拒绝**，不能是接口出错。
+
+    判定标准（两条同时满足）：
+      1. HTTP 状态码属于拒绝类 —— 默认 {401, 403}（未认证 / 权限不足）；
+         数据隔离场景后端可能故意返回 404（不暴露资源是否存在），
+         个别历史实现用 400 表达「无权」，由调用方用 allow_statuses 显式声明。
+      2. 响应 success 不为 True。
+
+    为什么不能只判 success：原实现只要 `success is not True` 就算通过，
+    于是 500（服务端异常）、422（参数校验失败）、405（HTTP 方法用错）、
+    404（路径写错）都会被当成「越权已拦截」而 PASS —— 接口崩了、请求发错了
+    反而全绿，门禁形同虚设。收紧后，这些情况一律 FAIL 并打印实际状态码与响应。
+    """
     fn = {"GET": client.get, "POST": client.post,
           "PUT": client.put, "DELETE": client.delete}[method]
-    payload, ms, _ = fn(path, body=body, params=params)
+    payload, ms, status = fn(path, body=body, params=params)
     if is_down(payload):
         return R.env(name, payload.get("message", "服务不可达"))
-    denied = payload.get("success") is not True
-    msg = payload.get("message", "")
-    if not denied:
-        R.issue("高", f"越权未拦截：{name}",
-                f"{method} {path} 在无权限情况下返回成功，响应={str(payload)[:150]}",
-                f"{method} {path}")
-    return R.add(name, denied, msg or f"{ms}ms")
+
+    allowed = (401, 403) + tuple(allow_statuses)
+    if payload.get("success") is not True and status in allowed:
+        return R.add(name, True, payload.get("message", "") or f"{ms}ms")
+
+    # 失败时把「实际状态码 + 响应体」打出来，方便区分两种成因：
+    # 真越权（2xx / success=True）还是请求本身有问题（405/422/404/500）。
+    detail = (f"{method} {path} -> HTTP {status}（期望拒绝码 {sorted(allowed)}）；"
+              f"message={str(payload.get('message', ''))[:80]!r}；"
+              f"响应={str(payload)[:200]}")
+    if payload.get("success") is True:
+        R.issue("高", f"越权未拦截：{name}", detail, f"{method} {path}")
+    else:
+        R.issue("高", f"越权断言拒绝码异常：{name}", detail, f"{method} {path}")
+    return R.add(name, False, detail)
 
 
 def api_ok(name, client, method, path, body=None, params=None, expect_keys=None):

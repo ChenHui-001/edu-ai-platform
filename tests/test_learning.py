@@ -237,9 +237,12 @@ def run():
         p2, _, _ = peer.get("/learning/wrong-questions", params={"page": 1, "page_size": 1})
         peer_wrongs = rows_of(p2)
         if peer_wrongs and peer_wrongs[0]["id"] != wid:
+            # 后端对「非本人错题」统一抛 NotFound(404)：不向他人暴露记录是否存在，
+            # 因此这里必须放行 404（403 反而不是当前实现的拒绝码）。
             expect_denied("他人错题不可标注", stu, "PUT",
                           f"/learning/wrong-questions/{peer_wrongs[0]['id']}",
-                          body={"error_reason": "hack"})
+                          body={"error_reason": "hack"},
+                          allow_statuses=(404,))
 
     # ---------------------------------------------------------- 3 智能复习
     R.set_phase("阶段四 · 学习中心 | 3. 智能复习")
@@ -257,8 +260,10 @@ def run():
         p, _, _ = stu.put(f"/learning/review/plans/{pid0}/complete",
                           {"correct_rate": 80})
         check("完成复习（闭环推进）", p.get("success"), p.get("message", ""))
+        # 非本人计划 → 后端抛 NotFound(404)，属「不暴露存在性」的数据隔离策略
         expect_denied("他人复习计划不可完成", peer, "PUT",
-                      f"/learning/review/plans/{pid0}/complete", body={})
+                      f"/learning/review/plans/{pid0}/complete", body={},
+                      allow_statuses=(404,))
     else:
         R.env("复习闭环用例", "无待完成计划，跳过")
 
@@ -439,9 +444,12 @@ def run():
     check("列表回显今日已打卡", mine.get("today_checked") is True,
           f"today={mine.get('today_value')}")
 
+    # 非本人目标 → NotFound(404)：数据隔离不暴露目标是否存在
     expect_denied("他人目标不可打卡", peer, "POST",
-                  f"/learning/goals/{gid}/checkin", body={"actual_value": 1})
-    expect_denied("他人目标不可删除", peer, "DELETE", f"/learning/goals/{gid}")
+                  f"/learning/goals/{gid}/checkin", body={"actual_value": 1},
+                  allow_statuses=(404,))
+    expect_denied("他人目标不可删除", peer, "DELETE", f"/learning/goals/{gid}",
+                  allow_statuses=(404,))
 
     p, _, _ = stu.delete(f"/learning/goals/{gid}")
     check("删除目标", p.get("success"), p.get("message", ""))
@@ -472,10 +480,13 @@ def run():
     p, _, _ = stu.post("/learning/notes", {"title": "越权对照", "content": "x"})
     nid = (data_of(p) or {}).get("id")
     if nid:
+        # 笔记详情：非本人且非管理员 → PermissionException(403)
         expect_denied("他人笔记详情不可读", peer, "GET", f"/learning/notes/{nid}")
+        # 笔记写操作：非本人 → NotFound(404)，不暴露笔记存在性
         expect_denied("他人笔记不可更新", peer, "PUT", f"/learning/notes/{nid}",
-                      body={"title": "hack"})
-        expect_denied("他人笔记不可删除", peer, "DELETE", f"/learning/notes/{nid}")
+                      body={"title": "hack"}, allow_statuses=(404,))
+        expect_denied("他人笔记不可删除", peer, "DELETE", f"/learning/notes/{nid}",
+                      allow_statuses=(404,))
         stu.delete(f"/learning/notes/{nid}")
 
     print("\n学习中心专项测试完成。")

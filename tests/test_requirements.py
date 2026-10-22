@@ -592,7 +592,11 @@ def run():
         p, _, _ = tea1.delete(f"/attachments/{att_id}")
         check("附件可删除", p.get("success"), f"{p.get('code')}")
 
-    expect_denied("学生不能上传附件", stu731, "POST", "/attachments/upload")
+    # 学生上传：需要带真实文件，确保 4xx 来自权限校验而不是缺 file 参数的 422
+    _p2, _, _sc2 = _upload(stu731, b"student upload attempt")
+    check("★ 学生不能上传附件",
+          _p2.get("success") is not True and _sc2 in (401, 403),
+          f"HTTP {_sc2} {_p2.get('message', '')[:50]}")
 
 
 # ============================================================
@@ -600,17 +604,19 @@ def run():
 # ============================================================
     R.set_phase("补充 · 需求覆盖回归 | 20. 管理端越权矩阵")
 
+    # 注意：定时任务路由前缀是 /jobs（logs.py 的 jobs_router），
+    # 此前写成 /job/jobs 会得到 404 —— 旧断言把 404 当作「越权已拦截」才没暴露。
     for path in ["/system/users", "/system/roles", "/system/permissions",
                  "/logs/login", "/logs/operation", "/logs/error",
-                 "/job/jobs"]:
+                 "/jobs"]:
         expect_denied(f"教师读 {path} 被拒", tea1, "GET", path)
         expect_denied(f"学生读 {path} 被拒", stu731, "GET", path)
 
     for path, method, body in [
         ("/system/users", "POST", {"username": "hack"}),
         ("/system/roles", "POST", {"code": "hacker"}),
-        ("/job/jobs", "POST", {"name": "h", "cron": "*/1 * * * *",
-                                "func": "hacker"}),
+        ("/jobs", "POST", {"name": "h", "cron": "*/1 * * * *",
+                           "func": "hacker"}),
     ]:
         expect_denied(f"学生写 {path} 被拒", stu731, method, path, body=body)
 
