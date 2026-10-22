@@ -121,6 +121,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { formatLocalDate } from '@/utils/date'
 import { Plus, Check, Edit, Delete } from '@element-plus/icons-vue'
 import { learningApi } from '@/api'
 
@@ -144,7 +145,9 @@ const calendarDays = computed(() => {
   for (let i = 29; i >= 0; i--) {
     const d = new Date(now)
     d.setDate(d.getDate() - i)
-    const dateStr = d.toISOString().slice(0, 10)
+    // 必须按本地时区取日期：toISOString() 是 UTC，东八区 0:00-8:00 会错一天，
+    // 打卡日历 key 与后端 calendar（本地日期）对不上。
+    const dateStr = formatLocalDate(d)
     days.push({
       date: dateStr,
       label: String(d.getDate()),

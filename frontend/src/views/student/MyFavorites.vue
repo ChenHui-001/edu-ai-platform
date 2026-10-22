@@ -100,6 +100,7 @@ import { Promotion, Refresh, Search, Edit, Delete } from '@element-plus/icons-vu
 import TYPES, { questionTypeLabel } from '@/constants/question'
 import { learningApi } from '@/api'
 import { sanitizeHtml } from '@/utils/sanitize'
+import { parseServerDate } from '@/utils/date'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
@@ -123,8 +124,10 @@ const recentCount = computed(() => {
   const week = 7 * 24 * 60 * 60 * 1000
   return list.value.filter(i => {
     if (!i.created_at) return false
-    const d = typeof i.created_at === 'string' ? new Date(i.created_at) : i.created_at
-    return now - d < week
+    // 后端返回 "YYYY-MM-DD HH:mm:ss"，Safari 直接 new Date 会 Invalid Date；
+    // 统一走 parseServerDate（空格转 T），避免「最近一周」恒为 0。
+    const d = parseServerDate(i.created_at)
+    return d ? now - d < week : false
   }).length
 })
 
