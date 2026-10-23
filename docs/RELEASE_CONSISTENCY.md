@@ -241,13 +241,13 @@ curl -s http://localhost/api/v1/health | jq .version
 | 项 | 值 |
 |---|---|
 | VERSION | `1.0.42` |
-| commit | 以本次 P1 修复合并后的 `git rev-parse HEAD` 为准（1.0.42 尚未发布） |
-| 本地镜像 | 待 1.0.42 发布后重建并核对（上一份记录为 `1.0.41`） |
-| ghcr | 待核对：本文档上一记录为 `1.0.41`；1.0.42 是否已发布以 `check_release_consistency.py --post` 结果为准 |
-| Docker Hub | 待核对：上一记录为 `1.0.41`（digest `sha256:8305b358…`） |
-| latest | 待核对：上一记录指向 `1.0.41` |
-| 发布后校验 | 待 1.0.42 推送后执行 `python tools/check_release_consistency.py --post` |
-| CI | 待 1.0.42 推送到 master 后触发（preflight / build-push / postflight） |
+| commit | `a15fad9`（代码最终提交；镜像构建 commit=`1f0c2a7`，其后仅文档提交） |
+| 本地镜像 | `nanpo/edu-ai-platform:1.0.42` / `:latest`（digest `sha256:0e3f853a…`，约 1.82GB） |
+| ghcr | 本轮未推送（仅手动发布 Docker Hub；未触发 CI） |
+| Docker Hub | 已推送 `1.0.42`（manifest-list digest `sha256:0e3f853a…`） |
+| latest | 已推送，与 `1.0.42` 指向同一 digest |
+| 发布后校验 | `docker buildx imagetools inspect` 已核对；容器实机 health/login/46 页浏览器冒烟通过 |
+| CI | 未触发（本次为手动发布） |
 
 > 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：
 > 发布后校验 **10 通过 / 0 失败 / 0 警告 / 0 跳过**（EXIT=0），

@@ -132,9 +132,9 @@
 ### P2-19 镜像构建与推送 Docker Hub
 
 - **状态**：✅ 已发布
-- **构建**：`docker build --target unified`，`GIT_COMMIT` 与当前 HEAD 一致；镜像内 `/app/BUILD_INFO` 已核对。
+- **构建**：`docker build --target unified`，镜像构建 commit=`1f0c2a7`（最终代码提交；此后仅文档提交），镜像内 `/app/BUILD_INFO` 已核对。
 - **验证**：临时容器 health=`healthy`、admin 登录成功、`/app/data` 属主 `app`(10001)；浏览器逐页冒烟通过。
-- **推送**：`nanpo/edu-ai-platform:1.0.42` 与 `:latest`（Docker Hub 账号 `nanpo`）。
+- **推送**：`nanpo/edu-ai-platform:1.0.42` 与 `:latest` 已推送 Docker Hub，manifest-list digest 均为 `sha256:0e3f853aa06da148993e386f1d2cc72afdf9e84120220fee6115f0323ec1d617`（`docker buildx imagetools inspect` 已核对）。
 
 ---
 
