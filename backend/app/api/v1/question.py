@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, Depends, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, noload
 
 from app.agents.rag import index_question
 from app.api.deps import get_current_teacher
@@ -364,16 +364,24 @@ def export_questions(
         stmt = stmt.where(Question.grade_id == grade_id)
     rows = db.scalars(stmt.limit(5000)).all()
 
+    # 一次预取知识点名称，避免循环内逐题 db.get(KnowledgePoint) 的 N+1
+    kp_ids = {q.knowledge_point_id for q in rows if q.knowledge_point_id}
+    kp_names = {
+        kp.id: kp.name for kp in db.scalars(
+            select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids))
+        ).all()
+    } if kp_ids else {}
+
     wb = Workbook()
     ws = wb.active
     ws.title = "题库导出"
     ws.append(["题型", "题干", "答案", "解析", "难度", "分值", "知识点ID", "状态", "创建时间"])
     for q in rows:
-        kp = db.get(KnowledgePoint, q.knowledge_point_id) if q.knowledge_point_id else None
         ws.append([
             QUESTION_TYPE_LABEL.get(q.type, q.type), q.stem, q.answer, q.analysis,
             DIFFICULTY_LABEL.get(q.difficulty, q.difficulty), q.score,
-            kp.name if kp else "", q.status,
+            kp_names.get(q.knowledge_point_id, "") if q.knowledge_point_id else "",
+            q.status,
             q.created_at.strftime("%Y-%m-%d %H:%M") if q.created_at else "",
         ])
     buf = io.BytesIO()
@@ -403,17 +411,56 @@ def list_papers(
         stmt = stmt.where(Paper.name.like(f"%{keyword}%"))
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
-        stmt.order_by(Paper.created_at.desc()).offset(params.offset).limit(params.page_size)
+        # noload：列表只需要题量，不再连带加载整卷题目明细
+        # （Paper.items 是 lazy="selectin"，默认会按页把全部 PaperItem 拉一遍）
+        stmt.options(noload(Paper.items))
+        .order_by(Paper.created_at.desc()).offset(params.offset).limit(params.page_size)
     ).all()
+    paper_ids = [p.id for p in rows]
+    # 一次聚合出本页试卷的题量与题分合计，替代逐卷读取 items 的 N+1；
+    # 返回字段名保持不变：item_count 仍取题目条数。
+    item_stats: Dict[int, tuple] = {
+        pid: (int(cnt or 0), float(score_sum or 0.0))
+        for pid, cnt, score_sum in db.execute(
+            select(
+                PaperItem.paper_id,
+                func.count(PaperItem.id),
+                func.sum(PaperItem.score),
+            ).where(PaperItem.paper_id.in_(paper_ids)).group_by(PaperItem.paper_id)
+        ).all()
+    } if paper_ids else {}
+
+    # 批量预取创建者 / 学科 / 年级名称，避免逐卷 db.get 的 N+1
+    creator_ids = {p.creator_id for p in rows if p.creator_id}
+    subject_ids = {p.subject_id for p in rows if p.subject_id}
+    grade_ids = {p.grade_id for p in rows if p.grade_id}
+    creator_names = {
+        u.id: u.real_name for u in db.scalars(
+            select(User).where(User.id.in_(creator_ids))
+        ).all()
+    } if creator_ids else {}
+    subject_names = {
+        s.id: s.name for s in db.scalars(
+            select(Subject).where(Subject.id.in_(subject_ids))
+        ).all()
+    } if subject_ids else {}
+    grade_names = {
+        g.id: g.name for g in db.scalars(
+            select(Grade).where(Grade.id.in_(grade_ids))
+        ).all()
+    } if grade_ids else {}
+
     items = []
     for p in rows:
         d = dictify(p)
-        d["item_count"] = len(p.items)
-        d["creator_name"] = db.get(User, p.creator_id).real_name if db.get(User, p.creator_id) else None
-        sub = db.get(Subject, p.subject_id)
-        d["subject_name"] = sub.name if sub else None
-        gr = db.get(Grade, p.grade_id)
-        d["grade_name"] = gr.name if gr else None
+        item_count, item_total = item_stats.get(p.id, (0, 0.0))
+        d["item_count"] = item_count
+        # 总分以 Paper.total_score 为准（组卷/编辑时维护），仅当其缺失时用题分合计兜底
+        if not d.get("total_score"):
+            d["total_score"] = round(item_total, 2)
+        d["creator_name"] = creator_names.get(p.creator_id)
+        d["subject_name"] = subject_names.get(p.subject_id)
+        d["grade_name"] = grade_names.get(p.grade_id)
         items.append(d)
     return ok({"items": items, "total": total, "page": params.page})
 

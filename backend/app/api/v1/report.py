@@ -100,9 +100,16 @@ def score_trend(
             select(Task.id).where(Task.subject_id == subject_id)
         ))
     subs = db.scalars(stmt.order_by(Submission.id).limit(limit)).all()
+    # 一次预取本页提交涉及的任务，避免循环内逐条 db.get(Task) 的 N+1
+    task_ids = {s.task_id for s in subs if s.task_id}
+    task_map: Dict[int, Task] = {
+        t.id: t for t in db.scalars(
+            select(Task).where(Task.id.in_(task_ids))
+        ).all()
+    } if task_ids else {}
     items = []
     for s in subs:
-        task = db.get(Task, s.task_id)
+        task = task_map.get(s.task_id)
         items.append({
             "id": s.id, "name": task.title if task else "练习",
             "type": task.type if task else "practice",
@@ -123,9 +130,16 @@ def knowledge_radar(
         stmt = stmt.where(KnowledgeMastery.subject_id == subject_id)
     rows = db.scalars(stmt).all()
 
+    # 一次预取知识点，避免循环内逐条 db.get(KnowledgePoint) 的 N+1
+    kp_ids = {m.knowledge_point_id for m in rows if m.knowledge_point_id}
+    kp_map: Dict[int, KnowledgePoint] = {
+        kp.id: kp for kp in db.scalars(
+            select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids))
+        ).all()
+    } if kp_ids else {}
     items = []
     for m in rows:
-        kp = db.get(KnowledgePoint, m.knowledge_point_id)
+        kp = kp_map.get(m.knowledge_point_id)
         if kp:
             items.append({"id": kp.id, "name": kp.name, "mastery": round(m.mastery, 2)})
     items.sort(key=lambda x: x["mastery"])
@@ -430,12 +444,45 @@ def student_detail(
     masteries = db.scalars(
         select(KnowledgeMastery).where(KnowledgeMastery.student_id == student_id)
     ).all()
+    # 一次预取知识点，避免循环内 db.get(KnowledgePoint) 的 N+1
+    kp_ids = {m.knowledge_point_id for m in masteries if m.knowledge_point_id}
+    kp_map: Dict[int, KnowledgePoint] = {
+        kp.id: kp for kp in db.scalars(
+            select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids))
+        ).all()
+    } if kp_ids else {}
     kp_items = []
     for m in masteries:
-        kp = db.get(KnowledgePoint, m.knowledge_point_id)
+        kp = kp_map.get(m.knowledge_point_id)
         if kp:
             kp_items.append({"name": kp.name, "mastery": round(m.mastery, 2)})
     kp_items.sort(key=lambda x: x["mastery"])
+
+    # 一次预取本学生全部提交涉及的任务：下面 score_trend 与 summary 都要用满分，
+    # 原实现每条提交（乃至每个字段）都 db.get(Task) 一次，构成 N+1。
+    task_ids = {s.task_id for s in subs if s.task_id}
+    task_map: Dict[int, Task] = {
+        t.id: t for t in db.scalars(
+            select(Task).where(Task.id.in_(task_ids))
+        ).all()
+    } if task_ids else {}
+    score_trend = []
+    for s in subs:
+        task = task_map.get(s.task_id)
+        total_score = (task.total_score or 0) if task else 0
+        score_trend.append({
+            "name": task.title if task else "",
+            "score": s.score,
+            "total_score": task.total_score if task else 0,
+            "score_rate": round((s.score or 0) / total_score * 100, 2) if total_score else 0,
+            "rank": s.class_rank,
+            "date": dictify(s.submit_time),
+        })
+    # 平均得分率分母：只累加「任务存在」的满分（与旧实现口径一致）
+    rated_total = sum(
+        (task_map.get(x.task_id).total_score or 0)
+        for x in subs if task_map.get(x.task_id)
+    )
 
     wrong = db.scalars(
         select(WrongQuestion).where(
@@ -450,21 +497,7 @@ def student_detail(
         },
         # 趋势必须带满分与得分率：否则 30 分卷与 100 分卷会画在同一条
         # 折线上，视觉上「成绩暴跌」而实际是试卷分值不同。
-        "score_trend": [
-            {
-                "name": (db.get(Task, s.task_id).title if db.get(Task, s.task_id) else ""),
-                "score": s.score,
-                "total_score": (db.get(Task, s.task_id).total_score
-                                if db.get(Task, s.task_id) else 0),
-                "score_rate": (round((s.score or 0) /
-                                     (db.get(Task, s.task_id).total_score or 1) * 100, 2)
-                               if db.get(Task, s.task_id)
-                               and (db.get(Task, s.task_id).total_score or 0) else 0),
-                "rank": s.class_rank,
-                "date": dictify(s.submit_time),
-            }
-            for s in subs
-        ],
+        "score_trend": score_trend,
         "knowledge_mastery": kp_items,
         "weak_points": kp_items[:5],
         "wrong_questions": [
@@ -477,9 +510,7 @@ def student_detail(
             "avg_score": round(sum(s.score for s in subs) / len(subs), 2) if subs else 0,
             # 平均得分率：跨不同满分试卷唯一可比的汇总口径
             "avg_score_rate": round(
-                sum(s.score or 0 for s in subs) /
-                max(sum((db.get(Task, x.task_id).total_score or 0)
-                        for x in subs if db.get(Task, x.task_id)), 1) * 100, 2
+                sum(s.score or 0 for s in subs) / max(rated_total, 1) * 100, 2
             ) if subs else 0,
         },
     })

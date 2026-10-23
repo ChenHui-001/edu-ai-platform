@@ -364,9 +364,15 @@ def task_submissions(
         .offset(params.offset).limit(params.page_size)
     ).all()
 
+    # 批量预取本页学生，避免循环内逐条 db.get(User)
+    stu_ids = {s.student_id for s in rows if s.student_id}
+    stu_map: Dict[int, User] = {
+        u.id: u for u in db.scalars(select(User).where(User.id.in_(stu_ids))).all()
+    } if stu_ids else {}
+
     items = []
     for s in rows:
-        stu = db.get(User, s.student_id)
+        stu = stu_map.get(s.student_id)
         items.append({
             "submission_id": s.id, "student_id": s.student_id,
             "student_name": stu.real_name if stu else "",
@@ -379,19 +385,32 @@ def task_submissions(
             "submit_time": s.submit_time.strftime("%Y-%m-%d %H:%M:%S") if s.submit_time else None,
         })
 
-    # 应交名单与完成率
+    # 应交名单与完成率：先收集学生 id 与班级 id，再一次 IN 查询，
+    # 避免每遇到一条班级下发就查一次用户表（N+1）。
     assigned_ids: set = set()
+    class_ids: set = set()
     for a in task.assignments:
         if a.student_id:
             assigned_ids.add(a.student_id)
         elif a.class_id:
-            assigned_ids.update(
-                db.scalars(select(User.id).where(User.class_id == a.class_id)).all()
-            )
+            class_ids.add(a.class_id)
+    if class_ids:
+        assigned_ids.update(
+            db.scalars(select(User.id).where(User.class_id.in_(class_ids))).all()
+        )
     submitted_ids = {s.student_id for s in rows} | set(
         db.scalars(select(Submission.student_id).where(Submission.task_id == task_id)).all()
     )
     pending = list(assigned_ids - submitted_ids)
+
+    # 待交名单只展示前 50 人：一次批量取名，替代逐人两次 db.get(User)
+    pending_page = pending[:50]
+    pending_user_ids = {pid for pid in pending_page if pid}
+    pending_names = {
+        u.id: u.real_name for u in db.scalars(
+            select(User).where(User.id.in_(pending_user_ids))
+        ).all()
+    } if pending_user_ids else {}
 
     return ok({
         "items": items, "total": total, "assigned": len(assigned_ids),
@@ -399,8 +418,8 @@ def task_submissions(
         "completion_rate": round(len(submitted_ids & assigned_ids) / len(assigned_ids) * 100, 2)
         if assigned_ids else 0,
         "pending_students": [
-            {"id": pid, "name": (db.get(User, pid).real_name if db.get(User, pid) else "")}
-            for pid in pending[:50]
+            {"id": pid, "name": pending_names.get(pid, "")}
+            for pid in pending_page
         ],
     })
 
