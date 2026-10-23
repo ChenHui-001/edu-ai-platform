@@ -223,7 +223,8 @@
 - **索引**：`rag.py` 新增附件 chunk 索引（900 字/块、最多 40 块）、`attachment_id/knowledge_point_id/filename/path/...` metadata；只索引 published+active 知识点 + 学生可见附件；上传/可见性切换走 BackgroundTasks，删除/下架/知识点删除清理索引；reindex 增加附件阶段与 attachment 统计；检索兜底过滤失效附件，防止隐藏/草稿内容进 LLM。
 - **引用**：TutorAgent 默认检索增加 attachment，`references` 返回「附件 + 文件名 + 知识点」；AgentChat 新增「引用来源」展示；原 LLM 调用/解析/fallback 未改动。
 - **验证**：真实 Chroma 容器上传 PDF → 后台索引 → 学生 AI 答疑命中附件并展示引用；删除附件索引数下降；无 Chroma 环境下上传/AI 仍正常（索引降级跳过）。
-- **镜像**：1.4.0 构建/推送中（完成后回填 digest）。
+- **不阻塞 AI 调用**：新增 Chroma 后台预热（`start_chroma_warmup`），预热期间 `search` 直接走 SQL 降级，AI 请求不被 79MB embedding 下载阻塞；镜像内置已验证的 ONNX 模型缓存（88MB），首次容器无需联网下载；流式 `/agent/chat/stream` 的 chat 意图兜底走 TutorAgent，并透传 `data`，引用来源在流式降级下也能展示。
+- **镜像**：`nanpo/edu-ai-platform:1.4.0` / `:latest` / `:sha-c08bd8f` 已推送，manifest-list digest `sha256:a24051f680a63b049fa516436d23ed7c3ae210598fb6992c9213564544dfb1d7`（基于 commit `c08bd8f`，含模型缓存层）；容器 AI 答疑 0.34s 返回并带「附件 + 文件名 + 知识点」引用，47 页浏览器冒烟通过。
 
 
 

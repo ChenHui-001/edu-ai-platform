@@ -236,17 +236,17 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（1.3.0）
+## 八、当前状态（1.4.0）
 
 | 项 | 值 |
 |---|---|
-| VERSION | `1.3.0` |
-| commit | `6be18dd`（知识点资料附件/学生知识资料页；镜像基于该 commit） |
-| 本地镜像 | `nanpo/edu-ai-platform:1.3.0` / `:latest` / `:sha-6be18dd`（digest `sha256:7f39504c…`） |
+| VERSION | `1.4.0` |
+| commit | `c08bd8f`（附件文本解析入 Chroma、AI 引用来源、Chroma 后台预热、流式引用透传；镜像基于该 commit） |
+| 本地镜像 | `nanpo/edu-ai-platform:1.4.0` / `:latest` / `:sha-c08bd8f`（digest `sha256:a24051f6…`，内置 88MB embedding 缓存） |
 | ghcr | 未推送（手动发布 Docker Hub；未触发 CI） |
-| Docker Hub | 已推送 `1.3.0`（manifest-list digest `sha256:7f39504c180b9e484d0e471015473da069d502fb6ae21d1b9d612d764bdd8e25`） |
-| latest | 已推送，与 `1.3.0` 同一 digest |
-| 发布后校验 | 容器 health=`healthy`、version=`1.3.0`；学生附件预览/下载、教师越权 403、可见性开关、47 页浏览器冒烟通过 |
+| Docker Hub | 已推送 `1.4.0`（manifest-list digest `sha256:a24051f680a63b049fa516436d23ed7c3ae210598fb6992c9213564544dfb1d7`） |
+| latest | 已推送，与 `1.4.0` 同一 digest |
+| 发布后校验 | 上传 PDF→后台索引→学生 AI 答疑 0.34s 返回，references 含附件文件名/知识点，UI「引用来源」可见；47 页浏览器冒烟通过 |
 | CI | 未触发（手动发布）；后续遵循 `docs/DELIVERY_RULES.md` |
 
 > 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：

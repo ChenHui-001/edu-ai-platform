@@ -41,5 +41,5 @@
 
 ## 5. 当前状态
 
-- 1.3.0 已发布（Docker Hub，manifest-list digest `sha256:7f39504c…`，对应 commit `6be18dd`）。
-- 1.2.0 / 1.1.0 / 1.0.43 / 1.0.42 保留为历史版本，不再覆盖。
+- 1.4.0 已发布（Docker Hub，manifest-list digest `sha256:a24051f6…`，对应 commit `c08bd8f`，镜像内置 Chroma 模型缓存）。
+- 1.3.0 / 1.2.0 / 1.1.0 / 1.0.43 / 1.0.42 保留为历史版本，不再覆盖。
