@@ -5,12 +5,29 @@
         <div class="st-title">
           <el-icon><Cpu /></el-icon> AI 引擎状态
         </div>
-        <div class="st-row"><span>模型</span><b>{{ status.model || '未配置' }}</b></div>
+        <div class="st-row"><span>提供商</span><b>{{ providerName }}</b></div>
+        <div class="st-row"><span>模型</span><b>{{ modelName }}</b></div>
+        <div class="st-row">
+          <span>API Key</span>
+          <b><el-tag size="small" :type="keyTagType" effect="plain">{{ keyLabel }}</el-tag></b>
+        </div>
         <div class="st-row"><span>编排</span><b>{{ status.orchestrator_mode === 'langgraph' ? 'LangGraph' : '顺序编排' }}</b></div>
         <div class="st-row"><span>向量库</span><b>{{ status.vector_db || '-' }}</b></div>
         <div class="st-row"><span>Agent</span><b>{{ status.agents || 0 }} 个</b></div>
         <el-alert v-if="status.tip" type="warning" :closable="false" show-icon style="margin-top:8px">
           <template #title><span style="font-size:12px">{{ status.tip }}</span></template>
+        </el-alert>
+        <!-- 未启用 AI：给出配置入口（管理员可跳转，非管理员提示联系管理员） -->
+        <el-alert v-if="showConfigHint" type="warning" :closable="false" show-icon style="margin-top:8px">
+          <template #title>
+            <span style="font-size:12px">
+              AI 未启用，当前走规则引擎降级。
+              <el-link v-if="isAdmin" type="primary" :underline="false" @click="goAiConfig">
+                前往 AI 大模型配置
+              </el-link>
+              <template v-else>请联系管理员在「AI 大模型配置」中启用。</template>
+            </span>
+          </template>
         </el-alert>
       </div>
 
@@ -19,7 +36,7 @@
         <div v-for="q in samples" :key="q" class="sample" @click="ask(q)">{{ q }}</div>
       </div>
 
-      <el-button :icon="Delete" style="width:100%" @click="clear">清空对话</el-button>
+      <el-button :icon="Delete" style="width:100%" @click="clear">新对话</el-button>
     </aside>
 
     <section class="main">
@@ -105,16 +122,17 @@
                 </div>
               </div>
 
-              <div v-if="m.data?.references?.length" class="refs">
-                参考：
-                <el-tag v-for="r in m.data.references" :key="r.type + r.id" size="small"
-                        style="margin:2px" type="info">{{ r.type }}·{{ r.name }}</el-tag>
-              </div>
-
               <div class="msg-meta">
                 <el-tag size="small" effect="plain">{{ agentLabel(m.agent) }}</el-tag>
                 <span v-if="m.duration">{{ m.duration }}ms</span>
                 <el-tag v-if="m.fallback" size="small" type="warning" effect="plain">规则引擎降级</el-tag>
+                <el-tag v-if="m.stopped" size="small" type="info" effect="plain">已停止</el-tag>
+                <span class="msg-actions">
+                  <el-button v-if="!m.thinking && m.content" link type="primary" size="small"
+                             @click="copyAnswer(m)">复制</el-button>
+                  <el-button v-if="i === messages.length - 1 && !loading && lastUserIndex >= 0"
+                             link type="primary" size="small" @click="regenerate">重新生成</el-button>
+                </span>
               </div>
             </template>
           </div>
@@ -129,14 +147,16 @@
           <el-select v-model="ctx.subject_id" placeholder="学科（选填）" clearable size="small" style="width:140px">
             <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
+          <el-button v-if="!loading && lastUserText" size="small" :icon="RefreshRight"
+                     @click="regenerate">重新生成</el-button>
         </div>
         <div class="input-row">
           <el-input ref="inputRef" v-model="input" type="textarea" :rows="2" resize="none" maxlength="500"
                     placeholder="描述你的需求，Enter 发送，Shift+Enter 换行"
                     @keydown.enter.exact.prevent="send" />
-          <el-button type="primary" :loading="loading" :icon="Promotion" @click="send">
-            {{ loading ? 'AI 思考中（最长约 60 秒）' : '发送' }}
-          </el-button>
+          <el-button v-if="loading" type="danger" plain :icon="VideoPause"
+                     @click="stopGeneration">停止生成</el-button>
+          <el-button v-else type="primary" :icon="Promotion" @click="send">发送</el-button>
         </div>
         <div class="tip">{{ input.length }}/500 · AI 生成内容仅供参考，请结合教材核实</div>
       </div>
@@ -145,14 +165,18 @@
 </template>
 
 <script setup>
-import { nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import MarkdownIt from 'markdown-it'
 import { sanitizeHtml } from '@/utils/sanitize'
-import { Delete, Promotion, Cpu, MagicStick } from '@element-plus/icons-vue'
+import { Delete, Promotion, Cpu, MagicStick, RefreshRight, VideoPause } from '@element-plus/icons-vue'
 import { agentApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
 const userStore = useUserStore()
+const router = useRouter()
+const isAdmin = computed(() => userStore.isAdmin === true)
 const md = new MarkdownIt()
 
 const input = ref('')
@@ -164,6 +188,45 @@ const subjects = ref([])
 const expanded = ref({})
 const scrollBox = ref()
 const ctx = ref({ grade_id: null, subject_id: null })
+let abortController = null
+
+// 对话持久化：localStorage 保留最近 50 条，刷新不丢
+const STORAGE_KEY = 'edu_chat_v2'
+const MAX_MESSAGES = 50
+
+// 状态卡：兼容新旧字段名，key_configured 缺失时显示「未知」
+const providerName = computed(() =>
+  status.value?.provider || status.value?.llm_provider || '-')
+const modelName = computed(() =>
+  status.value?.model || status.value?.llm_model || '未配置')
+const keyConfigured = computed(() => {
+  const v = status.value?.key_configured
+  return typeof v === 'boolean' ? v : null
+})
+const keyLabel = computed(() => {
+  if (keyConfigured.value === true) return '已配置'
+  if (keyConfigured.value === false) return '未配置'
+  return '未知'
+})
+const keyTagType = computed(() => {
+  if (keyConfigured.value === true) return 'success'
+  if (keyConfigured.value === false) return 'danger'
+  return 'info'
+})
+const showConfigHint = computed(() => status.value?.llm_enabled === false)
+
+function goAiConfig() { router.push('/admin/ai-config') }
+
+const lastUserIndex = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    if (messages.value[i]?.role === 'user') return i
+  }
+  return -1
+})
+const lastUserText = computed(() => {
+  const i = lastUserIndex.value
+  return i >= 0 ? String(messages.value[i]?.content || '') : ''
+})
 
 const samples = [
   '帮我出一套七年级数学有理数单元测试卷',
@@ -191,21 +254,70 @@ async function scrollBottom() {
   if (scrollBox.value) scrollBox.value.scrollTop = scrollBox.value.scrollHeight
 }
 
+/** 持久化最近 50 条消息（去掉 thinking/streaming 等瞬时字段）。 */
+function persistMessages() {
+  try {
+    const payload = messages.value
+      // 过滤「正在生成、尚无内容」的空 AI 气泡，避免刷新后出现空白回答
+      .filter(m => !(m.role === 'ai' && !m.content && !m.data))
+      .slice(-MAX_MESSAGES)
+      .map(m => ({
+        role: m.role,
+        content: m.content,
+        data: m.data,
+        agent: m.agent,
+        duration: m.duration,
+        fallback: m.fallback,
+        stopped: m.stopped
+      }))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+  } catch {
+    // 存储满/隐私模式时忽略
+  }
+}
+
+function loadStoredMessages() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return
+    const arr = JSON.parse(raw)
+    if (!Array.isArray(arr)) return
+    messages.value = arr
+      .filter(m => !(m.role === 'ai' && !m.content && !m.data))
+      .slice(-MAX_MESSAGES)
+      .map(m => ({
+        ...m,
+        thinking: false,
+        streaming: false,
+        content: m.thinking ? (m.content || '（上次生成已中断）') : m.content
+      }))
+  } catch {
+    // 历史数据损坏时忽略
+  }
+}
+
 /** 流式发送：fetch + ReadableStream 逐段渲染（SSE 协议手动解析）。
  *  优势：首字延迟 ~1s，用户不必盯着转圈 20-60 秒。
  *  兼容：若服务端未返回流（旧版本/网关缓冲），自动回退为普通请求。 */
-async function send() {
-  const text = input.value.trim()
+async function send(explicitText) {
+  const text = (typeof explicitText === 'string' ? explicitText : input.value).trim()
   if (!text || loading.value) return
   input.value = ''
   messages.value.push({ role: 'user', content: text })
   const idx = messages.value.length
   messages.value.push({ role: 'ai', thinking: true, content: '', streaming: true })
   loading.value = true
+  persistMessages()
   scrollBottom()
 
+  const controller = new AbortController()
+  abortController = controller
+  const signal = controller.signal
   const token = localStorage.getItem('access_token') || ''
   const base = import.meta.env.VITE_API_BASE || '/api/v1'
+  let acc = ''
+  let meta = {}
+  let fallback = false
   try {
     const resp = await fetch(`${base}/agent/chat/stream`, {
       method: 'POST',
@@ -215,7 +327,8 @@ async function send() {
       },
       body: JSON.stringify({
         message: text, grade_id: ctx.value.grade_id, subject_id: ctx.value.subject_id
-      })
+      }),
+      signal
     })
     if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`)
     const ctype = resp.headers.get('content-type') || ''
@@ -224,10 +337,7 @@ async function send() {
     const reader = resp.body.getReader()
     const decoder = new TextDecoder('utf-8')
     let buf = ''
-    let acc = ''
-    let meta = {}
     let dataBlock = null
-    let fallback = false
 
     while (true) {
       const { value, done } = await reader.read()
@@ -266,7 +376,7 @@ async function send() {
         }
       }
     }
-    if (messages.value[idx].thinking) {
+    if (messages.value[idx]?.thinking) {
       messages.value[idx] = {
         ...messages.value[idx],
         content: acc || '（无内容返回）',
@@ -275,41 +385,98 @@ async function send() {
       }
     }
   } catch (e) {
-    // 流式不可用时回退到普通请求
-    try {
-      const res = await agentApi.chat({
-        message: text, grade_id: ctx.value.grade_id, subject_id: ctx.value.subject_id
-      })
-      const d = res.data || {}
-      messages.value[idx] = {
-        role: 'ai',
-        content: d.answer || '（无内容返回）',
-        data: d.data,
-        agent: d.agent,
-        duration: d.duration_ms,
-        fallback: d.is_fallback
+    const current = messages.value[idx]
+    if (e?.name === 'AbortError' || signal.aborted) {
+      // 用户主动停止生成：保留已生成的部分内容
+      if (current) {
+        messages.value[idx] = {
+          ...current,
+          content: current.content || '已停止生成',
+          thinking: false, streaming: false, stopped: true
+        }
       }
-    } catch (e2) {
-      messages.value[idx] = { role: 'ai', content: `请求失败：${e2.message || e.message}` }
+    } else {
+      // 流式不可用时回退到普通请求（用户已停止则不再回退）
+      try {
+        const res = await agentApi.chat({
+          message: text, grade_id: ctx.value.grade_id, subject_id: ctx.value.subject_id
+        })
+        const d = res.data || {}
+        messages.value[idx] = {
+          role: 'ai',
+          content: d.answer || '（无内容返回）',
+          data: d.data,
+          agent: d.agent,
+          duration: d.duration_ms,
+          fallback: d.is_fallback
+        }
+      } catch (e2) {
+        messages.value[idx] = { role: 'ai', content: `请求失败：${e2.message || e.message}` }
+      }
     }
   } finally {
+    abortController = null
     loading.value = false
+    persistMessages()
     scrollBottom()
   }
 }
 
-function ask(q) { input.value = q; send() }
+/** 停止流式生成（AbortController）。 */
+function stopGeneration() {
+  if (abortController) abortController.abort()
+}
+
+/** 复制 AI 回答（优先 clipboard，失败回退 textarea）。 */
+async function copyAnswer(m) {
+  const text = String(m?.content || '')
+  if (!text) return
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    ElMessage.success('已复制回答')
+  } catch {
+    ElMessage.error('复制失败，请手动选择文本复制')
+  }
+}
+
+/** 重新生成：删掉最后一次问答，用同样的提问重新发送。 */
+function regenerate() {
+  if (loading.value) return ElMessage.warning('正在生成中，请先停止或等待完成')
+  const idx = lastUserIndex.value
+  if (idx < 0) return ElMessage.warning('没有可重新生成的问题')
+  const text = String(messages.value[idx]?.content || '')
+  messages.value = messages.value.slice(0, idx)
+  persistMessages()
+  scrollBottom()
+  send(text)
+}
+
+function ask(q) { send(q) }
 
 function clear() {
+  if (loading.value) stopGeneration()
   messages.value = []
-  sessionStorage.removeItem('edu_chat')
+  expanded.value = {}
+  localStorage.removeItem(STORAGE_KEY)
+  scrollBottom()
 }
 
 onMounted(async () => {
-  const saved = sessionStorage.getItem('edu_chat')
-  if (saved) { try { messages.value = JSON.parse(saved) } catch {} }
+  loadStoredMessages()
+  scrollBottom()
   const s = await agentApi.status()
-  status.value = s.data
+  status.value = s.data || {}
   const g = await eduApi.grades()
   grades.value = g.data
   const sub = await eduApi.subjects({ distinct: true })
@@ -378,6 +545,7 @@ onMounted(async () => {
   display: flex; align-items: center; gap: 8px; margin-top: 10px;
   padding-top: 8px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #c0c4cc;
 }
+.msg-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
 .input-bar { padding: 12px 20px 14px; background: #fff; border-top: 1px solid #ebeef5; }
 .filters { display: flex; gap: 8px; margin-bottom: 8px; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }

@@ -270,25 +270,96 @@ def _reload_llm_client() -> None:
         logger.warning(f"重载 LLM 客户端失败: {exc}")
 
 
-def test_ai_connection(data: Dict[str, Any]) -> Dict[str, Any]:
-    """用给定配置测试 LLM 连接（不写入数据库，直接临时调用一次）。"""
-    provider = data.get("llm_provider") or data.get("LLM_PROVIDER") or "deepseek"
-    api_key = data.get("llm_api_key") or data.get("LLM_API_KEY") or ""
-    base_url = data.get("llm_base_url") or data.get("LLM_BASE_URL") or ""
-    model = data.get("llm_model") or data.get("LLM_MODEL") or ""
+def _db_config_value(db: Optional[Session], key: str, default: Any) -> Any:
+    """读取 sys_config 配置值（DB > env）。
+
+    测试连接时前端不回显真实 key，只回传掩码/空值，因此必须能从已保存配置
+    取值；显式清空的 `llm_api_key`（value=""）表示管理员关闭了 AI，不能再
+    回落到 .env 的旧 key。
+    """
+    if db is None:
+        try:
+            from app.agents.llm import _get_db_value
+
+            return _get_db_value(key, "string", default)
+        except Exception:  # noqa: BLE001  配置读取失败不应让测试接口 500
+            return default
+    try:
+        row = db.scalar(select(SysConfig).where(SysConfig.key == key))
+        if row is None:
+            return default
+        if row.value is None or row.value == "":
+            return "" if key == "llm_api_key" else default
+        return row.value
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def test_ai_connection(
+    data: Dict[str, Any], db: Optional[Session] = None,
+) -> Dict[str, Any]:
+    """用给定配置测试 LLM 连接（不写入数据库，直接临时调用一次）。
+
+    前端配置页不会把已保存的 API Key 回显到输入框，所以 `llm_api_key`
+    为空或含掩码 `****` 时要从 sys_config（已保存配置）读取真实 key；
+    显式清空（DB 值为空串）则视为未配置。返回 `duration_ms` 供 UI 展示耗时。
+    """
+    import time
+
+    started = time.perf_counter()
+
+    def _done(payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload["duration_ms"] = int((time.perf_counter() - started) * 1000)
+        return payload
+
+    def _pick(*names: str) -> Optional[str]:
+        """取显式传入的参数；None 视为未传，空串视为显式空值。"""
+        for name in names:
+            if name in data and data.get(name) is not None:
+                return str(data.get(name)).strip()
+        return None
+
+    provider = _pick("llm_provider", "LLM_PROVIDER")
+    if not provider:
+        provider = str(_db_config_value(
+            db, "llm_provider", settings.LLM_PROVIDER) or settings.LLM_PROVIDER).strip()
+
+    api_key = _pick("llm_api_key", "LLM_API_KEY") or ""
+    if not api_key or "****" in api_key:
+        # 掩码/空值 = 使用已保存的 key；DB 显式空串则表示已清除，不回落到 env
+        api_key = str(_db_config_value(
+            db, "llm_api_key", settings.LLM_API_KEY) or "").strip()
+
+    # base_url：显式传入（含空串）优先；未传时取 DB 已保存值，非 custom
+    # 提供商再回退 .env（custom 不能拿 .env 里别的厂商地址冒充有效配置）
+    base_url = _pick("llm_base_url", "LLM_BASE_URL")
+    if base_url is None:
+        saved_base = str(_db_config_value(db, "llm_base_url", "") or "").strip()
+        base_url = saved_base or (
+            str(settings.LLM_BASE_URL or "").strip() if provider != "custom" else "")
+
+    model = _pick("llm_model", "LLM_MODEL")
+    if not model:
+        model = str(_db_config_value(
+            db, "llm_model", settings.LLM_MODEL) or "").strip()
 
     if not api_key and provider != "ollama":
-        return {
+        return _done({
             "success": False,
             "message": f"未配置 API Key，{PROVIDER_PRESETS.get(provider, {}).get('label', provider)} 无法连接",
-        }
+        })
 
     # 补充默认值
-    preset = PROVIDER_PRESETS.get(provider, PROVIDER_PRESETS["deepseek"])
+    preset = PROVIDER_PRESETS.get(provider) or PROVIDER_PRESETS["custom"]
     if not base_url:
         base_url = preset["base_url"]
     if not model:
         model = preset["model"]
+    if not base_url:
+        return _done({
+            "success": False,
+            "message": "自定义提供商必须填写 API 地址（llm_base_url）",
+        })
 
     try:
         from langchain_openai import ChatOpenAI
@@ -306,7 +377,7 @@ def test_ai_connection(data: Dict[str, Any]) -> Dict[str, Any]:
         content = str(resp.content)[:200]
         usage = getattr(resp, "usage_metadata", None) or {}
 
-        return {
+        return _done({
             "success": True,
             "message": f"连接成功，模型 {model} 回复：{content}",
             "model": model,
@@ -315,17 +386,17 @@ def test_ai_connection(data: Dict[str, Any]) -> Dict[str, Any]:
                 "input_tokens": usage.get("input_tokens", 0),
                 "output_tokens": usage.get("output_tokens", 0),
             },
-        }
+        })
     except ImportError:
-        return {
+        return _done({
             "success": False,
             "message": "langchain-openai 未安装，无法测试连接。请确认依赖已安装。",
-        }
+        })
     except Exception as exc:
         msg = str(exc)
         # 常见错误精简
         if "401" in msg or "Unauthorized" in msg or "invalid_api_key" in msg:
-            return {"success": False, "message": f"API Key 无效或已过期：{msg[:150]}"}
+            return _done({"success": False, "message": f"API Key 无效或已过期：{msg[:150]}"})
         if "Connection" in msg or "connect" in msg.lower() or "timed out" in msg.lower():
-            return {"success": False, "message": f"网络连接失败，请检查 Base URL：{msg[:150]}"}
-        return {"success": False, "message": f"连接测试失败：{msg[:200]}"}
+            return _done({"success": False, "message": f"网络连接失败，请检查 Base URL：{msg[:150]}"})
+        return _done({"success": False, "message": f"连接测试失败：{msg[:200]}"})

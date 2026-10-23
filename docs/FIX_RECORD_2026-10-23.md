@@ -270,6 +270,16 @@
 - **验证**：E2E 850/836/0/14；API 动态验证；前端 build/lint/test/bundle；浏览器列表/详情/AI 正常。
 - **镜像**：`nanpo/edu-ai-platform:1.8.0` / `:latest` / `:sha-0724382` 已推送，manifest-list digest `sha256:a600a178f148e36e54644aa6efb50142cc04ce1b5d2e06a7c96ed5d147ebb68d`（基于 commit `0724382`）；容器 health=`healthy`、version=`1.8.0`、47 页浏览器冒烟通过、试卷 AI/批量接口正常。
 
+### 1.9.0 AI 大模型配置与 AI 智能模块优化
+
+- **配置后端**：`test_ai_connection(data, db)` 空/掩码 Key 自动读已保存 Key（显式清空不回落 env），provider/model/base_url DB 优先，返回 duration_ms；`/system/ai-config/test` 传 db。
+- **Agent 状态**：`/agent/list`、`/agent/status` provider/model 改读 DB 配置，补 `key_configured/llm_temperature/llm_max_tokens`，修复后台改配置后 AI 页面仍显示 env 旧值的问题。
+- **AI 配置 UI**：Key 不回填掩码、留空不修改、勾选清除、空 Key 测试、duration/usage、custom 必填、启用无 Key 确认、max_tokens capped/来源展示。
+- **AI 模块**：AgentChat 删除重复引用块、localStorage 持久化、复制/重新生成/停止生成、状态卡与配置入口；AgentGenerate 修复 AI 题保存到题库（kp 数组→单值、年级学科兜底、private），逐条失败原因；状态卡配置提示。
+- **验证**：E2E 850/836/0/14；后端动态 key/status 验证；前端 build/lint/test/bundle；浏览器 AI 三页无 console error。
+- **镜像**：1.9.0 构建/推送中（完成后回填 digest）。
+
+
 
 
 

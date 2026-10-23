@@ -623,9 +623,15 @@ class AiTestIn(BaseModel):
 
 @router.post("/ai-config/test", summary="测试 AI 大模型连接")
 def test_ai_config_route(
-    payload: AiTestIn, _: User = Depends(get_current_admin),
+    payload: AiTestIn, db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
 ):
-    """用给定配置临时测试 LLM 连接（不写入数据库）。"""
+    """用给定配置临时测试 LLM 连接（不写入数据库）。
+
+    前端不会回显已保存的 API Key：payload.llm_api_key 为空/掩码时，
+    `test_ai_connection` 会用 db 读取 sys_config 中已保存的 key。
+    """
     from app.services.ai_config_service import test_ai_connection
-    result = test_ai_connection(payload.model_dump())
+    # exclude_none：未填写的字段不参与覆盖，便于「空 key 用已保存配置」的语义
+    result = test_ai_connection(payload.model_dump(exclude_none=True), db=db)
     return ok(result)

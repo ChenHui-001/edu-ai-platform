@@ -3,7 +3,7 @@
   "info": {
     "title": "九年义务教育学习管理系统",
     "description": "九年义务教育学习管理系统（AI Agent 版）后端 API",
-    "version": "1.8.0"
+    "version": "1.9.0"
   },
   "paths": {
     "/api/v1/auth/captcha": {
@@ -1524,7 +1524,7 @@
           "系统管理"
         ],
         "summary": "测试 AI 大模型连接",
-        "description": "用给定配置临时测试 LLM 连接（不写入数据库）。",
+        "description": "用给定配置临时测试 LLM 连接（不写入数据库）。\n\n前端不会回显已保存的 API Key：payload.llm_api_key 为空/掩码时，\n`test_ai_connection` 会用 db 读取 sys_config 中已保存的 key。",
         "operationId": "test_ai_config_route_api_v1_system_ai_config_test_post",
         "requestBody": {
           "content": {

@@ -4,11 +4,22 @@
       <h2 class="page-title">AI 出题组卷工作台</h2>
       <div>
         <el-tag v-if="engine" :type="engine.llm_enabled ? 'success' : 'warning'" effect="dark">
-          {{ engine.llm_enabled ? `${engine.llm_provider} 已接入` : '规则引擎模式' }}
+          {{ engine.llm_enabled ? `${engineProvider} 已接入` : '规则引擎模式' }}
         </el-tag>
         <el-button :icon="Cpu" @click="statusDrawer = true">引擎状态</el-button>
       </div>
     </div>
+
+    <!-- 未启用 AI：给管理员配置入口 -->
+    <el-alert v-if="engine && !engine.llm_enabled" type="warning" :closable="false" show-icon class="mb12">
+      <template #title>
+        AI 未启用，当前走规则引擎降级。
+        <el-link v-if="isAdmin" type="primary" :underline="false" @click="goConfig">
+          前往 AI 大模型配置
+        </el-link>
+        <template v-else>请联系管理员在「AI 大模型配置」中启用。</template>
+      </template>
+    </el-alert>
 
     <el-row :gutter="16">
       <!-- 左：功能选择 -->
@@ -198,8 +209,8 @@
               <el-table-column prop="score" label="分值" width="70" align="center" />
             </el-table>
             <div class="action-bar mt12">
-              <el-button type="success" :loading="saving" @click="saveAll">一键保存到题库</el-button>
-              <span class="tip">保存后题目进入「待审核」状态，审核通过即可组卷使用</span>
+              <el-button type="success" :loading="saving" @click="saveAll">保存到我的私有题库</el-button>
+              <span class="tip">保存为你的私有题（private），仅你本人可见与选用</span>
             </div>
           </template>
 
@@ -230,8 +241,13 @@
             {{ engine.orchestrator_mode }}
           </el-tag>
         </el-descriptions-item>
+        <el-descriptions-item label="提供商">{{ engineProvider }}</el-descriptions-item>
+        <el-descriptions-item label="模型">{{ engineModel }}</el-descriptions-item>
+        <el-descriptions-item label="API Key">
+          <el-tag :type="engineKeyType" size="small">{{ engineKeyLabel }}</el-tag>
+        </el-descriptions-item>
         <el-descriptions-item label="大模型">
-          {{ engine.llm_enabled ? `${engine.llm_provider} / ${engine.llm_model}` : '未配置（规则引擎）' }}
+          {{ engine.llm_enabled ? `${engineProvider} / ${engineModel}` : '未启用（规则引擎）' }}
         </el-descriptions-item>
         <el-descriptions-item label="向量库">
           <el-tag :type="engine.vector_db === 'chroma' ? 'success' : 'warning'" size="small">
@@ -239,6 +255,12 @@
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="调度器">{{ engine.scheduler_running ? '运行中' : '已停止' }}</el-descriptions-item>
+        <el-descriptions-item v-if="!engine.llm_enabled" label="配置">
+          <el-link v-if="isAdmin" type="primary" :underline="false" @click="goConfig">
+            前往 AI 大模型配置
+          </el-link>
+          <span v-else>请联系管理员在「AI 大模型配置」中启用</span>
+        </el-descriptions-item>
       </el-descriptions>
     </el-drawer>
   </div>
@@ -246,14 +268,40 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Refresh, Cpu, Notebook, Tickets, EditPen, Calendar, ChatDotRound, Collection } from '@element-plus/icons-vue'
 import { agentApi, eduApi, questionApi } from '@/api'
+import { useUserStore } from '@/store/user'
 import { sanitizeHtml } from '@/utils/sanitize'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
 function safeStem(s) { return sanitizeHtml(s) }
+
+const router = useRouter()
+const userStore = useUserStore()
+const isAdmin = computed(() => userStore.isAdmin === true)
+// 状态卡展示 DB 实际配置（后端 /agent/status 返回 provider/model/key_configured）
+const engineProvider = computed(() =>
+  engine.value?.provider || engine.value?.llm_provider || '-')
+const engineModel = computed(() =>
+  engine.value?.model || engine.value?.llm_model || '未配置')
+const engineKeyConfigured = computed(() => {
+  const v = engine.value?.key_configured
+  return typeof v === 'boolean' ? v : null
+})
+const engineKeyLabel = computed(() => {
+  if (engineKeyConfigured.value === true) return '已配置'
+  if (engineKeyConfigured.value === false) return '未配置'
+  return '未知'
+})
+const engineKeyType = computed(() => {
+  if (engineKeyConfigured.value === true) return 'success'
+  if (engineKeyConfigured.value === false) return 'danger'
+  return 'info'
+})
+function goConfig() { router.push('/admin/ai-config') }
 
 
 const TYPES = {
@@ -436,29 +484,77 @@ async function run() {
   }
 }
 
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]))
+}
+
+/** 从（可能来自 AI 的）题目对象里解析创建参数：题库 V2 只接受单值 knowledge_point_id。 */
+function buildQuestionPayload(q) {
+  const kpIds = Array.isArray(q.knowledge_point_ids)
+    ? q.knowledge_point_ids
+    : (q.knowledge_point_id ? [q.knowledge_point_id] : (qForm.knowledge_point_ids || []))
+  const kpId = kpIds[0] ?? null
+  // 年级兜底：先取题目自带，再用表单；表单没填年级时按学科反查所属年级
+  let gradeId = q.grade_id || qForm.grade_id
+  if (!gradeId && (q.subject_id || qForm.subject_id)) {
+    const sid = q.subject_id || qForm.subject_id
+    gradeId = subjects.value.find(s => s.id === sid)?.grade_id || null
+  }
+  const payload = {
+    ...q,
+    knowledge_point_id: kpId,
+    grade_id: gradeId,
+    subject_id: q.subject_id || qForm.subject_id || null,
+    // AI 结果来自公共/生成场景，统一保存为当前用户私有题，避免公共题审核语义
+    bank_type: 'private'
+  }
+  // 兼容旧字段：V2 create 只认 knowledge_point_id，多余数组字段会导致校验/落库异常
+  delete payload.knowledge_point_ids
+  return payload
+}
+
 async function saveAll() {
   const qs = result.value.questions || []
   if (!qs.length) return
-  // 二次确认：写入题库对全校教师可见，属于不可逆的公共数据变更
+  // 二次确认：明确保存到「我的私有题库」，避免误解为公共题库
   try {
     await ElMessageBox.confirm(
-      `将把 ${qs.length} 道题写入题库，入库后所有教师均可选用。请先核对题目与答案。`,
-      '确认入库', { type: 'warning', confirmButtonText: '确认入库', cancelButtonText: '再检查一下' })
+      `将把 ${qs.length} 道 AI 生成题保存到你自己的私有题库（private），保存后仅你本人可见与选用。请先核对题目与答案。`,
+      '确认保存', { type: 'warning', confirmButtonText: '保存到私有题库', cancelButtonText: '再检查一下' })
   } catch { return }
   saving.value = true
+  let okCount = 0
+  const failures = []
   try {
-    let okCount = 0
-    for (const q of qs) {
+    for (let i = 0; i < qs.length; i++) {
       try {
-        await questionApi.create({ ...q, subject_id: q.subject_id || qForm.subject_id,
-          grade_id: q.grade_id || qForm.grade_id, knowledge_point_ids: q.knowledge_point_ids || qForm.knowledge_point_ids })
+        await questionApi.create(buildQuestionPayload(qs[i]))
         okCount++
-      } catch { /* 单条失败继续 */ }
+      } catch (e) {
+        failures.push({
+          index: i + 1,
+          reason: e?.response?.data?.message || e?.message || String(e)
+        })
+      }
     }
-    ElMessage.success(`成功保存 ${okCount}/${qs.length} 道题目`)
   } finally {
     saving.value = false
   }
+  if (!failures.length) {
+    ElMessage.success(`已全部保存 ${okCount} 道题到你的私有题库`)
+    return
+  }
+  const shown = failures.slice(0, 10)
+    .map(f => `第 ${f.index} 题：${escapeHtml(f.reason)}`).join('<br/>')
+  const more = failures.length > shown.length
+    ? `<br/>…另有 ${failures.length - 10} 条失败` : ''
+  ElMessageBox.alert(
+    `${shown}${more}`,
+    `保存结果：成功 ${okCount}/${qs.length} 道，失败 ${failures.length} 道`,
+    { type: 'warning', dangerouslyUseHTMLString: true }
+  )
 }
 
 onMounted(async () => {

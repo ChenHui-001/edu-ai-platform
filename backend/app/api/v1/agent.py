@@ -7,7 +7,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.agents.base import AGENT_REGISTRY, get_orchestrator
-from app.agents.llm import is_available
+from app.agents.llm import _get_db_value, is_available
 from app.api.deps import (
     get_current_student,
     get_current_teacher,
@@ -91,6 +91,30 @@ def _warn_if_slow(res: dict, agent: str) -> None:
                        agent, ms / 1000, SLOW_CALL_MS / 1000)
 
 
+def _llm_runtime_config() -> Dict[str, Any]:
+    """LLM 运行态配置（sys_config 优先，回退 .env）。
+
+    状态/列表接口必须反映「AI 配置页」刚保存的值：此前直接读 settings，
+    后台改了 provider/model 后 AI 页面仍显示旧值（实测契约漂移）。
+    `key_configured` 供前端区分「已配置但被停用/熔断」与「从未配置」。
+    """
+    provider = str(_get_db_value(
+        "llm_provider", "string", settings.LLM_PROVIDER) or settings.LLM_PROVIDER)
+    model = str(_get_db_value(
+        "llm_model", "string", settings.LLM_MODEL) or settings.LLM_MODEL)
+    api_key = str(_get_db_value(
+        "llm_api_key", "string", settings.LLM_API_KEY) or "")
+    return {
+        "provider": provider,
+        "model": model,
+        "key_configured": bool(api_key.strip()),
+        "temperature": _get_db_value(
+            "llm_temperature", "float", settings.LLM_TEMPERATURE),
+        "max_tokens": _get_db_value(
+            "llm_max_tokens", "int", settings.LLM_MAX_TOKENS),
+    }
+
+
 # ---------------------------------------------------------------- 概览
 @router.get("/list", summary="Agent 列表")
 def list_agents(user: User = Depends(get_current_user)):
@@ -103,12 +127,20 @@ def list_agents(user: User = Depends(get_current_user)):
         }
         for a in AGENT_REGISTRY.values()
     ]
+    llm = _llm_runtime_config()
     return ok({
         "agents": items,
         "orchestrator_mode": orch.mode,
         "llm_enabled": is_available(),
-        # 此前硬编码 None，前端状态页拿不到实际供应商
-        "llm_provider": settings.LLM_PROVIDER if is_available() else None,
+        # provider/model 一律以 DB 配置为准（后台改配置后 AI 页面立即反映）；
+        # 旧键 llm_provider/llm_model 保留，另补 provider/model 兼容状态卡。
+        "llm_provider": llm["provider"],
+        "llm_model": llm["model"],
+        "provider": llm["provider"],
+        "model": llm["model"],
+        "key_configured": llm["key_configured"],
+        "llm_temperature": llm["temperature"],
+        "llm_max_tokens": llm["max_tokens"],
     })
 
 
@@ -120,18 +152,27 @@ def agent_status(_: User = Depends(get_current_user)):
     orch = get_orchestrator()
     col = get_collection()
     sched = scheduler_status()
-    if not is_available():
+    llm = _llm_runtime_config()
+    available = is_available()
+    if available:
+        tip = ""
+    elif not llm["key_configured"] and llm["provider"] != "ollama":
         tip = "未配置 LLM_API_KEY，所有 Agent 将使用规则引擎降级运行"
     else:
-        tip = ""
+        tip = "LLM 当前不可用（已停用或熔断），所有 Agent 将使用规则引擎降级运行"
     return ok({
-        "llm_enabled": is_available(),
-        "provider": settings.LLM_PROVIDER,
-        "model": settings.LLM_MODEL,
+        "llm_enabled": available,
+        # provider/model 以 DB 配置为准；即使未启用也返回实际配置，
+        # 前端状态卡才能显示「已配置但未启用」并给出配置入口。
+        "provider": llm["provider"],
+        "model": llm["model"],
         # 前端「引擎状态」抽屉按 llm_provider/llm_model 渲染，字段名不一致会
         # 恒显示「未配置（规则引擎）」—— 已配置也看不出来。两套键一起下发。
-        "llm_provider": settings.LLM_PROVIDER if is_available() else None,
-        "llm_model": settings.LLM_MODEL if is_available() else None,
+        "llm_provider": llm["provider"],
+        "llm_model": llm["model"],
+        "key_configured": llm["key_configured"],
+        "llm_temperature": llm["temperature"],
+        "llm_max_tokens": llm["max_tokens"],
         "orchestrator_mode": orch.mode,
         # rag.get_collection 返回集合对象，不是字符串 "chroma"；
         # 前端按 vector_db === 'chroma' 判断，这里显式给出标识
