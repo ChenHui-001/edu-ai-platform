@@ -41,5 +41,5 @@
 
 ## 5. 当前状态
 
-- 1.0.43 已发布（Docker Hub，manifest-list digest `sha256:e90ffede…`，对应 commit `f9f256e`）。
-- 1.0.42 保留为历史版本（digest `sha256:0e3f853a…`），不再覆盖。
+- 1.1.0 已发布（Docker Hub，manifest-list digest `sha256:b2c8dfcd…`，对应 commit `591c2ad`）。
+- 1.0.43 / 1.0.42 保留为历史版本，不再覆盖。

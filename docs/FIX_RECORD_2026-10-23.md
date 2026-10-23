@@ -190,6 +190,7 @@
   - 动态 API：树 21 根/93 节点、学生仅本年级（跨年级 403）、教师任教学科可写/跨学科 403、同级重名 400、批量/导入 dry_run/模板导出通过；
   - 前端：build/lint/test/check:bundle 全部通过；真实 Chrome 打开新页面：94 个树节点、统计卡、树详情、列表多选与批量栏、导入弹窗均正常，无 console error。
 - **数据说明**：旧知识点数据按用户确认不保留；启动时一次性清空并重新播种，题目知识点引用会被置空（需要重新挂载/AI 自动挂载）。
-- **镜像**：1.1.0 构建/推送中（完成后回填 digest）。
+- **镜像**：1.1.0 已构建/推送：`nanpo/edu-ai-platform:1.1.0` / `:latest` / `:sha-591c2ad`，manifest-list digest `sha256:b2c8dfcdde0aff51f6f83cd0be201acc01a9e375d5ac1dbd1f9f875553909ca7`（基于 commit `591c2ad`）；容器 health=`healthy`、version=`1.1.0`、46 页浏览器冒烟全通过。
+- **下一步**：RAG 生命周期/语义检索 + 知识点 AI 生成/补全（1.2.0），契约见 `docs/KNOWLEDGE_V2_RAG_AI.md`。
 
 
