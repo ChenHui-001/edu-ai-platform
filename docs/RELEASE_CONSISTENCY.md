@@ -236,18 +236,18 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（1.0.42）
+## 八、当前状态（1.0.43）
 
 | 项 | 值 |
 |---|---|
-| VERSION | `1.0.42` |
-| commit | 代码最终提交 `1f0c2a7`（镜像即基于该 commit）；其后 `a15fad9`/`6cf3886` 仅文档更新 |
-| 本地镜像 | `nanpo/edu-ai-platform:1.0.42` / `:latest`（digest `sha256:0e3f853a…`，约 1.82GB） |
-| ghcr | 本轮未推送（仅手动发布 Docker Hub；未触发 CI） |
-| Docker Hub | 已推送 `1.0.42`（manifest-list digest `sha256:0e3f853a…`） |
-| latest | 已推送，与 `1.0.42` 指向同一 digest |
-| 发布后校验 | `docker buildx imagetools inspect` 已核对；容器实机 health/login/46 页浏览器冒烟通过 |
-| CI | 未触发（本次为手动发布） |
+| VERSION | `1.0.43` |
+| commit | `f9f256e`（含版本号/启动脚本/交付规则；镜像即基于该 commit） |
+| 本地镜像 | `nanpo/edu-ai-platform:1.0.43` / `:latest` / `:sha-f9f256e`（digest `sha256:e90ffede…`） |
+| ghcr | 未推送（本轮手动发布 Docker Hub；未触发 CI） |
+| Docker Hub | 已推送 `1.0.43`（manifest-list digest `sha256:e90ffede3847e9ed247bbc2278cc6c2aaa8ab63a0b2037fbee36bf5fc7bc429c`） |
+| latest | 已推送，与 `1.0.43` 同一 digest |
+| 发布后校验 | `docker buildx imagetools inspect` 已核对；容器实机 health=`healthy`、admin 登录成功、46 页浏览器冒烟通过 |
+| CI | 未触发（本次为手动发布）；后续遵循 `docs/DELIVERY_RULES.md` |
 
 > 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：
 > 发布后校验 **10 通过 / 0 失败 / 0 警告 / 0 跳过**（EXIT=0），

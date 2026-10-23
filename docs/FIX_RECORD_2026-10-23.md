@@ -157,5 +157,19 @@
   - teacher：教学资源/题库试卷/教学管理/学情分析/AI 智能；
   - student：学习中心/AI 智能；
   - 三端均无「其他/无权访问/页面不存在」；`npm run build`/`lint`/`test` 通过。
-- **说明**：本地 `start.bat` 会因代码 commit 与镜像 BUILD_INFO 不一致自动重建，所以本地运行会带上本修复；Docker Hub 上的 `1.0.42` 镜像仍是本次改动前的构建。
+- **说明**：本地 `start.bat` 会因运行时代码 commit 与镜像 BUILD_INFO 不一致自动重建；Docker Hub `1.0.43` 已包含本修复。
+- **后续规则**：见 `docs/DELIVERY_RULES.md` —— 每次运行时代码提交后必须同步 Docker Hub（版本标签 + latest + sha-<short>）。
+
+### 1.0.43 发布与「每次提交同步 Docker Hub」规则
+
+- **状态**：✅ 已发布并落规则
+- **版本**：`VERSION` 1.0.42 → 1.0.43（菜单修复后运行时代码已变化，禁止覆盖已发布的 1.0.42）。
+- **启动脚本优化**：`start.ps1` 的镜像过期判断改为比对「运行时代码最后一次提交」（`git log -1 -- backend frontend Dockerfile deploy docker-compose.yml VERSION`），纯文档提交不再触发本地重建。
+- **规则文档**：新增 `docs/DELIVERY_RULES.md`：
+  - 每次运行时代码提交必须构建并推送 Docker Hub；
+  - 标签策略：`<VERSION>` + `latest` + `sha-<short7>`，版本标签不可覆盖；
+  - 推送前必须跑后端 E2E、前端 build/lint/test/bundle、容器 health/login，涉及页面再跑浏览器冒烟；
+  - 发布后更新 RELEASE_CONSISTENCY/FIX_RECORD 并核对 digest。
+- **构建与验证**：镜像基于 commit `f9f256e`；容器 health=`healthy`、version=`1.0.43`、admin 登录成功、46 页浏览器冒烟全部通过。
+- **Docker Hub**：`nanpo/edu-ai-platform:1.0.43`、`:latest`、`:sha-f9f256e` 已推送，manifest-list digest `sha256:e90ffede3847e9ed247bbc2278cc6c2aaa8ab63a0b2037fbee36bf5fc7bc429c`。
 
