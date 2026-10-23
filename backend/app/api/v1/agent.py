@@ -245,6 +245,18 @@ def chat_stream(
             return
 
         intent = result.get("intent") or "chat"
+        # 与非流式 /chat 保持一致：路由到 chat 但无实际结果时兜底走答疑，
+        # 否则流式降级只会返回一句「未启用大模型」，附件引用也丢失。
+        if intent == "chat" and not result.get("data"):
+            from app.agents.tutor_agent import TutorAgent
+
+            tr = TutorAgent().run(
+                db, user_id=user.id, request=request,
+                grade_id=data.get("grade_id"), subject_id=data.get("subject_id"),
+                student_id=target_sid,
+            )
+            result["data"] = tr.get("data")
+            result["agent"] = "tutor"
         yield _sse({"type": "meta", "intent": intent,
                     "agent": result.get("agent"), "request": request})
 
