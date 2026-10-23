@@ -66,6 +66,14 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Agent 引擎初始化异常: {exc}")
 
+    # 后台预热 Chroma embedding 模型：避免首次 AI 请求触发 79MB 下载而卡住
+    try:
+        from app.agents.rag import start_chroma_warmup
+
+        start_chroma_warmup()
+    except Exception as exc:
+        logger.warning(f"Chroma 预热启动失败: {exc}")
+
     # 定时任务
     if settings.SCHEDULER_ENABLED:
         try:

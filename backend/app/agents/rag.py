@@ -16,6 +16,9 @@ logger = get_logger("rag")
 
 _collection = None
 _chroma_failed = False
+_warmup_started = False
+_chroma_ready = False
+_warming = False
 
 
 def get_collection():
@@ -40,6 +43,42 @@ def get_collection():
         _chroma_failed = True
         logger.warning(f"ChromaDB 不可用，RAG 降级为 SQL 检索: {exc}")
     return _collection
+
+
+def start_chroma_warmup() -> None:
+    """后台预热 Chroma/embedding 模型。
+
+    关键：**不能把首次向量检索放在 AI 请求线程里**。全新容器若没有模型缓存，
+    Chroma 会在第一次 query 时下载 ~79MB 模型，AI 答疑请求会被拖到分钟级。
+    这里启动后台线程预热；预热期间 search 直接走 SQL 降级，AI 立即返回。
+    """
+    global _warmup_started
+    if _warmup_started:
+        return
+    _warmup_started = True
+    import threading
+
+    def _warm() -> None:
+        global _chroma_ready, _warming
+        _warming = True
+        try:
+            col = get_collection()
+            if col:
+                # 触发 embedding 模型加载/下载（只在后台线程发生）
+                col.query(query_texts=["warmup"], n_results=1)
+                _chroma_ready = True
+                logger.info("ChromaDB embedding 预热完成")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"ChromaDB 预热失败，继续 SQL 降级: {exc}")
+        finally:
+            _warming = False
+
+    threading.Thread(target=_warm, name="chroma-warmup", daemon=True).start()
+
+
+def chroma_ready() -> bool:
+    """预热完成后才允许 AI 请求线程使用向量检索。"""
+    return _chroma_ready and not _chroma_failed
 
 
 # ---------------------------------------------------------------- 写入
@@ -669,7 +708,7 @@ def search(
             logger.warning("RAG 只请求笔记但未提供 student_id，已跳过以防越权")
             return []
 
-    col = get_collection()
+    col = get_collection() if not _warming else None
     if col:
         try:
             return _filter_valid_attachment_results(db, _apply_score_threshold(
