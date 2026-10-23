@@ -121,7 +121,9 @@ PERMISSIONS: List[Tuple[str, str, str, str, str, int]] = [
 
     # 教学资源
     ("resource:grade:list", "年级管理", "menu", "/admin/grades", "School", 200),
+    ("resource:grade:write", "年级维护", "button", None, None, 201),
     ("resource:subject:list", "学科管理", "menu", "/admin/subjects", "Collection", 210),
+    ("resource:subject:write", "学科维护", "button", None, None, 211),
     ("resource:knowledge:list", "知识点管理", "menu", "/admin/knowledge", "Share", 220),
     ("resource:knowledge:write", "知识点维护", "button", None, None, 221),
     ("resource:class:list", "班级管理", "menu", "/admin/classes", "OfficeBuilding", 230),
@@ -201,6 +203,7 @@ ROLES: List[Dict] = [
             "system:user:list", "system:user:create", "system:user:update",
             "system:log:list", "system:attachment:list",
             "resource:grade:list", "resource:subject:list", "resource:knowledge:list",
+            "resource:subject:write",
             "resource:knowledge:write", "resource:class:list", "resource:class:write",
             "question:bank:list", "question:bank:audit", "question:bank:export",
             "paper:list", "paper:export", "task:list",

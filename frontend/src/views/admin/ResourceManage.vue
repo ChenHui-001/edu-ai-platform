@@ -4,9 +4,33 @@
       <h2 class="page-title">{{ typeName }}管理</h2>
       <div>
         <el-button :icon="Refresh" @click="loadAll">刷新</el-button>
-        <el-button type="primary" :icon="Plus" @click="openDialog()">新增{{ typeName }}</el-button>
+        <el-button v-if="canWriteHere" type="primary" :icon="Plus" @click="openDialog()">新增{{ typeName }}</el-button>
       </div>
     </div>
+
+    <!-- 年级页统计卡 -->
+    <el-row v-if="!isSubject" :gutter="14" class="stats-row">
+      <el-col :xs="12" :md="6">
+        <el-card shadow="never" class="stat-card">
+          <div class="stat-value">{{ gradeStats.total }}</div><div class="stat-label">年级总数</div>
+        </el-card>
+      </el-col>
+      <el-col :xs="12" :md="6">
+        <el-card shadow="never" class="stat-card">
+          <div class="stat-value">{{ gradeStats.primary }}</div><div class="stat-label">小学</div>
+        </el-card>
+      </el-col>
+      <el-col :xs="12" :md="6">
+        <el-card shadow="never" class="stat-card">
+          <div class="stat-value">{{ gradeStats.junior }}</div><div class="stat-label">初中</div>
+        </el-card>
+      </el-col>
+      <el-col :xs="12" :md="6">
+        <el-card shadow="never" class="stat-card">
+          <div class="stat-value">{{ gradeStats.active }}</div><div class="stat-label">启用年级</div>
+        </el-card>
+      </el-col>
+    </el-row>
 
     <!-- 学科专用：视图模式切换（按年级 vs 平铺） -->
     <div v-if="isSubject" class="mode-bar mb12">
@@ -59,14 +83,13 @@
                   <template v-else>请选择左侧年级</template>
                 </b>
                 <div v-if="selectedGrade">
-                  <el-button size="small" :icon="RefreshLeft" @click="openCloneDialog()">
-                    跨年级复制
-                  </el-button>
+                  <el-button v-if="isSysAdmin" size="small" :icon="RefreshLeft"
+                             @click="openCloneDialog()">跨年级复制</el-button>
                 </div>
               </div>
             </template>
             <el-table v-if="selectedGrade" v-loading="loading" :data="currentGradeSubjects" border stripe>
-              <el-table-column prop="sort_order" label="排序" width="70" align="center" />
+              <el-table-column prop="sort" label="排序" width="70" align="center" />
               <el-table-column prop="name" label="学科名称" min-width="160" />
               <el-table-column prop="code" label="代码" width="140" show-overflow-tooltip />
               <el-table-column prop="textbook_version" label="教材版本" width="120" show-overflow-tooltip />
@@ -79,9 +102,13 @@
               </el-table-column>
               <el-table-column label="操作" width="240" fixed="right">
                 <template #default="{ row }">
-                  <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
-                  <el-button link type="warning" @click="openCloneDialog(row)">复制到其他年级</el-button>
-                  <el-button link type="danger" @click="remove(row)">删除</el-button>
+                  <template v-if="rowWritable(row)">
+                    <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
+                    <el-button v-if="isSysAdmin" link type="warning"
+                               @click="openCloneDialog(row)">复制到其他年级</el-button>
+                    <el-button link type="danger" @click="remove(row)">删除</el-button>
+                  </template>
+                  <span v-else class="tip">只读</span>
                 </template>
               </el-table-column>
             </el-table>
@@ -98,6 +125,12 @@
     <template v-else>
       <el-card shadow="never" class="filter-card">
         <el-form :inline="true" :model="query">
+          <el-form-item v-if="!isSubject" label="学段">
+            <el-select v-model="query.stage" placeholder="全部" clearable style="width:130px">
+              <el-option label="小学" value="primary" />
+              <el-option label="初中" value="junior" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="关键词">
             <el-input v-model="query.keyword" placeholder="名称" clearable style="width:180px"
                       @keyup.enter="load" />
@@ -115,13 +148,44 @@
       </el-card>
 
       <el-card shadow="never">
-        <el-table v-loading="loading" :data="list" border stripe>
-          <el-table-column prop="sort_order" label="排序" width="70" align="center" />
-          <el-table-column prop="name" label="名称" min-width="160" />
-          <el-table-column v-if="isSubject" prop="grade_name" label="所属年级" width="140" />
-          <el-table-column prop="description" label="说明" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="created_at" label="创建时间" width="160" />
-          <el-table-column label="状态" width="90">
+        <!-- 年级专用列表 -->
+        <el-table v-if="!isSubject" v-loading="loading" :data="list" border stripe>
+          <el-table-column prop="name" label="年级名称" min-width="150" />
+          <el-table-column label="学段" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.stage === 'junior' ? 'warning' : 'success'">
+                {{ row.stage === 'junior' ? '初中' : '小学' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="grade_num" label="序号" width="70" align="center" />
+          <el-table-column prop="sort" label="排序" width="70" align="center" />
+          <el-table-column prop="class_count" label="班级数" width="90" align="center" />
+          <el-table-column prop="subject_count" label="学科数" width="90" align="center" />
+          <el-table-column prop="student_count" label="学生数" width="90" align="center" />
+          <el-table-column label="状态" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
+                {{ row.is_active ? '启用' : '停用' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="canWrite" label="操作" width="150" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
+              <el-button link type="danger" @click="remove(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <!-- 学科平铺列表 -->
+        <el-table v-else v-loading="loading" :data="list" border stripe>
+          <el-table-column prop="sort" label="排序" width="70" align="center" />
+          <el-table-column prop="name" label="学科名称" min-width="150" />
+          <el-table-column prop="grade_name" label="所属年级" width="120" />
+          <el-table-column prop="code" label="代码" width="120" show-overflow-tooltip />
+          <el-table-column prop="textbook_version" label="教材版本" width="120" show-overflow-tooltip />
+          <el-table-column label="状态" width="90" align="center">
             <template #default="{ row }">
               <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
                 {{ row.is_active ? '启用' : '停用' }}
@@ -130,8 +194,11 @@
           </el-table-column>
           <el-table-column label="操作" width="140" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
-              <el-button link type="danger" @click="remove(row)">删除</el-button>
+              <template v-if="rowWritable(row)">
+                <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
+                <el-button link type="danger" @click="remove(row)">删除</el-button>
+              </template>
+              <span v-else class="tip">只读</span>
             </template>
           </el-table-column>
         </el-table>
@@ -151,21 +218,34 @@
           </el-select>
         </el-form-item>
         <el-form-item label="名称">
-          <el-input v-model="form.name" />
+          <el-input v-model="form.name" maxlength="32" show-word-limit />
         </el-form-item>
-        <el-form-item v-if="isSubject" label="代码">
-          <el-input v-model="form.code" placeholder="可选" />
-        </el-form-item>
-        <el-form-item v-if="isSubject" label="教材版本">
-          <el-input v-model="form.textbook_version" placeholder="可选" />
-        </el-form-item>
+        <template v-if="!isSubject">
+          <el-form-item label="学段">
+            <el-select v-model="form.stage" style="width:100%">
+              <el-option label="小学" value="primary" />
+              <el-option label="初中" value="junior" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="年级序号">
+            <el-input-number v-model="form.grade_num" :min="1" :max="9" style="width:100%" />
+          </el-form-item>
+        </template>
+        <template v-if="isSubject">
+          <el-form-item label="代码">
+            <el-input v-model="form.code" placeholder="可选" />
+          </el-form-item>
+          <el-form-item label="教材版本">
+            <el-input v-model="form.textbook_version" placeholder="可选" />
+          </el-form-item>
+        </template>
         <el-form-item label="排序">
-          <el-input-number v-model="form.sort_order" :min="0" :max="999" />
+          <el-input-number v-model="form.sort" :min="0" :max="999" />
         </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="form.active" active-text="启用" inactive-text="停用" />
         </el-form-item>
-        <el-form-item label="说明">
+        <el-form-item v-if="isSubject" label="说明">
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
       </el-form>
@@ -209,10 +289,30 @@ import {
   Plus, Search, Refresh, RefreshLeft, Grid, List,
 } from '@element-plus/icons-vue'
 import { eduApi } from '@/api'
+import { useUserStore } from '@/store/user'
 
 const route = useRoute()
+const userStore = useUserStore()
+const { can } = userStore
 const isSubject = computed(() => route.name === 'SubjectManage')
 const typeName = computed(() => (isSubject.value ? '学科' : '年级'))
+const isSysAdmin = computed(() => userStore.isAdmin === true)
+const writePerm = computed(() => (
+  isSubject.value ? 'resource:subject:write' : 'resource:grade:write'))
+const canWrite = computed(() => can(writePerm.value))
+const myGradeId = computed(() => userStore.userInfo?.grade_id)
+const canWriteHere = computed(() => {
+  if (!canWrite.value) return false
+  if (!isSubject.value) return isSysAdmin.value
+  if (viewMode.value === 'flat' || isSysAdmin.value) return canWrite.value
+  return selectedGradeId.value === myGradeId.value
+})
+
+function rowWritable(row) {
+  if (!canWrite.value) return false
+  if (isSysAdmin.value) return true
+  return isSubject.value && row?.grade_id === userStore.userInfo?.grade_id
+}
 
 // -------- 列表视图（年级页 / 学科平铺页）通用状态 --------
 const list = ref([])
@@ -221,10 +321,20 @@ const total = ref(0)
 const loading = ref(false)
 const saving = ref(false)
 const dlg = ref(false)
-const query = reactive({ page: 1, page_size: 50, keyword: '', grade_id: null })
+const query = reactive({ page: 1, page_size: 50, keyword: '', grade_id: null, stage: null })
 const form = reactive({
-  id: null, name: '', grade_id: null, sort_order: 0, active: true,
-  description: '', code: '', textbook_version: '',
+  id: null, name: '', grade_id: null, sort: 0, active: true,
+  description: '', code: '', textbook_version: '', stage: 'primary', grade_num: 1,
+})
+
+const gradeStats = computed(() => {
+  const rows = grades.value || []
+  return {
+    total: rows.length,
+    primary: rows.filter(g => g.stage !== 'junior').length,
+    junior: rows.filter(g => g.stage === 'junior').length,
+    active: rows.filter(g => g.is_active).length,
+  }
 })
 
 // -------- 学科 · 按年级视图 状态 --------
@@ -312,7 +422,7 @@ function selectGrade(g) {
 }
 
 function reset() {
-  Object.assign(query, { page: 1, keyword: '', grade_id: null })
+  Object.assign(query, { page: 1, keyword: '', grade_id: null, stage: null })
   load()
 }
 
@@ -320,19 +430,30 @@ function reset() {
 function openDialog(row) {
   Object.assign(form, row
     ? { ...row, active: row.is_active ?? true,
+        sort: row.sort ?? 0,
+        stage: row.stage || 'primary',
+        grade_num: row.grade_num ?? 1,
         code: row.code || '', textbook_version: row.textbook_version || '',
         description: row.description || '' }
-    : { id: null, name: '', grade_id: null,
-        sort_order: 0, active: true, description: '',
-        code: '', textbook_version: '' })
+    : { id: null, name: '', grade_id: isSubject.value ? selectedGradeId.value : null,
+        sort: 0, active: true, description: '',
+        code: '', textbook_version: '', stage: 'primary', grade_num: 1 })
   dlg.value = true
 }
 async function save() {
   if (!form.name) return ElMessage.warning('请输入名称')
   if (isSubject.value && !form.grade_id) return ElMessage.warning('请选择所属年级')
   saving.value = true
-  const payload = { ...form, is_active: form.active ? 1 : 0, status: undefined }
-  delete payload.active
+  const payload = isSubject.value
+    ? {
+        name: form.name, grade_id: form.grade_id, code: form.code,
+        textbook_version: form.textbook_version, sort: form.sort,
+        is_active: form.active ? 1 : 0, description: form.description,
+      }
+    : {
+        name: form.name, stage: form.stage, grade_num: form.grade_num,
+        sort: form.sort, is_active: form.active ? 1 : 0,
+      }
   try {
     if (isSubject.value) {
       if (form.id) await eduApi.updateSubject(form.id, payload)
@@ -344,7 +465,7 @@ async function save() {
     ElMessage.success('保存成功')
     dlg.value = false
     if (viewMode.value === 'byGrade' && isSubject.value) loadAll()
-    else load()
+    else { load(); loadAll() }
   } finally { saving.value = false }
 }
 
@@ -384,8 +505,12 @@ watch(viewMode, (m) => {
 .flex-between { display: flex; align-items: center; justify-content: space-between; }
 .tip { color: #909399; font-size: 12px; }
 
-.mode-bar {
-  display: flex; align-items: center;
+.stats-row { margin-bottom: 14px; }
+.stat-card { border-radius: 10px; }
+.stat-value { font-size: 24px; font-weight: 600; color: #1f2d3d; line-height: 1.3; }
+.stat-label { color: #8a94a6; font-size: 13px; margin-top: 2px; }
+
+.mode-bar {  display: flex; align-items: center;
   padding: 10px 14px;
   background: #f5f7fa;
   border-radius: 4px;

@@ -23,30 +23,93 @@ from app.utils.common import dictify, now_local, ok
 
 router = APIRouter(prefix="/edu", tags=["教学资源"])
 
+GRADE_STAGES = {"primary", "junior"}
+SUBJECT_WRITE_PERM = "resource:subject:write"
+
+
+def _assert_stage(value: str) -> str:
+    stage = str(value or "").strip()
+    if stage not in GRADE_STAGES:
+        raise BusinessException("学段仅支持 primary（小学）/ junior（初中）")
+    return stage
+
+
+def _assert_grade_num(value: Any) -> int:
+    try:
+        num = int(value)
+    except (TypeError, ValueError):
+        raise BusinessException("年级序号必须为 1-999 的整数")
+    if not 1 <= num <= 999:
+        raise BusinessException("年级序号必须为 1-999 的整数")
+    return num
+
+
+def _assert_subject_scope(user: User, grade_id: int) -> None:
+    """学科写权限：sys_admin 全量；grade_admin 仅本年级；其他角色拒绝。"""
+    codes = set(user.role_codes or [])
+    if "sys_admin" in codes:
+        return
+    if "grade_admin" in codes and grade_id and user.grade_id == grade_id:
+        return
+    raise PermissionException("只能维护本年级的学科")
+
 
 # ---------------------------------------------------------------- 年级
 @router.get("/grades", summary="年级列表")
 def list_grades(
-    stage: Optional[str] = None, db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    stage: Optional[str] = None, keyword: Optional[str] = None,
+    db: Session = Depends(get_db), _: User = Depends(get_current_user),
 ):
     stmt = select(Grade)
     if stage:
         stmt = stmt.where(Grade.stage == stage)
-    return ok([dictify(g) for g in db.scalars(stmt.order_by(Grade.grade_num)).all()])
+    if keyword:
+        stmt = stmt.where(Grade.name.like(f"%{keyword}%"))
+    rows = list(db.scalars(stmt.order_by(Grade.grade_num, Grade.id)).all())
+    grade_ids = [g.id for g in rows]
+    class_counts = dict(db.execute(
+        select(Class.grade_id, func.count()).where(
+            Class.grade_id.in_(grade_ids)).group_by(Class.grade_id)
+    ).all()) if grade_ids else {}
+    subject_counts = dict(db.execute(
+        select(Subject.grade_id, func.count()).where(
+            Subject.grade_id.in_(grade_ids)).group_by(Subject.grade_id)
+    ).all()) if grade_ids else {}
+    student_counts = dict(db.execute(
+        select(User.grade_id, func.count()).where(
+            User.grade_id.in_(grade_ids), User.identity == "student",
+        ).group_by(User.grade_id)
+    ).all()) if grade_ids else {}
+    items = []
+    for g in rows:
+        d = dictify(g)
+        d["class_count"] = int(class_counts.get(g.id) or 0)
+        d["subject_count"] = int(subject_counts.get(g.id) or 0)
+        d["student_count"] = int(student_counts.get(g.id) or 0)
+        d["stage_label"] = "小学" if g.stage == "primary" else "初中"
+        items.append(d)
+    return ok(items)
 
 
 @router.post("/grades", summary="新增年级")
 def create_grade(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_manager),
+    _: User = Depends(require_perm("resource:grade:write")),
 ):
-    if db.scalar(select(Grade).where(Grade.name == data.get("name"))):
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise BusinessException("请填写年级名称")
+    if len(name) > 32:
+        raise BusinessException("年级名称不能超过 32 个字符")
+    stage = _assert_stage(data.get("stage", "primary"))
+    grade_num = _assert_grade_num(data.get("grade_num", 9))
+    if db.scalar(select(Grade).where(Grade.name == name)):
         raise BusinessException("年级已存在")
+    if db.scalar(select(Grade).where(Grade.grade_num == grade_num)):
+        raise BusinessException("年级序号已存在")
     grade = Grade(
-        name=data["name"], stage=data.get("stage", "primary"),
-        grade_num=int(data.get("grade_num", 9)),
-        sort=data.get("sort", 0),
+        name=name, stage=stage, grade_num=grade_num,
+        sort=int(data.get("sort", grade_num)), is_active=bool(data.get("is_active", True)),
     )
     db.add(grade)
     db.commit()
@@ -56,21 +119,37 @@ def create_grade(
 @router.put("/grades/{grade_id}", summary="编辑年级")
 def update_grade(
     grade_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_manager),
+    _: User = Depends(require_perm("resource:grade:write")),
 ):
     grade = db.get(Grade, grade_id)
     if not grade:
         raise NotFoundException("年级不存在")
-    for f in ("name", "stage", "grade_num", "sort", "is_active"):
-        if f in data:
-            setattr(grade, f, data[f])
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            raise BusinessException("年级名称不能为空")
+        if db.scalar(select(Grade).where(Grade.name == name, Grade.id != grade.id)):
+            raise BusinessException("年级名称已存在")
+        grade.name = name
+    if "stage" in data:
+        grade.stage = _assert_stage(data["stage"])
+    if "grade_num" in data:
+        num = _assert_grade_num(data["grade_num"])
+        if db.scalar(select(Grade).where(Grade.grade_num == num, Grade.id != grade.id)):
+            raise BusinessException("年级序号已存在")
+        grade.grade_num = num
+    if "sort" in data:
+        grade.sort = int(data["sort"])
+    if "is_active" in data:
+        grade.is_active = bool(data["is_active"])
     db.commit()
     return ok(dictify(grade), message="年级已更新")
 
 
 @router.delete("/grades/{grade_id}", summary="删除年级")
 def delete_grade(
-    grade_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_manager),
+    grade_id: int, db: Session = Depends(get_db),
+    _: User = Depends(require_perm("resource:grade:write")),
 ):
     grade = db.get(Grade, grade_id)
     if not grade:
@@ -86,6 +165,7 @@ def delete_grade(
         ("知识点", KnowledgePoint, KnowledgePoint.grade_id),
         ("题目", Question, Question.grade_id),
         ("试卷", Paper, Paper.grade_id), ("作业/考试", Task, Task.grade_id),
+        ("用户", User, User.grade_id),
     ):
         count = db.scalar(
             select(func.count()).select_from(model).where(column == grade_id)
@@ -155,17 +235,25 @@ def list_subjects(
 @router.post("/subjects", summary="新增学科")
 def create_subject(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_manager),
+    user: User = Depends(require_perm(SUBJECT_WRITE_PERM)),
 ):
+    name = (data.get("name") or "").strip()
+    grade_id = data.get("grade_id")
+    if not name:
+        raise BusinessException("请填写学科名称")
+    if not grade_id or not db.get(Grade, grade_id):
+        raise BusinessException("请选择年级")
+    _assert_subject_scope(user, int(grade_id))
     exists = db.scalar(select(Subject).where(
-        Subject.grade_id == data.get("grade_id"), Subject.name == data.get("name")
+        Subject.grade_id == grade_id, Subject.name == name
     ))
     if exists:
         raise BusinessException("该年级下学科已存在")
     subject = Subject(
-        name=data["name"], grade_id=data["grade_id"],
+        name=name, grade_id=grade_id,
         textbook_version=data.get("textbook_version"), code=data.get("code"),
-        sort=data.get("sort", 0),
+        sort=int(data.get("sort", data.get("sort_order", 0)) or 0),
+        is_active=bool(data.get("is_active", True)),
     )
     db.add(subject)
     db.commit()
@@ -175,25 +263,40 @@ def create_subject(
 @router.put("/subjects/{subject_id}", summary="编辑学科")
 def update_subject(
     subject_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(get_current_manager),
+    user: User = Depends(require_perm(SUBJECT_WRITE_PERM)),
 ):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise NotFoundException("学科不存在")
-    for f in ("name", "textbook_version", "code", "sort", "is_active"):
+    _assert_subject_scope(user, subject.grade_id)
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            raise BusinessException("学科名称不能为空")
+        dup = db.scalar(select(Subject).where(
+            Subject.grade_id == subject.grade_id, Subject.name == name,
+            Subject.id != subject.id))
+        if dup:
+            raise BusinessException("该年级下学科已存在")
+        subject.name = name
+    for f in ("textbook_version", "code", "is_active"):
         if f in data:
             setattr(subject, f, data[f])
+    if "sort" in data or "sort_order" in data:
+        subject.sort = int(data.get("sort", data.get("sort_order", 0)) or 0)
     db.commit()
     return ok(dictify(subject), message="学科已更新")
 
 
 @router.delete("/subjects/{subject_id}", summary="删除学科")
 def delete_subject(
-    subject_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_manager),
+    subject_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm(SUBJECT_WRITE_PERM)),
 ):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise NotFoundException("学科不存在")
+    _assert_subject_scope(user, subject.grade_id)
     # 学科被题目/试卷/任务/知识点/教案引用时删学科会级联清空整科数据，
     # 必须先阻断（此前删除学科可直接抹掉该科全部题目与考试记录）。
     from app.models import LessonPlan, Paper, Question, Task
@@ -224,7 +327,8 @@ def delete_subject(
 @router.post("/subjects/{subject_id}/clone", summary="跨年级复制学科")
 def clone_subject(
     subject_id: int, data: Dict[str, Any] = Body(...),
-    db: Session = Depends(get_db), _: User = Depends(get_current_manager),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(SUBJECT_WRITE_PERM)),
 ):
     """把指定学科复制到多个目标年级。
 
@@ -236,6 +340,7 @@ def clone_subject(
     src = db.get(_Sub, subject_id)
     if not src:
         raise NotFoundException("源学科不存在")
+    _assert_subject_scope(user, src.grade_id)
     target_grades = data.get("target_grade_ids") or []
     if not isinstance(target_grades, list) or not target_grades:
         raise BusinessException("请选择至少一个目标年级")
@@ -248,6 +353,10 @@ def clone_subject(
             continue
         if not db.get(Grade, gid):
             skipped.append({"grade_id": gid, "reason": "年级不存在"})
+            continue
+        # 年级管理员只能在本年级内操作；跨年级复制仅 sys_admin
+        if "sys_admin" not in set(user.role_codes or []) and gid != user.grade_id:
+            skipped.append({"grade_id": gid, "reason": "无权复制到其他年级"})
             continue
         if db.scalar(select(_Sub).where(_Sub.grade_id == gid, _Sub.name == src.name)):
             skipped.append({"grade_id": gid, "reason": "该年级已存在同名学科"})

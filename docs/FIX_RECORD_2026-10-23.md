@@ -235,6 +235,14 @@
 - **验证**：E2E 851/837/0/14；前端 build/lint/test/bundle；真实浏览器完成附件上传→预览→删除，班级页统计/分页/学生抽屉正常。
 - **镜像**：`nanpo/edu-ai-platform:1.5.0` / `:latest` / `:sha-0b3b8f7` 已推送，manifest-list digest `sha256:f4845667a2caa808a749b12d2037adfe802cee53769908dbfe9471a223fdf831`（基于 commit `0b3b8f7`，内置模型缓存）；容器 health=`healthy`、version=`1.5.0`、47 页浏览器冒烟通过。
 
+### 1.6.0 年级管理检查与优化
+
+- **发现**：排序字段 `sort_order` 与模型 `sort` 错位（排序失效）；新增年级默认序号 9、缺名称/学段/序号/重名校验；编辑无重名校验；删除漏查用户；年级写权限过宽（grade_admin 可改/删年级）；学科写未限本年级；前端无权限控制；年级页缺学段/序号/统计列。
+- **修复**：新增 `resource:grade:write`（仅 sys_admin）与 `resource:subject:write`；年级写接口收紧为 sys_admin，学科写按年级 scope；补齐名称/学段/序号/重名校验、删除用户引用检查；年级列表补班级/学科/学生数与学段标签、关键词筛选；前端新增统计卡、学段筛选、学段/序号列，弹窗补齐字段，按钮按权限/行 scope 显隐，跨年级复制仅 sys_admin；年级/学科排序字段统一为 `sort`。
+- **验证**：E2E 851/837/0/14；权限矩阵 teacher/student 年级/学科写 403、grade_admin 年级写 403 但本年级学科 200/跨年级 403、sys_admin 年级 CRUD 200；前端 build/lint/test/bundle；浏览器年级页统计/列/弹窗正常。
+- **镜像**：1.6.0 构建/推送中（完成后回填 digest）。
+
+
 
 
 
