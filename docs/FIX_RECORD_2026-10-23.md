@@ -84,3 +84,25 @@
 - **改动**：改用 `active`/`paperReq` 构造参数；`asyncSupported` 计算属性控制开关仅对出题/组卷可用；不支持时提示并回退同步；修复结果赋值变量遮蔽。
 - **验证**：`npm run build` / `npm run lint` / `npm run test` 均通过。
 
+### P2-14 Docker 镜像构建与运行验证（容器降权/构建指纹）
+
+- **状态**：✅ 已验证
+- **验证**（Docker Desktop 29.2.1）：
+  - `docker compose build` 退出码 0（含 `npm ci`、非 root 用户创建、Chroma 缓存迁移）。
+  - 以 `-e SECRET_KEY=<随机>`、`-e DEBUG=false`、`-e SEED_DEMO_DATA=true` + 临时数据卷启动测试容器：
+    `/api/v1/health` 返回 `healthy` / version `1.0.42`，`admin/Admin@123456` 登录成功；
+    `/app/data` 属主为 `app`（uid/gid 10001），非 root 运行生效；
+    `/app/BUILD_INFO` 记录的 commit 与构建时 `git HEAD` 一致。
+  - 测试容器与临时目录已清理。
+- **说明**：`start.ps1` 会根据镜像 `BUILD_INFO` 与当前 `HEAD` 自动重建；因此每次代码提交后首次 `start.bat` 会重新构建（Docker 层缓存可显著缩短时间）。
+
+---
+
+## 本轮仍未覆盖（后续可选）
+
+- `report.student_comparison` 的 `assign_rows` 仍一次性查询全站已发布下发记录，规模大时内存线性增长（非 N+1，未扩改）。
+- 前端图标仍走 `@element-plus/icons-vue` barrel，整包约 69KB 共享；可改逐 subpath 导入。
+- 前端未做真实浏览器逐页 E2E；按需样式依赖 unplugin 注入（构建产物已核验样式存在）。
+- 新增 devDependencies 带来 npm audit 的 2 个 dev 树漏洞（未处理，生产依赖不受影响）。
+- 1.0.42 镜像尚未发布到 registry（需发版流水线/凭据）。
+
