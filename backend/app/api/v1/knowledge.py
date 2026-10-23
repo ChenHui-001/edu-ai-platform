@@ -18,7 +18,10 @@ from openpyxl import Workbook, load_workbook
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.agents.rag import index_knowledge, reindex_all
+from app.agents import rag as rag_engine
+from app.agents.rag import (
+    delete_knowledge_index, index_knowledge, knowledge_index_stats, reindex_all,
+)
 from app.api.deps import (
     DataScope, get_current_teacher, get_current_user, get_data_scope, require_perm,
 )
@@ -605,6 +608,76 @@ def knowledge_mastery_overview(
     return ok({"items": items, "student_count": len(stu_ids), "class_name": k.name})
 
 
+# ================================================================ 语义检索 / RAG 状态
+@router.get("/knowledge/search", summary="知识点语义搜索（RAG）")
+def knowledge_search(
+    q: str = Query(..., min_length=1, max_length=200, description="搜索问题/关键词"),
+    grade_id: Optional[int] = None, subject_id: Optional[int] = None,
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """RAG 语义检索知识点（只返回 knowledge 类型结果）。
+
+    读取权限按 1.1.0 契约收敛：学生强制本年级 + published；其他身份只返回
+    published（索引本身也只收 published，这里再按 DB 兜底过滤存量脏索引）。
+    """
+    query = (q or "").strip()
+    if not query:
+        raise BusinessException("请输入搜索内容")
+
+    student = _is_student_user(user)
+    visible_grade = _forced_grade(user, grade_id)
+    results = rag_engine.search(
+        query, db, top_k=limit, grade_id=visible_grade,
+        subject_id=subject_id, types=["knowledge"],
+    )
+
+    ids: List[int] = []
+    for r in results:
+        meta = r.get("metadata") or {}
+        if meta.get("type") == "knowledge":
+            value = _to_int(meta.get("id"))
+            if value and value not in ids:
+                ids.append(value)
+    kps = {
+        kp.id: kp for kp in db.scalars(
+            select(KnowledgePoint).where(KnowledgePoint.id.in_(ids))
+        ).all()
+    } if ids else {}
+    counts = _question_counts(db, list(kps))
+
+    items: List[Dict[str, Any]] = []
+    for r in results:
+        meta = r.get("metadata") or {}
+        if meta.get("type") != "knowledge":
+            continue
+        kp = kps.get(_to_int(meta.get("id")) or 0)
+        if not kp or not kp.is_active or kp.status != "published":
+            continue
+        if student and (not user.grade_id or kp.grade_id != user.grade_id):
+            continue
+        if subject_id and kp.subject_id != int(subject_id):
+            continue
+        items.append({
+            "id": kp.id, "name": kp.name, "path": kp.path or str(kp.id),
+            "description": kp.description or "", "difficulty": kp.difficulty,
+            "score": r.get("score"), "grade_id": kp.grade_id,
+            "subject_id": kp.subject_id,
+            "question_count": int(counts.get(kp.id, 0)),
+        })
+        if len(items) >= limit:
+            break
+    return ok({"items": items, "total": len(items)})
+
+
+@router.get("/knowledge/rag-status", summary="知识点 RAG 索引状态")
+def knowledge_rag_status(
+    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+):
+    """索引覆盖率（admin/teacher 可读）：供管理页展示与重建后刷新。"""
+    return ok(knowledge_index_stats(db))
+
+
 # ================================================================ 详情
 @router.get("/knowledge/{kp_id}", summary="知识点详情")
 def knowledge_detail(
@@ -793,6 +866,8 @@ def delete_knowledge(
             f"该知识点已有 {r_cnt} 条复习计划引用，请先处理相关计划后再删除")
     db.delete(kp)
     db.commit()
+    # RAG 生命周期：删除后清理向量索引（失败只告警，不阻断业务）
+    delete_knowledge_index(kp_id)
     return ok(message="知识点已删除")
 
 
@@ -922,6 +997,29 @@ def _batch_move(
         done.append(kp.id)
 
 
+def _sync_batch_indexes(db: Session, action: str, done: List[int]) -> None:
+    """批量写操作后的向量索引同步（RAG 生命周期）。
+
+    - delete：删除对应向量；
+    - publish/archive/update：重建这些节点的向量（archive 由
+      `index_knowledge` 内部转为删除，避免语义检索命中已归档内容）；
+    - move：节点及其整棵子树的 path/grade/subject 都变了，逐个重建。
+    索引失败只告警，不影响业务返回。
+    """
+    if action == "delete":
+        for kp_id in done:
+            delete_knowledge_index(kp_id)
+        return
+    for kp_id in done:
+        kp = db.get(KnowledgePoint, kp_id)
+        if not kp:
+            continue
+        index_knowledge(kp)
+        if action == "move":
+            for child in _subtree_nodes(db, kp):
+                index_knowledge(child)
+
+
 @router.post("/knowledge/batch", summary="批量操作知识点")
 def batch_knowledge(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
@@ -989,6 +1087,7 @@ def batch_knowledge(
         _batch_move(db, user, nodes, payload, done, skipped)
 
     db.commit()
+    _sync_batch_indexes(db, action, done)
     return ok({"done": done, "skipped": skipped}, message=f"批量操作完成 {len(done)} 条")
 
 

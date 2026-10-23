@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import (
     get_current_student, get_current_student_self,
 )
+from app.agents.rag import delete_note_index
 from app.core.database import get_db
 from app.core.exception import NotFoundException, PermissionException
 from app.models import Note, Subject, User
@@ -193,6 +194,8 @@ def delete_note(
         raise NotFoundException("笔记不存在")
     db.delete(note)
     db.commit()
+    # RAG 生命周期：删除后清理笔记向量（失败只告警，不阻断业务）
+    delete_note_index(note_id)
     return ok(message="笔记已删除")
 
 

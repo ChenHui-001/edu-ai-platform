@@ -9,7 +9,7 @@ from openpyxl import Workbook, load_workbook
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, noload
 
-from app.agents.rag import index_question
+from app.agents.rag import delete_question_index, index_question
 from app.api.deps import get_current_teacher
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
@@ -216,6 +216,8 @@ def delete_question(
         raise BusinessException(f"该题目已被 {ref_cnt} 份试卷引用，请先从相关试卷中移除")
     db.delete(q)
     db.commit()
+    # RAG 生命周期：删除后清理题目向量（失败只告警，不阻断业务）
+    delete_question_index(q_id)
     return ok(message="题目已删除")
 
 

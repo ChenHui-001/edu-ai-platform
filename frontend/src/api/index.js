@@ -93,7 +93,12 @@ export const knowledgeApi = {
   template: () => request.get('/edu/knowledge/template', { responseType: 'blob' }),
   export: (params) => request.get('/edu/knowledge/export',
     { params, responseType: 'blob' }),
-  reindex: () => request.post('/edu/knowledge/reindex')
+  reindex: () => request.post('/edu/knowledge/reindex'),
+  // AI / RAG（1.2.0，契约 docs/KNOWLEDGE_V2_RAG_AI.md）
+  search: (params) => request.get('/edu/knowledge/search', { params }),
+  ragStatus: () => request.get('/edu/knowledge/rag-status'),
+  aiGenerate: (data) => request.post('/edu/knowledge/ai/generate', data),
+  aiEnrich: (ids) => request.post('/edu/knowledge/ai/enrich', { ids })
 }
 
 // ---------------- 题库与试卷 ----------------

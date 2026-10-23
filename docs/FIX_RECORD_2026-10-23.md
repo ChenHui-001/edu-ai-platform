@@ -193,4 +193,18 @@
 - **镜像**：1.1.0 已构建/推送：`nanpo/edu-ai-platform:1.1.0` / `:latest` / `:sha-591c2ad`，manifest-list digest `sha256:b2c8dfcdde0aff51f6f83cd0be201acc01a9e375d5ac1dbd1f9f875553909ca7`（基于 commit `591c2ad`）；容器 health=`healthy`、version=`1.1.0`、46 页浏览器冒烟全通过。
 - **下一步**：RAG 生命周期/语义检索 + 知识点 AI 生成/补全（1.2.0），契约见 `docs/KNOWLEDGE_V2_RAG_AI.md`。
 
+### 1.2.0 RAG 生命周期与知识点 AI
+
+- **状态**：✅ 已实现（镜像构建/真库校验后发布）
+- **RAG 生命周期**（`agents/rag.py` + 调用点）：
+  - 新增 `delete_knowledge_index/delete_question_index/delete_note_index`；知识点单删/批量删/发布/归档/更新/移动，题目删除，笔记删除均同步索引；
+  - `index_knowledge/index_question` 只索引 published；metadata 统一补 `knowledge_point_id/path/grade_id/subject_id/term/status/level/textbook_version`；
+  - `RAG_SCORE_THRESHOLD` 在向量、SQL、search 三处生效；SQL 降级也只返回 published+active；
+  - reindex 追加 `db_total/index_count/coverage_percent/chroma_available/purged`，并清理已删除/下架知识点的残留向量。
+- **接口**：`GET /edu/knowledge/search`（语义检索，学生仅本年级 published、跨年级 403）、`GET /edu/knowledge/rag-status`（admin/teacher）；`POST /edu/knowledge/ai/generate`、`/ai/enrich`（scope 校验、限流、ids≤50；无 LLM 或 LLM 失败规则降级 `is_fallback=true`，只预览不落库）。
+- **前端**：AI 生成弹窗（预览→逐条创建）、AI 补全（详情/批量，预览→逐条 PUT）、语义搜索（结果定位树节点）、RAG 状态标签（覆盖率/索引数，重建后刷新）。
+- **验证**：后端 E2E 851/837/0/14；无 Chroma 环境 fallback 搜索/AI/状态通过；前端 build/lint/test/bundle 通过；真实 Chroma 在 1.2.0 容器内验证 reindex→搜索→删除索引→覆盖率。
+- **镜像**：1.2.0 构建/推送中（完成后回填 digest）。
+
+
 

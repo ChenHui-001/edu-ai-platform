@@ -3,7 +3,7 @@
   "info": {
     "title": "九年义务教育学习管理系统",
     "description": "九年义务教育学习管理系统（AI Agent 版）后端 API",
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "paths": {
     "/api/v1/auth/captcha": {
@@ -3399,6 +3399,125 @@
         }
       }
     },
+    "/api/v1/edu/knowledge/search": {
+      "get": {
+        "tags": [
+          "知识点"
+        ],
+        "summary": "知识点语义搜索（RAG）",
+        "description": "RAG 语义检索知识点（只返回 knowledge 类型结果）。\n\n读取权限按 1.1.0 契约收敛：学生强制本年级 + published；其他身份只返回\npublished（索引本身也只收 published，这里再按 DB 兜底过滤存量脏索引）。",
+        "operationId": "knowledge_search_api_v1_edu_knowledge_search_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "搜索问题/关键词",
+              "title": "Q"
+            },
+            "description": "搜索问题/关键词"
+          },
+          {
+            "name": "grade_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Grade Id"
+            }
+          },
+          {
+            "name": "subject_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/edu/knowledge/rag-status": {
+      "get": {
+        "tags": [
+          "知识点"
+        ],
+        "summary": "知识点 RAG 索引状态",
+        "description": "索引覆盖率（admin/teacher 可读）：供管理页展示与重建后刷新。",
+        "operationId": "knowledge_rag_status_api_v1_edu_knowledge_rag_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/edu/knowledge/{kp_id}": {
       "get": {
         "tags": [
@@ -3644,6 +3763,98 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/edu/knowledge/ai/generate": {
+      "post": {
+        "tags": [
+          "知识点 AI"
+        ],
+        "summary": "AI 生成知识点预览",
+        "description": "生成知识点预览（只预览不落库）。\n\n无 LLM 时返回规则引擎模板并标记 `is_fallback=true`；LLM 失败同样降级，\n保证前端「AI 生成」始终可用。",
+        "operationId": "ai_generate_api_v1_edu_knowledge_ai_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Data"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/edu/knowledge/ai/enrich": {
+      "post": {
+        "tags": [
+          "知识点 AI"
+        ],
+        "summary": "AI 批量补全知识点建议",
+        "description": "对选中知识点返回补全建议（只预览不落库）。\n\nids 必须全部存在且在写 scope 内；任一越权整体 403（与批量操作契约一致）。",
+        "operationId": "ai_enrich_api_v1_edu_knowledge_ai_enrich_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Data"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
