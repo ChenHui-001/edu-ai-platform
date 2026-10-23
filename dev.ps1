@@ -6,6 +6,8 @@
 #
 #  说明：
 #    - 首次运行自动安装依赖（pip install -r requirements.txt / npm install）
+#    - 首次运行自动生成 backend/.env（固定随机 SECRET_KEY、DEBUG=true），
+#      避免应用 fail-closed 校验失败；同时保证 --reload 重启后登录令牌不失效
 #    - 两个窗口分别承载前后端进程，关窗口或 Ctrl+C 即停止对应服务
 #    - 数据库是 backend 目录下的本地 SQLite，与 Docker 容器内数据不互通
 #    - 与 Docker 方式（start.bat，打包部署用）可并存，端口互不冲突
@@ -73,7 +75,66 @@ else {
     Write-Ok '已按参数跳过依赖检查'
 }
 
+# ---------- 1.5 本地后端 .env ----------
+# 后端配置从「工作目录 backend/ 下的 .env」读取（config.py env_file=".env"）。
+# SECRET_KEY 已改为 fail-closed：DEBUG=false 且密钥弱时应用拒绝启动；
+# DEBUG=true 时每次进程重启会生成临时密钥，--reload 一改代码所有登录令牌失效。
+# 因此本地开发固定写入 backend/.env：随机强密钥 + DEBUG=true。
+function New-DevSecret { return ([guid]::NewGuid().ToString('N')) + ([guid]::NewGuid().ToString('N')) }
+function Test-DevWeakSecret {
+    param([string]$Key)
+    if ([string]::IsNullOrWhiteSpace($Key)) { return $true }
+    $v = $Key.Trim()
+    if ($v -match '^CHANGE_ME') { return $true }
+    if ($v.Length -lt 32) { return $true }
+    if (($v.ToCharArray() | Select-Object -Unique).Count -lt 8) { return $true }
+    return $false
+}
+function Initialize-BackendEnv {
+    $envPath = Join-Path $PSScriptRoot 'backend/.env'
+    if (-not (Test-Path $envPath)) {
+        $content = @(
+            '# 本地开发配置（dev.ps1 自动生成；已在 .gitignore 中忽略）',
+            "SECRET_KEY=$(New-DevSecret)",
+            'DEBUG=true',
+            'SEED_DEMO_DATA=true',
+            'LOG_LEVEL=INFO'
+        ) -join "`n"
+        [System.IO.File]::WriteAllText(
+            $envPath, $content + "`n", (New-Object System.Text.UTF8Encoding $false))
+        Write-Ok '已生成 backend/.env（DEBUG=true，固定随机 SECRET_KEY）'
+        return
+    }
+    $text = Get-Content $envPath -Raw -Encoding UTF8
+    if ($null -eq $text) { $text = '' }
+    $patched = $false
+    $m = [regex]::Match($text, '(?m)^\s*SECRET_KEY=(.*)$')
+    $key = if ($m.Success) { $m.Groups[1].Value.Trim() } else { '' }
+    if (Test-DevWeakSecret $key) {
+        $newKey = New-DevSecret
+        if ($m.Success) {
+            $text = [regex]::Replace($text, '(?m)^\s*SECRET_KEY=.*$', "SECRET_KEY=$newKey")
+        } else {
+            $text = $text.TrimEnd() + "`nSECRET_KEY=$newKey`n"
+        }
+        $patched = $true
+        Write-Ok 'backend/.env：已补全随机 SECRET_KEY'
+    }
+    if ($text -notmatch '(?m)^\s*DEBUG=') {
+        $text = $text.TrimEnd() + "`nDEBUG=true`n"; $patched = $true
+    }
+    if ($text -notmatch '(?m)^\s*SEED_DEMO_DATA=') {
+        $text = $text.TrimEnd() + "`nSEED_DEMO_DATA=true`n"; $patched = $true
+    }
+    if ($patched) {
+        [System.IO.File]::WriteAllText(
+            $envPath, $text, (New-Object System.Text.UTF8Encoding $false))
+    }
+    Write-Ok 'backend/.env 已就绪（本地开发模式）'
+}
+
 # ---------- 2. 启动后端（独立窗口，热重载） ----------
+Initialize-BackendEnv
 Write-Step '启动后端 uvicorn（端口 8000，独立窗口，--reload 热重载）'
 $backendCmd = 'chcp 65001 >nul & title backend(8000) & cd /d "' +
               (Join-Path $PSScriptRoot 'backend') +

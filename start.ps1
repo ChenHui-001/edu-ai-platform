@@ -163,55 +163,108 @@ function Resolve-Port {
 }
 
 # ---------- 准备 .env ----------
-function Initialize-Env {
+function New-RandomSecret {
+    # 64 位十六进制随机串（PS 5.1 无 RandomNumberGenerator.Fill，用 Guid 拼接）
+    return ([guid]::NewGuid().ToString('N')) + ([guid]::NewGuid().ToString('N'))
+}
+
+function Test-WeakSecret {
+    param([string]$Key)
+    if ([string]::IsNullOrWhiteSpace($Key)) { return $true }
+    $v = $Key.Trim()
+    if ($v -match '^CHANGE_ME') { return $true }
+    if ($v.Length -lt 32) { return $true }
+    if (($v.ToCharArray() | Select-Object -Unique).Count -lt 8) { return $true }
+    return $false
+}
+
+function Write-EnvFile {
+    param([string]$Content)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $PSScriptRoot '.env'),
+        $Content,
+        (New-Object System.Text.UTF8Encoding $false))
+}
+
+# 确保 .env 存在且至少具备「可启动」的配置：
+#   - SECRET_KEY：空/占位符/过短/单字符重复 → 重新生成（应用已 fail-closed）
+#   - DEBUG / SEED_DEMO_DATA：旧 .env 缺少时补默认值
+# 所有会调用 docker compose 的子命令都必须先跑本函数：
+# compose 的 ${SECRET_KEY:?...} 在变量为空时会让 down/logs/status 也直接失败。
+function Ensure-EnvBase {
     if (-not (Test-Path '.env')) {
         Copy-Item '.env.example' '.env' -Force
-        Write-Ok '已生成 .env（默认关闭大模型，AI 走规则引擎）'
-    } else {
-        Write-Ok '.env 已存在'
+        Write-Ok '已从 .env.example 生成 .env'
     }
-
-    # 修正镜像名占位符，避免构建出 your-dockerhub-username/... 这种无意义标签
     $content = Get-Content '.env' -Raw -Encoding UTF8
+    if ($null -eq $content) { $content = '' }
     $patched = $false
 
+    # 修正镜像名占位符，避免构建出 your-dockerhub-username/... 这种无意义标签
     if ($content -match 'DOCKERHUB_REPO=your-dockerhub-username/edu-ai-platform') {
         $content = $content -replace 'DOCKERHUB_REPO=.*', 'DOCKERHUB_REPO=edu-ai-platform'
         $patched = $true
     }
 
+    $secretMatch = [regex]::Match($content, '(?m)^\s*SECRET_KEY=(.*)$')
+    $currentKey = if ($secretMatch.Success) { $secretMatch.Groups[1].Value.Trim() } else { '' }
+    if (Test-WeakSecret $currentKey) {
+        $newKey = New-RandomSecret
+        if ($secretMatch.Success) {
+            $content = [regex]::Replace($content, '(?m)^\s*SECRET_KEY=.*$', "SECRET_KEY=$newKey")
+        } else {
+            $content = $content.TrimEnd() + "`nSECRET_KEY=$newKey`n"
+        }
+        $patched = $true
+        Write-Ok '已生成随机 SECRET_KEY（至少 32 位）'
+    }
+
+    # 新版本新增/变更的开关：旧 .env 缺失时补默认值
+    if ($content -notmatch '(?m)^\s*DEBUG=') {
+        $content = $content.TrimEnd() + "`nDEBUG=false`n"
+        $patched = $true
+    }
+    if ($content -notmatch '(?m)^\s*SEED_DEMO_DATA=') {
+        $content = $content.TrimEnd() + "`nSEED_DEMO_DATA=true`n"
+        $patched = $true
+    }
+
+    if ($patched) { Write-EnvFile $content }
+}
+
+function Get-EnvValue {
+    param([string]$Key)
+    if (-not (Test-Path '.env')) { return '' }
+    $text = Get-Content '.env' -Raw -Encoding UTF8
+    $m = [regex]::Match($text, "(?m)^\s*$Key=(.*)$")
+    if ($m.Success) { return $m.Groups[1].Value.Trim() }
+    return ''
+}
+
+function Get-EnvPort {
+    $v = Get-EnvValue 'HOST_PORT'
+    if ($v -match '^\d+$') { return [int]$v }
+    return $Port
+}
+
+function Initialize-Env {
+    Ensure-EnvBase
+    $content = Get-Content '.env' -Raw -Encoding UTF8
+    if ($null -eq $content) { $content = '' }
+    $patched = $false
+
     # 端口：compose 读的是 .env 里的 HOST_PORT，必须与实际使用端口保持一致
-    if ($content -match 'HOST_PORT=(\d+)') {
+    if ($content -match '(?m)^\s*HOST_PORT=(\d+)') {
         if ([int]$Matches[1] -ne $script:UsePort) {
-            $content = $content -replace 'HOST_PORT=\d+', "HOST_PORT=$script:UsePort"
+            $content = [regex]::Replace($content, '(?m)^\s*HOST_PORT=\d+', "HOST_PORT=$script:UsePort")
             $patched = $true
         }
     } else {
-        $content += "`nHOST_PORT=$script:UsePort"
+        $content = $content.TrimEnd() + "`nHOST_PORT=$script:UsePort`n"
         $patched = $true
     }
-
-    # SECRET_KEY 仍是占位符或明显退化（如全 a）时重新生成
-    $needsKey = $false
-    if ($content -match 'SECRET_KEY=CHANGE_ME_IN_PRODUCTION') { $needsKey = $true }
-    elseif ($content -match 'SECRET_KEY=([a-zA-Z0-9]{16,})') {
-        $k = $Matches[1]
-        # 单一字符重复（如 aaaa...）视为退化
-        if (($k.ToCharArray() | Select-Object -Unique).Count -lt 8) { $needsKey = $true }
-    }
-
-    if ($needsKey) {
-        # 用 Guid 拼接保证随机性（PS 5.1 无 RandomNumberGenerator.Fill）
-        $key = ([guid]::NewGuid().ToString('N')) + ([guid]::NewGuid().ToString('N'))
-        $content = $content -replace 'SECRET_KEY=.*', "SECRET_KEY=$key"
-        $patched = $true
-        Write-Ok '已生成随机 SECRET_KEY'
-    }
-
-    if ($patched) {
-        [System.IO.File]::WriteAllText(
-            (Resolve-Path '.env'), $content, (New-Object System.Text.UTF8Encoding $false))
-    }
+    if ($patched) { Write-EnvFile $content }
+    Write-Ok ".env 已就绪（端口 $script:UsePort）"
 }
 
 function Remove-StaleContainer {
@@ -251,12 +304,19 @@ function Invoke-Start {
     docker compose down --remove-orphans 2>&1 | Out-Null
     Remove-StaleContainer
 
-    # 镜像已存在则直接启动，不再 --build。
-    # compose 的 --build 会重走整个 Dockerfile —— 其中 embedding 模型
-    # 预置步骤要访问 S3/HF 镜像，国内网络下双源各等满 600s 超时
-    # （一键启动卡在 #22 十几分钟就是它）。本地镜像本就是 CI/上次构建
-    # 产物，版本跟随 .env 的 IMAGE_TAG；强制重建请用 manage.bat rebuild。
-    # 镜像名/标签从 .env 解析（compose 的 image: 行用的就是这两个变量）
+    # 当前代码 commit：用于判断本地镜像是否过期（镜像内 /app/BUILD_INFO 记录了构建时 commit）
+    $headCommit = ''
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $gitHead = (& git rev-parse HEAD 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and $gitHead) { $headCommit = $gitHead.Trim() }
+    }
+    # compose 的 build.args 读取这两个环境变量，写入镜像 BUILD_INFO
+    $env:GIT_COMMIT = if ($headCommit) { $headCommit } else { 'unknown' }
+    $env:BUILD_TIME = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+
+    # 镜像已存在且 commit 与当前代码一致才跳过构建。
+    # 旧逻辑只看镜像存在就跳过：代码更新后本地一直跑旧镜像（版本号相同、行为不同），
+    # 这是最隐蔽的“改了没生效”来源，因此必须比对 BUILD_INFO 的 commit。
     $imgRepo = 'edu-ai-platform'
     $imgTag = 'latest'
     if (Test-Path '.env') {
@@ -269,13 +329,29 @@ function Invoke-Start {
     docker image inspect $fullImage *> $null
     if ($LASTEXITCODE -eq 0) { $haveImage = $true }
 
+    if ($haveImage -and $headCommit) {
+        $imageCommit = ''
+        $buildInfo = docker run --rm --entrypoint cat $fullImage /app/BUILD_INFO 2>$null
+        if ($LASTEXITCODE -eq 0 -and $buildInfo) {
+            $bm = [regex]::Match(($buildInfo -join "`n"), '(?m)^commit=(.+)$')
+            if ($bm.Success) { $imageCommit = $bm.Groups[1].Value.Trim() }
+        }
+        if ($imageCommit -ne $headCommit) {
+            $shownImage = if ($imageCommit) { $imageCommit } else { 'unknown' }
+            Write-Warn "本地镜像与当前代码不一致（镜像 commit=$shownImage，当前=$($headCommit.Substring(0,7))）"
+            Write-Host '    将重新构建镜像，确保运行的是当前代码（首次构建约 5-15 分钟）...'
+            Write-Host ''
+            $haveImage = $false
+        }
+    }
+
     if ($haveImage) {
-        Write-Ok "本地已有镜像 $fullImage，跳过构建直接启动"
+        Write-Ok "本地镜像 $fullImage 与当前代码一致，跳过构建直接启动"
         Write-Host '    如需强制重建：manage.bat rebuild（或 .\start.ps1 -Action rebuild）'
         Write-Host ''
         docker compose up -d
     } else {
-        Write-Step '首次运行，开始构建镜像（约 5-15 分钟）...'
+        Write-Step '开始构建镜像（约 5-15 分钟）...'
         Write-Host '    构建完成后会自动打开浏览器。'
         Write-Host ''
         docker compose up -d --build
@@ -325,13 +401,21 @@ function Invoke-Start {
     Write-Host "    健康检查    http://localhost:${script:UsePort}/api/v1/health"
     Write-Host ''
     Write-Host "  $( '─' * 52)"
-    Write-Host '    默认账号'
+    # 演示账号是否创建取决于 SEED_DEMO_DATA（生产建议 false）
+    if ((Get-EnvValue 'SEED_DEMO_DATA') -eq 'false') {
+        Write-Host '    演示账号已关闭（SEED_DEMO_DATA=false）'
+        Write-Host '    请使用初始化时的 admin 账号登录，或走注册审批流程'
+    } else {
+        Write-Host '    默认账号'
+        Write-Host ''
+        Write-Host '      系统管理员   admin        / Admin@123456'
+        Write-Host '      教师         teacher1     / Teacher@123'
+        Write-Host '      学生         stu731       / Student@123'
+    }
     Write-Host ''
-    Write-Host '      系统管理员   admin        / Admin@123456'
-    Write-Host '      教师         teacher1     / Teacher@123'
-    Write-Host '      学生         stu731       / Student@123'
-    Write-Host ''
-    Write-Host '    注：首次登录会强制修改密码'
+    Write-Host '    注：默认口令仅用于首次初始化，请登录后立即修改；'
+    Write-Host '        生产环境请设置 SEED_DEMO_DATA=false 关闭演示账号。'
+    Write-Host '        SECRET_KEY 已自动生成并写入 .env（请勿泄露/提交）。'
     Write-Host "$script:Green$( '═' * 60)$script:Reset"
     Write-Host ''
     Write-Host '  常用命令：'
@@ -357,6 +441,8 @@ function Invoke-Start {
 function Invoke-Stop {
     Write-Host ''
     Write-Host '正在停止服务...' -ForegroundColor Cyan
+    # compose 的 ${SECRET_KEY:?...} 在 .env 缺失/为空时会让 down 也失败
+    Ensure-EnvBase
     docker compose down
     Remove-StaleContainer
     Write-Host ''
@@ -368,6 +454,7 @@ function Invoke-Logs {
     Write-Host ''
     Write-Host '正在查看日志（按 Ctrl+C 退出）...' -ForegroundColor Cyan
     Write-Host ''
+    Ensure-EnvBase
     docker compose logs -f --tail=100
 }
 
@@ -375,6 +462,8 @@ function Invoke-Status {
     Write-Host ''
     Write-Host '════════════════ 服务状态 ════════════════' -ForegroundColor Cyan
     Write-Host ''
+    # 补全 .env（SECRET_KEY）后再查状态：否则后续 compose 命令会因插值失败
+    Ensure-EnvBase
     docker ps --filter "name=edu-platform" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
     Write-Host ''
     Write-Host '════════════════ 健康检查 ════════════════' -ForegroundColor Cyan
@@ -406,6 +495,8 @@ function Invoke-Status {
 function Invoke-Restart {
     Write-Host ''
     Write-Step '正在重启服务...'
+    Ensure-EnvBase
+    $script:UsePort = Get-EnvPort
     docker compose restart
     Write-Step '等待后端就绪...'
     for ($i = 1; $i -le 30; $i++) {
@@ -413,7 +504,7 @@ function Invoke-Restart {
         $h = docker exec edu-platform curl -s --max-time 4 http://localhost/api/v1/health 2>$null
         if ($h -match '"status"\s*:\s*"healthy"') {
             Write-Ok "服务已就绪（$($i * 2) 秒）"
-            if (-not $NoBrowser) { Start-Process "http://localhost:$Port" }
+            if (-not $NoBrowser) { Start-Process "http://localhost:$script:UsePort" }
             Wait-Enter
             return
         }
@@ -443,6 +534,7 @@ function Invoke-Reset {
 
     Write-Host ''
     Write-Step '停止服务并删除数据卷...'
+    Ensure-EnvBase
     docker compose down -v 2>&1 | Out-Null
     Remove-StaleContainer
     foreach ($dir in @('data', 'logs')) {
@@ -474,7 +566,7 @@ function Invoke-Help {
     Write-Host '  示例：'
     Write-Host '    manage.bat start 8081'
     Write-Host ''
-    Write-Host '  常见账号：admin / Admin@123456（首次登录须改密）'
+    Write-Host '  常见账号：admin / Admin@123456（部署后请立即修改；SEED_DEMO_DATA=false 时不创建演示账号）'
     Write-Host ''
     Wait-Enter
 }
@@ -482,6 +574,14 @@ function Invoke-Help {
 function Invoke-Rebuild {
     Write-Host ''
     Write-Step '清除缓存重新构建镜像（耗时较长）...'
+    Ensure-EnvBase
+    $headCommit = ''
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $gitHead = (& git rev-parse HEAD 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and $gitHead) { $headCommit = $gitHead.Trim() }
+    }
+    $env:GIT_COMMIT = if ($headCommit) { $headCommit } else { 'unknown' }
+    $env:BUILD_TIME = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     docker compose down
     Remove-StaleContainer
     docker compose build --no-cache

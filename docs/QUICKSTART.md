@@ -55,13 +55,28 @@
 
 ## 命令一览
 
-### `start.bat`（双击即用）
+### `start.bat`（双击即用，Docker）
 
 ```bat
 start.bat              启动服务（默认 8080）
-start.bat 8081         换端口启动
+start.bat 8081         换端口启动（参数会转发给 start.ps1）
 start.bat help         查看所有命令
+start.bat status       查看状态
 ```
+
+> 首次启动会自动生成 `.env` 与随机 `SECRET_KEY`；如果本地镜像的
+> `BUILD_INFO` commit 与当前代码不一致，会自动重新构建，避免“改了代码却跑旧镜像”。
+
+### `dev.bat`（本地开发，无 Docker）
+
+```bat
+dev.bat                启动后端 :8000（--reload）+ 前端 :5173
+dev.bat -SkipDeps      跳过依赖检查，快速启动
+```
+
+> 首次运行会生成 `backend/.env`（固定随机 `SECRET_KEY`、`DEBUG=true`）；
+> 后端热重载不会导致登录令牌失效。数据库为 `backend/data` 下的本地 SQLite，
+> 与 Docker 容器的数据不互通。
 
 ### `manage.bat`（命令管理）
 
@@ -93,13 +108,18 @@ manage.bat rebuild     清除缓存重新构建镜像
 
 1. **检查 Docker** —— 没装或没运行会给出明确指引
 2. **检查端口** —— 被占用时自动找下一个空闲端口，并把结果写回 `.env`
-3. **准备 `.env`** —— 首次自动生成，顺手做三件事：
-   - 生成 64 位随机 `SECRET_KEY`（不是明文默认值）
-   - 修正 `DOCKERHUB_REPO` 的占位符名
-   - 把实际使用的端口写入 `HOST_PORT`
-4. **构建并启动容器**
-5. **轮询健康接口** —— 直到真的返回 `"status":"healthy"` 才算就绪（不是"端口能连上"）
-6. **显示访问信息**并自动打开浏览器
+3. **准备 `.env`** —— 首次自动生成；旧 `.env` 自动补齐：
+   - 生成 64 位随机 `SECRET_KEY`（空/占位符/过短时重新生成；应用已 fail-closed，弱密钥会拒绝启动）
+   - 补 `DEBUG=false`、`SEED_DEMO_DATA=true`（生产可改为 `false` 关闭演示账号）
+   - 修正 `DOCKERHUB_REPO` 的占位符名、把实际使用的端口写入 `HOST_PORT`
+4. **检查本地镜像** —— 读取镜像内 `/app/BUILD_INFO` 的 commit 与当前 `git HEAD` 比对；
+   不一致则自动 `--build`，确保运行的是当前代码
+5. **构建并启动容器**
+6. **轮询健康接口** —— 直到真的返回 `"status":"healthy"` 才算就绪（不是"端口能连上"）
+7. **显示访问信息**并自动打开浏览器
+
+`stop.bat` / `manage.bat stop` 会先补全 `.env` 再执行 `docker compose down`
+（新版 compose 的 `${SECRET_KEY:?...}` 在变量为空时连 `down` 都会失败）。
 
 ---
 

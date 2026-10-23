@@ -50,8 +50,9 @@
 
 ## 快速开始
 
-> **本地体验？直接双击 `start.bat`**（macOS/Linux 用 `./start.sh`）
-> 脚本会自动检查环境、生成配置、构建并启动，最后自动打开浏览器。
+> **本地体验？直接双击 `start.bat`**（Docker 部署，macOS/Linux 用 `./start.sh`）；
+> 写代码调试用 `dev.bat`（后端 :8000 + 前端 :5173，无 Docker）。
+> 脚本会自动检查环境、生成 `.env` 与随机 `SECRET_KEY`、按需重建镜像并启动，最后自动打开浏览器。
 > 完整说明见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
 
 ### 方式一（最快）：直接拉取已发布镜像
@@ -59,7 +60,10 @@
 ```bash
 docker pull nanpo/edu-ai-platform:1.0.42
 docker run -d --name edu-platform -p 8080:80 \
-  -v $(pwd)/data:/app/data \
+  -e SECRET_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(48))')" \
+  -e DEBUG=false \
+  -e SEED_DEMO_DATA=true \
+  -v "$(pwd)/data:/app/data" \
   --restart unless-stopped \
   nanpo/edu-ai-platform:1.0.42
 
