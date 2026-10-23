@@ -258,7 +258,7 @@
 - **UI**：QuestionBank.vue 重写：统计卡、完整筛选、多选批量栏、详情抽屉、AI 变体/补全/质检、导入导出模板/查重/单题 CRUD 保留。
 - **E2E 适配**：test_teacher kp 按年级+学科过滤、引用保护改管理员；test_learning 前置题 bank_type=private；test_requirements kp 过滤。
 - **验证**：E2E 850/836/0/14；API 动态验证批量/统计/AI/越权；前端 build/lint/test/bundle；浏览器题库页正常。
-- **镜像**：1.7.0 构建/推送中（完成后回填 digest）。
+- **镜像**：`nanpo/edu-ai-platform:1.7.0` / `:latest` / `:sha-645980c` 已推送，manifest-list digest `sha256:eb27e89f7856f7d58431759ae22a92576441471cafb25c462e56144eb22d2f7e`（基于 commit `645980c`）；容器 health=`healthy`、version=`1.7.0`、47 页浏览器冒烟通过、题库批量/AI 接口正常。
 
 
 

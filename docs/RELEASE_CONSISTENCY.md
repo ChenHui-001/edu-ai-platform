@@ -236,17 +236,17 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（1.6.1）
+## 八、当前状态（1.7.0）
 
 | 项 | 值 |
 |---|---|
-| VERSION | `1.6.1` |
-| commit | `1edf9c1`（年级/班级名称自动生成与自定义名称校验） |
-| 本地镜像 | `nanpo/edu-ai-platform:1.6.1` / `:latest` / `:sha-1edf9c1`（digest `sha256:82575ea6…`） |
+| VERSION | `1.7.0` |
+| commit | `645980c`（题库 V2：权限/批量/统计/AI/UI） |
+| 本地镜像 | `nanpo/edu-ai-platform:1.7.0` / `:latest` / `:sha-645980c`（digest `sha256:eb27e89f…`） |
 | ghcr | 未推送（手动发布 Docker Hub；未触发 CI） |
-| Docker Hub | 已推送 `1.6.1`（manifest-list digest `sha256:82575ea6008c8d076e5a04e8bb992bb3c2fe1efb286746a8243f3ad91a330887`） |
-| latest | 已推送，与 `1.6.1` 同一 digest |
-| 发布后校验 | 容器 health=`healthy`、version=`1.6.1`；年级/班级命名弹窗正常，47 页浏览器冒烟通过 |
+| Docker Hub | 已推送 `1.7.0`（manifest-list digest `sha256:eb27e89f7856f7d58431759ae22a92576441471cafb25c462e56144eb22d2f7e`） |
+| latest | 已推送，与 `1.7.0` 同一 digest |
+| 发布后校验 | 容器 health=`healthy`、version=`1.7.0`；题库批量/AI 接口、47 页浏览器冒烟通过 |
 | CI | 未触发（手动发布）；后续遵循 `docs/DELIVERY_RULES.md` |
 
 > 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：
