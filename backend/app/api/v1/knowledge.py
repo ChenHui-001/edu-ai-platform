@@ -15,7 +15,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import case, func, or_, select
@@ -23,7 +23,9 @@ from sqlalchemy.orm import Session
 
 from app.agents import rag as rag_engine
 from app.agents.rag import (
-    delete_knowledge_index, index_knowledge, knowledge_index_stats, reindex_all,
+    delete_attachment_index, delete_knowledge_attachments_index, delete_knowledge_index,
+    index_attachment_background, index_knowledge, knowledge_index_stats, reindex_all,
+    reindex_attachments_for_kp,
 )
 from app.api.deps import (
     DataScope, get_current_teacher, get_current_user, get_data_scope, require_perm,
@@ -750,7 +752,8 @@ def list_knowledge_attachments(
 
 @router.post("/knowledge/{kp_id}/attachments", summary="上传知识点附件")
 async def upload_knowledge_attachment(
-    kp_id: int, file: UploadFile = File(...),
+    kp_id: int, background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
     visible_to_student: bool = Form(True),
     db: Session = Depends(get_db), user: User = Depends(require_perm(WRITE_PERM)),
 ):
@@ -790,12 +793,16 @@ async def upload_knowledge_attachment(
     db.add(att)
     db.commit()
     db.refresh(att)
+    # 索引放后台：PDF/Office 解析可能耗时，不能阻塞上传响应，更不能影响后续 AI 调用。
+    if att.visible_to_student:
+        background_tasks.add_task(index_attachment_background, att.id)
     return ok(_attachment_out(att), message="附件上传成功")
 
 
 @router.put("/knowledge/{kp_id}/attachments/{att_id}", summary="更新知识点附件可见性")
 def update_knowledge_attachment(
-    kp_id: int, att_id: int, data: Dict[str, Any] = Body(...),
+    kp_id: int, att_id: int, background_tasks: BackgroundTasks,
+    data: Dict[str, Any] = Body(...),
     db: Session = Depends(get_db), user: User = Depends(require_perm(WRITE_PERM)),
 ):
     kp = db.get(KnowledgePoint, kp_id)
@@ -807,6 +814,10 @@ def update_knowledge_attachment(
         att.visible_to_student = bool(data["visible_to_student"])
     db.commit()
     db.refresh(att)
+    if att.visible_to_student:
+        background_tasks.add_task(index_attachment_background, att.id)
+    else:
+        delete_attachment_index(att.id)
     return ok(_attachment_out(att), message="附件已更新")
 
 
@@ -827,6 +838,7 @@ def delete_knowledge_attachment(
         pass
     db.delete(att)
     db.commit()
+    delete_attachment_index(att.id)
     return ok(message="附件已删除")
 
 
@@ -899,7 +911,8 @@ def create_knowledge(
 
 @router.put("/knowledge/{kp_id}", summary="编辑知识点")
 def update_knowledge(
-    kp_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    kp_id: int, background_tasks: BackgroundTasks,
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm(WRITE_PERM)),
 ):
     kp = db.get(KnowledgePoint, kp_id)
@@ -958,6 +971,11 @@ def update_knowledge(
     db.commit()
     db.refresh(kp)
     index_knowledge(kp)
+    # 知识点下架时同步清理其附件索引；重新发布则后台重建附件索引
+    if kp.status != "published" or not kp.is_active:
+        delete_knowledge_attachments_index(db, kp.id)
+    else:
+        background_tasks.add_task(reindex_attachments_for_kp, kp.id)
     return ok(_single_node(db, kp), message="知识点已更新")
 
 
@@ -1000,8 +1018,9 @@ def delete_knowledge(
             f"该知识点已有 {r_cnt} 条复习计划引用，请先处理相关计划后再删除")
     db.delete(kp)
     db.commit()
-    # RAG 生命周期：删除后清理向量索引（失败只告警，不阻断业务）
+    # RAG 生命周期：删除后清理知识点与附件向量索引（失败只告警，不阻断业务）
     delete_knowledge_index(kp_id)
+    delete_knowledge_attachments_index(db, kp_id)
     return ok(message="知识点已删除")
 
 
@@ -1143,12 +1162,15 @@ def _sync_batch_indexes(db: Session, action: str, done: List[int]) -> None:
     if action == "delete":
         for kp_id in done:
             delete_knowledge_index(kp_id)
+            delete_knowledge_attachments_index(db, kp_id)
         return
     for kp_id in done:
         kp = db.get(KnowledgePoint, kp_id)
         if not kp:
             continue
         index_knowledge(kp)
+        if kp.status != "published" or not kp.is_active:
+            delete_knowledge_attachments_index(db, kp_id)
         if action == "move":
             for child in _subtree_nodes(db, kp):
                 index_knowledge(child)

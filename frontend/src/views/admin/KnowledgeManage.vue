@@ -25,6 +25,9 @@
             <div class="rag-row"><span>库内知识点</span><b>{{ ragStatusData?.db_total ?? '-' }}</b></div>
             <div class="rag-row"><span>已建索引</span><b>{{ ragStatusData?.index_count ?? '-' }}</b></div>
             <div class="rag-row"><span>覆盖率</span><b>{{ ragCoverageText }}</b></div>
+            <div class="rag-row"><span>资料附件</span>
+              <b>{{ ragStatusData?.attachment_index_count ?? 0 }}/{{ ragStatusData?.attachment_total ?? 0 }}</b>
+            </div>
             <div class="rag-row"><span>向量库</span>
               <b>{{ ragStatusData?.chroma_available ? '可用' : '不可用/降级' }}</b>
             </div>

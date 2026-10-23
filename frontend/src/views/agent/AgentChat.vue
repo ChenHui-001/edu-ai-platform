@@ -78,6 +78,17 @@
                 </ul>
               </div>
 
+              <div v-if="m.data?.references?.length" class="result-block">
+                <div class="rb-title">引用来源</div>
+                <div v-for="(ref, n) in m.data.references" :key="`ref-${n}`" class="ref-item">
+                  <el-tag size="small" effect="plain">{{ ref.type }}</el-tag>
+                  <span class="ref-name">{{ ref.name }}</span>
+                  <span v-if="ref.knowledge_point_name || ref.path" class="muted">
+                    {{ ref.knowledge_point_name || '' }}<template v-if="ref.path"> · {{ ref.path }}</template>
+                  </span>
+                </div>
+              </div>
+
               <div v-if="m.data?.weak_points?.length" class="result-block">
                 <div class="rb-title">薄弱知识点</div>
                 <el-tag v-for="w in m.data.weak_points" :key="w.name" size="small"
@@ -359,6 +370,8 @@ onMounted(async () => {
 .paper-item { margin-bottom: 5px; line-height: 1.6; }
 .rb-note { margin-top: 6px; color: #909399; font-size: 12px; }
 .answer-box { margin-top: 5px; padding: 8px; background: #fff; border-radius: 4px; font-size: 12px; }
+.ref-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+.ref-name { font-weight: 500; }
 .plan-day { margin-bottom: 8px; font-size: 12px; }
 .refs { margin-top: 10px; font-size: 12px; color: #909399; }
 .msg-meta {

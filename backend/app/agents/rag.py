@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.models import KnowledgePoint, Note, Question
+from app.models import Attachment, KnowledgePoint, Note, Question
+from app.services.attachment_parser import extract_text
 
 logger = get_logger("rag")
 
@@ -45,6 +46,9 @@ def get_collection():
 KNOWLEDGE_ID_PREFIX = "kp_"
 QUESTION_ID_PREFIX = "q_"
 NOTE_ID_PREFIX = "note_"
+ATTACHMENT_ID_PREFIX = "att_"
+ATTACHMENT_CHUNK_SIZE = 900
+ATTACHMENT_MAX_CHUNKS = 40
 
 
 def _delete_index_ids(ids: List[str], label: str) -> bool:
@@ -85,6 +89,186 @@ def delete_note_index(note_id: int) -> bool:
             [f"{NOTE_ID_PREFIX}{int(note_id)}"], f"笔记 {note_id}")
     except (TypeError, ValueError):
         return False
+
+
+def delete_attachment_index(att_id: int) -> bool:
+    """删除附件全部 chunk 向量（附件删除/隐藏/知识点下架后调用）。"""
+    col = get_collection()
+    if not col:
+        return False
+    try:
+        col.delete(where={"attachment_id": int(att_id)})
+        return True
+    except Exception as exc:
+        logger.warning(f"附件 {att_id} 向量索引删除失败: {exc}")
+        return False
+
+
+def _attachment_chunks(text: str) -> List[str]:
+    """按段落/长度切分附件文本，避免单条向量过大。"""
+    text = (text or "").strip()
+    if not text:
+        return []
+    chunks: List[str] = []
+    buf = ""
+    for para in text.replace("\r\n", "\n").split("\n"):
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) > ATTACHMENT_CHUNK_SIZE:
+            if buf:
+                chunks.append(buf)
+                buf = ""
+            chunks.extend(para[i:i + ATTACHMENT_CHUNK_SIZE]
+                          for i in range(0, len(para), ATTACHMENT_CHUNK_SIZE))
+            continue
+        if len(buf) + len(para) + 1 > ATTACHMENT_CHUNK_SIZE and buf:
+            chunks.append(buf)
+            buf = para
+        else:
+            buf = f"{buf}\n{para}" if buf else para
+        if len(chunks) >= ATTACHMENT_MAX_CHUNKS:
+            break
+    if buf and len(chunks) < ATTACHMENT_MAX_CHUNKS:
+        chunks.append(buf)
+    return chunks[:ATTACHMENT_MAX_CHUNKS]
+
+
+def _attachment_metadata(
+    att: Attachment, kp: KnowledgePoint, index: int,
+) -> Dict[str, Any]:
+    return {
+        "type": "attachment",
+        "id": int(att.id),
+        "attachment_id": int(att.id),
+        "knowledge_point_id": int(kp.id),
+        "filename": att.filename or "",
+        "path": kp.path or "",
+        "name": kp.name,
+        "grade_id": int(kp.grade_id),
+        "subject_id": int(kp.subject_id),
+        "term": int(kp.term or 1),
+        "status": kp.status or "published",
+        "chunk_index": int(index),
+        "ext": (att.filename or "").rsplit(".", 1)[-1].lower() if "." in (att.filename or "") else "",
+    }
+
+
+def index_attachment(
+    db: Session, att: Attachment, deadline: Optional[float] = None,
+) -> bool:
+    """解析附件文本并写入 Chroma（后台调用；失败只告警，不影响上传/下载）。"""
+    if not att or not att.id or att.is_temp:
+        return False
+    kp = db.get(KnowledgePoint, att.biz_id) if att.biz_id else None
+    # 只有「已发布知识点 + 学生可见附件」进入 AI 检索：隐藏附件是教师私有资料，
+    # 学生/教师共用同一个 RAG 检索通道，不能让隐藏内容进入上下文造成越权泄漏。
+    if not kp or not _is_indexable_knowledge(kp) or not att.visible_to_student:
+        delete_attachment_index(att.id)
+        return False
+    if deadline is not None:
+        import time as _time
+        if _time.monotonic() > deadline:
+            return False
+    text = extract_text(att.file_path, att.filename)
+    chunks = _attachment_chunks(text)
+    if not chunks:
+        delete_attachment_index(att.id)
+        return False
+    col = get_collection()
+    if not col:
+        return False
+    if deadline is not None:
+        import time as _time
+        if _time.monotonic() > deadline:
+            return False
+    try:
+        # 先清理旧 chunk，避免文件更新后旧内容残留
+        col.delete(where={"attachment_id": int(att.id)})
+        ids = [f"{ATTACHMENT_ID_PREFIX}{int(att.id)}_{i}" for i in range(len(chunks))]
+        documents = [f"资料《{att.filename}》\n{c}" for c in chunks]
+        metadatas = [_attachment_metadata(att, kp, i) for i in range(len(chunks))]
+        col.upsert(ids=ids, documents=documents, metadatas=metadatas)
+        return True
+    except Exception as exc:
+        logger.warning(f"附件 {att.id} 向量化失败: {exc}")
+        return False
+
+
+def index_attachment_by_id(db: Session, att_id: int) -> bool:
+    """按 id 索引附件（供 BackgroundTasks/reindex 使用）。"""
+    att = db.get(Attachment, att_id)
+    return index_attachment(db, att) if att else False
+
+
+def index_attachment_background(att_id: int) -> bool:
+    """后台线程/任务入口：自建 DB session，避免复用已关闭的请求 session。"""
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return index_attachment_by_id(db, att_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"附件 {att_id} 后台索引失败: {exc}")
+        return False
+    finally:
+        db.close()
+
+
+def reindex_attachments_for_kp(kp_id: int) -> int:
+    """知识点发布/移动后重建其附件索引（后台调用，失败不影响业务）。"""
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    n = 0
+    try:
+        atts = db.scalars(select(Attachment).where(
+            Attachment.biz_type == "knowledge_point",
+            Attachment.biz_id == int(kp_id),
+            Attachment.is_temp.is_(False),
+        )).all()
+        for att in atts:
+            n += bool(index_attachment(db, att))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"知识点 {kp_id} 附件索引重建失败: {exc}")
+    finally:
+        db.close()
+    return n
+
+
+def delete_knowledge_attachments_index(db: Session, kp_id: int) -> int:
+    """知识点删除/下架时清理其所有附件向量。"""
+    att_ids = db.scalars(select(Attachment.id).where(
+        Attachment.biz_type == "knowledge_point",
+        Attachment.biz_id == int(kp_id),
+    )).all()
+    n = 0
+    for att_id in att_ids:
+        n += bool(delete_attachment_index(att_id))
+    return n
+
+
+def _filter_valid_attachment_results(
+    db: Session, results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """兜底过滤：向量可能残留已删除/隐藏/下架知识点的附件，不能进 LLM 上下文。"""
+    filtered: List[Dict[str, Any]] = []
+    for r in results:
+        meta = r.get("metadata") or {}
+        if meta.get("type") != "attachment":
+            filtered.append(r)
+            continue
+        att = db.get(Attachment, meta.get("attachment_id") or meta.get("id") or 0)
+        if not att or not att.visible_to_student or att.is_temp:
+            continue
+        kp = db.get(KnowledgePoint, att.biz_id) if att.biz_id else None
+        if not kp or not _is_indexable_knowledge(kp):
+            continue
+        meta["filename"] = att.filename or ""
+        meta["name"] = kp.name
+        meta["knowledge_point_id"] = kp.id
+        filtered.append(r)
+    return filtered
 
 
 def _knowledge_document(kp: KnowledgePoint) -> str:
@@ -231,11 +415,24 @@ def knowledge_index_stats(db: Session) -> Dict[str, Any]:
             KnowledgePoint.status == "published",
         )
     ) or 0)
+    attachment_total = int(db.scalar(
+        select(func.count()).select_from(Attachment).join(
+            KnowledgePoint, KnowledgePoint.id == Attachment.biz_id).where(
+                Attachment.biz_type == "knowledge_point",
+                Attachment.is_temp.is_(False),
+                Attachment.visible_to_student.is_(True),
+                KnowledgePoint.is_active.is_(True),
+                KnowledgePoint.status == "published",
+            )
+    ) or 0)
     stats: Dict[str, Any] = {
         "db_total": db_total,
         "index_count": 0,
         "coverage_percent": _coverage(0, db_total),
         "chroma_available": False,
+        "attachment_total": attachment_total,
+        "attachment_index_count": 0,
+        "attachment_coverage_percent": _coverage(0, attachment_total),
     }
     col = get_collection()
     if not col:
@@ -250,7 +447,22 @@ def knowledge_index_stats(db: Session) -> Dict[str, Any]:
     except Exception as exc:
         logger.warning(f"读取知识点向量索引失败: {exc}")
         return stats
+    try:
+        got_att = col.get(where={"type": "attachment"}, include=[])
+        att_ids = got_att.get("ids") or []
+        unique_att = set()
+        for doc_id in att_ids:
+            s = str(doc_id)
+            if not s.startswith(ATTACHMENT_ID_PREFIX):
+                continue
+            tail = s[len(ATTACHMENT_ID_PREFIX):]
+            unique_att.add(tail.split("_", 1)[0])
+        stats["attachment_index_count"] = len(unique_att)
+    except Exception as exc:
+        logger.warning(f"读取附件向量索引失败: {exc}")
     stats["coverage_percent"] = _coverage(stats["index_count"], db_total)
+    stats["attachment_coverage_percent"] = _coverage(
+        stats["attachment_index_count"], attachment_total)
     return stats
 
 
@@ -278,8 +490,8 @@ def reindex_all(
     import time as _time
 
     stats: Dict[str, Any] = {
-        "knowledge": 0, "question": 0, "note": 0, "failed": 0,
-        "timed_out": False, "purged": 0,
+        "knowledge": 0, "question": 0, "note": 0, "attachment": 0,
+        "failed": 0, "timed_out": False, "purged": 0,
     }
 
     def _expired() -> bool:
@@ -327,10 +539,24 @@ def reindex_all(
                 KnowledgePoint.status == "published",
             )
         ) or 0)
+        attachment_total = int(db.scalar(
+            select(func.count()).select_from(Attachment).join(
+                KnowledgePoint, KnowledgePoint.id == Attachment.biz_id).where(
+                    Attachment.biz_type == "knowledge_point",
+                    Attachment.is_temp.is_(False),
+                    Attachment.visible_to_student.is_(True),
+                    KnowledgePoint.is_active.is_(True),
+                    KnowledgePoint.status == "published",
+                )
+        ) or 0)
         stats["db_total"] = db_total
         stats["chroma_available"] = bool(col_available)
         stats["index_count"] = int(stats.get("knowledge") or 0)
         stats["coverage_percent"] = _coverage(stats["index_count"], db_total)
+        stats["attachment_total"] = attachment_total
+        stats["attachment_index_count"] = int(stats.get("attachment") or 0)
+        stats["attachment_coverage_percent"] = _coverage(
+            stats["attachment_index_count"], attachment_total)
         return stats
 
     col = get_collection()
@@ -373,10 +599,25 @@ def reindex_all(
     )
     stats["note"] += stats.pop("_tmp", 0)
 
+    # 知识点附件：解析文本后按 chunk 写入；deadline 到点即停止，避免拖死接口
+    att_rows = list(db.scalars(select(Attachment).where(
+        Attachment.biz_type == "knowledge_point",
+        Attachment.is_temp.is_(False),
+        Attachment.visible_to_student.is_(True),
+    )).all())
+    for att in att_rows:
+        if _expired():
+            stats["timed_out"] = True
+            logger.warning("附件索引超时提前收尾")
+            break
+        if index_attachment(db, att, deadline=deadline):
+            stats["attachment"] += 1
+
     logger.info(
         f"向量重建{'超时中断' if stats['timed_out'] else '完成'}: "
         f"知识点 {stats['knowledge']} / 题目 {stats['question']} / "
-        f"笔记 {stats['note']} / 清理残留 {stats['purged']} / 失败 {stats['failed']}"
+        f"笔记 {stats['note']} / 附件 {stats['attachment']} / "
+        f"清理残留 {stats['purged']} / 失败 {stats['failed']}"
     )
     return _finish(True)
 
@@ -421,7 +662,7 @@ def search(
     top_k = top_k or settings.RAG_TOP_K
 
     # 归一化检索类型：未指定 = 全部。note 只允许在已知归属者时参与检索。
-    effective_types = list(types) if types else ["question", "knowledge", "note"]
+    effective_types = list(types) if types else ["question", "knowledge", "note", "attachment"]
     if "note" in effective_types and not student_id:
         effective_types = [t for t in effective_types if t != "note"]
         if not effective_types:
@@ -431,18 +672,19 @@ def search(
     col = get_collection()
     if col:
         try:
-            return _apply_score_threshold(_vector_search(
-                col, query, top_k=top_k,
-                grade_id=grade_id, subject_id=subject_id,
-                types=effective_types, student_id=student_id,
-            ))
+            return _filter_valid_attachment_results(db, _apply_score_threshold(
+                _vector_search(
+                    col, query, top_k=top_k,
+                    grade_id=grade_id, subject_id=subject_id,
+                    types=effective_types, student_id=student_id,
+                )))
         except Exception as exc:
             logger.warning(f"向量检索失败，降级 SQL: {exc}")
 
-    return _apply_score_threshold(_sql_search(
+    return _filter_valid_attachment_results(db, _apply_score_threshold(_sql_search(
         query, db, top_k, knowledge_point_id, grade_id, subject_id,
         effective_types, student_id,
-    ))
+    )))
 
 
 def _vector_search(
@@ -574,6 +816,7 @@ def build_context(results: List[Dict[str, Any]], limit: int = 5) -> List[str]:
     lines = []
     for r in results[:limit]:
         meta = r.get("metadata", {})
-        kind = {"question": "题目", "knowledge": "知识点", "note": "笔记"}.get(meta.get("type"), "资料")
+        kind = {"question": "题目", "knowledge": "知识点", "note": "笔记",
+                "attachment": "资料"}.get(meta.get("type"), "资料")
         lines.append(f"[{kind}] {r.get('content', '')[:400]}")
     return lines

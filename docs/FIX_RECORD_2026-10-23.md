@@ -216,6 +216,16 @@
 - **验证**：管理员上传 PDF → 学生列表/预览(200, application/pdf)/下载(200)；教师跨年级上传 403；隐藏后学生列表为空且下载 403；教师本学科上传/删除 200；后端 E2E 851/837/0/14；前端 build/lint/test/bundle 通过。
 - **镜像**：`nanpo/edu-ai-platform:1.3.0` / `:latest` / `:sha-6be18dd` 已推送，manifest-list digest `sha256:7f39504c180b9e484d0e471015473da069d502fb6ae21d1b9d612d764bdd8e25`（基于 commit `6be18dd`）；容器 health=`healthy`、version=`1.3.0`、学生预览/下载、教师越权 403、可见性开关、47 页浏览器冒烟均通过。
 
+### 1.4.0 附件文本解析 → Chroma → AI 引用来源
+
+- **状态**：✅ 已实现
+- **解析**：新增 `app/services/attachment_parser.py`：PDF(PyMuPDF)、xlsx(openpyxl)、docx/pptx(zip XML，无新依赖)、txt/md/csv；图片/旧版 Office 跳过；失败只告警。
+- **索引**：`rag.py` 新增附件 chunk 索引（900 字/块、最多 40 块）、`attachment_id/knowledge_point_id/filename/path/...` metadata；只索引 published+active 知识点 + 学生可见附件；上传/可见性切换走 BackgroundTasks，删除/下架/知识点删除清理索引；reindex 增加附件阶段与 attachment 统计；检索兜底过滤失效附件，防止隐藏/草稿内容进 LLM。
+- **引用**：TutorAgent 默认检索增加 attachment，`references` 返回「附件 + 文件名 + 知识点」；AgentChat 新增「引用来源」展示；原 LLM 调用/解析/fallback 未改动。
+- **验证**：真实 Chroma 容器上传 PDF → 后台索引 → 学生 AI 答疑命中附件并展示引用；删除附件索引数下降；无 Chroma 环境下上传/AI 仍正常（索引降级跳过）。
+- **镜像**：1.4.0 构建/推送中（完成后回填 digest）。
+
+
 
 
 

@@ -149,4 +149,13 @@ class TutorAgent(BaseAgent):
                 refs.append({"type": "知识点", "id": meta.get("id"), "name": meta.get("name", "")})
             elif meta.get("type") == "note":
                 refs.append({"type": "笔记", "id": meta.get("id"), "name": meta.get("title", "")})
+            elif meta.get("type") == "attachment":
+                refs.append({
+                    "type": "附件",
+                    "id": meta.get("attachment_id") or meta.get("id"),
+                    "name": meta.get("filename", ""),
+                    "knowledge_point_id": meta.get("knowledge_point_id"),
+                    "knowledge_point_name": meta.get("name", ""),
+                    "path": meta.get("path", ""),
+                })
         return refs
