@@ -3,7 +3,7 @@
   "info": {
     "title": "九年义务教育学习管理系统",
     "description": "九年义务教育学习管理系统（AI Agent 版）后端 API",
-    "version": "1.7.0"
+    "version": "1.8.0"
   },
   "paths": {
     "/api/v1/auth/captcha": {
@@ -5385,6 +5385,64 @@
             }
           },
           {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "name": "shared",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Shared"
+            }
+          },
+          {
+            "name": "creator_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Creator Id"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "created_desc",
+              "title": "Sort"
+            }
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
@@ -5468,6 +5526,185 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/question/papers/stats": {
+      "get": {
+        "tags": [
+          "题库与试卷"
+        ],
+        "summary": "试卷统计",
+        "description": "同筛选范围（不分页）的试卷统计：总数/题量/平均分/分布/共享/AI 卷。",
+        "operationId": "paper_stats_api_v1_question_papers_stats_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject Id"
+            }
+          },
+          {
+            "name": "grade_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Grade Id"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "name": "shared",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Shared"
+            }
+          },
+          {
+            "name": "creator_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Creator Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/question/papers/batch": {
+      "post": {
+        "tags": [
+          "题库与试卷"
+        ],
+        "summary": "批量操作试卷",
+        "description": "批量删除/复制/共享试卷。返回 {done, skipped}；同批无权整体 403。",
+        "operationId": "batch_papers_api_v1_question_papers_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Data"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/v1/question/papers/{paper_id}": {
@@ -5917,6 +6154,109 @@
             "HTTPBearer": []
           }
         ]
+      }
+    },
+    "/api/v1/question/papers/{paper_id}/ai/analyze": {
+      "post": {
+        "tags": [
+          "试卷 AI"
+        ],
+        "summary": "AI 分析试卷（规则 + 建议）",
+        "description": "分析试卷难度/题型/知识点覆盖并对问题给出建议（只读，不落库）。\n\n规则分析始终执行；LLM 可用且成功时补充建议并返回 `is_fallback=false`，\n无 LLM 或 LLM 失败时返回规则结果 + `is_fallback=true`，不报 500。",
+        "operationId": "analyze_paper_api_v1_question_papers__paper_id__ai_analyze_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Paper Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/question/papers/{paper_id}/ai/recommend": {
+      "post": {
+        "tags": [
+          "试卷 AI"
+        ],
+        "summary": "AI 推荐候选题",
+        "description": "基于试卷薄弱知识点/难度缺口推荐候选题（只读，不落库）。\n\n候选范围：同年级同学科、published、当前用户可访问（公共题库/本人私有）、\n且不在卷中的题目。无 LLM 时返回规则推荐 + `is_fallback=true`；\nLLM 可用时仅优化推荐理由。",
+        "operationId": "recommend_questions_api_v1_question_papers__paper_id__ai_recommend_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Paper Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "default": {},
+                "title": "Data"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/task/tasks": {

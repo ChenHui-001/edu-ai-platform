@@ -260,6 +260,17 @@
 - **验证**：E2E 850/836/0/14；API 动态验证批量/统计/AI/越权；前端 build/lint/test/bundle；浏览器题库页正常。
 - **镜像**：`nanpo/edu-ai-platform:1.7.0` / `:latest` / `:sha-645980c` 已推送，manifest-list digest `sha256:eb27e89f7856f7d58431759ae22a92576441471cafb25c462e56144eb22d2f7e`（基于 commit `645980c`）；容器 health=`healthy`、version=`1.7.0`、47 页浏览器冒烟通过、题库批量/AI 接口正常。
 
+### 1.8.0 试卷管理 V2（权限/批量/AI/UI）
+
+- **权限**：list `paper:list`；create/update/delete/batch `paper:write`；share/export/AI 分别 `paper:share/export/ai`；grade_admin 补 `paper:write`。列表可见性修复为「本人创建 / is_shared / PaperShare 接收」，sys_admin 全量；学生 403。
+- **校验**：名称/年级/学科/题量/题目可访问/同年级同学科/禁止重复/分值/时长/总分求和；编辑重建 items 同样校验。
+- **接口**：`/papers/stats`、`/papers/batch`（delete 任务引用 skipped、copy、share）；列表 source/shared/creator_id/sort；share 兼容 to_user_id；四格式导出保留。
+- **AI**：新增 `paper_ai.py`：AI 试卷分析（难度/题型/知识点覆盖/问题/建议）与 AI 推荐题目（薄弱知识点/难度缺口），无 LLM 规则降级、只读不落库。
+- **UI**：PaperManage.vue 重构：统计卡、筛选、批量复制/删除/共享、详情抽屉、AI 分析/推荐、手动组卷选题器、权限按钮。
+- **验证**：E2E 850/836/0/14；API 动态验证；前端 build/lint/test/bundle；浏览器列表/详情/AI 正常。
+- **镜像**：1.8.0 构建/推送中（完成后回填 digest）。
+
+
 
 
 

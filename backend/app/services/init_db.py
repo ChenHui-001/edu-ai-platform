@@ -207,7 +207,7 @@ ROLES: List[Dict] = [
             "resource:knowledge:write", "resource:class:list", "resource:class:write",
             "question:bank:list", "question:bank:write", "question:bank:audit",
             "question:bank:export",
-            "paper:list", "paper:export", "task:list",
+            "paper:list", "paper:write", "paper:export", "task:list",
             "analysis:class", "analysis:student", "report:teacher",
             "agent:chat", "agent:generate", "report:admin", "agent:logs",
         ],

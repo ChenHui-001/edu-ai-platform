@@ -11,12 +11,12 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, noload
 
 from app.agents.rag import delete_question_index, index_question
-from app.api.deps import get_current_teacher, has_perm, require_perm
+from app.api.deps import has_perm, require_perm
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Grade, KnowledgePoint, Paper, PaperItem, PaperShare, Question, QuestionBankType,
-    QuestionStatus, Subject, User,
+    Grade, KnowledgePoint, Notification, Paper, PaperItem, PaperShare, Question,
+    QuestionBankType, QuestionStatus, Subject, Task, User,
 )
 from app.utils.common import PageParams, dictify, ok
 
@@ -863,41 +863,153 @@ def export_questions(
 
 
 # ---------------------------------------------------------------- 试卷
+def _clean_str(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _dump_json_field(value: Any) -> Optional[str]:
+    """difficulty_ratio 等 String(64) 字段：dict/list 统一转 JSON 字符串。"""
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        return value[:64]
+    return json.dumps(value, ensure_ascii=False)[:64]
+
+
+def _paper_visibility_clause(user: User):
+    """试卷可见性：sys_admin 全量；其他用户 = 本人创建 / 公开共享 / PaperShare 接收。"""
+    if _is_sys_admin(user):
+        return None
+    return or_(
+        Paper.creator_id == user.id,
+        Paper.is_shared.is_(True),
+        Paper.id.in_(select(PaperShare.paper_id).where(
+            PaperShare.to_user_id == user.id)),
+    )
+
+
+def _can_edit_paper(paper: Paper, user: User) -> bool:
+    """编辑/删除：创建者 / sys_admin；grade_admin 仅公共卷（is_shared）或本人。"""
+    if _is_sys_admin(user) or paper.creator_id == user.id:
+        return True
+    if _is_grade_admin(user):
+        return bool(paper.is_shared)
+    return False
+
+
+def _validate_paper_name(value: Any) -> str:
+    name = str(value or "").strip()
+    if not name:
+        raise BusinessException("试卷名称不能为空")
+    if len(name) > 128:
+        raise BusinessException("试卷名称不能超过 128 个字符")
+    return name
+
+
+def _validate_duration(value: Any, default: int = 60) -> int:
+    try:
+        duration = int(value if value not in (None, "") else default)
+    except (TypeError, ValueError):
+        raise BusinessException("考试时长必须为整数分钟")
+    if duration < 1 or duration > 300:
+        raise BusinessException("考试时长需在 1~300 分钟之间")
+    return duration
+
+
+def _normalize_paper_items(
+    db: Session, user: User, raw_items: Any, grade_id: int, subject_id: int,
+) -> Tuple[List[Dict[str, Any]], float]:
+    """组卷/编辑题目校验：存在、可访问、同年级同学科、不重复、分值合法。
+
+    返回 (规范化 items, 总分)。总分一律由 items 求和，忽略客户端 total_score。
+    """
+    if not isinstance(raw_items, list) or not raw_items:
+        raise BusinessException("请至少选择一道题目")
+    seen: set = set()
+    prepared: List[Dict[str, Any]] = []
+    total = 0.0
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            raise BusinessException("题目数据格式错误")
+        try:
+            qid = int(raw.get("question_id"))
+        except (TypeError, ValueError):
+            raise BusinessException("题目数据格式错误：question_id 无效")
+        if qid in seen:
+            raise BusinessException(f"试卷中题目重复（question_id={qid}）")
+        seen.add(qid)
+        q = db.get(Question, qid)
+        if not q:
+            raise BusinessException(f"题目不存在或已删除（id={qid}）")
+        # 可访问题目：公共题库或本人私有（共享试卷不扩大题库权限）
+        if not _is_sys_admin(user) and not (
+                q.bank_type == QuestionBankType.PUBLIC.value
+                or q.owner_id == user.id):
+            raise BusinessException(f"无权使用题目（id={qid}）：仅可选公共题或本人私有题")
+        if q.grade_id != grade_id or q.subject_id != subject_id:
+            raise BusinessException(f"题目年级/学科与试卷不一致（id={qid}）")
+        try:
+            score = float(raw.get("score")
+                          if raw.get("score") is not None else (q.score or 5))
+        except (TypeError, ValueError):
+            raise BusinessException(f"题目分值必须为数字（id={qid}）")
+        if not math.isfinite(score) or score < 0 or score > 1000:
+            raise BusinessException(f"题目分值需在 0~1000 之间（id={qid}）")
+        section = raw.get("section_name")
+        prepared.append({
+            "question_id": qid,
+            "score": round(score, 2),
+            "section_name": str(section)[:64] if section else None,
+        })
+        total += score
+    return prepared, round(total, 2)
+
+
+def _paper_item_rows(db: Session, paper_ids: List[int]) -> Dict[int, int]:
+    """分组统计题量（不含题分，供列表/统计复用）。"""
+    if not paper_ids:
+        return {}
+    rows = db.execute(
+        select(PaperItem.paper_id, func.count(PaperItem.id))
+        .where(PaperItem.paper_id.in_(paper_ids))
+        .group_by(PaperItem.paper_id)
+    ).all()
+    return {int(pid): int(cnt or 0) for pid, cnt in rows}
+
+
 @router.get("/papers", summary="试卷列表")
 def list_papers(
-    params: PageParams = Depends(), subject_id: Optional[int] = None,
-    grade_id: Optional[int] = None, keyword: Optional[str] = None,
-    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    params: PageParams = Depends(),
+    subject_id: Optional[int] = None,
+    grade_id: Optional[int] = None,
+    keyword: Optional[str] = None,
+    source: Optional[str] = None,
+    shared: Optional[bool] = None,
+    creator_id: Optional[int] = None,
+    sort: str = "created_desc",
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:list")),
 ):
-    stmt = select(Paper).where(
-        or_(Paper.creator_id == user.id, Paper.is_shared.is_(True))
+    stmt = _paper_filtered_stmt(
+        user, subject_id=subject_id, grade_id=grade_id, keyword=keyword,
+        source=source, shared=shared, creator_id=creator_id,
     )
-    if subject_id:
-        stmt = stmt.where(Paper.subject_id == subject_id)
-    if grade_id:
-        stmt = stmt.where(Paper.grade_id == grade_id)
-    if keyword:
-        stmt = stmt.where(Paper.name.like(f"%{keyword}%"))
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    order = (
+        (Paper.updated_at.desc(), Paper.id.desc())
+        if sort == "updated_desc"
+        else (Paper.created_at.desc(), Paper.id.desc())
+    )
     rows = db.scalars(
         # noload：列表只需要题量，不再连带加载整卷题目明细
-        # （Paper.items 是 lazy="selectin"，默认会按页把全部 PaperItem 拉一遍）
         stmt.options(noload(Paper.items))
-        .order_by(Paper.created_at.desc()).offset(params.offset).limit(params.page_size)
+        .order_by(*order).offset(params.offset).limit(params.page_size)
     ).all()
     paper_ids = [p.id for p in rows]
-    # 一次聚合出本页试卷的题量与题分合计，替代逐卷读取 items 的 N+1；
-    # 返回字段名保持不变：item_count 仍取题目条数。
-    item_stats: Dict[int, tuple] = {
-        pid: (int(cnt or 0), float(score_sum or 0.0))
-        for pid, cnt, score_sum in db.execute(
-            select(
-                PaperItem.paper_id,
-                func.count(PaperItem.id),
-                func.sum(PaperItem.score),
-            ).where(PaperItem.paper_id.in_(paper_ids)).group_by(PaperItem.paper_id)
-        ).all()
-    } if paper_ids else {}
+    item_counts = _paper_item_rows(db, paper_ids)
 
     # 批量预取创建者 / 学科 / 年级名称，避免逐卷 db.get 的 N+1
     creator_ids = {p.creator_id for p in rows if p.creator_id}
@@ -922,21 +1034,203 @@ def list_papers(
     items = []
     for p in rows:
         d = dictify(p)
-        item_count, item_total = item_stats.get(p.id, (0, 0.0))
-        d["item_count"] = item_count
-        # 总分以 Paper.total_score 为准（组卷/编辑时维护），仅当其缺失时用题分合计兜底
-        if not d.get("total_score"):
-            d["total_score"] = round(item_total, 2)
+        d["item_count"] = item_counts.get(p.id, 0)
         d["creator_name"] = creator_names.get(p.creator_id)
         d["subject_name"] = subject_names.get(p.subject_id)
         d["grade_name"] = grade_names.get(p.grade_id)
+        # AI 卷标记：来源以 ai 开头（ai / ai_import 等）
+        d["ai_source"] = (p.source or "").startswith("ai")
         items.append(d)
     return ok({"items": items, "total": total, "page": params.page})
 
 
+def _paper_filtered_stmt(
+    user: User, *, subject_id: Optional[int] = None,
+    grade_id: Optional[int] = None, keyword: Optional[str] = None,
+    source: Optional[str] = None, shared: Optional[bool] = None,
+    creator_id: Optional[int] = None,
+):
+    """试卷列表/统计共用筛选条件（含可见性）。"""
+    stmt = select(Paper)
+    visibility = _paper_visibility_clause(user)
+    if visibility is not None:
+        stmt = stmt.where(visibility)
+    if subject_id:
+        stmt = stmt.where(Paper.subject_id == subject_id)
+    if grade_id:
+        stmt = stmt.where(Paper.grade_id == grade_id)
+    if keyword:
+        stmt = stmt.where(Paper.name.like(f"%{keyword}%"))
+    if source:
+        stmt = stmt.where(Paper.source == source)
+    if shared is not None:
+        stmt = stmt.where(Paper.is_shared.is_(bool(shared)))
+    # creator_id 仅管理员可用（普通用户可见性本就限定为本人/共享，忽略该参数）
+    if creator_id and _is_sys_admin(user):
+        stmt = stmt.where(Paper.creator_id == creator_id)
+    return stmt
+
+
+@router.get("/papers/stats", summary="试卷统计")
+def paper_stats(
+    subject_id: Optional[int] = None, grade_id: Optional[int] = None,
+    keyword: Optional[str] = None, source: Optional[str] = None,
+    shared: Optional[bool] = None, creator_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:list")),
+):
+    """同筛选范围（不分页）的试卷统计：总数/题量/平均分/分布/共享/AI 卷。"""
+    stmt = _paper_filtered_stmt(
+        user, subject_id=subject_id, grade_id=grade_id, keyword=keyword,
+        source=source, shared=shared, creator_id=creator_id,
+    )
+    rows = db.execute(
+        stmt.with_only_columns(
+            Paper.id, Paper.subject_id, Paper.grade_id, Paper.source,
+            Paper.is_shared, Paper.total_score,
+        )
+    ).all()
+    total = len(rows)
+    paper_ids = [r[0] for r in rows]
+    item_counts = _paper_item_rows(db, paper_ids)
+    total_items = sum(item_counts.values())
+    scores = [float(r[5] or 0) for r in rows]
+    avg_score = round(sum(scores) / total, 2) if total else 0
+
+    subject_ids = {r[1] for r in rows if r[1]}
+    grade_ids = {r[2] for r in rows if r[2]}
+    subject_names = {
+        s.id: s.name for s in db.scalars(
+            select(Subject).where(Subject.id.in_(subject_ids))).all()
+    } if subject_ids else {}
+    grade_names = {
+        g.id: g.name for g in db.scalars(
+            select(Grade).where(Grade.id.in_(grade_ids))).all()
+    } if grade_ids else {}
+
+    by_subject: Dict[str, int] = {}
+    by_grade: Dict[str, int] = {}
+    by_source: Dict[str, int] = {}
+    shared_count = 0
+    ai_count = 0
+    for r in rows:
+        subject_name = subject_names.get(r[1]) or "未设置"
+        grade_name = grade_names.get(r[2]) or "未设置"
+        src = r[3] or "manual"
+        by_subject[subject_name] = by_subject.get(subject_name, 0) + 1
+        by_grade[grade_name] = by_grade.get(grade_name, 0) + 1
+        by_source[src] = by_source.get(src, 0) + 1
+        if r[4]:
+            shared_count += 1
+        if src.startswith("ai"):
+            ai_count += 1
+
+    return ok({
+        "total": total,
+        "total_items": total_items,
+        "avg_score": avg_score,
+        "by_subject": by_subject,
+        "by_grade": by_grade,
+        "by_source": by_source,
+        "shared": shared_count,
+        "ai_papers": ai_count,
+    })
+
+
+@router.post("/papers/batch", summary="批量操作试卷")
+def batch_papers(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:write")),
+):
+    """批量删除/复制/共享试卷。返回 {done, skipped}；同批无权整体 403。"""
+    action = str(data.get("action") or "").strip().lower()
+    if action not in {"delete", "copy", "share"}:
+        raise BusinessException("action 仅支持 delete / copy / share")
+    raw_ids = data.get("ids") or []
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise BusinessException("请选择要操作的试卷")
+    ids: List[int] = []
+    for item in raw_ids:
+        try:
+            value = int(item)
+        except (TypeError, ValueError):
+            raise BusinessException("ids 必须为整数列表")
+        if value not in ids:
+            ids.append(value)
+
+    found = {
+        p.id: p for p in db.scalars(
+            select(Paper).where(Paper.id.in_(ids))).all()
+    }
+    papers = [found[i] for i in ids if i in found]
+    skipped: List[Dict[str, Any]] = [
+        {"id": i, "reason": "不存在"} for i in ids if i not in found]
+    if not papers:
+        return ok({"done": [], "skipped": skipped})
+
+    if action == "share" and not has_perm(user, "paper:share"):
+        raise PermissionException("缺少权限：paper:share")
+
+    # 同批无权限整体 403：delete/copy 按编辑/可读判定；share 按契约非 owner 进 skipped
+    if action == "delete":
+        if any(not _can_edit_paper(p, user) for p in papers):
+            raise PermissionException("所选试卷中存在无权删除的试卷，已拒绝整批操作")
+    elif action == "copy":
+        for p in papers:
+            try:
+                _assert_paper_readable(db, p, user)
+            except PermissionException:
+                raise PermissionException("所选试卷中存在无权复制的试卷，已拒绝整批操作")
+
+    payload = data.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise BusinessException("payload 必须为对象")
+    done: List[int] = []
+    copied: List[Dict[str, Any]] = []
+
+    if action == "delete":
+        ref_counts = dict(db.execute(
+            select(Task.paper_id, func.count()).where(
+                Task.paper_id.in_([p.id for p in papers])
+            ).group_by(Task.paper_id)
+        ).all())
+        for p in papers:
+            ref = int(ref_counts.get(p.id, 0) or 0)
+            if ref:
+                skipped.append({
+                    "id": p.id,
+                    "reason": f"已被 {ref} 个作业/考试引用，请先处理相关任务",
+                })
+                continue
+            db.delete(p)
+            done.append(p.id)
+    elif action == "copy":
+        for p in papers:
+            new = _copy_paper_row(db, p, user)
+            done.append(p.id)
+            copied.append({"source_id": p.id, "id": new.id, "name": new.name})
+    else:  # share
+        user_ids = payload.get("user_ids") or (
+            [payload["to_user_id"]] if payload.get("to_user_id") else [])
+        targets = _validate_share_targets(db, user_ids)
+        for p in papers:
+            if not (_is_sys_admin(user) or p.creator_id == user.id):
+                skipped.append({"id": p.id, "reason": "仅创建者或管理员可共享"})
+                continue
+            _share_paper_to(db, p, user, targets)
+            done.append(p.id)
+
+    db.commit()
+    result: Dict[str, Any] = {"done": done, "skipped": skipped}
+    if copied:
+        result["copied"] = copied
+    return ok(result, message=f"批量操作完成 {len(done)} 份，跳过 {len(skipped)} 份")
+
+
 @router.get("/papers/{paper_id}", summary="试卷详情（含题目）")
 def get_paper(
-    paper_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    paper_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:list")),
 ):
     paper = db.get(Paper, paper_id)
     if not paper:
@@ -958,47 +1252,43 @@ def get_paper(
             "knowledge_point_name": kp.name if kp else None,
         })
     d["items"] = items
+    # 补充展示字段（旧字段全部保留）
+    d["creator_name"] = db.scalar(
+        select(User.real_name).where(User.id == paper.creator_id))
+    d["subject_name"] = db.scalar(
+        select(Subject.name).where(Subject.id == paper.subject_id))
+    d["grade_name"] = db.scalar(
+        select(Grade.name).where(Grade.id == paper.grade_id))
+    d["item_count"] = len(items)
+    d["ai_source"] = (paper.source or "").startswith("ai")
     return ok(d)
 
 
 @router.post("/papers", summary="手动组卷")
 def create_paper(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(require_perm("paper:write")),
 ):
-    name = data.get("name")
-    if not name:
-        raise BusinessException("试卷名称不能为空")
-    items = data.get("items") or []
-    if not items:
-        raise BusinessException("请至少选择一道题目")
-    # question_id 存在性校验：悬空 PaperItem 会让预览/考试缺题、总分虚高
-    q_ids = [it.get("question_id") for it in items]
-    valid_ids = set(db.scalars(select(Question.id).where(
-        Question.id.in_([q for q in q_ids if q]))).all())
-    for it in items:
-        if it.get("question_id") not in valid_ids:
-            raise BusinessException(f"题目不存在或已删除（id={it.get('question_id')}）")
+    name = _validate_paper_name(data.get("name"))
+    grade, subject = _require_grade_subject(
+        db, data.get("grade_id"), data.get("subject_id"))
+    duration = _validate_duration(data.get("duration"))
+    items, total = _normalize_paper_items(
+        db, user, data.get("items"), grade.id, subject.id)
+    # 总分由 items 求和，忽略客户端伪造的 total_score；source 固定 manual
+    # （AI 组卷由 paper_agent 落库时写 source=ai，不走本接口）
     paper = Paper(
-        name=name, grade_id=data.get("grade_id", 0), subject_id=data["subject_id"],
-        total_score=float(data.get("total_score", 100)),
-        duration=int(data.get("duration", 60)), creator_id=user.id,
-        source="manual", difficulty_ratio=data.get("difficulty_ratio"),
+        name=name, grade_id=grade.id, subject_id=subject.id,
+        total_score=total, duration=duration, creator_id=user.id,
+        source="manual", difficulty_ratio=_dump_json_field(data.get("difficulty_ratio")),
     )
     db.add(paper)
     db.flush()
-    total = 0.0
     for i, item in enumerate(items, start=1):
-        score = float(item.get("score") or
-                      db.get(Question, item["question_id"]).score or 5)
-        total += score
-        db.add(
-            PaperItem(
-                paper_id=paper.id, question_id=item["question_id"],
-                sort_order=i, score=score, section_name=item.get("section_name"),
-            )
-        )
-    paper.total_score = total or paper.total_score
+        db.add(PaperItem(
+            paper_id=paper.id, question_id=item["question_id"],
+            sort_order=i, score=item["score"], section_name=item["section_name"],
+        ))
     db.commit()
     db.refresh(paper)
     return ok({"id": paper.id, "name": paper.name, "total_score": paper.total_score},
@@ -1008,49 +1298,79 @@ def create_paper(
 @router.put("/papers/{paper_id}", summary="编辑试卷")
 def update_paper(
     paper_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(require_perm("paper:write")),
 ):
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
-    if paper.creator_id != user.id and "sys_admin" not in user.role_codes:
+    if not _can_edit_paper(paper, user):
         raise PermissionException("只能编辑自己创建的试卷")
 
     if "name" in data:
-        paper.name = data["name"]
+        paper.name = _validate_paper_name(data.get("name"))
+    effective_grade = paper.grade_id
+    effective_subject = paper.subject_id
+    if "grade_id" in data or "subject_id" in data:
+        try:
+            if "grade_id" in data:
+                effective_grade = int(data["grade_id"])
+            if "subject_id" in data:
+                effective_subject = int(data["subject_id"])
+        except (TypeError, ValueError):
+            raise BusinessException("请选择年级和学科")
+        grade, subject = _require_grade_subject(db, effective_grade, effective_subject)
+        effective_grade, effective_subject = grade.id, subject.id
     if "duration" in data:
-        paper.duration = int(data["duration"])
+        paper.duration = _validate_duration(data.get("duration"), default=paper.duration)
+
     if "items" in data:
-        db.execute(PaperItem.__table__.delete().where(PaperItem.paper_id == paper_id))
-        total = 0.0
-        for i, item in enumerate(data["items"], start=1):
-            score = float(item.get("score", 5))
-            total += score
-            db.add(
-                PaperItem(
-                    paper_id=paper_id, question_id=item["question_id"],
-                    sort_order=i, score=score, section_name=item.get("section_name"),
-                )
-            )
+        items, total = _normalize_paper_items(
+            db, user, data.get("items"), effective_grade, effective_subject)
+        db.execute(PaperItem.__table__.delete().where(
+            PaperItem.paper_id == paper_id))
+        for i, item in enumerate(items, start=1):
+            db.add(PaperItem(
+                paper_id=paper_id, question_id=item["question_id"],
+                sort_order=i, score=item["score"], section_name=item["section_name"],
+            ))
         paper.total_score = total
+    elif "grade_id" in data or "subject_id" in data:
+        # 仅改年级/学科而题目不变时，必须保证现存题目与新年级/学科一致
+        mismatched = db.scalar(
+            select(func.count()).select_from(PaperItem)
+            .join(Question, Question.id == PaperItem.question_id)
+            .where(
+                PaperItem.paper_id == paper_id,
+                or_(Question.grade_id != effective_grade,
+                    Question.subject_id != effective_subject),
+            )
+        ) or 0
+        if mismatched:
+            raise BusinessException(
+                f"试卷中仍有 {mismatched} 道题目的年级/学科与新设置不一致，请先调整题目")
+
+    paper.grade_id = effective_grade
+    paper.subject_id = effective_subject
+    if "difficulty_ratio" in data:
+        paper.difficulty_ratio = _dump_json_field(data.get("difficulty_ratio"))
+    # 不改变 creator_id / source（契约要求）
     db.commit()
-    return ok(message="试卷已更新")
+    return ok({"id": paper.id, "total_score": paper.total_score}, message="试卷已更新")
 
 
 @router.delete("/papers/{paper_id}", summary="删除试卷")
 def delete_paper(
-    paper_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    paper_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:write")),
 ):
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
-    if paper.creator_id != user.id and "sys_admin" not in user.role_codes:
+    if not _can_edit_paper(paper, user):
         raise PermissionException("只能删除自己创建的试卷")
     # 外键 edu_task.paper_id 是 ON DELETE CASCADE：直接删会连带物理删除
     # 已发布的作业/考试及全部学生提交与成绩（实测 1 份试卷可带走 14 份提交），
     # 因此必须先阻断，由用户显式处理任务后再删。
-    from app.models import Task
-
     task_count = db.scalar(
         select(func.count()).select_from(Task).where(Task.paper_id == paper_id)
     ) or 0
@@ -1064,17 +1384,9 @@ def delete_paper(
     return ok(message="试卷已删除")
 
 
-@router.post("/papers/{paper_id}/copy", summary="试卷复制复用")
-def copy_paper(
-    paper_id: int, data: Dict[str, Any] = Body(default={}),
-    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
-):
-    src = db.get(Paper, paper_id)
-    if not src:
-        raise NotFoundException("试卷不存在")
-    _assert_paper_readable(db, src, user)
+def _copy_paper_row(db: Session, src: Paper, user: User, name: Optional[str] = None) -> Paper:
     new = Paper(
-        name=data.get("name", f"{src.name}副本"), grade_id=src.grade_id,
+        name=(name or f"{src.name}副本")[:128], grade_id=src.grade_id,
         subject_id=src.subject_id, total_score=src.total_score,
         duration=src.duration, difficulty_ratio=src.difficulty_ratio,
         knowledge_coverage=src.knowledge_coverage, difficulty_report=src.difficulty_report,
@@ -1082,53 +1394,97 @@ def copy_paper(
     )
     db.add(new)
     db.flush()
+    total = 0.0
     for it in src.items:
         db.add(PaperItem(
             paper_id=new.id, question_id=it.question_id, sort_order=it.sort_order,
             score=it.score, section_name=it.section_name,
         ))
+        total += float(it.score or 0)
+    new.total_score = round(total, 2)
+    return new
+
+
+@router.post("/papers/{paper_id}/copy", summary="试卷复制复用")
+def copy_paper(
+    paper_id: int, data: Dict[str, Any] = Body(default={}),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:write")),
+):
+    src = db.get(Paper, paper_id)
+    if not src:
+        raise NotFoundException("试卷不存在")
+    _assert_paper_readable(db, src, user)
+    new = _copy_paper_row(db, src, user, name=_clean_str(data.get("name")))
     db.commit()
     return ok({"id": new.id, "name": new.name}, message="试卷复制成功")
+
+
+def _validate_share_targets(db: Session, user_ids: Any) -> List[int]:
+    """分享目标校验：去重、必须是教师/管理员账号。"""
+    if not isinstance(user_ids, list) or not user_ids:
+        raise BusinessException("请选择接收人")
+    targets: List[int] = []
+    for raw in user_ids:
+        try:
+            uid = int(raw)
+        except (TypeError, ValueError):
+            raise BusinessException("接收人参数无效")
+        if uid in targets:
+            continue
+        user = db.get(User, uid)
+        if not user:
+            raise BusinessException(f"接收人不存在（id={uid}）")
+        if user.identity not in ("teacher", "grade_admin", "sys_admin"):
+            raise BusinessException(f"接收人必须是教师（id={uid}）")
+        targets.append(uid)
+    if not targets:
+        raise BusinessException("请选择接收人")
+    return targets
+
+
+def _share_paper_to(db: Session, paper: Paper, user: User, targets: List[int]) -> None:
+    """共享试卷并发送站内通知（重复共享仍通知，分享记录去重）。"""
+    for uid in targets:
+        exists = db.scalar(
+            select(PaperShare.id).where(
+                PaperShare.paper_id == paper.id, PaperShare.to_user_id == uid))
+        if not exists:
+            db.add(PaperShare(
+                paper_id=paper.id, from_user_id=user.id, to_user_id=uid))
+        db.add(Notification(
+            user_id=uid, title="收到共享试卷",
+            content=f"{user.real_name} 共享了试卷《{paper.name}》",
+            type="system", biz_type="paper", biz_id=paper.id,
+        ))
+    paper.is_shared = True
 
 
 @router.post("/papers/{paper_id}/share", summary="共享试卷给同科教师")
 def share_paper(
     paper_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(require_perm("paper:share")),
 ):
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
-    if paper.creator_id != user.id and "sys_admin" not in user.role_codes:
+    if paper.creator_id != user.id and not _is_sys_admin(user):
         raise PermissionException("只能共享自己的试卷")
-    to_ids = data.get("user_ids", [])
-    if not to_ids:
-        raise BusinessException("请选择接收人")
-
-    for uid in to_ids:
-        exists = db.scalar(
-            select(PaperShare).where(
-                PaperShare.paper_id == paper_id, PaperShare.to_user_id == uid
-            )
-        )
-        if not exists:
-            db.add(PaperShare(paper_id=paper_id, from_user_id=user.id, to_user_id=uid))
-        from app.models import Notification
-
-        db.add(Notification(
-            user_id=uid, title="收到共享试卷",
-            content=f"{user.real_name} 共享了试卷《{paper.name}》",
-            type="system", biz_type="paper", biz_id=paper_id,
-        ))
-    paper.is_shared = True
+    # 兼容旧契约：user_ids 列表 或 to_user_id 单值
+    raw_ids = data.get("user_ids")
+    if not raw_ids and data.get("to_user_id"):
+        raw_ids = [data.get("to_user_id")]
+    targets = _validate_share_targets(db, raw_ids or [])
+    _share_paper_to(db, paper, user, targets)
     db.commit()
-    return ok(message=f"已共享给 {len(to_ids)} 名教师")
+    return ok(message=f"已共享给 {len(targets)} 名教师")
 
 
 @router.get("/papers/{paper_id}/export", summary="导出试卷（Excel/Word/PDF）")
 def export_paper(
     paper_id: int, fmt: str = Query("excel", regex="^(excel|word|pdf|html)$"),
-    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:export")),
 ):
     """导出试卷：
     - excel：xlsx 文件（默认）
