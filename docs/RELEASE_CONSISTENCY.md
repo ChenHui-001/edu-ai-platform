@@ -241,7 +241,7 @@ curl -s http://localhost/api/v1/health | jq .version
 | 项 | 值 |
 |---|---|
 | VERSION | `1.0.42` |
-| commit | `a15fad9`（代码最终提交；镜像构建 commit=`1f0c2a7`，其后仅文档提交） |
+| commit | 代码最终提交 `1f0c2a7`（镜像即基于该 commit）；其后 `a15fad9`/`6cf3886` 仅文档更新 |
 | 本地镜像 | `nanpo/edu-ai-platform:1.0.42` / `:latest`（digest `sha256:0e3f853a…`，约 1.82GB） |
 | ghcr | 本轮未推送（仅手动发布 Docker Hub；未触发 CI） |
 | Docker Hub | 已推送 `1.0.42`（manifest-list digest `sha256:0e3f853a…`） |
