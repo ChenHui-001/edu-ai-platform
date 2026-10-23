@@ -236,17 +236,17 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（1.1.0）
+## 八、当前状态（1.2.0）
 
 | 项 | 值 |
 |---|---|
-| VERSION | `1.1.0` |
-| commit | `591c2ad`（知识点管理 V2：结构/权限/批量/导入导出/新工作台；镜像基于该 commit） |
-| 本地镜像 | `nanpo/edu-ai-platform:1.1.0` / `:latest` / `:sha-591c2ad`（digest `sha256:b2c8dfcd…`） |
+| VERSION | `1.2.0` |
+| commit | `adac1cf`（知识点 V2 RAG 生命周期 + 语义搜索 + AI 生成/补全；镜像基于该 commit） |
+| 本地镜像 | `nanpo/edu-ai-platform:1.2.0` / `:latest` / `:sha-adac1cf`（digest `sha256:09e77c17…`） |
 | ghcr | 未推送（手动发布 Docker Hub；未触发 CI） |
-| Docker Hub | 已推送 `1.1.0`（manifest-list digest `sha256:b2c8dfcdde0aff51f6f83cd0be201acc01a9e375d5ac1dbd1f9f875553909ca7`） |
-| latest | 已推送，与 `1.1.0` 同一 digest |
-| 发布后校验 | `docker buildx imagetools inspect` 已核对；容器 health=`healthy`、version=`1.1.0`、admin 登录成功、46 页浏览器冒烟通过 |
+| Docker Hub | 已推送 `1.2.0`（manifest-list digest `sha256:09e77c17ddef055cf06419131c4219663a1a2e8e53e5cc7c492e3f523695ac6b`） |
+| latest | 已推送，与 `1.2.0` 同一 digest |
+| 发布后校验 | `docker buildx imagetools inspect` 已核对；真实 Chroma reindex/搜索/删除索引/覆盖率通过；容器 46 页浏览器冒烟通过 |
 | CI | 未触发（手动发布）；后续遵循 `docs/DELIVERY_RULES.md` |
 
 > 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：

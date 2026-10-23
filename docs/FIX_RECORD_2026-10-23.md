@@ -203,8 +203,8 @@
   - reindex 追加 `db_total/index_count/coverage_percent/chroma_available/purged`，并清理已删除/下架知识点的残留向量。
 - **接口**：`GET /edu/knowledge/search`（语义检索，学生仅本年级 published、跨年级 403）、`GET /edu/knowledge/rag-status`（admin/teacher）；`POST /edu/knowledge/ai/generate`、`/ai/enrich`（scope 校验、限流、ids≤50；无 LLM 或 LLM 失败规则降级 `is_fallback=true`，只预览不落库）。
 - **前端**：AI 生成弹窗（预览→逐条创建）、AI 补全（详情/批量，预览→逐条 PUT）、语义搜索（结果定位树节点）、RAG 状态标签（覆盖率/索引数，重建后刷新）。
-- **验证**：后端 E2E 851/837/0/14；无 Chroma 环境 fallback 搜索/AI/状态通过；前端 build/lint/test/bundle 通过；真实 Chroma 在 1.2.0 容器内验证 reindex→搜索→删除索引→覆盖率。
-- **镜像**：1.2.0 构建/推送中（完成后回填 digest）。
+- **验证**：后端 E2E 851/837/0/14；无 Chroma 环境 fallback 搜索/AI/状态通过；前端 build/lint/test/bundle 通过；真实 Chroma 在 1.2.0 容器内验证 reindex→搜索→删除索引→覆盖率（97→98→97，覆盖率 100%）。
+- **镜像**：`nanpo/edu-ai-platform:1.2.0` / `:latest` / `:sha-adac1cf` 已推送，manifest-list digest `sha256:09e77c17ddef055cf06419131c4219663a1a2e8e53e5cc7c492e3f523695ac6b`（基于 commit `adac1cf`）；容器 health=`healthy`、version=`1.2.0`、46 页浏览器冒烟通过，管理页 AI/语义搜索/索引入口正常。
 
 
 
