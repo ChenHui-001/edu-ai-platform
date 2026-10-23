@@ -51,6 +51,55 @@ _KNOWLEDGE_V2_MARKER = "knowledge_v2_migrated"
 _KNOWLEDGE_V2_MARKER_VALUE = "2"
 
 
+# 题库 V2 一次性迁移标记：历史题库数据用户已确认可全部删除，首次升级清空
+# edu_question（级联 question_knowledge / paper_item），**不重新播种**；
+# E2E 在空库基础上自建题目。只执行一次，之后不再触碰业务数据。
+_QUESTION_V2_MARKER = "question_bank_v2_migrated"
+_QUESTION_V2_MARKER_VALUE = "1"
+
+
+def run_question_v2_migration(db: Session) -> bool:
+    """题库 V2 数据迁移：首次启动清空历史题库（只执行一次）。
+
+    与知识点迁移一样仅走 SQLite 轻量路径；全新库表为空，DELETE 无副作用。
+    返回本次是否执行了清空。
+    """
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        return False
+    try:
+        # 表不存在说明 create_all 尚未建表（正常启动流程不会发生），直接跳过
+        info = db.execute(text("PRAGMA table_info(edu_question)")).fetchall()
+        if not info:
+            return False
+        applied = db.execute(text(
+            "SELECT value FROM sys_config WHERE key = :k"), {"k": _QUESTION_V2_MARKER}
+        ).first()
+        if applied and str(applied[0]) == _QUESTION_V2_MARKER_VALUE:
+            return False
+
+        old_count = db.execute(text("SELECT COUNT(*) FROM edu_question")).scalar() or 0
+        # 显式清空子表：不依赖数据库外键级联开关（SQLite PRAGMA 非全局生效，
+        # PostgreSQL 迁移路径未来接入时也能保证不残留孤儿关联）。
+        db.execute(text("DELETE FROM edu_question_knowledge"))
+        db.execute(text("DELETE FROM edu_paper_item"))
+        db.execute(text("DELETE FROM edu_question"))
+        db.execute(text(
+            "INSERT INTO sys_config "
+            "(key, value, value_type, category, is_public, created_at, updated_at) "
+            "VALUES (:k, :v, 'string', 'system', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value = :v, updated_at = CURRENT_TIMESTAMP"),
+            {"k": _QUESTION_V2_MARKER, "v": _QUESTION_V2_MARKER_VALUE})
+        db.commit()
+        logger.warning(
+            "题库 V2 迁移完成：已清空 %s 道历史题目（用户已确认可删除），"
+            "不重新播种；E2E 将在空库上自建题", old_count)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        logger.error("题库 V2 迁移失败: %s", exc)
+        return False
+
+
 def run_knowledge_v2_migration(db: Session) -> bool:
     """知识点结构升级：清空旧平铺数据 + 建索引 + 写迁移标记。
 

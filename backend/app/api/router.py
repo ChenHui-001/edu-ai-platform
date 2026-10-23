@@ -3,7 +3,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     agent, attachment, auth, edu, grading, knowledge, knowledge_ai, lesson,
-    lesson_ai, logs, question, report, system, task,
+    lesson_ai, logs, question, question_ai, report, system, task,
 )
 
 api_router = APIRouter()
@@ -18,6 +18,9 @@ api_router.include_router(knowledge.router)
 # 权限/scope 直接复用 knowledge.py 的 helper，避免两套权限判定漂移。
 api_router.include_router(knowledge_ai.router)
 api_router.include_router(question.router)
+# 题库 AI（变式/补全/质检）：独立文件，前缀 /question/questions/ai。
+# 只预览不落库，不修改 question.py 的既有 CRUD/LLM 行为。
+api_router.include_router(question_ai.router)
 api_router.include_router(task.router)
 api_router.include_router(grading.grading_router)
 api_router.include_router(grading.learning_router)

@@ -69,7 +69,7 @@ def run():
                 "options": [{"key": "A", "text": str(3 + i)}, {"key": "B", "text": "99"},
                             {"key": "C", "text": "0"}, {"key": "D", "text": "1"}],
                 "answer": "A", "subject_id": subj_id, "grade_id": stu_grade,
-                "knowledge_point_id": None, "bank_type": "public",
+                "knowledge_point_id": None, "bank_type": "private",
             })
         # 已进入此分支说明自建请求已发出且拿到响应，这里仅记录规模信息；
         # 真正的判据是后续"随机练习能否出卷"，故允许 info-only。

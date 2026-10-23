@@ -120,6 +120,12 @@ export const knowledgeApi = {
 // ---------------- 题库与试卷 ----------------
 export const questionApi = {
   list: (params) => request.get('/question/questions', { params }),
+  // 题库 V2：统计 / 批量 / AI（契约 docs/QUESTION_BANK_V2.md）
+  stats: (params) => request.get('/question/questions/stats', { params }),
+  batch: (data) => request.post('/question/questions/batch', data),
+  aiVariants: (data) => request.post('/question/questions/ai/variants', data),
+  aiEnrich: (ids) => request.post('/question/questions/ai/enrich', { ids }),
+  aiQuality: (ids) => request.post('/question/questions/ai/quality', { ids }),
   create: (data) => request.post('/question/questions', data),
   update: (id, data) => request.put(`/question/questions/${id}`, data),
   remove: (id) => request.delete(`/question/questions/${id}`),

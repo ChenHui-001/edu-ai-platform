@@ -249,6 +249,18 @@
 - **验证**：班级自动命名忽略乱写名生成 `一年级(9)班`；`乱写@@@` 400、`一年级兴趣班` 200；年级自动命名重复/学段序号不匹配 400；前端弹窗自动预览/只读/自定义开关正常。
 - **镜像**：`nanpo/edu-ai-platform:1.6.1` / `:latest` / `:sha-1edf9c1` 已推送，manifest-list digest `sha256:82575ea6008c8d076e5a04e8bb992bb3c2fe1efb286746a8243f3ad91a330887`（基于 commit `1edf9c1`）；容器 health=`healthy`、version=`1.6.1`、47 页浏览器冒烟通过。
 
+### 1.7.0 题库 V2 重构（权限/批量/AI/UI）
+
+- **历史数据**：按用户确认，首次启动一次性清空 `edu_question`（级联 question_knowledge/paper_item），不重新播种；旧试卷可能变为空卷。
+- **权限**：list/stats/duplicate → `question:bank:list`；create/update/delete/batch → `question:bank:write`；import/template → import；export → export；公共题上架 → audit；grade_admin 补 write；修复 `bank_type=private` 越权；学生 403；编辑/删除 owner/admin/grade_admin 规则。
+- **功能**：严格 create/update 校验（年级/学科/知识点一致、题型/难度/分值/状态）；公共题非 audit 强制 draft；批量 delete/publish/offline/draft/move_bank/assign_knowledge/set_difficulty（引用题 delete 进 skipped、越权整体 403）；`/questions/stats`；列表 source/sort、type_stats 与筛选一致；导入表单参数修复/逐行校验/文件内去重；RAG 索引同步保留。
+- **AI**：新增 `question_ai.py`：AI 变式/补全/质检，只预览；权限+归属+限流+ids≤50；无 LLM 规则降级 `is_fallback=true`，不影响原 LLM 调用。
+- **UI**：QuestionBank.vue 重写：统计卡、完整筛选、多选批量栏、详情抽屉、AI 变体/补全/质检、导入导出模板/查重/单题 CRUD 保留。
+- **E2E 适配**：test_teacher kp 按年级+学科过滤、引用保护改管理员；test_learning 前置题 bank_type=private；test_requirements kp 过滤。
+- **验证**：E2E 850/836/0/14；API 动态验证批量/统计/AI/越权；前端 build/lint/test/bundle；浏览器题库页正常。
+- **镜像**：1.7.0 构建/推送中（完成后回填 digest）。
+
+
 
 
 

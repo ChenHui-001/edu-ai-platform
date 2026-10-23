@@ -109,7 +109,9 @@ def run():
         subs, _, _ = tea1.get(f"/edu/subjects?grade_id={gid}")
         sub = rows_of(subs)
         sid = sub[0]["id"] if sub else 1
-        kps, _, _ = tea1.get("/edu/knowledge/list")
+        kps, _, _ = tea1.get("/edu/knowledge/list", params={
+            "grade_id": gid, "subject_id": sid, "params_limit": 200,
+        })
         kp = rows_of(kps)
         kp_id = kp[0]["id"] if kp else None
         tea1.post("/question/questions", {

@@ -174,6 +174,14 @@ def run():
     R.context["grade_id"] = (g7 or {}).get("id") or 1
 
     kp_id = kps[0]["id"] if kps else None
+    # 题库 V2 强制知识点与题目同年级同学科：重新按「七年级数学」取 kp，
+    # 不能用未过滤列表的首条（可能是低年级/其他学科）。
+    _kp_resp, _, _ = tea.get("/edu/knowledge/list", params={
+        "grade_id": R.context["grade_id"], "subject_id": subj_id, "params_limit": 200,
+    })
+    _kp_rows = rows_of(_kp_resp)
+    if _kp_rows:
+        kp_id = _kp_rows[0]["id"]
     R.context["kp_id"] = kp_id
 
     # teacher1 任教一年级(1)班，而 stu731 属七年级(2)班（teacher4 任教）。
@@ -592,7 +600,10 @@ def run():
     # （防学生掌握数据 CASCADE 清空、题目知识点悬空）
     kp_ref = R.context.get("kp_id")
     if kp_ref:
-        p, _, _ = tea.delete(f"/edu/knowledge/{kp_ref}")
+        # 该 kp 属于七年级数学，teacher1 无写权限；改用管理员验证引用保护
+        admin_del = Client("admin-kp-del")
+        admin_del.login("admin", "Admin@123456")
+        p, _, _ = admin_del.delete(f"/edu/knowledge/{kp_ref}")
         check("★ 被题目引用的知识点删除被拒（引用保护）",
               p.get("success") is False and "引用" in str(p.get("message", "")),
               f"{p.get('code')} {p.get('message', '')}")

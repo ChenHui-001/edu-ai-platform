@@ -1,16 +1,17 @@
 """题库与试卷接口。"""
 import io
 import json
-from typing import Any, Dict, Optional
+import math
+from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Body, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, noload
 
 from app.agents.rag import delete_question_index, index_question
-from app.api.deps import get_current_teacher
+from app.api.deps import get_current_teacher, has_perm, require_perm
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
@@ -57,29 +58,169 @@ def normalize_question_type(raw: Any, *, strict: bool = True) -> str:
     return "single"
 
 
-def _has_access(q: Question, user: User) -> bool:
-    """题目可见性：公共题库 + 本人私有题库。"""
-    if q.bank_type == QuestionBankType.PUBLIC.value:
+QUESTION_PERM_LIST = "question:bank:list"
+QUESTION_PERM_WRITE = "question:bank:write"
+QUESTION_PERM_IMPORT = "question:bank:import"
+QUESTION_PERM_EXPORT = "question:bank:export"
+QUESTION_PERM_AUDIT = "question:bank:audit"
+
+QUESTION_STATUS_VALUES = {
+    QuestionStatus.DRAFT.value, QuestionStatus.PUBLISHED.value,
+    QuestionStatus.OFFLINE.value,
+}
+QUESTION_BANK_VALUES = {
+    QuestionBankType.PRIVATE.value, QuestionBankType.PUBLIC.value,
+}
+
+SORT_MAP = {
+    "created_desc": (Question.created_at.desc(), Question.id.desc()),
+    "usage_desc": (Question.usage_count.desc(), Question.id.desc()),
+    "updated_desc": (Question.updated_at.desc(), Question.id.desc()),
+}
+
+
+def _codes(user: User) -> set:
+    return set(user.role_codes or [])
+
+
+def _is_sys_admin(user: User) -> bool:
+    return "sys_admin" in _codes(user)
+
+
+def _is_grade_admin(user: User) -> bool:
+    return "grade_admin" in _codes(user)
+
+
+def _can_audit(user: User) -> bool:
+    """公共题库上架/审核：sys_admin、grade_admin 或显式 question:bank:audit。"""
+    if _is_sys_admin(user) or _is_grade_admin(user):
         return True
-    return q.owner_id == user.id or "sys_admin" in user.role_codes or "grade_admin" in user.role_codes
+    return has_perm(user, QUESTION_PERM_AUDIT)
 
 
-# ---------------------------------------------------------------- 题目
-@router.get("/questions", summary="题目列表")
-def list_questions(
-    params: PageParams = Depends(),
-    keyword: Optional[str] = None,
-    grade_id: Optional[int] = None,
-    subject_id: Optional[int] = None,
-    knowledge_point_id: Optional[int] = None,
-    qtype: Optional[str] = None,
-    difficulty: Optional[str] = None,
-    bank_type: Optional[str] = None,
-    status: Optional[str] = None,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+def _grade_scope(user: User) -> Optional[int]:
+    """年级管理员的管辖年级；sys_admin 返回 None（不限）。"""
+    if _is_sys_admin(user):
+        return None
+    return user.grade_admin_grade_id or user.grade_id or -1
+
+
+def _visibility_clause(user: User):
+    """题库可见性：sys_admin 全量；其他人「公共 + 本人私有」。
+
+    关键修复：显式传 bank_type 时必须叠加本条件，否则传 bank_type=private
+    会直接覆盖可见性过滤，任意教师都能拉到他人私有题。
+    """
+    if _is_sys_admin(user):
+        return None
+    return or_(
+        Question.bank_type == QuestionBankType.PUBLIC.value,
+        Question.owner_id == user.id,
+    )
+
+
+def _can_edit_question(q: Question, user: User) -> bool:
+    """编辑/上下架/批量写：本人 / sys_admin / grade_admin（公共题审核场景）。"""
+    if _is_sys_admin(user) or q.owner_id == user.id:
+        return True
+    if _is_grade_admin(user):
+        return q.bank_type == QuestionBankType.PUBLIC.value
+    return False
+
+
+def _can_delete_question(q: Question, user: User) -> bool:
+    """删除：本人 / sys_admin / grade_admin（公共题或本年级题目）。"""
+    if _is_sys_admin(user) or q.owner_id == user.id:
+        return True
+    if _is_grade_admin(user):
+        scope = _grade_scope(user)
+        return q.bank_type == QuestionBankType.PUBLIC.value or (
+            scope is not None and q.grade_id == scope)
+    return False
+
+
+# ---------------------------------------------------------------- 写接口校验
+def _require_grade_subject(
+    db: Session, grade_id: Any, subject_id: Any
+) -> Tuple[Grade, Subject]:
+    """create/update 必填校验：年级/学科存在且 subject.grade_id == grade_id。"""
+    try:
+        gid = int(grade_id)
+        sid = int(subject_id)
+    except (TypeError, ValueError):
+        raise BusinessException("请选择年级和学科")
+    if not gid or not sid:
+        raise BusinessException("请选择年级和学科")
+    grade = db.get(Grade, gid)
+    if not grade:
+        raise BusinessException("年级不存在")
+    subject = db.get(Subject, sid)
+    if not subject:
+        raise BusinessException("学科不存在")
+    if subject.grade_id != gid:
+        raise BusinessException("学科与年级不匹配")
+    return grade, subject
+
+
+def _validate_difficulty(value: Any, default: str = "medium") -> str:
+    diff = str(value or default).strip().lower()
+    if diff not in DIFFICULTY_LABEL:
+        raise BusinessException("难度只能是 easy / medium / hard")
+    return diff
+
+
+def _validate_score(value: Any, default: float = 5.0) -> float:
+    try:
+        score = float(value if value not in (None, "") else default)
+    except (TypeError, ValueError):
+        raise BusinessException("分值必须为数字")
+    if not math.isfinite(score) or score <= 0 or score > 1000:
+        raise BusinessException("分值需在 0~1000 之间")
+    return score
+
+
+def _validate_q_status(value: Any, default: str = "published") -> str:
+    status = str(value or default).strip().lower()
+    if status not in QUESTION_STATUS_VALUES:
+        raise BusinessException("题目状态只能是 draft / published / offline")
+    return status
+
+
+def _validate_bank_type(value: Any, default: str = "private") -> str:
+    bank = str(value or default).strip().lower()
+    if bank not in QUESTION_BANK_VALUES:
+        raise BusinessException("题库类型只能是 private / public")
+    return bank
+
+
+def _validate_knowledge_point(
+    db: Session, kp_id: Any, grade_id: int, subject_id: int
+) -> KnowledgePoint:
+    """知识点必须存在，且与题目同年级同学科（防跨学科脏关联）。"""
+    try:
+        kid = int(kp_id)
+    except (TypeError, ValueError):
+        raise BusinessException("知识点不存在")
+    kp = db.get(KnowledgePoint, kid)
+    if not kp:
+        raise BusinessException("知识点不存在")
+    if kp.grade_id != grade_id or kp.subject_id != subject_id:
+        raise BusinessException("知识点与题目的年级/学科不一致")
+    return kp
+
+
+def _filtered_question_stmt(
+    user: User, *, keyword: Optional[str] = None, grade_id: Optional[int] = None,
+    subject_id: Optional[int] = None, knowledge_point_id: Optional[int] = None,
+    qtype: Optional[str] = None, difficulty: Optional[str] = None,
+    bank_type: Optional[str] = None, status: Optional[str] = None,
+    source: Optional[str] = None,
 ):
+    """题库筛选（列表/统计/type_stats 共用同一套条件）。"""
     stmt = select(Question)
+    visibility = _visibility_clause(user)
+    if visibility is not None:
+        stmt = stmt.where(visibility)
     if keyword:
         like = f"%{keyword}%"
         stmt = stmt.where(or_(Question.stem.like(like), Question.analysis.like(like)))
@@ -95,37 +236,81 @@ def list_questions(
         stmt = stmt.where(Question.difficulty == difficulty)
     if bank_type:
         stmt = stmt.where(Question.bank_type == bank_type)
-    else:
-        stmt = stmt.where(or_(
-            Question.bank_type == QuestionBankType.PUBLIC.value,
-            Question.owner_id == user.id,
-        ))
     if status:
         stmt = stmt.where(Question.status == status)
+    if source:
+        stmt = stmt.where(Question.source == source)
+    return stmt
 
+
+def _question_out(
+    q: Question, kp_names: Optional[Dict[int, str]] = None
+) -> Dict[str, Any]:
+    """题目出参：保留旧字段并补 type_label/difficulty_label/knowledge_point_name。"""
+    d = dictify(q)
+    d["type"] = normalize_question_type(q.type, strict=False)
+    d["type_label"] = QUESTION_TYPE_LABEL.get(d["type"], d["type"])
+    d["difficulty_label"] = DIFFICULTY_LABEL.get(q.difficulty, q.difficulty)
+    d["knowledge_point_name"] = (kp_names or {}).get(q.knowledge_point_id)
+    return d
+
+
+def _kp_name_map(db: Session, rows: List[Question]) -> Dict[int, str]:
+    """一次预取知识点名称，避免列表循环内逐题 db.get 的 N+1。"""
+    kp_ids = {q.knowledge_point_id for q in rows if q.knowledge_point_id}
+    if not kp_ids:
+        return {}
+    return {
+        kp.id: kp.name for kp in db.scalars(
+            select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids))
+        ).all()
+    }
+
+
+# ---------------------------------------------------------------- 题目
+@router.get("/questions", summary="题目列表")
+def list_questions(
+    params: PageParams = Depends(),
+    keyword: Optional[str] = None,
+    grade_id: Optional[int] = None,
+    subject_id: Optional[int] = None,
+    knowledge_point_id: Optional[int] = None,
+    qtype: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    bank_type: Optional[str] = None,
+    status: Optional[str] = None,
+    source: Optional[str] = None,
+    sort: str = "created_desc",
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_LIST)),
+):
+    stmt = _filtered_question_stmt(
+        user, keyword=keyword, grade_id=grade_id, subject_id=subject_id,
+        knowledge_point_id=knowledge_point_id, qtype=qtype,
+        difficulty=difficulty, bank_type=bank_type, status=status, source=source,
+    )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
-        stmt.order_by(Question.created_at.desc())
+        stmt.order_by(*SORT_MAP.get(sort, SORT_MAP["created_desc"]))
         .offset(params.offset).limit(params.page_size)
     ).all()
 
-    items = []
-    for q in rows:
-        d = dictify(q)
-        kp = db.get(KnowledgePoint, q.knowledge_point_id) if q.knowledge_point_id else None
-        d["knowledge_point_name"] = kp.name if kp else None
-        # 存量脏数据（如历史写入的 subjective）归一化后再出，
-        # 否则前端题型下拉框匹配不到该值，会显示原始英文
-        d["type"] = normalize_question_type(q.type, strict=False)
-        d["type_label"] = QUESTION_TYPE_LABEL.get(d["type"], d["type"])
-        d["difficulty_label"] = DIFFICULTY_LABEL.get(q.difficulty, q.difficulty)
-        items.append(d)
+    kp_names = _kp_name_map(db, rows)
+    items = [_question_out(q, kp_names) for q in rows]
 
-    # 当前筛选范围内的题型统计
-    type_stmt = select(Question.type, func.count()).where(
-        Question.subject_id == subject_id
-    ).group_by(Question.type) if subject_id else select(Question.type, func.count()).group_by(Question.type)
-    type_stats = {t: c for t, c in db.execute(type_stmt).all()}
+    # type_stats 必须与当前筛选一致（排除 qtype 维度本身，便于切换题型标签）
+    type_base = _filtered_question_stmt(
+        user, keyword=keyword, grade_id=grade_id, subject_id=subject_id,
+        knowledge_point_id=knowledge_point_id, qtype=None,
+        difficulty=difficulty, bank_type=bank_type, status=status, source=source,
+    )
+    type_stats = {
+        normalize_question_type(t, strict=False): int(c or 0)
+        for t, c in db.execute(
+            type_base.with_only_columns(Question.type, func.count())
+            .group_by(Question.type)
+        ).all()
+    }
 
     return ok({
         "items": items, "total": total, "page": params.page, "page_size": params.page_size,
@@ -133,133 +318,226 @@ def list_questions(
     })
 
 
+@router.get("/questions/stats", summary="题库统计")
+def question_stats(
+    keyword: Optional[str] = None,
+    grade_id: Optional[int] = None,
+    subject_id: Optional[int] = None,
+    knowledge_point_id: Optional[int] = None,
+    qtype: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    bank_type: Optional[str] = None,
+    status: Optional[str] = None,
+    source: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_LIST)),
+):
+    """与列表同筛选范围（不分页）的题库统计。"""
+    stmt = _filtered_question_stmt(
+        user, keyword=keyword, grade_id=grade_id, subject_id=subject_id,
+        knowledge_point_id=knowledge_point_id, qtype=qtype,
+        difficulty=difficulty, bank_type=bank_type, status=status, source=source,
+    )
+
+    def _count(extra=None) -> int:
+        target = stmt if extra is None else stmt.where(extra)
+        return db.scalar(select(func.count()).select_from(target.subquery())) or 0
+
+    def _group(column) -> Dict[str, int]:
+        rows = db.execute(
+            stmt.with_only_columns(column, func.count()).group_by(column)
+        ).all()
+        return {str(key): int(cnt or 0) for key, cnt in rows}
+
+    return ok({
+        "total": _count(),
+        "by_type": _group(Question.type),
+        "by_difficulty": _group(Question.difficulty),
+        "by_status": _group(Question.status),
+        "by_bank": _group(Question.bank_type),
+        "with_analysis": _count(Question.analysis.isnot(None) & (Question.analysis != "")),
+        "with_knowledge": _count(Question.knowledge_point_id.isnot(None)),
+        "ai_source": _count(Question.source.like("ai%")),
+    })
+
+
 @router.post("/questions", summary="新增题目")
 def create_question(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
 ):
-    if not data.get("stem"):
+    stem = str(data.get("stem") or "").strip()
+    if not stem:
         raise BusinessException("题干不能为空")
+    grade, subject = _require_grade_subject(db, data.get("grade_id"), data.get("subject_id"))
     qtype = normalize_question_type(data.get("type", "single"))
+    difficulty = _validate_difficulty(data.get("difficulty"))
+    score = _validate_score(data.get("score"))
+    status = _validate_q_status(data.get("status"))
+    bank_type = _validate_bank_type(data.get("bank_type"))
+    kp_id = None
+    if data.get("knowledge_point_id") not in (None, ""):
+        kp = _validate_knowledge_point(
+            db, data["knowledge_point_id"], grade.id, subject.id)
+        kp_id = kp.id
+    # 公共题库：非审核角色创建/发布一律进待审核（draft），修复「教师可自行上架公共题」
+    if bank_type == QuestionBankType.PUBLIC.value and status == "published" \
+            and not _can_audit(user):
+        status = QuestionStatus.DRAFT.value
+
     options = data.get("options")
     if qtype == "judge" and not options:
         options = DEFAULT_JUDGE_OPTIONS
     q = Question(
-        # 校验题型合法性：此前直接透传，任何字符串都能入库，
-        # 会导致前端题型下拉框匹配不到、显示原始英文（如 subjective）
         type=qtype,
-        stem=data["stem"],
+        stem=stem,
         options=_dump(options), answer=_dump(data.get("answer")),
-        analysis=data.get("analysis"), score=float(data.get("score", 5)),
-        difficulty=data.get("difficulty", "medium"),
-        grade_id=data.get("grade_id", 0), subject_id=data["subject_id"],
-        knowledge_point_id=data.get("knowledge_point_id"),
-        bank_type=data.get("bank_type", QuestionBankType.PRIVATE.value),
-        owner_id=user.id, status=data.get("status", QuestionStatus.PUBLISHED.value),
-        fingerprint=_fingerprint(data["stem"]), source="manual",
+        analysis=data.get("analysis"), score=score,
+        difficulty=difficulty,
+        grade_id=grade.id, subject_id=subject.id,
+        knowledge_point_id=kp_id,
+        bank_type=bank_type,
+        owner_id=user.id, status=status,
+        fingerprint=_fingerprint(stem), source="manual",
     )
     db.add(q)
     db.commit()
     db.refresh(q)
     index_question(q)
-    return ok(dictify(q), message="题目创建成功")
+    return ok(_question_out(q, _kp_name_map(db, [q])), message="题目创建成功")
 
 
-@router.put("/questions/{q_id}", summary="编辑题目")
-def update_question(
-    q_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+@router.post("/questions/batch", summary="批量操作题目")
+def batch_questions(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
 ):
-    q = db.get(Question, q_id)
-    if not q:
-        raise NotFoundException("题目不存在")
-    if q.owner_id != user.id and "sys_admin" not in user.role_codes:
-        raise PermissionException("只能编辑自己的题目")
-    # 更新时同样校验题型，避免把非法值写回库
-    if data.get("type") is not None:
-        data = {**data, "type": normalize_question_type(data["type"])}
-    # status 不在此处更新：上下架/审核必须走 /status 端点，
-    # 否则编辑接口会绕过「公共题库上架需管理员审核」的校验
-    for f, v in (("type", data.get("type")), ("stem", data.get("stem")),
-                  ("options", _dump(data.get("options"))), ("answer", _dump(data.get("answer"))),
-                  ("analysis", data.get("analysis")), ("score", data.get("score")),
-                  ("difficulty", data.get("difficulty")), ("subject_id", data.get("subject_id")),
-                  ("grade_id", data.get("grade_id")),
-                  ("knowledge_point_id", data.get("knowledge_point_id"))):
-        if v is not None:
-            setattr(q, f, v)
-    if data.get("stem"):
-        q.fingerprint = _fingerprint(data["stem"])
-    # 题型切到判断题但没传选项时补齐标准选项，保证答题页可作答
-    if q.type == "judge" and not q.options:
-        q.options = _dump(DEFAULT_JUDGE_OPTIONS)
+    """批量删除/上下架/移动题库/分配知识点/修改难度。
+
+    权限：同批只要有一道题无权操作，整体 403（防部分写入歧义）；
+    业务失败（被试卷引用、知识点不匹配等）进 skipped，不影响其它题。
+    """
+    action = str(data.get("action") or "").strip().lower()
+    if action not in {"delete", "publish", "offline", "draft", "move_bank",
+                      "assign_knowledge", "set_difficulty"}:
+        raise BusinessException(
+            "action 仅支持 delete / publish / offline / draft / move_bank / "
+            "assign_knowledge / set_difficulty")
+    raw_ids = data.get("ids") or []
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise BusinessException("请选择要操作的题目")
+    ids: List[int] = []
+    for item in raw_ids:
+        try:
+            value = int(item)
+        except (TypeError, ValueError):
+            raise BusinessException("ids 必须为整数列表")
+        if value not in ids:
+            ids.append(value)
+
+    found = {
+        q.id: q for q in db.scalars(
+            select(Question).where(Question.id.in_(ids))).all()
+    }
+    nodes = [found[i] for i in ids if i in found]
+    skipped: List[Dict[str, Any]] = [
+        {"id": i, "reason": "不存在"} for i in ids if i not in found]
+    if not nodes:
+        return ok({"done": [], "skipped": skipped})
+
+    permission_check = (
+        _can_delete_question if action == "delete" else _can_edit_question)
+    if any(not permission_check(q, user) for q in nodes):
+        raise PermissionException("所选题目中存在无权操作的题目，已拒绝整批操作")
+
+    payload = data.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise BusinessException("payload 必须为对象")
+    done: List[int] = []
+    rag_delete_ids: List[int] = []
+
+    if action == "delete":
+        ref_counts = dict(db.execute(
+            select(PaperItem.question_id, func.count()).where(
+                PaperItem.question_id.in_([q.id for q in nodes])
+            ).group_by(PaperItem.question_id)
+        ).all())
+        for q in nodes:
+            ref = int(ref_counts.get(q.id, 0) or 0)
+            if ref:
+                skipped.append({
+                    "id": q.id,
+                    "reason": f"已被 {ref} 份试卷引用，请先从相关试卷中移除",
+                })
+                continue
+            db.delete(q)
+            done.append(q.id)
+            rag_delete_ids.append(q.id)
+    elif action in ("publish", "offline", "draft"):
+        target = {
+            "publish": QuestionStatus.PUBLISHED.value,
+            "offline": QuestionStatus.OFFLINE.value,
+            "draft": QuestionStatus.DRAFT.value,
+        }[action]
+        for q in nodes:
+            if target == QuestionStatus.PUBLISHED.value \
+                    and q.bank_type == QuestionBankType.PUBLIC.value \
+                    and not _can_audit(user):
+                skipped.append({"id": q.id, "reason": "公共题库上架需管理员审核"})
+                continue
+            q.status = target
+            done.append(q.id)
+    elif action == "move_bank":
+        if payload.get("bank_type") in (None, ""):
+            raise BusinessException("move_bank 需要 payload.bank_type（private/public）")
+        bank = _validate_bank_type(payload.get("bank_type"))
+        for q in nodes:
+            q.bank_type = bank
+            # 移入公共题库：非审核角色强制待审核，审核角色保留当前状态
+            if bank == QuestionBankType.PUBLIC.value and not _can_audit(user):
+                q.status = QuestionStatus.DRAFT.value
+            done.append(q.id)
+    elif action == "assign_knowledge":
+        if "knowledge_point_id" not in payload:
+            raise BusinessException("assign_knowledge 需要 payload.knowledge_point_id")
+        raw_kp = payload.get("knowledge_point_id")
+        kp = None
+        if raw_kp not in (None, ""):
+            try:
+                kp = db.get(KnowledgePoint, int(raw_kp))
+            except (TypeError, ValueError):
+                kp = None
+            if not kp:
+                raise BusinessException("知识点不存在")
+        for q in nodes:
+            if kp is not None and (
+                    kp.grade_id != q.grade_id or kp.subject_id != q.subject_id):
+                skipped.append({
+                    "id": q.id, "reason": "知识点与题目的年级/学科不一致"})
+                continue
+            q.knowledge_point_id = kp.id if kp else None
+            done.append(q.id)
+    else:  # set_difficulty
+        if payload.get("difficulty") in (None, ""):
+            raise BusinessException("set_difficulty 需要 payload.difficulty")
+        difficulty = _validate_difficulty(payload.get("difficulty"))
+        for q in nodes:
+            q.difficulty = difficulty
+            done.append(q.id)
+
     db.commit()
-    index_question(q)
-    return ok(dictify(q), message="题目已更新")
-
-
-@router.delete("/questions/{q_id}", summary="删除题目")
-def delete_question(
-    q_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
-):
-    q = db.get(Question, q_id)
-    if not q:
-        raise NotFoundException("题目不存在")
-    if q.owner_id != user.id and "sys_admin" not in user.role_codes:
-        raise PermissionException("只能删除自己的题目")
-    # 引用检查：已组卷的题目删除会让 PaperItem 悬空、试卷总分虚高、
-    # 考试预览缺题——必须先从相关试卷移除
-    from app.models import PaperItem
-    ref_cnt = db.scalar(select(func.count()).select_from(PaperItem).where(
-        PaperItem.question_id == q_id)) or 0
-    if ref_cnt:
-        raise BusinessException(f"该题目已被 {ref_cnt} 份试卷引用，请先从相关试卷中移除")
-    db.delete(q)
-    db.commit()
-    # RAG 生命周期：删除后清理题目向量（失败只告警，不阻断业务）
-    delete_question_index(q_id)
-    return ok(message="题目已删除")
-
-
-@router.put("/questions/{q_id}/status", summary="上下架 / 审核")
-def change_status(
-    q_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
-):
-    q = db.get(Question, q_id)
-    if not q:
-        raise NotFoundException("题目不存在")
-    status = data.get("status")
-    if status == QuestionStatus.PUBLISHED.value and q.bank_type == QuestionBankType.PUBLIC.value:
-        # 公共题库上架需管理员审核权限
-        if not ({"sys_admin", "grade_admin"} & set(user.role_codes)):
-            raise PermissionException("公共题库上架需管理员审核")
-    if status not in QuestionStatus.__members__.values() and status not in (
-        "draft", "published", "offline"
-    ):
-        raise BusinessException(f"无效状态：{status}")
-    q.status = status
-    db.commit()
-    return ok(message="状态已更新")
-
-
-@router.get("/questions/{q_id}/duplicates", summary="题目查重")
-def check_duplicate(
-    q_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
-):
-    q = db.get(Question, q_id)
-    if not q:
-        raise NotFoundException("题目不存在")
-    dupes = db.scalars(
-        select(Question).where(
-            Question.fingerprint == q.fingerprint, Question.id != q.id
-        ).limit(10)
-    ).all()
-    return ok([{"id": d.id, "stem": d.stem[:80], "created_at": d.created_at} for d in dupes])
+    # RAG 生命周期：删除成功后清理对应题目向量（失败仅告警，不阻断）
+    for qid in rag_delete_ids:
+        delete_question_index(qid)
+    return ok({"done": done, "skipped": skipped},
+              message=f"批量操作完成 {len(done)} 道，跳过 {len(skipped)} 道")
 
 
 @router.get("/questions/template", summary="下载批量导入模板")
-def import_template(db: Session = Depends(get_db), _: User = Depends(get_current_teacher)):
+def import_template(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_perm(QUESTION_PERM_IMPORT)),
+):
     wb = Workbook()
     ws = wb.active
     ws.title = "题目导入"
@@ -282,17 +560,168 @@ def import_template(db: Session = Depends(get_db), _: User = Depends(get_current
     )
 
 
+@router.put("/questions/{q_id}", summary="编辑题目")
+def update_question(
+    q_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
+):
+    q = db.get(Question, q_id)
+    if not q:
+        raise NotFoundException("题目不存在")
+    if not _can_edit_question(q, user):
+        raise PermissionException("只能编辑自己的题目")
+
+    # 年级/学科不允许单独改到不匹配组合：先算出生效值并整体校验
+    effective_grade = q.grade_id
+    effective_subject = q.subject_id
+    if "grade_id" in data:
+        try:
+            effective_grade = int(data["grade_id"])
+        except (TypeError, ValueError):
+            raise BusinessException("请选择年级")
+        if not db.get(Grade, effective_grade):
+            raise BusinessException("年级不存在")
+    if "subject_id" in data:
+        try:
+            effective_subject = int(data["subject_id"])
+        except (TypeError, ValueError):
+            raise BusinessException("请选择学科")
+        if not db.get(Subject, effective_subject):
+            raise BusinessException("学科不存在")
+    if "grade_id" in data or "subject_id" in data:
+        _require_grade_subject(db, effective_grade, effective_subject)
+
+    if "stem" in data:
+        stem = str(data.get("stem") or "").strip()
+        if not stem:
+            raise BusinessException("题干不能为空")
+        q.stem = stem
+        q.fingerprint = _fingerprint(stem)
+    if "type" in data and data.get("type") is not None:
+        q.type = normalize_question_type(data["type"])
+    if "difficulty" in data:
+        q.difficulty = _validate_difficulty(data["difficulty"], default=q.difficulty)
+    if "score" in data:
+        q.score = _validate_score(data["score"], default=q.score)
+    if "knowledge_point_id" in data:
+        raw_kp = data.get("knowledge_point_id")
+        if raw_kp in (None, ""):
+            q.knowledge_point_id = None
+        else:
+            q.knowledge_point_id = _validate_knowledge_point(
+                db, raw_kp, effective_grade, effective_subject).id
+    if "grade_id" in data:
+        q.grade_id = effective_grade
+    if "subject_id" in data:
+        q.subject_id = effective_subject
+    if "options" in data:
+        q.options = _dump(data.get("options"))
+    if "answer" in data:
+        q.answer = _dump(data.get("answer"))
+    if "analysis" in data:
+        q.analysis = data.get("analysis")
+    # status 不在此处更新：上下架/审核必须走 /status 端点，
+    # 否则编辑接口会绕过「公共题库上架需管理员审核」的校验（E2E 依赖此行为）
+    # 题型切到判断题但没传选项时补齐标准选项，保证答题页可作答
+    if q.type == "judge" and not q.options:
+        q.options = _dump(DEFAULT_JUDGE_OPTIONS)
+    db.commit()
+    db.refresh(q)
+    index_question(q)
+    return ok(_question_out(q, _kp_name_map(db, [q])), message="题目已更新")
+
+
+@router.delete("/questions/{q_id}", summary="删除题目")
+def delete_question(
+    q_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
+):
+    q = db.get(Question, q_id)
+    if not q:
+        raise NotFoundException("题目不存在")
+    if not _can_delete_question(q, user):
+        raise PermissionException("只能删除自己的题目")
+    # 引用检查：已组卷的题目删除会让 PaperItem 悬空、试卷总分虚高、
+    # 考试预览缺题——必须先从相关试卷移除
+    ref_cnt = db.scalar(select(func.count()).select_from(PaperItem).where(
+        PaperItem.question_id == q_id)) or 0
+    if ref_cnt:
+        raise BusinessException(f"该题目已被 {ref_cnt} 份试卷引用，请先从相关试卷中移除")
+    db.delete(q)
+    db.commit()
+    # RAG 生命周期：删除后清理题目向量（失败只告警，不阻断业务）
+    delete_question_index(q_id)
+    return ok(message="题目已删除")
+
+
+@router.put("/questions/{q_id}/status", summary="上下架 / 审核")
+def change_status(
+    q_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
+):
+    q = db.get(Question, q_id)
+    if not q:
+        raise NotFoundException("题目不存在")
+    if not _can_edit_question(q, user):
+        raise PermissionException("只能操作自己的题目")
+    status = _validate_q_status(data.get("status"), default="")
+    if status == QuestionStatus.PUBLISHED.value \
+            and q.bank_type == QuestionBankType.PUBLIC.value \
+            and not _can_audit(user):
+        # 公共题库上架需管理员审核权限
+        raise PermissionException("公共题库上架需管理员审核")
+    q.status = status
+    db.commit()
+    return ok(message="状态已更新")
+
+
+@router.get("/questions/{q_id}/duplicates", summary="题目查重")
+def check_duplicate(
+    q_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_LIST)),
+):
+    q = db.get(Question, q_id)
+    if not q:
+        raise NotFoundException("题目不存在")
+    visibility = _visibility_clause(user)
+    if visibility is not None and not (
+            q.bank_type == QuestionBankType.PUBLIC.value or q.owner_id == user.id):
+        raise PermissionException("无权查看该题目")
+    stmt = select(Question).where(
+        Question.fingerprint == q.fingerprint, Question.id != q.id)
+    if visibility is not None:
+        stmt = stmt.where(visibility)
+    dupes = db.scalars(stmt.limit(10)).all()
+    return ok([{"id": d.id, "stem": d.stem[:80], "created_at": d.created_at} for d in dupes])
+
+
 @router.post("/questions/import", summary="Excel 批量导入题目")
 async def import_questions(
-    file: UploadFile = File(...), grade_id: Optional[int] = Query(None),
-    subject_id: Optional[int] = Query(None),
-    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    request: Request,
+    file: UploadFile = File(...),
+    grade_id: Optional[int] = Form(None),
+    subject_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_IMPORT)),
 ):
     content = await file.read()
     try:
         wb = load_workbook(io.BytesIO(content), data_only=True)
     except Exception as exc:
         raise BusinessException(f"Excel 解析失败：{exc}")
+
+    # 前后端契约：前端以 multipart 表单字段传年级/学科（FormData.append）；
+    # 同时兼容旧脚本用 query string 传参。
+    if grade_id is None:
+        try:
+            grade_id = int(request.query_params.get("grade_id") or 0) or None
+        except (TypeError, ValueError):
+            grade_id = None
+    if subject_id is None:
+        try:
+            subject_id = int(request.query_params.get("subject_id") or 0) or None
+        except (TypeError, ValueError):
+            subject_id = None
 
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
@@ -305,7 +734,19 @@ async def import_questions(
     if not required.issubset(set(headers)):
         raise BusinessException(f"模板缺少必需列：{'、'.join(required - set(headers))}")
 
+    # 导入必须落在明确的年级/学科下（缺 grade 不再默认 0）；只给学科时按学科反推年级
+    if not subject_id:
+        raise BusinessException("请选择导入的学科")
+    subject = db.get(Subject, int(subject_id))
+    if not subject:
+        raise BusinessException("学科不存在")
+    if grade_id and int(grade_id) != subject.grade_id:
+        raise BusinessException("学科与年级不匹配")
+    target_grade = subject.grade_id
+    target_subject = subject.id
+
     created, skipped = 0, []
+    seen_fps: set = set()
     for line_no, row in enumerate(rows[1:], start=2):
         def get(key: str, default=None):
             i = idx.get(key)
@@ -325,24 +766,48 @@ async def import_questions(
         # 导入模板的判断题没有选项列：补齐 A/B，否则答题页无选项可点
         if qtype == "judge" and not options:
             options = json.dumps(DEFAULT_JUDGE_OPTIONS, ensure_ascii=False)
+        difficulty = str(get("难度", "medium") or "medium").strip().lower()
+        if difficulty not in DIFFICULTY_LABEL:
+            skipped.append({"line": line_no, "reason": f"难度非法：{difficulty}",
+                            "stem": str(stem)[:40]})
+            continue
+        try:
+            score = _validate_score(get("分值"), default=5.0)
+        except BusinessException as exc:
+            skipped.append({"line": line_no, "reason": exc.message,
+                            "stem": str(stem)[:40]})
+            continue
+        kp_id = None
+        raw_kp = get("知识点ID")
+        if raw_kp not in (None, ""):
+            try:
+                kp = _validate_knowledge_point(db, raw_kp, target_grade, target_subject)
+                kp_id = kp.id
+            except BusinessException as exc:
+                skipped.append({"line": line_no, "reason": exc.message,
+                                "stem": str(stem)[:40]})
+                continue
+        bank_type = str(get("题库类型", "private") or "private").strip().lower()
+        if bank_type not in QUESTION_BANK_VALUES:
+            bank_type = QuestionBankType.PRIVATE.value
         fp = _fingerprint(str(stem))
-        if db.scalar(select(Question).where(Question.fingerprint == fp)):
+        if fp in seen_fps or db.scalar(
+                select(Question).where(Question.fingerprint == fp)):
             skipped.append({"line": line_no, "reason": "题目重复", "stem": str(stem)[:40]})
             continue
-        kp_id = get("知识点ID")
+        seen_fps.add(fp)
         db.add(Question(
             type=qtype, stem=str(stem), options=options,
             answer=_dump(get("答案")), analysis=get("解析"),
-            difficulty=str(get("难度", "medium")),
-            score=float(get("分值", 5) or 5),
-            grade_id=grade_id or 0, subject_id=subject_id or 0,
-            knowledge_point_id=int(kp_id) if kp_id else None,
-            bank_type=str(get("题库类型", "private")),
+            difficulty=difficulty, score=score,
+            grade_id=target_grade, subject_id=target_subject,
+            knowledge_point_id=kp_id,
+            bank_type=bank_type,
             # 公共题库导入必须走审核（draft），防止教师批量导入直接上架；
             # 私有题库导入即上架（仅自己可见），与单题创建行为一致
             owner_id=user.id,
             status=(QuestionStatus.DRAFT.value
-                    if str(get("题库类型", "private")) == "public" else
+                    if bank_type == QuestionBankType.PUBLIC.value else
                     QuestionStatus.PUBLISHED.value),
             fingerprint=fp, source="import",
         ))
@@ -355,15 +820,17 @@ async def import_questions(
 @router.get("/questions/export", summary="导出题目为 Excel")
 def export_questions(
     subject_id: Optional[int] = None, grade_id: Optional[int] = None,
-    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    keyword: Optional[str] = None, difficulty: Optional[str] = None,
+    bank_type: Optional[str] = None, status: Optional[str] = None,
+    source: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_EXPORT)),
 ):
-    stmt = select(Question).where(or_(
-        Question.bank_type == QuestionBankType.PUBLIC.value, Question.owner_id == user.id
-    ))
-    if subject_id:
-        stmt = stmt.where(Question.subject_id == subject_id)
-    if grade_id:
-        stmt = stmt.where(Question.grade_id == grade_id)
+    """导出题目（沿用列表筛选与可见性；最多 5000 行）。"""
+    stmt = _filtered_question_stmt(
+        user, keyword=keyword, grade_id=grade_id, subject_id=subject_id,
+        difficulty=difficulty, bank_type=bank_type, status=status, source=source,
+    )
     rows = db.scalars(stmt.limit(5000)).all()
 
     # 一次预取知识点名称，避免循环内逐题 db.get(KnowledgePoint) 的 N+1
