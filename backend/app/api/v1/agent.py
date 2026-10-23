@@ -291,6 +291,7 @@ def chat_stream(
             if got_any:
                 yield _sse({"type": "done", "intent": intent, "agent": "tutor",
                             "is_fallback": False,
+                            "data": data_block,
                             "duration_ms": int((time.perf_counter() - start) * 1000)})
                 return
 
@@ -299,6 +300,7 @@ def chat_stream(
         yield _sse({"type": "delta", "text": answer})
         yield _sse({"type": "done", "intent": intent, "agent": result.get("agent"),
                     "is_fallback": True,
+                    "data": data_block,
                     "duration_ms": int((time.perf_counter() - start) * 1000)})
 
     return StreamingResponse(gen(), media_type="text/event-stream",
