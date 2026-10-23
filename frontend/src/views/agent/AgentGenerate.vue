@@ -152,7 +152,7 @@
               {{ running ? 'AI 生成中（约 20-60 秒，请勿刷新）' : '开始生成' }}
             </el-button>
             <el-tooltip :content="'后台任务：提交后立即返回，页面可关闭，稍后回来查看结果'" placement="top">
-              <el-checkbox v-model="asyncMode" :disabled="running">后台生成</el-checkbox>
+              <el-checkbox v-model="asyncMode" :disabled="running || !asyncSupported">后台生成</el-checkbox>
             </el-tooltip>
             <el-button :icon="Refresh" @click="result = null">清空结果</el-button>
           </div>
@@ -289,6 +289,8 @@ const paperTemplates = [
 ]
 
 const currentAgent = computed(() => agents.value.find(a => a.name === active.value))
+// 后端异步任务仅支持出题 / 组卷：其余 Agent 勾选后台生成会 400
+const asyncSupported = computed(() => ['question_generator', 'paper_composer'].includes(active.value))
 const isFallback = computed(() => result.value?.is_fallback === true)
 
 const textResult = computed(() => {
@@ -367,26 +369,38 @@ async function pollJob(id) {
 }
 
 async function run() {
-  // 后台模式：提交任务 + 轮询（不占用 HTTP 长连接）
+  // 后台模式：提交任务 + 轮询（不占用 HTTP 长连接）。
+  // 仅出题/组卷有后端异步任务；此前分支引用不存在的 mode/pForm，
+  // 一旦勾选「后台生成」必抛 ReferenceError，且结果赋值 nameshadowing。
   if (asyncMode.value) {
-    running.value = true
-    try {
-      const agent = mode.value === 'question' ? 'question' : 'paper'
-      const res = await agentApi.createJob({
-        agent,
-        params: agent === 'question' ? { ...qForm } : { ...pForm }
-      })
-      jobId.value = res.data?.job_id
-      ElMessage.success(`任务已提交（#${jobId.value}），正在后台生成…`)
-      const result = await pollJob(jobId.value)
-      result.value = result?.data || result
-      ElMessage.success('后台生成完成')
-    } catch (e) {
-      ElMessage.error(e.message || '后台任务失败')
-    } finally {
-      running.value = false
+    if (!asyncSupported.value) {
+      ElMessage.warning('该功能暂不支持后台生成，将直接同步生成')
+      asyncMode.value = false
+    } else {
+      running.value = true
+      try {
+        const isQuestion = active.value === 'question_generator'
+        const agent = isQuestion ? 'question' : 'paper'
+        const params = isQuestion
+          ? {
+              ...qForm,
+              type: qForm.question_types?.[0] || 'single',
+              knowledge_point_id: qForm.knowledge_point_ids?.[0] || undefined
+            }
+          : { requirement: paperReq.value }
+        const res = await agentApi.createJob({ agent, params })
+        jobId.value = res.data?.job_id
+        ElMessage.success(`任务已提交（#${jobId.value}），正在后台生成…`)
+        const jobResult = await pollJob(jobId.value)
+        result.value = jobResult?.data || jobResult || {}
+        ElMessage.success('后台生成完成')
+      } catch (e) {
+        ElMessage.error(e.message || '后台任务失败')
+      } finally {
+        running.value = false
+      }
+      return
     }
-    return
   }
   running.value = true
   result.value = null
