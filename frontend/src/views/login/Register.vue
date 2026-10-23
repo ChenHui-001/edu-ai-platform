@@ -75,6 +75,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 import { authApi, attachmentApi, eduApi } from '@/api'
 import { validatePassword } from '@/utils/password'
 

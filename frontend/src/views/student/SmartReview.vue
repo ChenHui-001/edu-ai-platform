@@ -44,9 +44,11 @@
             <el-tab-pane :label="`待完成 (${planData.pending_count || 0})`" name="pending" />
           </el-tabs>
 
-          <el-list v-loading="loading" class="plan-list">
-            <el-list-item v-for="p in plans" :key="p.id" class="plan-item"
-                          :class="{ done: p.is_completed, today: p.scheduled_date === planData.today }">
+          <!-- Element Plus 没有 el-list 组件（全局注册时只是被当作未知标签静默渲染），
+               按需引入后 resolver 会去解析不存在的组件导致构建失败，这里用普通 div 承载。 -->
+          <div v-loading="loading" class="plan-list">
+            <div v-for="p in plans" :key="p.id" class="plan-item"
+                 :class="{ done: p.is_completed, today: p.scheduled_date === planData.today }">
               <div class="row-between">
                 <div>
                   <b>{{ p.knowledge_point_name || '综合复习' }}</b>
@@ -58,9 +60,9 @@
                 <el-tag v-else type="success" size="small">已完成</el-tag>
               </div>
               <p v-if="p.stem" class="stem">{{ strip(p.stem) }}</p>
-            </el-list-item>
+            </div>
             <el-empty v-if="!loading && !plans.length" description="暂无复习计划" :image-size="70" />
-          </el-list>
+          </div>
         </el-card>
       </el-col>
 

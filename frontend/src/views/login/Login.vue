@@ -82,6 +82,9 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import {
+  School, MagicStick, Notebook, EditPen, Refresh, DataLine, User, Lock, Key, ArrowDown
+} from '@element-plus/icons-vue'
 import { authApi } from '@/api'
 import { useUserStore } from '@/store/user'
 

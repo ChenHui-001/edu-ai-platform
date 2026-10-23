@@ -413,7 +413,8 @@ onMounted(() => {
     form.subject_id = Number(q.subject)
   }
   if (q.kp) {
-    selectedKps.value = [Number(q.kp)]
+    // 历史变量名写错（selectedKps 不存在），知识点预设一直静默失效；用表单字段承接
+    form.knowledge_point_ids = [Number(q.kp)]
   }
 })
 </script>

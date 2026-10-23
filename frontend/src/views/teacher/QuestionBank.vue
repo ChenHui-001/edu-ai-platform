@@ -78,7 +78,7 @@
             <div class="expand-box">
               <p><b>题干：</b><span v-html="safeStem(row.stem)"></span></p>
               <p v-if="parseJson(row.options)?.length"><b>选项：</b>
-                <span v-for="o in parseJson(row.options)" :key="o.key">{{ o.key }}. {{ o.text }}　</span>
+                <span v-for="o in parseJson(row.options)" :key="o.key">{{ o.key }}. {{ o.text }} </span>
               </p>
               <p><b>标准答案：</b>{{ parseJson(row.answer) }}</p>
               <p><b>解析：</b>{{ row.analysis || '暂无' }}</p>

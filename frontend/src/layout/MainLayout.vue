@@ -22,7 +22,7 @@
 
           <el-sub-menu v-for="group in menuGroups" :key="group.title" :index="group.title">
             <template #title>
-              <el-icon><component :is="group.icon" /></el-icon>
+              <el-icon><component :is="iconOf(group.icon)" /></el-icon>
               <span>{{ group.title }}</span>
             </template>
             <el-menu-item
@@ -30,7 +30,7 @@
               :key="item.path"
               :index="item.path"
             >
-              <el-icon><component :is="item.icon" /></el-icon>
+              <el-icon><component :is="iconOf(item.icon)" /></el-icon>
               <template #title>{{ item.title }}</template>
             </el-menu-item>
           </el-sub-menu>
@@ -120,12 +120,31 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+// 全局图标注册已移除：路由 meta / 菜单分组里存的是图标名字符串，
+// 这里集中 import 并映射成组件；新增菜单图标时补一个 import + ICONS 映射即可。
+import {
+  School, HomeFilled, Fold, Expand, Cpu, Bell, ArrowDown, User, SwitchButton,
+  Collection, Avatar, Stamp, Share, OfficeBuilding, Document, Clock, Paperclip,
+  DataAnalysis, Setting, Notebook, Tickets, List, EditPen, TrendCharts, Reading,
+  MagicStick, Menu, UserFilled, PieChart, Edit, Timer, Warning, Refresh, DataLine,
+  Medal, Star, Histogram, Calendar, Guide, Box
+} from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
 import { agentApi, systemApi } from '@/api'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+
+// 图标名字符串 → 图标组件（菜单元数据与路由 meta 共用这份映射）
+const ICONS = {
+  School, HomeFilled, Fold, Expand, Cpu, Bell, ArrowDown, User, SwitchButton,
+  Collection, Avatar, Stamp, Share, OfficeBuilding, Document, Clock, Paperclip,
+  DataAnalysis, Setting, Notebook, Tickets, List, EditPen, TrendCharts, Reading,
+  MagicStick, Menu, UserFilled, PieChart, Edit, Timer, Warning, Refresh, DataLine,
+  Medal, Star, Histogram, Calendar, Guide, Box
+}
+function iconOf(name) { return ICONS[name] || name }
 
 const collapsed = ref(false)
 const notifications = ref([])

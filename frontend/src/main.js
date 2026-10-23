@@ -1,19 +1,16 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus, { ElMessage } from 'element-plus'
-import zhCn from 'element-plus/es/locale/lang/zh-cn'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
-import 'element-plus/dist/index.css'
+import { ElMessage } from 'element-plus'
+// Element Plus 已改为按需引入：模板组件的样式由 unplugin-vue-components 注入，
+// 但 ElMessage / ElMessageBox 是函数式调用、不经过模板 resolver，样式必须显式引入。
+import 'element-plus/es/components/message/style/css'
+import 'element-plus/es/components/message-box/style/css'
 
 import App from './App.vue'
 import router from './router'
 import './styles/index.css'
 
 const app = createApp(App)
-
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component)
-}
 
 // 全局错误捕获：组件 setup / 渲染异常此前只会让内容区白屏、无任何提示，
 // 排查成本极高。现将错误显式呈现（顶部红条 + 提示），并保留 console 输出。
@@ -58,5 +55,4 @@ router.onError((err) => {
 
 app.use(createPinia())
 app.use(router)
-app.use(ElementPlus, { locale: zhCn })
 app.mount('#app')

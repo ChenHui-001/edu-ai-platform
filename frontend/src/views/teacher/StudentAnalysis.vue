@@ -156,7 +156,6 @@ const radarEmptyText = computed(() => {
 const trendOption = computed(() => {
   const trend = detail.value?.score_trend || []
   return {
-    tooltip: { trigger: 'axis' },
     grid: { left: 50, right: 30, top: 30, bottom: 50 },
     xAxis: { type: 'category', data: trend.map(t => t.name?.slice(0, 8) || ''), axisLabel: { rotate: 30 } },
     // 归一化为得分率，避免 30 分卷与 100 分卷混画造成「成绩暴跌」的误读

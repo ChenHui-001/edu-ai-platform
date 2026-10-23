@@ -285,7 +285,7 @@ import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Refresh, RefreshLeft, Search, Delete, CopyDocument, UploadFilled,
-  MagicStick, Clock
+  MagicStick, Clock, Document
 } from '@element-plus/icons-vue'
 import { lessonApi, lessonAiApi, attachmentApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'

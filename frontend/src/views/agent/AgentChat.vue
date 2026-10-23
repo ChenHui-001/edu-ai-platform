@@ -137,7 +137,7 @@
 import { nextTick, onMounted, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { sanitizeHtml } from '@/utils/sanitize'
-import { Delete, Promotion } from '@element-plus/icons-vue'
+import { Delete, Promotion, Cpu, MagicStick } from '@element-plus/icons-vue'
 import { agentApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
 

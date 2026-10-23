@@ -217,6 +217,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { Cpu, Tickets, ChatLineRound, Compass, MagicStick } from '@element-plus/icons-vue'
 import EChart from '@/components/EChart.vue'
 import { gradingApi, reportApi, taskApi } from '@/api'
 import { useUserStore } from '@/store/user'
@@ -247,11 +248,12 @@ const greeting = computed(() => {
   return '晚上好'
 })
 
+// 全局图标注册已移除：<component :is> 需要组件对象而不是字符串
 const aiEntries = [
-  { name: '智能出题', icon: 'Cpu', path: '/agent/generate' },
-  { name: 'AI 组卷', icon: 'Tickets', path: '/agent/generate' },
-  { name: '答疑助教', icon: 'ChatLineRound', path: '/agent/chat' },
-  { name: '学习规划', icon: 'Compass', path: '/agent/chat' }
+  { name: '智能出题', icon: Cpu, path: '/agent/generate' },
+  { name: 'AI 组卷', icon: Tickets, path: '/agent/generate' },
+  { name: '答疑助教', icon: ChatLineRound, path: '/agent/chat' },
+  { name: '学习规划', icon: Compass, path: '/agent/chat' }
 ]
 
 const stats = computed(() => {
