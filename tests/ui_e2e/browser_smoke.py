@@ -79,6 +79,16 @@ def run_role(page, base: str, role: str, route_list, shots_dir: str) -> list:
     )
 
     failures = []
+    # 侧边栏回归：不应出现「其他」兜底组，也不应把 403/404 兜底页当菜单项
+    try:
+        page.goto(base + "/dashboard", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(1200)
+        menu_text = page.locator(".el-menu.el-menu--vertical").first.inner_text(timeout=5000)
+        for bad in ("其他", "无权访问", "页面不存在"):
+            if bad in menu_text:
+                failures.append(("/dashboard", f"侧边栏出现无意义菜单项: {bad}"))
+    except Exception as exc:  # noqa: BLE001
+        failures.append(("/dashboard", f"侧边栏检查失败: {exc}"))
     for path in route_list:
         page_errors = []
         console_errors = []
