@@ -3,7 +3,7 @@
   "info": {
     "title": "九年义务教育学习管理系统",
     "description": "九年义务教育学习管理系统（AI Agent 版）后端 API",
-    "version": "1.6.0"
+    "version": "1.6.1"
   },
   "paths": {
     "/api/v1/auth/captcha": {

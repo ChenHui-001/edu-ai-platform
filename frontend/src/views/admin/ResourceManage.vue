@@ -218,17 +218,21 @@
           </el-select>
         </el-form-item>
         <el-form-item label="名称">
-          <el-input v-model="form.name" maxlength="32" show-word-limit />
+          <el-input v-if="isSubject" v-model="form.name" maxlength="32" show-word-limit />
+          <el-input v-else :model-value="gradeNamePreview" disabled />
+          <div v-if="!isSubject" class="tip">按「学段 + 年级序号」自动生成，避免手输格式不一致</div>
         </el-form-item>
         <template v-if="!isSubject">
           <el-form-item label="学段">
-            <el-select v-model="form.stage" style="width:100%">
+            <el-select v-model="form.stage" style="width:100%" @change="onStageChange">
               <el-option label="小学" value="primary" />
               <el-option label="初中" value="junior" />
             </el-select>
           </el-form-item>
           <el-form-item label="年级序号">
-            <el-input-number v-model="form.grade_num" :min="1" :max="9" style="width:100%" />
+            <el-select v-model="form.grade_num" style="width:100%">
+              <el-option v-for="n in gradeNumOptions" :key="n" :label="String(n)" :value="n" />
+            </el-select>
           </el-form-item>
         </template>
         <template v-if="isSubject">
@@ -337,6 +341,18 @@ const gradeStats = computed(() => {
   }
 })
 
+const CN_NUMS = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九' }
+const gradeNumOptions = computed(() => (
+  form.stage === 'junior' ? [7, 8, 9] : [1, 2, 3, 4, 5, 6]
+))
+const gradeNamePreview = computed(() => `${CN_NUMS[form.grade_num] || form.grade_num || ''}年级`)
+
+function onStageChange() {
+  if (!gradeNumOptions.value.includes(form.grade_num)) {
+    form.grade_num = gradeNumOptions.value[0]
+  }
+}
+
 // -------- 学科 · 按年级视图 状态 --------
 const viewMode = ref('byGrade')          // 'byGrade' | 'flat'
 const allSubjects = ref([])              // 全量学科（按年级视图用）
@@ -441,8 +457,9 @@ function openDialog(row) {
   dlg.value = true
 }
 async function save() {
-  if (!form.name) return ElMessage.warning('请输入名称')
+  if (!form.name && isSubject.value) return ElMessage.warning('请输入名称')
   if (isSubject.value && !form.grade_id) return ElMessage.warning('请选择所属年级')
+  if (!isSubject.value && !form.stage) return ElMessage.warning('请选择学段')
   saving.value = true
   const payload = isSubject.value
     ? {
@@ -451,7 +468,8 @@ async function save() {
         is_active: form.active ? 1 : 0, description: form.description,
       }
     : {
-        name: form.name, stage: form.stage, grade_num: form.grade_num,
+        name: gradeNamePreview.value, auto_name: true,
+        stage: form.stage, grade_num: form.grade_num,
         sort: form.sort, is_active: form.active ? 1 : 0,
       }
   try {

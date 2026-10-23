@@ -126,16 +126,31 @@
     </el-card>
 
     <!-- 新增/编辑班级 -->
-    <el-dialog v-model="dlg" :title="form.id ? '编辑班级' : '新增班级'" width="500px">
-      <el-form :model="form" label-width="90px">
-        <el-form-item label="班级名称" required>
-          <el-input v-model="form.name" placeholder="如：七年级(3)班" maxlength="64" />
-        </el-form-item>
+    <el-dialog v-model="dlg" :title="form.id ? '编辑班级' : '新增班级'" width="540px">
+      <el-form :model="form" label-width="100px">
         <el-form-item label="所属年级" required>
-          <el-select v-model="form.grade_id" style="width:100%">
+          <el-select v-model="form.grade_id" style="width:100%" @change="onClassGradeChange">
             <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
           </el-select>
           <div v-if="form.id" class="tip">修改年级会同步迁移班内学生的年级</div>
+        </el-form-item>
+        <el-form-item label="班级名称" required>
+          <div class="class-name-row">
+            <el-input v-if="form.custom_name" v-model="form.name" maxlength="32" show-word-limit
+                      placeholder="如：七年级(3)班 / 数学兴趣班" />
+            <el-input v-else :model-value="autoClassName" disabled />
+            <el-switch v-model="form.custom_name" active-text="自定义名称"
+                       @change="onCustomNameChange" />
+          </div>
+          <div v-if="!form.custom_name" class="tip">
+            名称按「年级 + 班级序号」自动生成，避免手输格式不一致
+          </div>
+          <div v-else class="tip">
+            仅支持中文、字母、数字、括号、间隔号、短横线，长度 2-32
+          </div>
+        </el-form-item>
+        <el-form-item v-if="!form.custom_name" label="班级序号" required>
+          <el-input-number v-model="form.class_no" :min="1" :max="99" style="width:100%" />
         </el-form-item>
         <el-form-item label="班主任">
           <el-select v-model="form.head_teacher_id" clearable filterable style="width:100%">
@@ -320,6 +335,7 @@ const dlg = ref(false)
 const saving = ref(false)
 const form = reactive({
   id: null, name: '', grade_id: null, head_teacher_id: null, is_active: true, remark: '',
+  class_no: 1, custom_name: false,
 })
 
 // 学生抽屉
@@ -397,24 +413,81 @@ function onSelectionChange(val) {
   selection.value = val || []
 }
 
+function gradeNameOf(gid) {
+  return grades.value.find(g => g.id === gid)?.name || ''
+}
+
+const autoClassName = computed(() => {
+  const g = gradeNameOf(form.grade_id)
+  return g ? `${g}(${form.class_no || 1})班` : ''
+})
+
+function nextClassNo(gradeId) {
+  const nos = list.value
+    .filter(c => c.grade_id === gradeId)
+    .map(c => c.class_no || 0)
+    .filter(n => n > 0)
+  return (nos.length ? Math.max(...nos) : 0) + 1
+}
+
+function onClassGradeChange(gid) {
+  if (!form.custom_name) form.class_no = nextClassNo(gid)
+}
+
+function onCustomNameChange(val) {
+  if (!val) {
+    form.class_no = nextClassNo(form.grade_id)
+  } else if (!form.name) {
+    form.name = autoClassName.value
+  }
+}
+
 function openDialog(row) {
-  Object.assign(form, row || {
-    id: null, name: '', grade_id: null, head_teacher_id: null, is_active: true, remark: '',
-  })
+  if (row) {
+    const classNo = row.class_no || 0
+    Object.assign(form, {
+      id: row.id,
+      name: row.name,
+      grade_id: row.grade_id,
+      head_teacher_id: row.head_teacher_id || null,
+      is_active: row.is_active !== false,
+      remark: row.remark || '',
+      class_no: classNo || 1,
+      custom_name: !classNo,
+    })
+  } else {
+    const gid = query.grade_id || grades.value[0]?.id || null
+    Object.assign(form, {
+      id: null, name: '', grade_id: gid, head_teacher_id: null,
+      is_active: true, remark: '', class_no: nextClassNo(gid), custom_name: false,
+    })
+  }
   dlg.value = true
 }
 
 async function save() {
-  if (!form.name.trim()) return ElMessage.warning('请输入班级名称')
   if (!form.grade_id) return ElMessage.warning('请选择年级')
+  if (form.custom_name) {
+    const name = (form.name || '').trim()
+    if (!name) return ElMessage.warning('请输入班级名称')
+    if (!/^[\u4e00-\u9fa5A-Za-z0-9()（）·\-_\s]{2,32}$/.test(name)) {
+      return ElMessage.warning('名称仅支持中文、字母、数字、括号、间隔号、短横线，长度 2-32')
+    }
+    form.name = name
+  } else if (!form.class_no) {
+    return ElMessage.warning('请填写班级序号')
+  }
   saving.value = true
   try {
     const payload = {
-      name: form.name.trim(),
       grade_id: form.grade_id,
       head_teacher_id: form.head_teacher_id || null,
       is_active: form.is_active,
       remark: form.remark,
+      auto_name: !form.custom_name,
+      strict_name: form.custom_name,
+      class_no: form.class_no,
+      name: form.custom_name ? form.name : autoClassName.value,
     }
     if (form.id) await eduApi.updateClass(form.id, payload)
     else await eduApi.createClass(payload)
@@ -635,6 +708,9 @@ onMounted(async () => {
   gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
 }
 .student-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.class-name-row { display: flex; align-items: center; gap: 12px; width: 100%; }
+.class-name-row .el-input { flex: 1; }
+.class-name-row .el-switch { flex-shrink: 0; }
 @media (max-width: 768px) {
   .header-actions { width: 100%; }
   .student-toolbar { align-items: flex-start; }

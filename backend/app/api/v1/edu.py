@@ -1,6 +1,7 @@
 """教学基础档案接口：年级、学科、班级（知识点 V2 已迁移到 knowledge.py）。"""
 import csv
 import io
+import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -25,6 +26,46 @@ router = APIRouter(prefix="/edu", tags=["教学资源"])
 
 GRADE_STAGES = {"primary", "junior"}
 SUBJECT_WRITE_PERM = "resource:subject:write"
+CN_NUMBERS = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九"}
+# 自定义班级名：中文/字母/数字/中英文括号/间隔号/短横线下划线/空格，2-32 字
+CLASS_CUSTOM_NAME_RE = re.compile(r"^[\u4e00-\u9fa5A-Za-z0-9()（）·\-_\s]{2,32}$")
+CLASS_AUTO_NAME_RE = re.compile(r"^.+\((\d{1,2})\)班$")
+
+
+def _canonical_grade_name(stage: str, grade_num: int) -> str:
+    """按学段+序号生成标准年级名，避免手工输入「七年级」「7年级」混用。"""
+    if stage == "primary" and 1 <= grade_num <= 6:
+        return f"{CN_NUMBERS[grade_num]}年级"
+    if stage == "junior" and 7 <= grade_num <= 9:
+        return f"{CN_NUMBERS[grade_num]}年级"
+    raise BusinessException("学段与年级序号不匹配：小学为 1-6，初中为 7-9")
+
+
+def _validate_custom_name(name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        raise BusinessException("请填写名称")
+    if not CLASS_CUSTOM_NAME_RE.match(name):
+        raise BusinessException("名称仅支持中文、字母、数字、括号、间隔号、短横线，长度 2-32")
+    return name
+
+
+def _class_no_from_name(name: str) -> Optional[int]:
+    m = CLASS_AUTO_NAME_RE.match((name or "").strip())
+    return int(m.group(1)) if m else None
+
+
+def _auto_class_name(db: Session, grade_id: int, class_no: Any) -> str:
+    grade = db.get(Grade, grade_id)
+    if not grade:
+        raise BusinessException("年级不存在")
+    try:
+        no = int(class_no)
+    except (TypeError, ValueError):
+        raise BusinessException("请填写班级序号")
+    if not 1 <= no <= 99:
+        raise BusinessException("班级序号必须为 1-99")
+    return f"{grade.name}({no})班"
 
 
 def _assert_stage(value: str) -> str:
@@ -96,13 +137,18 @@ def create_grade(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
     _: User = Depends(require_perm("resource:grade:write")),
 ):
-    name = (data.get("name") or "").strip()
+    stage = _assert_stage(data.get("stage", "primary"))
+    grade_num = _assert_grade_num(data.get("grade_num", 1))
+    auto_name = bool(data.get("auto_name"))
+    if auto_name:
+        # 名称由学段+序号自动生成，前端不再手填，杜绝「7年级/七年级/初一」混用
+        name = _canonical_grade_name(stage, grade_num)
+    else:
+        name = (data.get("name") or "").strip()
     if not name:
         raise BusinessException("请填写年级名称")
     if len(name) > 32:
         raise BusinessException("年级名称不能超过 32 个字符")
-    stage = _assert_stage(data.get("stage", "primary"))
-    grade_num = _assert_grade_num(data.get("grade_num", 9))
     if db.scalar(select(Grade).where(Grade.name == name)):
         raise BusinessException("年级已存在")
     if db.scalar(select(Grade).where(Grade.grade_num == grade_num)):
@@ -124,20 +170,26 @@ def update_grade(
     grade = db.get(Grade, grade_id)
     if not grade:
         raise NotFoundException("年级不存在")
-    if "name" in data:
-        name = (data.get("name") or "").strip()
+    auto_name = bool(data.get("auto_name"))
+    target_stage = _assert_stage(data.get("stage", grade.stage)) if (
+        "stage" in data or auto_name) else grade.stage
+    target_num = _assert_grade_num(data.get("grade_num", grade.grade_num)) if (
+        "grade_num" in data or auto_name) else grade.grade_num
+    if "stage" in data:
+        grade.stage = target_stage
+    if "grade_num" in data:
+        grade.grade_num = target_num
+    if auto_name or "name" in data:
+        name = _canonical_grade_name(target_stage, target_num) if auto_name else (
+            data.get("name") or "").strip()
         if not name:
             raise BusinessException("年级名称不能为空")
         if db.scalar(select(Grade).where(Grade.name == name, Grade.id != grade.id)):
             raise BusinessException("年级名称已存在")
         grade.name = name
-    if "stage" in data:
-        grade.stage = _assert_stage(data["stage"])
-    if "grade_num" in data:
-        num = _assert_grade_num(data["grade_num"])
-        if db.scalar(select(Grade).where(Grade.grade_num == num, Grade.id != grade.id)):
-            raise BusinessException("年级序号已存在")
-        grade.grade_num = num
+    if "grade_num" in data and db.scalar(select(Grade).where(
+            Grade.grade_num == target_num, Grade.id != grade.id)):
+        raise BusinessException("年级序号已存在")
     if "sort" in data:
         grade.sort = int(data["sort"])
     if "is_active" in data:
@@ -491,6 +543,7 @@ def list_classes(
         d["grade_name"] = grades.get(c.grade_id)
         d["student_count"] = int(counts.get(c.id) or 0)
         d["head_teacher_name"] = heads.get(c.head_teacher_id)
+        d["class_no"] = _class_no_from_name(c.name)
         items.append(d)
     if page is not None and page_size is not None:
         return ok({"items": items, "total": total, "page": page, "page_size": page_size})
@@ -535,12 +588,19 @@ def create_class(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
     _: User = Depends(require_perm("resource:class:write")),
 ):
-    name = (data.get("name") or "").strip()
     grade_id = data.get("grade_id")
-    if not name:
-        raise BusinessException("请填写班级名称")
     if not grade_id or not db.get(Grade, grade_id):
         raise BusinessException("请选择年级")
+    auto_name = bool(data.get("auto_name"))
+    strict_name = bool(data.get("strict_name"))
+    if auto_name:
+        name = _auto_class_name(db, int(grade_id), data.get("class_no"))
+    else:
+        name = (data.get("name") or "").strip()
+        if strict_name:
+            name = _validate_custom_name(name)
+    if not name:
+        raise BusinessException("请填写班级名称")
     if db.scalar(select(Class).where(Class.name == name, Class.grade_id == grade_id)):
         raise BusinessException("该年级下已存在同名班级")
     _assert_class_head_teacher(db, data.get("head_teacher_id"))
@@ -552,7 +612,9 @@ def create_class(
     )
     db.add(k)
     db.commit()
-    return ok(dictify(k), message="班级创建成功")
+    d = dictify(k)
+    d["class_no"] = _class_no_from_name(k.name)
+    return ok(d, message="班级创建成功")
 
 
 @router.put("/classes/{class_id}", summary="编辑班级")
@@ -566,10 +628,18 @@ def update_class(
     target_grade = data.get("grade_id", k.grade_id)
     if target_grade != k.grade_id and not db.get(Grade, target_grade):
         raise BusinessException("目标年级不存在")
-    if "name" in data:
+    auto_name = bool(data.get("auto_name"))
+    strict_name = bool(data.get("strict_name"))
+    if auto_name:
+        class_no = data.get("class_no") or _class_no_from_name(k.name) or 1
+        new_name = _auto_class_name(db, int(target_grade), class_no)
+    elif "name" in data:
         new_name = (data.get("name") or "").strip()
-        if not new_name:
-            raise BusinessException("班级名称不能为空")
+        if strict_name:
+            new_name = _validate_custom_name(new_name)
+    else:
+        new_name = k.name
+    if new_name != k.name:
         dup = db.scalar(select(Class).where(
             Class.name == new_name, Class.grade_id == target_grade, Class.id != k.id))
         if dup:
@@ -591,7 +661,9 @@ def update_class(
             User.class_id == k.id, User.identity == "student"
         ).values(grade_id=target_grade))
     db.commit()
-    return ok(dictify(k), message="班级已更新")
+    d = dictify(k)
+    d["class_no"] = _class_no_from_name(k.name)
+    return ok(d, message="班级已更新")
 
 
 @router.post("/classes/batch", summary="批量启用/停用/删除班级")
