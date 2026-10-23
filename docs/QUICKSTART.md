@@ -167,12 +167,12 @@ LLM_MODEL=deepseek-chat
 或手动：
 ```bat
 docker compose down
-docker pull nanpo/edu-ai-platform:1.0.42
+docker pull nanpo/edu-ai-platform:1.0.43
 docker compose up -d
 ```
 > Docker Hub `nanpo/edu-ai-platform` 由本地 `push_dockerhub.sh` 推送；
 > CI 发布的是 `ghcr.io/chenhui-001/edu-ai-platform`，Docker Hub 不可达时可改用
-> `docker pull ghcr.io/chenhui-001/edu-ai-platform:1.0.42`。
+> `docker pull ghcr.io/chenhui-001/edu-ai-platform:1.0.43`。
 
 ---
 

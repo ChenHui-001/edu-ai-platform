@@ -306,15 +306,20 @@ function Invoke-Start {
 
     # 当前代码 commit：用于判断本地镜像是否过期（镜像内 /app/BUILD_INFO 记录了构建时 commit）
     $headCommit = ''
+    $runtimeCommit = ''
     if (Get-Command git -ErrorAction SilentlyContinue) {
         $gitHead = (& git rev-parse HEAD 2>$null | Select-Object -First 1)
         if ($LASTEXITCODE -eq 0 -and $gitHead) { $headCommit = $gitHead.Trim() }
+        # 只统计会进入镜像的文件：docs/README/记录类提交不应触发重建。
+        $gitRuntime = (& git log -1 --format=%H -- backend frontend Dockerfile deploy docker-compose.yml VERSION 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and $gitRuntime) { $runtimeCommit = $gitRuntime.Trim() }
     }
     # compose 的 build.args 读取这两个环境变量，写入镜像 BUILD_INFO
+    # GIT_COMMIT 仍记录真实 HEAD 便于追溯；过期判断同时接受运行时代码 commit。
     $env:GIT_COMMIT = if ($headCommit) { $headCommit } else { 'unknown' }
     $env:BUILD_TIME = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 
-    # 镜像已存在且 commit 与当前代码一致才跳过构建。
+    # 镜像已存在且 commit 与当前**运行时代码**一致才跳过构建。
     # 旧逻辑只看镜像存在就跳过：代码更新后本地一直跑旧镜像（版本号相同、行为不同），
     # 这是最隐蔽的“改了没生效”来源，因此必须比对 BUILD_INFO 的 commit。
     $imgRepo = 'edu-ai-platform'
@@ -329,16 +334,18 @@ function Invoke-Start {
     docker image inspect $fullImage *> $null
     if ($LASTEXITCODE -eq 0) { $haveImage = $true }
 
-    if ($haveImage -and $headCommit) {
+    if ($haveImage -and ($headCommit -or $runtimeCommit)) {
         $imageCommit = ''
         $buildInfo = docker run --rm --entrypoint cat $fullImage /app/BUILD_INFO 2>$null
         if ($LASTEXITCODE -eq 0 -and $buildInfo) {
             $bm = [regex]::Match(($buildInfo -join "`n"), '(?m)^commit=(.+)$')
             if ($bm.Success) { $imageCommit = $bm.Groups[1].Value.Trim() }
         }
-        if ($imageCommit -ne $headCommit) {
-            $shownImage = if ($imageCommit) { $imageCommit } else { 'unknown' }
-            Write-Warn "本地镜像与当前代码不一致（镜像 commit=$shownImage，当前=$($headCommit.Substring(0,7))）"
+        $expectedCommits = @($headCommit, $runtimeCommit) | Where-Object { $_ }
+        if ($imageCommit -and ($expectedCommits -notcontains $imageCommit)) {
+            $shownImage = $imageCommit
+            $shownExpected = if ($runtimeCommit) { $runtimeCommit.Substring(0,7) } else { $headCommit.Substring(0,7) }
+            Write-Warn "本地镜像与当前运行时代码不一致（镜像 commit=$shownImage，当前=$shownExpected）"
             Write-Host '    将重新构建镜像，确保运行的是当前代码（首次构建约 5-15 分钟）...'
             Write-Host ''
             $haveImage = $false
