@@ -268,7 +268,7 @@
 - **AI**：新增 `paper_ai.py`：AI 试卷分析（难度/题型/知识点覆盖/问题/建议）与 AI 推荐题目（薄弱知识点/难度缺口），无 LLM 规则降级、只读不落库。
 - **UI**：PaperManage.vue 重构：统计卡、筛选、批量复制/删除/共享、详情抽屉、AI 分析/推荐、手动组卷选题器、权限按钮。
 - **验证**：E2E 850/836/0/14；API 动态验证；前端 build/lint/test/bundle；浏览器列表/详情/AI 正常。
-- **镜像**：1.8.0 构建/推送中（完成后回填 digest）。
+- **镜像**：`nanpo/edu-ai-platform:1.8.0` / `:latest` / `:sha-0724382` 已推送，manifest-list digest `sha256:a600a178f148e36e54644aa6efb50142cc04ce1b5d2e06a7c96ed5d147ebb68d`（基于 commit `0724382`）；容器 health=`healthy`、version=`1.8.0`、47 页浏览器冒烟通过、试卷 AI/批量接口正常。
 
 
 
