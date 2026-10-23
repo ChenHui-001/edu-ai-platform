@@ -234,6 +234,40 @@
                 </el-button>
               </div>
             </el-form>
+
+            <el-divider content-position="left">资料附件</el-divider>
+            <div class="att-head">
+              <span class="muted">支持 PDF/图片/Office 文档，单文件 ≤50MB；学生可在线预览与下载</span>
+              <el-upload v-if="canWrite" :show-file-list="false" :http-request="uploadAttachment">
+                <el-button size="small" :icon="Upload" :loading="attUploading">上传附件</el-button>
+              </el-upload>
+            </div>
+            <el-table v-loading="attLoading" :data="attachments" size="small" border
+                      empty-text="暂无资料附件">
+              <el-table-column prop="filename" label="文件名" min-width="220" show-overflow-tooltip />
+              <el-table-column label="大小" width="90" align="center">
+                <template #default="{ row }">{{ formatFileSize(row.file_size) }}</template>
+              </el-table-column>
+              <el-table-column label="学生可见" width="100" align="center">
+                <template #default="{ row }">
+                  <el-switch v-model="row.visible_to_student" :disabled="!canWrite"
+                             @change="toggleAttachmentVisible(row)" />
+                </template>
+              </el-table-column>
+              <el-table-column prop="download_count" label="下载" width="70" align="center" />
+              <el-table-column label="上传时间" width="150">
+                <template #default="{ row }">{{ formatLocalDate(row.created_at) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="170" align="center">
+                <template #default="{ row }">
+                  <el-button link type="primary" :disabled="!isPreviewable(row.ext)"
+                             @click="previewAttachment(row)">预览</el-button>
+                  <el-button link type="primary" @click="downloadAttachment(row)">下载</el-button>
+                  <el-button v-if="canWrite" link type="danger"
+                             @click="removeAttachment(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
           </template>
           <el-empty v-else description="请在左侧选择一个知识点查看详情" :image-size="70" />
         </el-card>
@@ -614,18 +648,31 @@
         <el-button @click="semanticDlg = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 知识点附件预览：鉴权 blob -> objectURL，关闭时释放 -->
+    <el-dialog v-model="attPreviewVisible" title="附件预览" width="72%" top="5vh"
+               destroy-on-close @closed="clearAttPreview">
+      <img v-if="attPreviewIsImage && attPreviewUrl" :src="attPreviewUrl"
+           style="max-width:100%;max-height:70vh;display:block;margin:0 auto" />
+      <iframe v-else-if="attPreviewUrl" :src="attPreviewUrl"
+              style="width:100%;height:70vh;border:0;border-radius:6px" />
+      <el-empty v-else description="附件加载失败或类型不支持预览" :image-size="70" />
+      <template #footer>
+        <el-button @click="attPreviewVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Refresh, Plus, Upload, Download, Search, MagicStick, UploadFilled, Cpu
 } from '@element-plus/icons-vue'
-import { eduApi, knowledgeApi } from '@/api'
+import { attachmentApi, eduApi, knowledgeApi } from '@/api'
 import { useUserStore } from '@/store/user'
-import { downloadBlob } from '@/utils/download'
+import { downloadBlob, fetchBlobUrl } from '@/utils/download'
 import { formatLocalDate } from '@/utils/date'
 
 const userStore = useUserStore()
@@ -882,6 +929,8 @@ function clearSelection() {
   selectedId.value = null
   detail.value = null
   breadcrumb.value = []
+  attachments.value = []
+  clearAttPreview()
 }
 
 async function loadDetail(id, withLoading = true) {
@@ -897,7 +946,109 @@ async function loadDetail(id, withLoading = true) {
   } finally {
     if (withLoading) detailLoading.value = false
   }
+  if (detail.value?.id === id) loadAttachments(id)
 }
+
+// ---------------------------------------------------------------- 知识点资料附件
+const attachments = ref([])
+const attLoading = ref(false)
+const attUploading = ref(false)
+const attPreviewVisible = ref(false)
+const attPreviewUrl = ref('')
+const attPreviewIsImage = ref(false)
+let attPreviewObjectUrl = ''
+
+function isPreviewable(ext) {
+  return ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(String(ext || '').toLowerCase())
+}
+
+function formatFileSize(size) {
+  const n = Number(size || 0)
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function loadAttachments(kpId) {
+  if (!kpId) { attachments.value = []; return }
+  attLoading.value = true
+  try {
+    const res = await knowledgeApi.attachments(kpId)
+    attachments.value = Array.isArray(res.data) ? res.data : (res.data?.items || [])
+  } catch {
+    attachments.value = []
+  } finally {
+    attLoading.value = false
+  }
+}
+
+async function uploadAttachment(option) {
+  if (!detail.value?.id) return
+  attUploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', option.file)
+    fd.append('visible_to_student', 'true')
+    await knowledgeApi.uploadAttachment(detail.value.id, fd)
+    ElMessage.success('附件上传成功')
+    await loadAttachments(detail.value.id)
+  } finally {
+    attUploading.value = false
+  }
+}
+
+async function toggleAttachmentVisible(row) {
+  const next = row.visible_to_student
+  try {
+    await knowledgeApi.updateAttachment(detail.value.id, row.id, { visible_to_student: next })
+    ElMessage.success(next ? '学生现在可以查看该附件' : '已设为学生不可见')
+  } catch {
+    row.visible_to_student = !next
+  }
+}
+
+async function removeAttachment(row) {
+  await ElMessageBox.confirm(
+    `确认删除附件「${row.filename}」？删除后学生将无法再预览/下载。`,
+    '删除确认', { type: 'warning' })
+  await knowledgeApi.removeAttachment(detail.value.id, row.id)
+  ElMessage.success('附件已删除')
+  await loadAttachments(detail.value.id)
+}
+
+async function previewAttachment(row) {
+  if (!isPreviewable(row.ext)) return ElMessage.warning('该文件类型请下载后查看')
+  clearAttPreview()
+  try {
+    const url = await fetchBlobUrl(attachmentApi.preview(row.id))
+    attPreviewObjectUrl = url
+    attPreviewUrl.value = url
+    attPreviewIsImage.value = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+      .includes(String(row.ext || '').toLowerCase())
+    attPreviewVisible.value = true
+  } catch {
+    ElMessage.error('附件预览失败')
+  }
+}
+
+function clearAttPreview() {
+  if (attPreviewObjectUrl) {
+    URL.revokeObjectURL(attPreviewObjectUrl)
+    attPreviewObjectUrl = ''
+  }
+  attPreviewUrl.value = ''
+  attPreviewIsImage.value = false
+}
+
+async function downloadAttachment(row) {
+  try {
+    await downloadBlob(attachmentApi.download(row.id), row.filename || '知识点附件')
+  } catch {
+    ElMessage.error('附件下载失败')
+  }
+}
+
+onBeforeUnmount(clearAttPreview)
 
 async function onNodeClick(data) {
   selectedId.value = data.id

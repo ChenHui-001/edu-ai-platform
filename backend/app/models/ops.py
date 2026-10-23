@@ -117,6 +117,8 @@ class Attachment(Base):
     uploader_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
     download_count: Mapped[int] = mapped_column(Integer, default=0)
     is_temp: Mapped[bool] = mapped_column(Boolean, default=True, index=True, comment="临时附件定时清理")
+    visible_to_student: Mapped[bool] = mapped_column(
+        Boolean, default=True, index=True, comment="关联知识点时是否允许学生查看/下载")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
 

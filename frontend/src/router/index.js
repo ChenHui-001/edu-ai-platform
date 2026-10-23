@@ -99,6 +99,8 @@ const routes = [
         meta: { title: '学习路径', icon: 'Guide', perm: 'student:path' } },
       { path: 'student/flashcard', name: 'Flashcards', component: () => import('@/views/student/Flashcards.vue'),
         meta: { title: '闪卡速记', icon: 'Box', perm: 'student:flashcard' } },
+      { path: 'student/knowledge', name: 'KnowledgeLibrary', component: () => import('@/views/student/KnowledgeLibrary.vue'),
+        meta: { title: '知识资料', icon: 'Reading', perm: 'student:knowledge' } },
 
       // AI
       { path: 'agent/chat', name: 'AgentChat', component: () => import('@/views/agent/AgentChat.vue'),

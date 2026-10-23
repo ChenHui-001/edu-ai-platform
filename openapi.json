@@ -3,7 +3,7 @@
   "info": {
     "title": "九年义务教育学习管理系统",
     "description": "九年义务教育学习管理系统（AI Agent 版）后端 API",
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
   "paths": {
     "/api/v1/auth/captcha": {
@@ -3635,6 +3635,221 @@
             "schema": {
               "type": "integer",
               "title": "Kp Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/edu/knowledge/{kp_id}/attachments": {
+      "get": {
+        "tags": [
+          "知识点"
+        ],
+        "summary": "知识点附件列表",
+        "operationId": "list_knowledge_attachments_api_v1_edu_knowledge__kp_id__attachments_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Kp Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "知识点"
+        ],
+        "summary": "上传知识点附件",
+        "operationId": "upload_knowledge_attachment_api_v1_edu_knowledge__kp_id__attachments_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Kp Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_knowledge_attachment_api_v1_edu_knowledge__kp_id__attachments_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/edu/knowledge/{kp_id}/attachments/{att_id}": {
+      "put": {
+        "tags": [
+          "知识点"
+        ],
+        "summary": "更新知识点附件可见性",
+        "operationId": "update_knowledge_attachment_api_v1_edu_knowledge__kp_id__attachments__att_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Kp Id"
+            }
+          },
+          {
+            "name": "att_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Att Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Data"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "知识点"
+        ],
+        "summary": "删除知识点附件",
+        "operationId": "delete_knowledge_attachment_api_v1_edu_knowledge__kp_id__attachments__att_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Kp Id"
+            }
+          },
+          {
+            "name": "att_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Att Id"
             }
           }
         ],
@@ -11985,6 +12200,25 @@
           "file"
         ],
         "title": "Body_upload_api_v1_attachments_upload_post"
+      },
+      "Body_upload_knowledge_attachment_api_v1_edu_knowledge__kp_id__attachments_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          },
+          "visible_to_student": {
+            "type": "boolean",
+            "title": "Visible To Student",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_knowledge_attachment_api_v1_edu_knowledge__kp_id__attachments_post"
       },
       "Body_upload_plan_attachment_api_v1_lesson_plans__plan_id__attachments_post": {
         "properties": {

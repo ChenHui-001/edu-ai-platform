@@ -7,8 +7,11 @@
 - POST /edu/knowledge/reindex 保留教师可调用（E2E 既有契约）。
 """
 import csv
+import hashlib
 import io
+import os
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
 
@@ -25,14 +28,15 @@ from app.agents.rag import (
 from app.api.deps import (
     DataScope, get_current_teacher, get_current_user, get_data_scope, require_perm,
 )
+from app.api.v1.attachment import OFFICE_TYPES, PREVIEW_TYPES
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Class, Grade, KnowledgeMastery, KnowledgePoint, Question, ReviewPlan, Subject,
-    TeachingAssignment, User,
+    Attachment, Class, Grade, KnowledgeMastery, KnowledgePoint, Question, ReviewPlan,
+    Subject, TeachingAssignment, User,
 )
-from app.utils.common import dictify, ok
+from app.utils.common import dictify, now_local, ok
 
 router = APIRouter(prefix="/edu", tags=["知识点"])
 
@@ -694,6 +698,136 @@ def knowledge_detail(
     node = _single_node(db, kp)
     node["breadcrumb"] = _breadcrumb(db, kp)
     return ok(node)
+
+
+# ================================================================ 知识点附件
+KNOWLEDGE_ATTACH_CATEGORY = "knowledge"
+
+
+def _attachment_out(a: Attachment) -> Dict[str, Any]:
+    """附件输出：不暴露物理路径/存储名，只给可安全使用的预览/下载地址。"""
+    ext = os.path.splitext(a.filename or "")[1].lower()
+    d = dictify(a)
+    for key in ("file_path", "stored_name"):
+        d.pop(key, None)
+    d["ext"] = ext
+    d["previewable"] = ext in PREVIEW_TYPES or ext in OFFICE_TYPES
+    d["preview_url"] = f"/api/v1/attachments/{a.id}/preview"
+    d["download_url"] = f"/api/v1/attachments/{a.id}/download"
+    return d
+
+
+def _get_attachment(db: Session, kp_id: int, att_id: int) -> Attachment:
+    att = db.get(Attachment, att_id)
+    if (not att or att.biz_type != "knowledge_point" or att.biz_id != kp_id):
+        raise NotFoundException("附件不存在")
+    return att
+
+
+@router.get("/knowledge/{kp_id}/attachments", summary="知识点附件列表")
+def list_knowledge_attachments(
+    kp_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    kp = db.get(KnowledgePoint, kp_id)
+    if not kp or not kp.is_active:
+        raise NotFoundException("知识点不存在")
+    if _is_student_user(user):
+        if not user.grade_id or kp.grade_id != user.grade_id or kp.status != "published":
+            raise PermissionException("无权查看该知识点的附件")
+    elif not _is_admin(user) and kp.status != "published" and not _can_write(
+            db, user, kp.grade_id, kp.subject_id):
+        raise PermissionException("无权查看该知识点的附件")
+
+    stmt = select(Attachment).where(
+        Attachment.biz_type == "knowledge_point", Attachment.biz_id == kp_id,
+        Attachment.is_temp.is_(False),
+    )
+    if _is_student_user(user):
+        stmt = stmt.where(Attachment.visible_to_student.is_(True))
+    rows = db.scalars(stmt.order_by(Attachment.created_at.desc(), Attachment.id.desc())).all()
+    return ok([_attachment_out(a) for a in rows])
+
+
+@router.post("/knowledge/{kp_id}/attachments", summary="上传知识点附件")
+async def upload_knowledge_attachment(
+    kp_id: int, file: UploadFile = File(...),
+    visible_to_student: bool = Form(True),
+    db: Session = Depends(get_db), user: User = Depends(require_perm(WRITE_PERM)),
+):
+    kp = db.get(KnowledgePoint, kp_id)
+    if not kp or not kp.is_active:
+        raise NotFoundException("知识点不存在")
+    _assert_write(db, user, kp.grade_id, kp.subject_id)
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in settings.ALLOWED_UPLOAD_TYPES:
+        raise BusinessException(
+            f"不支持的文件类型 {ext or '未知'}，允许：{'、'.join(settings.ALLOWED_UPLOAD_TYPES)}")
+    content = await file.read()
+    if not content:
+        raise BusinessException("文件为空")
+    max_bytes = settings.MAX_UPLOAD_SIZE * 1024 * 1024
+    if len(content) > max_bytes:
+        raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
+
+    digest = hashlib.md5(content).hexdigest()[:12]
+    stored_name = f"{uuid.uuid4().hex}_{digest}{ext}"
+    dir_path = os.path.join(settings.UPLOAD_DIR, now_local().strftime("%Y%m%d"))
+    os.makedirs(dir_path, exist_ok=True)
+    full_path = os.path.abspath(os.path.join(dir_path, stored_name))
+    if not full_path.startswith(os.path.abspath(settings.UPLOAD_DIR)):
+        raise BusinessException("非法文件路径")
+    with open(full_path, "wb") as f:
+        f.write(content)
+
+    att = Attachment(
+        filename=os.path.basename(file.filename or f"attachment{ext}")[:255],
+        stored_name=stored_name, file_path=full_path,
+        file_size=len(content), file_type=file.content_type,
+        category=KNOWLEDGE_ATTACH_CATEGORY, biz_type="knowledge_point", biz_id=kp.id,
+        uploader_id=user.id, is_temp=False, visible_to_student=bool(visible_to_student),
+    )
+    db.add(att)
+    db.commit()
+    db.refresh(att)
+    return ok(_attachment_out(att), message="附件上传成功")
+
+
+@router.put("/knowledge/{kp_id}/attachments/{att_id}", summary="更新知识点附件可见性")
+def update_knowledge_attachment(
+    kp_id: int, att_id: int, data: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db), user: User = Depends(require_perm(WRITE_PERM)),
+):
+    kp = db.get(KnowledgePoint, kp_id)
+    if not kp:
+        raise NotFoundException("知识点不存在")
+    _assert_write(db, user, kp.grade_id, kp.subject_id)
+    att = _get_attachment(db, kp_id, att_id)
+    if "visible_to_student" in data:
+        att.visible_to_student = bool(data["visible_to_student"])
+    db.commit()
+    db.refresh(att)
+    return ok(_attachment_out(att), message="附件已更新")
+
+
+@router.delete("/knowledge/{kp_id}/attachments/{att_id}", summary="删除知识点附件")
+def delete_knowledge_attachment(
+    kp_id: int, att_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm(WRITE_PERM)),
+):
+    kp = db.get(KnowledgePoint, kp_id)
+    if not kp:
+        raise NotFoundException("知识点不存在")
+    _assert_write(db, user, kp.grade_id, kp.subject_id)
+    att = _get_attachment(db, kp_id, att_id)
+    try:
+        if os.path.exists(att.file_path):
+            os.remove(att.file_path)
+    except OSError:
+        pass
+    db.delete(att)
+    db.commit()
+    return ok(message="附件已删除")
 
 
 # ================================================================ 写入接口

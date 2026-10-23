@@ -206,5 +206,16 @@
 - **验证**：后端 E2E 851/837/0/14；无 Chroma 环境 fallback 搜索/AI/状态通过；前端 build/lint/test/bundle 通过；真实 Chroma 在 1.2.0 容器内验证 reindex→搜索→删除索引→覆盖率（97→98→97，覆盖率 100%）。
 - **镜像**：`nanpo/edu-ai-platform:1.2.0` / `:latest` / `:sha-adac1cf` 已推送，manifest-list digest `sha256:09e77c17ddef055cf06419131c4219663a1a2e8e53e5cc7c492e3f523695ac6b`（基于 commit `adac1cf`）；容器 health=`healthy`、version=`1.2.0`、46 页浏览器冒烟通过，管理页 AI/语义搜索/索引入口正常。
 
+### 1.3.0 知识点资料附件（学生可预览/下载）
+
+- **状态**：✅ 已实现
+- **需求确认**：学生允许下载附件。
+- **后端**：`sys_attachment` 新增 `visible_to_student`（迁移默认 1）；复用附件体系，`category=knowledge` / `biz_type=knowledge_point`；新增知识点附件列表/上传/可见性更新/删除接口；扩展 `_assert_attachment_visible`：学生仅本年级 published + 学生可见，跨年级/隐藏附件 403；教师按知识点读权限；上传/删除复用知识点写 scope。
+- **安全**：沿用类型/50MB 限制、随机存储名、鉴权 blob 预览/下载、不暴露物理路径；修复中文文件名预览 Header 编码导致的 500。
+- **前端**：知识点详情新增「资料附件」表格（上传/预览/下载/学生可见开关/删除）；学生端新增「学习中心 → 知识资料」页面（本年级知识点树 + 附件预览/下载）；新增 `student:knowledge` 权限。
+- **验证**：管理员上传 PDF → 学生列表/预览(200, application/pdf)/下载(200)；教师跨年级上传 403；隐藏后学生列表为空且下载 403；教师本学科上传/删除 200；后端 E2E 851/837/0/14；前端 build/lint/test/bundle 通过。
+- **镜像**：1.3.0 构建/推送中（完成后回填 digest）。
+
+
 
 

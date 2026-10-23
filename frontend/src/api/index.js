@@ -94,6 +94,15 @@ export const knowledgeApi = {
   export: (params) => request.get('/edu/knowledge/export',
     { params, responseType: 'blob' }),
   reindex: () => request.post('/edu/knowledge/reindex'),
+  // 知识点资料附件（1.3.0）
+  attachments: (kpId) => request.get(`/edu/knowledge/${kpId}/attachments`),
+  uploadAttachment: (kpId, formData) => request.post(
+    `/edu/knowledge/${kpId}/attachments`, formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } }),
+  updateAttachment: (kpId, attId, data) => request.put(
+    `/edu/knowledge/${kpId}/attachments/${attId}`, data),
+  removeAttachment: (kpId, attId) => request.delete(
+    `/edu/knowledge/${kpId}/attachments/${attId}`),
   // AI / RAG（1.2.0，契约 docs/KNOWLEDGE_V2_RAG_AI.md）
   search: (params) => request.get('/edu/knowledge/search', { params }),
   ragStatus: () => request.get('/edu/knowledge/rag-status'),

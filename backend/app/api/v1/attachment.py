@@ -4,6 +4,7 @@ import os
 import threading
 import uuid
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -38,6 +39,26 @@ def _assert_attachment_visible(db: Session, att: Attachment, user: User) -> None
         return
     if att.uploader_id is not None and att.uploader_id == user.id:
         return
+
+    if att.biz_type == "knowledge_point" and att.biz_id:
+        from app.models import KnowledgePoint
+
+        kp = db.get(KnowledgePoint, att.biz_id)
+        if not kp or not kp.is_active:
+            raise PermissionException("无权查看该附件")
+        is_student = getattr(user, "identity", "") == "student" or "student" in codes
+        if is_student:
+            # 学生只能看本年级、已发布知识点下、且显式标记学生可见的附件
+            if (kp.status == "published" and user.grade_id == kp.grade_id
+                    and att.visible_to_student):
+                return
+            raise PermissionException("无权查看该附件")
+        # 教师/年级管理员：已发布知识点附件可读；草稿/归档仅管理端可读
+        if kp.status == "published":
+            return
+        if {"sys_admin", "grade_admin"} & codes:
+            return
+        raise PermissionException("无权查看该附件")
 
     if att.biz_type == "lesson_plan" and att.biz_id:
         from app.models import LessonPlan, TeachingAssignment
@@ -282,7 +303,7 @@ def preview(
     }.get(ext, "application/octet-stream")
     return FileResponse(
         att.file_path, media_type=media,
-        headers={"Content-Disposition": f"inline; filename*=UTF-8''{att.filename}"},
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(att.filename or 'attachment')}"},
     )
 
 

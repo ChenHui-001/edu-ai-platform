@@ -39,6 +39,8 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
     ("edu_knowledge_point", "status", "VARCHAR(16) DEFAULT 'published'"),
     ("edu_knowledge_point", "source", "VARCHAR(16) DEFAULT 'manual'"),
     ("edu_knowledge_point", "owner_id", "INTEGER"),
+    # v1.3.0: 知识点附件学生可见性（默认可见，旧数据升级后不改变行为）
+    ("sys_attachment", "visible_to_student", "INTEGER DEFAULT 1"),
 ]
 
 

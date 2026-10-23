@@ -42,7 +42,7 @@ ROUTES = {
         "/student/notes", "/student/review", "/student/report", "/student/scores",
         "/student/favorites", "/student/mastery", "/student/custom",
         "/student/goals", "/student/path", "/student/flashcard",
-        "/agent/chat", "/profile",
+        "/student/knowledge", "/agent/chat", "/profile",
     ],
 }
 ACCOUNTS = {
