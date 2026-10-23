@@ -238,39 +238,107 @@
               </div>
             </el-form>
 
-            <el-divider content-position="left">资料附件</el-divider>
-            <div class="att-head">
-              <span class="muted">支持 PDF/图片/Office 文档，单文件 ≤50MB；学生可在线预览与下载</span>
-              <el-upload v-if="canWrite" :show-file-list="false" :http-request="uploadAttachment">
-                <el-button size="small" :icon="Upload" :loading="attUploading">上传附件</el-button>
-              </el-upload>
+            <!-- 资料附件：独立区块（标题 + 数量 + 工具栏 + 列表/空态） -->
+            <div class="att-block mt12">
+              <div class="att-toolbar">
+                <div class="att-title-wrap">
+                  <b class="att-title">资料附件</b>
+                  <el-tag size="small" type="info" effect="plain">{{ attachments.length }}</el-tag>
+                  <span class="muted att-hint">
+                    支持 PDF/图片/Office/文本，单文件 ≤50MB；开启「学生可见」后学生可预览/下载
+                  </span>
+                </div>
+                <div class="att-actions">
+                  <el-upload
+                    v-if="canWrite"
+                    multiple
+                    :show-file-list="false"
+                    :http-request="uploadAttachment"
+                    :before-upload="beforeAttachmentUpload"
+                    :accept="ATTACH_ACCEPT"
+                  >
+                    <el-button type="primary" :icon="Upload" :loading="attUploadingCount > 0">
+                      上传附件<template v-if="attUploadingCount > 0">（{{ attUploadingCount }}）</template>
+                    </el-button>
+                  </el-upload>
+                  <el-button :icon="Refresh" :loading="attLoading" @click="refreshAttachments">刷新</el-button>
+                </div>
+              </div>
+
+              <el-table v-if="attLoading || attachments.length"
+                        v-loading="attLoading" :data="attachments" size="small" border row-key="id">
+                <el-table-column label="文件名" min-width="260" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <span class="att-name-cell">
+                      <el-tag size="small" effect="plain" class="att-kind"
+                              :type="attachmentKind(row.ext).type">
+                        {{ attachmentKind(row.ext).label }}
+                      </el-tag>
+                      <el-link v-if="isPreviewable(row.ext)" type="primary" :underline="false"
+                               class="att-name-link" @click="previewAttachment(row)">
+                        {{ row.filename }}
+                      </el-link>
+                      <span v-else class="att-name-text">{{ row.filename }}</span>
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="大小" width="90" align="center">
+                  <template #default="{ row }">{{ formatFileSize(row.file_size) }}</template>
+                </el-table-column>
+                <el-table-column label="学生可见" width="90" align="center">
+                  <template #default="{ row }">
+                    <el-tooltip placement="top"
+                                content="开启后学生可在知识资料页看到并下载该附件">
+                      <span class="att-switch-wrap">
+                        <el-switch v-model="row.visible_to_student" :disabled="!canWrite"
+                                   @change="toggleAttachmentVisible(row)" />
+                      </span>
+                    </el-tooltip>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="download_count" label="下载" width="70" align="center" />
+                <el-table-column label="上传时间" width="150">
+                  <template #default="{ row }">{{ formatServerDateTime(row.created_at) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="140" align="center">
+                  <template #default="{ row }">
+                    <el-tooltip placement="top"
+                                :content="isPreviewable(row.ext) ? '预览' : '该类型不支持在线预览，请下载后查看'">
+                      <span class="att-op">
+                        <el-button link type="primary" :icon="View"
+                                   :disabled="!isPreviewable(row.ext)"
+                                   @click="previewAttachment(row)" />
+                      </span>
+                    </el-tooltip>
+                    <el-tooltip placement="top" content="下载">
+                      <span class="att-op">
+                        <el-button link type="primary" :icon="Download" @click="downloadAttachment(row)" />
+                      </span>
+                    </el-tooltip>
+                    <el-tooltip v-if="canWrite" placement="top" content="删除">
+                      <span class="att-op">
+                        <el-button link type="danger" :icon="Delete" @click="removeAttachment(row)" />
+                      </span>
+                    </el-tooltip>
+                  </template>
+                </el-table-column>
+              </el-table>
+
+              <el-empty v-else description="暂无资料，上传第一份讲义/课件" :image-size="70">
+                <el-upload
+                  v-if="canWrite"
+                  multiple
+                  :show-file-list="false"
+                  :http-request="uploadAttachment"
+                  :before-upload="beforeAttachmentUpload"
+                  :accept="ATTACH_ACCEPT"
+                >
+                  <el-button type="primary" :icon="Upload" :loading="attUploadingCount > 0">
+                    上传附件
+                  </el-button>
+                </el-upload>
+              </el-empty>
             </div>
-            <el-table v-loading="attLoading" :data="attachments" size="small" border
-                      empty-text="暂无资料附件">
-              <el-table-column prop="filename" label="文件名" min-width="220" show-overflow-tooltip />
-              <el-table-column label="大小" width="90" align="center">
-                <template #default="{ row }">{{ formatFileSize(row.file_size) }}</template>
-              </el-table-column>
-              <el-table-column label="学生可见" width="100" align="center">
-                <template #default="{ row }">
-                  <el-switch v-model="row.visible_to_student" :disabled="!canWrite"
-                             @change="toggleAttachmentVisible(row)" />
-                </template>
-              </el-table-column>
-              <el-table-column prop="download_count" label="下载" width="70" align="center" />
-              <el-table-column label="上传时间" width="150">
-                <template #default="{ row }">{{ formatLocalDate(row.created_at) }}</template>
-              </el-table-column>
-              <el-table-column label="操作" width="170" align="center">
-                <template #default="{ row }">
-                  <el-button link type="primary" :disabled="!isPreviewable(row.ext)"
-                             @click="previewAttachment(row)">预览</el-button>
-                  <el-button link type="primary" @click="downloadAttachment(row)">下载</el-button>
-                  <el-button v-if="canWrite" link type="danger"
-                             @click="removeAttachment(row)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
           </template>
           <el-empty v-else description="请在左侧选择一个知识点查看详情" :image-size="70" />
         </el-card>
@@ -671,12 +739,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Refresh, Plus, Upload, Download, Search, MagicStick, UploadFilled, Cpu
+  Refresh, Plus, Upload, Download, Search, MagicStick, UploadFilled, Cpu, View, Delete
 } from '@element-plus/icons-vue'
 import { attachmentApi, eduApi, knowledgeApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { downloadBlob, fetchBlobUrl } from '@/utils/download'
-import { formatLocalDate } from '@/utils/date'
+import { formatLocalDate, parseServerDate } from '@/utils/date'
 
 const userStore = useUserStore()
 const { can } = userStore
@@ -953,16 +1021,64 @@ async function loadDetail(id, withLoading = true) {
 }
 
 // ---------------------------------------------------------------- 知识点资料附件
+// 与后端 settings.ALLOWED_UPLOAD_TYPES / MAX_UPLOAD_SIZE=50MB 保持一致
+const ATTACH_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.jpg,.jpeg,.png,.gif,.webp'
+const ATTACH_ALLOWED_EXTS = ATTACH_ACCEPT.split(',')
+const ATTACH_MAX_MB = 50
+const PREVIEWABLE_EXTS = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp']
+const ATTACH_KINDS = [
+  { label: 'PDF', type: 'danger', exts: ['.pdf'] },
+  { label: '图片', type: 'success', exts: ['.jpg', '.jpeg', '.png', '.gif', '.webp'] },
+  { label: 'Office', type: 'primary', exts: ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'] },
+  { label: '文本', type: 'info', exts: ['.txt', '.csv', '.md'] }
+]
+
 const attachments = ref([])
 const attLoading = ref(false)
-const attUploading = ref(false)
+// 多选上传时按文件并发，全部完成后才刷新列表（计数用于显示「上传中」）
+const attUploadingCount = ref(0)
 const attPreviewVisible = ref(false)
 const attPreviewUrl = ref('')
 const attPreviewIsImage = ref(false)
 let attPreviewObjectUrl = ''
 
 function isPreviewable(ext) {
-  return ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(String(ext || '').toLowerCase())
+  return PREVIEWABLE_EXTS.includes(String(ext || '').toLowerCase())
+}
+
+function attachmentKind(ext) {
+  const e = String(ext || '').toLowerCase()
+  return ATTACH_KINDS.find(k => k.exts.includes(e)) || { label: '其他', type: 'info' }
+}
+
+function attachmentExt(name) {
+  const text = String(name || '')
+  const idx = text.lastIndexOf('.')
+  return idx >= 0 ? text.slice(idx).toLowerCase() : ''
+}
+
+/** 上传前前端校验（后端同样校验，先挡掉明显不合规的文件）。 */
+function beforeAttachmentUpload(file) {
+  const ext = attachmentExt(file.name)
+  if (!ATTACH_ALLOWED_EXTS.includes(ext)) {
+    ElMessage.warning(
+      `不支持的文件类型 ${ext || '未知'}，请上传 PDF/图片/Office/文本文件`)
+    return false
+  }
+  if (file.size > ATTACH_MAX_MB * 1024 * 1024) {
+    ElMessage.warning(`「${file.name}」超过 ${ATTACH_MAX_MB}MB 限制`)
+    return false
+  }
+  return true
+}
+
+/** 附件上传时间：后端返回本地时间字符串，走 parseServerDate 兼容 Safari。 */
+function formatServerDateTime(value) {
+  const date = parseServerDate(value)
+  if (!date) return '-'
+  const p = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} `
+    + `${p(date.getHours())}:${p(date.getMinutes())}`
 }
 
 function formatFileSize(size) {
@@ -986,18 +1102,29 @@ async function loadAttachments(kpId) {
 }
 
 async function uploadAttachment(option) {
-  if (!detail.value?.id) return
-  attUploading.value = true
+  const kpId = detail.value?.id
+  if (!kpId) return
+  attUploadingCount.value++
   try {
     const fd = new FormData()
     fd.append('file', option.file)
+    // 默认学生可见；教师可在列表里用开关改为不可见
     fd.append('visible_to_student', 'true')
-    await knowledgeApi.uploadAttachment(detail.value.id, fd)
-    ElMessage.success('附件上传成功')
-    await loadAttachments(detail.value.id)
+    await knowledgeApi.uploadAttachment(kpId, fd)
+    ElMessage.success(`「${option.file.name}」上传成功`)
   } finally {
-    attUploading.value = false
+    attUploadingCount.value = Math.max(0, attUploadingCount.value - 1)
+    if (attUploadingCount.value === 0) {
+      // 所有文件处理完后统一刷新附件列表与 RAG 附件索引状态
+      await Promise.all([loadAttachments(kpId), loadRagStatus()])
+    }
   }
+}
+
+/** 只刷新附件列表 + RAG 状态，不重载整棵树/详情。 */
+async function refreshAttachments() {
+  if (!detail.value?.id) return
+  await Promise.all([loadAttachments(detail.value.id), loadRagStatus()])
 }
 
 async function toggleAttachmentVisible(row) {
@@ -1005,6 +1132,8 @@ async function toggleAttachmentVisible(row) {
   try {
     await knowledgeApi.updateAttachment(detail.value.id, row.id, { visible_to_student: next })
     ElMessage.success(next ? '学生现在可以查看该附件' : '已设为学生不可见')
+    // 可见性会触发附件索引增删，刷新 RAG 状态计数
+    await loadRagStatus()
   } catch {
     row.visible_to_student = !next
   }
@@ -1016,7 +1145,7 @@ async function removeAttachment(row) {
     '删除确认', { type: 'warning' })
   await knowledgeApi.removeAttachment(detail.value.id, row.id)
   ElMessage.success('附件已删除')
-  await loadAttachments(detail.value.id)
+  await Promise.all([loadAttachments(detail.value.id), loadRagStatus()])
 }
 
 async function previewAttachment(row) {
@@ -1871,4 +2000,29 @@ onMounted(async () => {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px; margin: 12px 0 8px;
 }
+
+/* 资料附件区块 */
+.att-block {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 12px;
+}
+.att-toolbar {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.att-title-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.att-title { font-size: 14px; color: var(--el-text-color-primary); }
+.att-hint { line-height: 1.4; }
+.att-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.att-actions :deep(.el-button + .el-button) { margin-left: 0; }
+
+.att-name-cell { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.att-kind { flex: none; }
+.att-name-link { font-size: 13px; }
+.att-name-text { font-size: 13px; color: var(--el-text-color-regular); }
+
+.att-op { display: inline-flex; align-items: center; }
+.att-op + .att-op { margin-left: 6px; }
+.att-switch-wrap { display: inline-flex; align-items: center; }
 </style>

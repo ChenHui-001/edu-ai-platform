@@ -1,8 +1,12 @@
 """教学基础档案接口：年级、学科、班级（知识点 V2 已迁移到 knowledge.py）。"""
+import csv
+import io
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, Query
-from sqlalchemy import func, select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -268,6 +272,33 @@ def clone_subject(
 
 
 # ---------------------------------------------------------------- 班级
+def _assert_class_head_teacher(db: Session, teacher_id: Optional[int]) -> None:
+    """班主任必须是教师身份；避免把学生/管理员 id 误设为班主任。"""
+    if not teacher_id:
+        return
+    teacher = db.get(User, teacher_id)
+    if not teacher or teacher.identity != "teacher" or teacher.status != "active":
+        raise BusinessException("班主任必须是启用状态的教师")
+
+
+def _class_ids_for_scope(scope: DataScope) -> Optional[List[int]]:
+    allowed = scope.class_ids()
+    return None if allowed is None else list(allowed)
+
+
+def _assert_class_visible(scope: DataScope, class_id: int) -> None:
+    allowed = _class_ids_for_scope(scope)
+    if allowed is not None and class_id not in allowed:
+        raise PermissionException("无权访问该班级")
+
+
+def _class_student_count(db: Session, class_id: int) -> int:
+    return int(db.scalar(
+        select(func.count()).select_from(User).where(
+            User.class_id == class_id, User.identity == "student")
+    ) or 0)
+
+
 @router.get("/classes/public", summary="班级列表（注册页匿名可用）")
 def list_classes_public(db: Session = Depends(get_db)):
     """注册页在**未登录**状态需要选择班级。
@@ -290,33 +321,104 @@ def list_classes_public(db: Session = Depends(get_db)):
 @router.get("/classes", summary="班级列表")
 def list_classes(
     grade_id: Optional[int] = None, keyword: Optional[str] = None,
-    mine: bool = False,
+    mine: bool = False, status: Optional[str] = None,
+    page: Optional[int] = None, page_size: Optional[int] = None,
     db: Session = Depends(get_db), user: User = Depends(get_current_user),
     scope: DataScope = Depends(get_data_scope),
 ):
+    """班级列表。
+
+    兼容旧调用：不传 page/page_size 时返回数组（注册/下拉/既有 E2E 依赖）；
+    传分页参数时返回 `{items,total,page,page_size}`，管理页用分页版。
+    """
     stmt = select(Class)
     if grade_id:
         stmt = stmt.where(Class.grade_id == grade_id)
     if keyword:
         stmt = stmt.where(Class.name.like(f"%{keyword}%"))
+    if status == "active":
+        stmt = stmt.where(Class.is_active.is_(True))
+    elif status == "inactive":
+        stmt = stmt.where(Class.is_active.is_(False))
     # mine=true：教师端学情分析等场景只返回任教班级。
-    # 不加过滤的话下拉里能看到全部班级，选中非任教班级后接口必然 400，
-    # 表现为「下拉可选但一选就报无权查看」（交互矛盾）。
     if mine and "sys_admin" not in user.role_codes:
         allowed = scope.class_ids()
         if allowed is not None:
             stmt = stmt.where(Class.id.in_(allowed or [0]))
+    if "sys_admin" not in user.role_codes and not mine:
+        # 非管理员在班级管理页只看到本 scope 内班级（教师任教/年级管理员本年级），
+        # 避免下拉里出现无权访问的班级。
+        allowed = scope.class_ids()
+        if allowed is not None:
+            stmt = stmt.where(Class.id.in_(allowed or [0]))
+
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    if page is not None and page_size is not None:
+        page = max(1, int(page))
+        page_size = min(200, max(1, int(page_size)))
+        rows = list(db.scalars(
+            stmt.order_by(Class.id).offset((page - 1) * page_size).limit(page_size)
+        ).all())
+    else:
+        rows = list(db.scalars(stmt.order_by(Class.id)).all())
+
+    # 批量取年级/班主任/学生数，避免逐个 get 的 N+1
+    grade_ids = {c.grade_id for c in rows if c.grade_id}
+    head_ids = {c.head_teacher_id for c in rows if c.head_teacher_id}
+    grades = {g.id: g.name for g in db.scalars(
+        select(Grade).where(Grade.id.in_(grade_ids))).all()} if grade_ids else {}
+    heads = {u.id: u.real_name for u in db.scalars(
+        select(User).where(User.id.in_(head_ids))).all()} if head_ids else {}
+    counts = dict(db.execute(
+        select(User.class_id, func.count()).where(
+            User.class_id.in_([c.id for c in rows]),
+            User.identity == "student",
+        ).group_by(User.class_id)
+    ).all()) if rows else {}
+
     items = []
-    for c in db.scalars(stmt.order_by(Class.id)).all():
+    for c in rows:
         d = dictify(c)
-        d["grade_name"] = db.get(Grade, c.grade_id).name if db.get(Grade, c.grade_id) else None
-        d["student_count"] = db.scalar(
-            select(func.count()).select_from(User).where(User.class_id == c.id)
-        ) or 0
-        head = db.get(User, c.head_teacher_id) if c.head_teacher_id else None
-        d["head_teacher_name"] = head.real_name if head else None
+        d["grade_name"] = grades.get(c.grade_id)
+        d["student_count"] = int(counts.get(c.id) or 0)
+        d["head_teacher_name"] = heads.get(c.head_teacher_id)
         items.append(d)
+    if page is not None and page_size is not None:
+        return ok({"items": items, "total": total, "page": page, "page_size": page_size})
     return ok(items)
+
+
+@router.get("/classes/stats", summary="班级统计（管理页顶部卡片）")
+def class_stats(
+    grade_id: Optional[int] = None, db: Session = Depends(get_db),
+    _: User = Depends(get_current_user), scope: DataScope = Depends(get_data_scope),
+):
+    stmt = select(Class)
+    if grade_id:
+        stmt = stmt.where(Class.grade_id == grade_id)
+    allowed = _class_ids_for_scope(scope)
+    if allowed is not None:
+        stmt = stmt.where(Class.id.in_(allowed or [0]))
+    rows = list(db.scalars(stmt).all())
+    ids = [c.id for c in rows]
+    students = int(db.scalar(
+        select(func.count()).select_from(User).where(
+            User.class_id.in_(ids), User.identity == "student")
+    ) or 0) if ids else 0
+    active = sum(1 for c in rows if c.is_active)
+    with_head = sum(1 for c in rows if c.head_teacher_id)
+    by_grade = []
+    for g in db.scalars(select(Grade).order_by(Grade.sort)).all():
+        n = sum(1 for c in rows if c.grade_id == g.id)
+        if n:
+            by_grade.append({"grade_id": g.id, "grade_name": g.name, "count": n})
+    return ok({
+        "total": len(rows), "students": students,
+        "active": active, "inactive": len(rows) - active,
+        "with_head_teacher": with_head,
+        "head_teacher_coverage": round(with_head / len(rows) * 100, 1) if rows else 0,
+        "by_grade": by_grade,
+    })
 
 
 @router.post("/classes", summary="新增班级")
@@ -324,9 +426,6 @@ def create_class(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
     _: User = Depends(require_perm("resource:class:write")),
 ):
-    # 同年级下同名班级必须拦截：班级下拉按名称展示，出现两个「一年级(1)班」
-    # 后学生归属、考勤与统计都会分裂且无法从界面区分。
-    # 教师建班申请（create_class_request）一直有这道校验，管理员直接建班漏了。
     name = (data.get("name") or "").strip()
     grade_id = data.get("grade_id")
     if not name:
@@ -335,9 +434,12 @@ def create_class(
         raise BusinessException("请选择年级")
     if db.scalar(select(Class).where(Class.name == name, Class.grade_id == grade_id)):
         raise BusinessException("该年级下已存在同名班级")
+    _assert_class_head_teacher(db, data.get("head_teacher_id"))
     k = Class(
         name=name, grade_id=grade_id,
-        head_teacher_id=data.get("head_teacher_id"), remark=data.get("remark"),
+        head_teacher_id=data.get("head_teacher_id"),
+        remark=data.get("remark") if data.get("remark") is not None else data.get("description"),
+        is_active=bool(data.get("is_active", True)),
     )
     db.add(k)
     db.commit()
@@ -352,22 +454,67 @@ def update_class(
     k = db.get(Class, class_id)
     if not k:
         raise NotFoundException("班级不存在")
+    target_grade = data.get("grade_id", k.grade_id)
+    if target_grade != k.grade_id and not db.get(Grade, target_grade):
+        raise BusinessException("目标年级不存在")
     if "name" in data:
         new_name = (data.get("name") or "").strip()
         if not new_name:
             raise BusinessException("班级名称不能为空")
-        # 改名同样要防重名（同年级内），否则绕过 create 的校验
-        target_grade = data.get("grade_id", k.grade_id)
         dup = db.scalar(select(Class).where(
             Class.name == new_name, Class.grade_id == target_grade, Class.id != k.id))
         if dup:
             raise BusinessException("该年级下已存在同名班级")
         data["name"] = new_name
-    for f in ("name", "head_teacher_id", "remark", "is_active"):
+    if "head_teacher_id" in data:
+        _assert_class_head_teacher(db, data.get("head_teacher_id"))
+
+    grade_changed = target_grade != k.grade_id
+    for f in ("name", "head_teacher_id", "remark", "is_active", "grade_id"):
         if f in data:
             setattr(k, f, data[f])
+    # 兼容前端字段名 description（旧页面的 form 用 description，实际落 remark）
+    if "description" in data and "remark" not in data:
+        k.remark = data["description"]
+    if grade_changed:
+        # 班级换年级时，班内学生的 grade_id 必须一起迁移，否则学情/筛选错位
+        db.execute(update(User).where(
+            User.class_id == k.id, User.identity == "student"
+        ).values(grade_id=target_grade))
     db.commit()
     return ok(dictify(k), message="班级已更新")
+
+
+@router.post("/classes/batch", summary="批量启用/停用/删除班级")
+def batch_classes(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    _: User = Depends(require_perm("resource:class:write")),
+):
+    action = str(data.get("action") or "").lower()
+    if action not in {"enable", "disable", "delete"}:
+        raise BusinessException("action 仅支持 enable / disable / delete")
+    ids = [int(x) for x in (data.get("ids") or []) if str(x).isdigit()]
+    if not ids:
+        raise BusinessException("请选择班级")
+    done, skipped = [], []
+    for cid in ids:
+        c = db.get(Class, cid)
+        if not c:
+            skipped.append({"id": cid, "reason": "班级不存在"})
+            continue
+        if action == "delete":
+            cnt = _class_student_count(db, cid)
+            if cnt:
+                skipped.append({"id": cid, "name": c.name,
+                                "reason": f"仍有 {cnt} 名学生"})
+                continue
+            db.delete(c)
+        else:
+            c.is_active = action == "enable"
+        done.append(cid)
+    db.commit()
+    return ok({"done": done, "skipped": skipped},
+              message=f"完成 {len(done)} 个，跳过 {len(skipped)} 个")
 
 
 @router.delete("/classes/{class_id}", summary="删除班级")
@@ -424,6 +571,82 @@ def import_students(
     db.commit()
     return ok({"created": created, "skipped": skipped},
               message=f"成功导入 {created} 名学生")
+
+
+@router.get("/classes/{class_id}/students", summary="班级学生列表（分页/搜索）")
+def list_class_students(
+    class_id: int, keyword: Optional[str] = None,
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db), _: User = Depends(get_current_user),
+    scope: DataScope = Depends(get_data_scope),
+):
+    klass = db.get(Class, class_id)
+    if not klass:
+        raise NotFoundException("班级不存在")
+    _assert_class_visible(scope, class_id)
+    stmt = select(User).where(
+        User.class_id == class_id, User.identity == "student")
+    if keyword:
+        like = f"%{keyword}%"
+        stmt = stmt.where((User.username.like(like)) | (User.real_name.like(like)))
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    rows = list(db.scalars(
+        stmt.order_by(User.username).offset((page - 1) * page_size).limit(page_size)
+    ).all())
+    items = [{
+        "id": u.id, "username": u.username, "real_name": u.real_name,
+        "phone": u.phone, "email": u.email, "status": u.status,
+        "grade_id": u.grade_id, "class_id": u.class_id,
+    } for u in rows]
+    return ok({"items": items, "total": total, "page": page, "page_size": page_size,
+               "class_name": klass.name})
+
+
+@router.get("/classes/{class_id}/students/export", summary="导出班级学生 CSV")
+def export_class_students(
+    class_id: int, db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+    scope: DataScope = Depends(get_data_scope),
+):
+    klass = db.get(Class, class_id)
+    if not klass:
+        raise NotFoundException("班级不存在")
+    _assert_class_visible(scope, class_id)
+    rows = db.scalars(select(User).where(
+        User.class_id == class_id, User.identity == "student"
+    ).order_by(User.username)).all()
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["学号", "姓名", "手机号", "邮箱", "状态"])
+    for u in rows:
+        writer.writerow([u.username, u.real_name, u.phone or "", u.email or "", u.status])
+    data = ("\ufeff" + buf.getvalue()).encode("utf-8")
+    filename = quote(f"{klass.name}-学生名单.csv")
+    return StreamingResponse(
+        io.BytesIO(data), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@router.post("/classes/{class_id}/students/batch-remove", summary="批量移出班级")
+def batch_remove_students(
+    class_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    _: User = Depends(require_perm("resource:class:write")),
+    scope: DataScope = Depends(get_data_scope),
+):
+    klass = db.get(Class, class_id)
+    if not klass:
+        raise NotFoundException("班级不存在")
+    _assert_class_visible(scope, class_id)
+    ids = [int(x) for x in (data.get("ids") or []) if str(x).isdigit()]
+    if not ids:
+        raise BusinessException("请选择学生")
+    rows = db.scalars(select(User).where(
+        User.id.in_(ids), User.class_id == class_id, User.identity == "student")).all()
+    for u in rows:
+        u.class_id = None
+    db.commit()
+    return ok({"removed": len(rows)}, message=f"已移出 {len(rows)} 名学生")
 
 
 @router.delete("/classes/{class_id}/students/{student_id}", summary="移出班级")

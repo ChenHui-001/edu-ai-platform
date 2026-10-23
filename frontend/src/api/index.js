@@ -53,6 +53,13 @@ export const eduApi = {
   deleteKnowledge: (id) => request.delete(`/edu/knowledge/${id}`),
   reindex: () => request.post('/edu/knowledge/reindex'),
   classes: (params) => request.get('/edu/classes', { params }),
+  classStats: (params) => request.get('/edu/classes/stats', { params }),
+  classStudents: (id, params) => request.get(`/edu/classes/${id}/students`, { params }),
+  exportClassStudents: (id) => request.get(`/edu/classes/${id}/students/export`,
+    { responseType: 'blob' }),
+  batchRemoveStudents: (id, data) => request.post(
+    `/edu/classes/${id}/students/batch-remove`, data),
+  batchClasses: (data) => request.post('/edu/classes/batch', data),
   // 注册页专用：匿名可读的班级简表（注册页不能调用需登录的 /edu/classes）
   classesPublic: () => request.get('/edu/classes/public'),
   // 人员简表（教师端下拉专用；/system/users 是 admin 专属，教师调用必 403）
