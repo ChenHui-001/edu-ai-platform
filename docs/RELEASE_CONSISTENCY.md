@@ -236,17 +236,17 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（1.8.0）
+## 八、当前状态（1.9.0）
 
 | 项 | 值 |
 |---|---|
-| VERSION | `1.8.0` |
-| commit | `0724382`（试卷管理 V2：权限/批量/统计/AI/UI） |
-| 本地镜像 | `nanpo/edu-ai-platform:1.8.0` / `:latest` / `:sha-0724382`（digest `sha256:a600a178…`） |
+| VERSION | `1.9.0` |
+| commit | `4bbc904`（AI 大模型配置 + AI 智能模块优化） |
+| 本地镜像 | `nanpo/edu-ai-platform:1.9.0` / `:latest` / `:sha-4bbc904`（digest `sha256:03a66939…`） |
 | ghcr | 未推送（手动发布 Docker Hub；未触发 CI） |
-| Docker Hub | 已推送 `1.8.0`（manifest-list digest `sha256:a600a178f148e36e54644aa6efb50142cc04ce1b5d2e06a7c96ed5d147ebb68d`） |
-| latest | 已推送，与 `1.8.0` 同一 digest |
-| 发布后校验 | 容器 health=`healthy`、version=`1.8.0`；试卷批量/AI 接口、47 页浏览器冒烟通过 |
+| Docker Hub | 已推送 `1.9.0`（manifest-list digest `sha256:03a66939f0bfceffd4b051b253bdddb17b3550d65eee6d8af1c871d5922f2351`） |
+| latest | 已推送，与 `1.9.0` 同一 digest |
+| 发布后校验 | 容器 health=`healthy`、version=`1.9.0`；AI 配置 DB key/status 验证、47 页浏览器冒烟通过 |
 | CI | 未触发（手动发布）；后续遵循 `docs/DELIVERY_RULES.md` |
 
 > 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：

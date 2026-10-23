@@ -277,7 +277,7 @@
 - **AI 配置 UI**：Key 不回填掩码、留空不修改、勾选清除、空 Key 测试、duration/usage、custom 必填、启用无 Key 确认、max_tokens capped/来源展示。
 - **AI 模块**：AgentChat 删除重复引用块、localStorage 持久化、复制/重新生成/停止生成、状态卡与配置入口；AgentGenerate 修复 AI 题保存到题库（kp 数组→单值、年级学科兜底、private），逐条失败原因；状态卡配置提示。
 - **验证**：E2E 850/836/0/14；后端动态 key/status 验证；前端 build/lint/test/bundle；浏览器 AI 三页无 console error。
-- **镜像**：1.9.0 构建/推送中（完成后回填 digest）。
+- **镜像**：`nanpo/edu-ai-platform:1.9.0` / `:latest` / `:sha-4bbc904` 已推送，manifest-list digest `sha256:03a66939f0bfceffd4b051b253bdddb17b3550d65eee6d8af1c871d5922f2351`（基于 commit `4bbc904`）；容器 health=`healthy`、version=`1.9.0`、47 页浏览器冒烟通过、AI 配置 DB key/状态验证通过。
 
 
 
