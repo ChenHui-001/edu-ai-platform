@@ -98,11 +98,49 @@
 
 ---
 
-## 本轮仍未覆盖（后续可选）
+## 第四轮：收尾四个遗留项 + 全量回归 + 镜像发布
 
-- `report.student_comparison` 的 `assign_rows` 仍一次性查询全站已发布下发记录，规模大时内存线性增长（非 N+1，未扩改）。
-- 前端图标仍走 `@element-plus/icons-vue` barrel，整包约 69KB 共享；可改逐 subpath 导入。
-- 前端未做真实浏览器逐页 E2E；按需样式依赖 unplugin 注入（构建产物已核验样式存在）。
-- 新增 devDependencies 带来 npm audit 的 2 个 dev 树漏洞（未处理，生产依赖不受影响）。
-- 1.0.42 镜像尚未发布到 registry（需发版流水线/凭据）。
+### P2-15 `student_comparison` 全站下发记录查询
+
+- **状态**：✅ 已修复
+- **问题**：`/report/teacher/student-comparison` 为计算完成率，把全站所有已发布非练习的 `TaskAssignment` 一次拉入内存再按学生归并；学校规模大时内存随全校数据线性增长（非 N+1）。
+- **改动**：`report.py` 查询增加 `or_(student_id in 本班学生, class_id == 本班)` 过滤；结果与内存归并完全等价（完成率只关心本班学生）。
+- **验证**：`py_compile`；全量 E2E 851 项 / 通过 837 / 失败 0。
+
+### P2-16 生产依赖漏洞（npm audit）
+
+- **状态**：✅ 已修复
+- **问题**：`markdown-it@14.3.2`（high）与 `echarts@5.6.0`（moderate）命中 npm audit 公告。
+- **改动**：升级 `markdown-it@^15.0.3`、`echarts@^6.1.0`（按需导入 API 兼容）；lock 同步。
+- **验证**：`npm audit` → **0 vulnerabilities**；`npm run build` / `lint` / `test` 全部通过（ECharts 6 构建正常，charts 分包约 506KB）。
+
+### P2-17 @element-plus/icons-vue barrel 图标体积
+
+- **状态**：✅ 已确认并加回归保护
+- **结论**：该包（2.3.2）只有一个 `dist/index.js` barrel，没有可按图标深导入的文件；但 Vite/Rollup 的 tree-shaking 已验证生效——产物中未使用的图标（Watermelon/Football/Basketball/IceCream/Mug 等）均不存在，仅打包实际使用的图标（约 69KB）。
+- **改动**：新增 `frontend/scripts/check-bundle.mjs`：构建后断言未使用图标不出现、单个 JS chunk ≤650KB；`package.json` 增加 `check:bundle`。若未来有人改回全量导入/全局注册，构建检查会失败。
+- **验证**：`npm run check:bundle` 通过（113 个 JS chunk，最大 charts ~506KB）。
+
+### P2-18 真实浏览器逐页 E2E
+
+- **状态**：✅ 已补上并执行
+- **改动**：新增 `tests/ui_e2e/browser_smoke.py`（Python Playwright，使用本机 Chrome/Edge，无需下载浏览器）：通过 `/auth/login` API 注入 token/权限快照，三端分别遍历菜单路由，检查未被踢回 `/login`/`/403`、`#app` 文本非空、无 pageerror/console error，失败截图。
+- **验证**（对最终 Docker 镜像真实浏览器执行）：
+  - admin 18 页、teacher 12 页、student 16 页，共 **46 页全部 PASS**，耗时 60.1s；
+  - 覆盖 Element Plus 按需组件、ECharts 6 图表页、markdown-it 15 渲染页。
+
+### P2-19 镜像构建与推送 Docker Hub
+
+- **状态**：✅ 已发布
+- **构建**：`docker build --target unified`，`GIT_COMMIT` 与当前 HEAD 一致；镜像内 `/app/BUILD_INFO` 已核对。
+- **验证**：临时容器 health=`healthy`、admin 登录成功、`/app/data` 属主 `app`(10001)；浏览器逐页冒烟通过。
+- **推送**：`nanpo/edu-ai-platform:1.0.42` 与 `:latest`（Docker Hub 账号 `nanpo`）。
+
+---
+
+## 收尾状态
+
+- 上一轮列出的 4 个遗留项（student_comparison 内存、图标 barrel、真实浏览器 E2E、npm audit）已全部处理；第 5 项「镜像未发布」已随本轮推送完成。
+- 全量回归：后端 E2E 851/837/0/14；前端 build/lint/test/bundle 检查全绿；真实浏览器 46 页全绿；npm audit 0。
+- 仍可选的长期事项（非缺陷）：前端未覆盖所有交互路径（仅逐页渲染冒烟）；图标总量受实际使用量决定；CI 可进一步接入浏览器冒烟与 `check:bundle`。
 
