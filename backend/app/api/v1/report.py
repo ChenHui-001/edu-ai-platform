@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
-from sqlalchemy import case, desc, func, select
+from sqlalchemy import case, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -372,12 +372,17 @@ def student_comparison(
         .group_by(WrongQuestion.student_id)
     ).all())
 
-    # ---- 4) 下发任务（一次取全，按学生/班级归属在内存归并）----
+    # ---- 4) 下发任务（只取本班相关，避免随全校数据线性增长）----
+    # 旧实现无差条件地拉全站已发布非练习下发记录，再在内存按学生/班级归并；
+    # 学校规模大时这里会加载数十万行。补齐「本班学生 或 本班班级」过滤后，
+    # 结果与内存归并完全等价（完成率只关心这些学生的下发）。
     assign_rows = db.execute(
         select(TaskAssignment.student_id, TaskAssignment.class_id, TaskAssignment.task_id)
         .join(TaskModel, TaskModel.id == TaskAssignment.task_id)
         .where(TaskModel.status == TaskStatus.PUBLISHED.value,
-               TaskModel.type != "practice")
+               TaskModel.type != "practice",
+               or_(TaskAssignment.student_id.in_(sids),
+                   TaskAssignment.class_id == class_id))
     ).all()
 
     # ---- 归并 ----
