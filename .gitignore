@@ -75,3 +75,9 @@ tests/ui_e2e/p3_*.png
 
 # 单阶段调试跑出的报告（不覆盖交付用的全量 E2E_REPORT.md）
 tests/E2E_REPORT.partial.md
+
+# 页面截图 / Playwright 快照 / 生成的页面快照（2026-10-23 起不再入库）
+ui_shots/
+.playwright-cli/
+login.yaml
+
