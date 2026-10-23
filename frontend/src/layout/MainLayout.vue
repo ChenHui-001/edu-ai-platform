@@ -126,7 +126,7 @@ import {
   School, HomeFilled, Fold, Expand, Cpu, Bell, ArrowDown, User, SwitchButton,
   Collection, Avatar, Stamp, Share, OfficeBuilding, Document, Clock, Paperclip,
   DataAnalysis, Setting, Notebook, Tickets, List, EditPen, TrendCharts, Reading,
-  MagicStick, Menu, UserFilled, PieChart, Edit, Timer, Warning, Refresh, DataLine,
+  MagicStick, UserFilled, PieChart, Edit, Timer, Warning, Refresh, DataLine,
   Medal, Star, Histogram, Calendar, Guide, Box
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
@@ -141,7 +141,7 @@ const ICONS = {
   School, HomeFilled, Fold, Expand, Cpu, Bell, ArrowDown, User, SwitchButton,
   Collection, Avatar, Stamp, Share, OfficeBuilding, Document, Clock, Paperclip,
   DataAnalysis, Setting, Notebook, Tickets, List, EditPen, TrendCharts, Reading,
-  MagicStick, Menu, UserFilled, PieChart, Edit, Timer, Warning, Refresh, DataLine,
+  MagicStick, UserFilled, PieChart, Edit, Timer, Warning, Refresh, DataLine,
   Medal, Star, Histogram, Calendar, Guide, Box
 }
 function iconOf(name) { return ICONS[name] || name }
@@ -156,7 +156,11 @@ const activeMenu = computed(() => route.path)
 // 菜单分组（按角色/权限点过滤）
 // allRoutes 是 router.getRoutes().filter() 返回的普通数组，不是 ref，
 // 渲染时直接用 allRoutes，不能用 allRoutes.value（会得到 undefined）。
-const allRoutes = router.getRoutes().filter(r => r.meta?.title && !r.meta.hidden && r.path.startsWith('/'))
+// 注意排除 public 路由：/403 与 /:pathMatch 兜底页也有 title，若不排除会被
+// 当作普通菜单项渲染，侧边栏就会出现无意义的「其他 → 无权访问/页面不存在」。
+const allRoutes = router.getRoutes().filter(
+  r => r.meta?.title && !r.meta.hidden && !r.meta.public && r.path.startsWith('/')
+)
 
 // 身份限定路由前缀：只有对应身份的用户能看到（分组配置里用 onlyIdentity 引用）
 const IDENTITY_PREFIXES = {
@@ -167,7 +171,7 @@ const menuGroups = computed(() => {
   const roles = userStore.permissions.roles || []
   const perms = userStore.permissions.permissions || []
   // 身份限定分组（如学习中心仅学生）：其前缀路由必须整体排除，
-  // 否则身份不符时这些路由会落进最后的「其他」兜底组（实测 admin 菜单出现「其他」并含 14 个学生页）
+  // 否则身份不符时这些路由会出现在菜单里（实测 admin 曾看到 14 个学生页）。
   const identity = userStore.userInfo?.identity
     || (userStore.isStudent ? 'student' : '')
   const hiddenPrefixes = Object.entries(IDENTITY_PREFIXES)
@@ -214,14 +218,15 @@ const menuGroups = computed(() => {
     if (items.length) result.push({ title: g.title, icon: g.icon, items })
   }
 
-  // 兜底：未被任何分组覆盖的路由集中展示，避免「授权了却找不到入口」
+  // 不再提供「其他」兜底分组：兜底组的唯一实际内容曾是 /403 与 404 兜底页
+  // （已在上面的 public 过滤中排除），业务路由若未被任何分组覆盖，说明新增
+  // 页面忘记登记分组 —— 这类问题应在开发期暴露，而不是以「其他」菜单遮住。
   const rest = allowed.filter(r => !matched.has(r.path))
-  if (rest.length) {
-    result.push({
-      title: '其他',
-      icon: 'Menu',
-      items: rest.map(r => ({ path: r.path, title: r.meta.title, icon: r.meta.icon || 'Document' }))
-    })
+  if (import.meta.env.DEV && rest.length) {
+    console.warn(
+      '[menu] 以下授权路由未归入任何菜单分组，不会显示在侧边栏，请补充 menuGroups 前缀：',
+      rest.map(r => `${r.path} (${r.meta.title})`)
+    )
   }
   return result
 })
