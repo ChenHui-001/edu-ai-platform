@@ -1,21 +1,18 @@
-"""教学基础档案接口：年级、学科、知识点、班级。"""
-import time
+"""教学基础档案接口：年级、学科、班级（知识点 V2 已迁移到 knowledge.py）。"""
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.agents.rag import index_knowledge, reindex_all
 from app.api.deps import (
     DataScope, get_current_manager, get_current_teacher, get_current_user,
     get_data_scope, require_perm,
 )
-from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Class, ClassRequest, Grade, KnowledgeMastery, KnowledgePoint, Notification,
+    Class, ClassRequest, Grade, KnowledgePoint, Notification,
     Subject, User,
 )
 from app.utils.common import dictify, now_local, ok
@@ -265,141 +262,9 @@ def clone_subject(
 
 
 # ---------------------------------------------------------------- 知识点
-@router.get("/knowledge", summary="知识点树")
-def knowledge_tree(
-    grade_id: Optional[int] = None, subject_id: Optional[int] = None,
-    subject_name: Optional[str] = None,
-    term: Optional[int] = None,
-    keyword: Optional[str] = None, db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    """知识点树。grade_id/subject_id 不传时返回全部（供前端初始化加载）。
-
-    `subject_name` 用于「只选学科、不选年级」的筛选场景：学科按年级配置
-    （唯一键 `(grade_id, name)`），同一名称对应 9 条记录、9 个 id，
-    用户只选「数学」时前端拿到的只是一个代表 id，直接按 id 过滤会漏掉
-    其他 8 个年级的数学知识点。按名称过滤才能覆盖全部年级。
-    """
-    stmt = select(KnowledgePoint).where(KnowledgePoint.is_active.is_(True))
-    if grade_id:
-        stmt = stmt.where(KnowledgePoint.grade_id == grade_id)
-    if subject_id:
-        stmt = stmt.where(KnowledgePoint.subject_id == subject_id)
-    if subject_name:
-        stmt = stmt.where(KnowledgePoint.subject_id.in_(
-            select(Subject.id).where(Subject.name == subject_name)
-        ))
-    if term:
-        stmt = stmt.where(KnowledgePoint.term == term)
-    if keyword:
-        stmt = stmt.where(or_(KnowledgePoint.name.like(f"%{keyword}%"),
-                              KnowledgePoint.keywords.like(f"%{keyword}%")))
-    rows = list(db.scalars(stmt.order_by(KnowledgePoint.sort, KnowledgePoint.id)).all())
-    return ok([dictify(r) for r in rows])
-
-
-@router.get("/knowledge/list", summary="知识点平铺列表")
-def knowledge_list(
-    grade_id: Optional[int] = None, subject_id: Optional[int] = None,
-    level: Optional[int] = None, keyword: Optional[str] = None,
-    params_limit: int = Query(200, le=1000),
-    db: Session = Depends(get_db), _: User = Depends(get_current_user),
-):
-    stmt = select(KnowledgePoint).where(KnowledgePoint.is_active.is_(True))
-    if grade_id:
-        stmt = stmt.where(KnowledgePoint.grade_id == grade_id)
-    if subject_id:
-        stmt = stmt.where(KnowledgePoint.subject_id == subject_id)
-    if level:
-        stmt = stmt.where(KnowledgePoint.level == level)
-    if keyword:
-        stmt = stmt.where(KnowledgePoint.name.like(f"%{keyword}%"))
-    return ok([dictify(r) for r in db.scalars(stmt.limit(params_limit)).all()])
-
-
-@router.post("/knowledge", summary="新增知识点")
-def create_knowledge(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(require_perm("resource:knowledge:write")),
-):
-    kp = KnowledgePoint(
-        name=data["name"], grade_id=data["grade_id"], subject_id=data["subject_id"],
-        level=int(data.get("level", 3)), parent_id=data.get("parent_id"),
-        path=data.get("path"), term=int(data.get("term", 1)),
-        code=data.get("code"), description=data.get("description"),
-        difficulty=data.get("difficulty", "medium"),
-        keywords=data.get("keywords"), sort=data.get("sort", 0),
-    )
-    db.add(kp)
-    db.commit()
-    db.refresh(kp)
-    index_knowledge(kp)
-    return ok(dictify(kp), message="知识点创建成功")
-
-
-@router.put("/knowledge/{kp_id}", summary="编辑知识点")
-def update_knowledge(
-    kp_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(require_perm("resource:knowledge:write")),
-):
-    kp = db.get(KnowledgePoint, kp_id)
-    if not kp:
-        raise NotFoundException("知识点不存在")
-    for f in ("name", "level", "parent_id", "path", "term", "code", "description",
-              "difficulty", "keywords", "sort", "is_active"):
-        if f in data:
-            setattr(kp, f, data[f])
-    db.commit()
-    index_knowledge(kp)
-    return ok(dictify(kp), message="知识点已更新")
-
-
-@router.delete("/knowledge/{kp_id}", summary="删除知识点")
-def delete_knowledge(
-    kp_id: int, db: Session = Depends(get_db), _: User = Depends(require_perm("resource:knowledge:write")),
-):
-    kp = db.get(KnowledgePoint, kp_id)
-    if not kp:
-        raise NotFoundException("知识点不存在")
-    # 引用检查：题目挂载 / 学生掌握度。直接删会让题目知识点悬空（SET NULL）、
-    # 学生掌握数据 CASCADE 清空（学习路径与掌握地图随之失真）。
-    from app.models import Question
-    q_cnt = db.scalar(select(func.count()).select_from(Question).where(
-        Question.knowledge_point_id == kp_id)) or 0
-    if q_cnt:
-        raise BusinessException(
-            f"该知识点已被 {q_cnt} 道题目引用，请先调整相关题目后再删除")
-    db.delete(kp)
-    db.commit()
-    return ok(message="知识点已删除")
-
-
-@router.post("/knowledge/reindex", summary="重建向量索引")
-def reindex(db: Session = Depends(get_db), _: User = Depends(get_current_teacher)):
-    """全量重建向量索引。
-
-    `reindex_all` 已改为批量 upsert（耗时下降一个数量级），
-    但仍可能因首次下载 embedding 模型（~79MB）或数据量过大而很慢。
-    这里传入 **wall-clock deadline**：到点后 reindex_all 在批间自行收尾，
-    保留已完成部分并返回 timed_out 标记，避免长时间挂起拖死调用方。
-    """
-    t0 = time.time()
-    budget = settings.REINDEX_TIMEOUT_SEC
-    stats = reindex_all(db, deadline=time.monotonic() + budget)
-    elapsed = int((time.time() - t0) * 1000)
-    stats["elapsed_ms"] = elapsed
-
-    if stats.get("timed_out"):
-        return ok(stats, message=(
-            f"向量索引重建超时（>{budget}s），已中断并保留已完成部分。"
-            "若为首次运行，多因需要下载 embedding 模型，请检查网络后重试"
-        ))
-    slow = elapsed > settings.REINDEX_WARN_MS
-    return ok(
-        stats,
-        message=("向量索引重建完成" if not slow
-                 else f"向量索引重建耗时偏长({elapsed}ms)，建议分批执行"),
-    )
+# V2 起知识点相关接口已迁移到 app/api/v1/knowledge.py（新文件，同前缀 /edu）。
+# 旧平铺接口 GET /edu/knowledge、/edu/knowledge/list 与
+# GET /edu/knowledge/mastery-overview 在新文件中保持路径与返回结构兼容。
 
 
 # ---------------------------------------------------------------- 班级
@@ -624,67 +489,8 @@ def people_brief(
 
 
 # ---------------------------------------------------------------- 班级掌握概览
-@router.get("/knowledge/mastery-overview", summary="班级知识点掌握概览（教师端）")
-def knowledge_mastery_overview(
-    class_id: int = Query(..., description="班级 ID"),
-    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
-    scope: DataScope = Depends(get_data_scope),
-):
-    """聚合班内学生在每个知识点上的掌握数据，薄弱优先排序，
-    供教师备课 / 讲评定位全班共性薄弱点。
-
-    数据来源 KnowledgeMastery（学生作答后自动沉淀），教师按任教班级
-    查看（DataScope 校验），学生无权访问他人班级聚合。
-    """
-    if not scope.is_super:
-        allowed = scope.class_ids()
-        if allowed is not None and class_id not in allowed:
-            if "grade_admin" not in user.role_codes:
-                raise BusinessException("无权查看该班级的掌握数据")
-
-    k = db.get(Class, class_id)
-    if not k:
-        raise NotFoundException("班级不存在")
-
-    stu_ids = db.scalars(select(User.id).where(
-        User.class_id == class_id, User.identity == "student",
-        User.status == "active",
-    )).all()
-    if not stu_ids:
-        return ok({"items": [], "student_count": 0, "class_name": k.name})
-
-    rows = db.execute(
-        select(
-            KnowledgeMastery.knowledge_point_id,
-            func.avg(KnowledgeMastery.mastery),
-            func.sum(KnowledgeMastery.total_count),
-            func.count(KnowledgeMastery.student_id),
-            func.sum(case((KnowledgeMastery.mastery < 60, 1), else_=0)),
-        ).where(
-            KnowledgeMastery.student_id.in_(stu_ids)
-        ).group_by(KnowledgeMastery.knowledge_point_id)
-    ).all()
-
-    kp_ids = {r[0] for r in rows}
-    kp_map = {x.id: x for x in db.scalars(
-        select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids))).all()} if kp_ids else {}
-
-    items = []
-    for kp_id_, avg_m, total, stu_cnt, weak in rows:
-        kp = kp_map.get(kp_id_)
-        if not kp:
-            continue
-        items.append({
-            "knowledge_point_id": kp_id_,
-            "name": kp.name,
-            "subject_id": kp.subject_id,
-            "avg_mastery": round(float(avg_m or 0), 1),
-            "total_count": int(total or 0),
-            "student_count": int(stu_cnt or 0),
-            "weak_count": int(weak or 0),
-        })
-    items.sort(key=lambda x: x["avg_mastery"])  # 薄弱优先
-    return ok({"items": items, "student_count": len(stu_ids), "class_name": k.name})
+# 已迁移到 app/api/v1/knowledge.py 的 GET /edu/knowledge/mastery-overview，
+# 路径与返回结构保持不变（本文件不再注册该路由，避免重复）。
 
 
 # ---------------------------------------------------------------- 教师建班申请（审核制）

@@ -173,3 +173,23 @@
 - **构建与验证**：镜像基于 commit `f9f256e`；容器 health=`healthy`、version=`1.0.43`、admin 登录成功、46 页浏览器冒烟全部通过。
 - **Docker Hub**：`nanpo/edu-ai-platform:1.0.43`、`:latest`、`:sha-f9f256e` 已推送，manifest-list digest `sha256:e90ffede3847e9ed247bbc2278cc6c2aaa8ab63a0b2037fbee36bf5fc7bc429c`。
 
+---
+
+### 1.1.0 知识点管理 V2（阶段 1+2）
+
+- **状态**：✅ 已实现（RAG/AI 为下一阶段）
+- **数据模型**：`KnowledgePoint` 新增 `textbook_version/status/source/owner_id`；`level` 默认 1；增加 `(grade_id,subject_id,parent_id)` 索引与 `(grade_id,subject_id,code)` 唯一约束（NULL 不冲突）。
+- **迁移**：`run_knowledge_v2_migration` 按用户确认**一次性清空旧平铺知识点**、建索引并写版本标记（旧库首次启动执行一次；新库空表不受影响）。`init_knowledge_points` 改为播种「学科 → 单元(level1) → 知识点(level2)」树，共 21 单元 + 72 知识点。
+- **后端 API**（新 `backend/app/api/v1/knowledge.py`，14 个路由）：
+  - 读：`tree`（嵌套 children + 题目数）、兼容旧 `GET /knowledge` / `list`（平铺）、详情（breadcrumb）、`stats`、`mastery-overview` 原路径保留；
+  - 写：创建/编辑/删除（同级重名、跨年级 parent、环检测、子节点/题目/掌握度/复习计划引用守卫、level/path 服务端维护）；`batch`（publish/archive/update/delete/move，越权整体 403）；`import`（xlsx/csv，dry-run、按行容错、自动补建中间层）、`template`、`export`；`reindex` 保留原逻辑。
+  - 权限：sys_admin 全量；grade_admin 本年级；teacher 仅 active `TeachingAssignment` 的 (grade_id,subject_id)；student 只读本年级 published。
+- **前端**：`KnowledgeManage.vue` 重写为「树视图（左树+右详情/编辑）/ 列表视图（多选 + 批量发布/归档/移动/删除）/ 统计卡 / 筛选（年级/学科/学期/状态/关键词）/ 导入（模板→dry-run→确认）/ 导出」；`api/index.js` 新增 `knowledgeApi`。
+- **验证**：
+  - 后端全量 E2E：851 项 / 通过 837 / 失败 0 / 环境跳过 14（含旧知识点/权限/引用删除用例）；
+  - 动态 API：树 21 根/93 节点、学生仅本年级（跨年级 403）、教师任教学科可写/跨学科 403、同级重名 400、批量/导入 dry_run/模板导出通过；
+  - 前端：build/lint/test/check:bundle 全部通过；真实 Chrome 打开新页面：94 个树节点、统计卡、树详情、列表多选与批量栏、导入弹窗均正常，无 console error。
+- **数据说明**：旧知识点数据按用户确认不保留；启动时一次性清空并重新播种，题目知识点引用会被置空（需要重新挂载/AI 自动挂载）。
+- **镜像**：1.1.0 构建/推送中（完成后回填 digest）。
+
+

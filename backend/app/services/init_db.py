@@ -475,24 +475,20 @@ def init_demo_data(db: Session) -> None:
 
 
 def init_knowledge_points(db: Session) -> None:
-    """初始化各年级各学科的核心知识点。
+    """初始化各年级各学科的知识点树（年级 → 学科 → 单元 → 知识点）。
 
-    知识点是 AI 组卷按考点抽题、错题归因、知识掌握地图三处功能的共同基础，
-    缺失会让这些功能全部退化为「无考点」模式。
-
-    幂等策略：按 (grade_id, subject_id, name) 去重，已存在的跳过，
-    这样既能补齐历史库缺失的知识点，又不会重复播种或覆盖教师自建内容。
+    V2 起不再播种平铺数据：每个学科按 4 条一组生成「第 N 单元」，
+    原知识点作为单元子级，parent_id/path/level 由种子直接维护。
+    知识点是 AI 组卷、错题归因、掌握地图的共同基础；空表才播种，
+    已有数据（管理员/教师维护或导入）一律不覆盖。
     """
+    if db.scalar(select(func.count()).select_from(KnowledgePoint)) or 0:
+        return
     grades = {g.grade_num: g for g in db.scalars(select(Grade)).all()}
     subjects = db.scalars(select(Subject)).all()
-    # (grade_id, subject_name) -> Subject
     sub_map = {(s.grade_id, s.name): s for s in subjects}
-    existing = {
-        (k.grade_id, k.subject_id, k.name)
-        for k in db.scalars(select(KnowledgePoint)).all()
-    }
 
-    count = 0
+    total = 0
     for grade_num, subj_map in KNOWLEDGE_POINTS.items():
         g = grades.get(grade_num)
         if not g:
@@ -501,22 +497,40 @@ def init_knowledge_points(db: Session) -> None:
             s = sub_map.get((g.id, subj_name))
             if not s:
                 continue
-            for i, (name, level, difficulty) in enumerate(items):
-                if (g.id, s.id, name) in existing:
-                    continue
-                db.add(
-                    KnowledgePoint(
-                        name=name, grade_id=g.id, subject_id=s.id, level=level,
-                        term=1, difficulty=difficulty, sort=i,
-                        path=f"{g.name}/{subj_name}/{name}",
-                        description=f"{g.name}{subj_name}「{name}」知识点",
-                    )
+            # 每组最多 4 个知识点组成一个单元；不足 2 个时补一条综合练习，
+            # 保证每个学科至少有「单元 + 2 个知识点」，避免树退化成单链。
+            names = list(items)
+            if len(names) < 2:
+                names.append((f"{subj_name}综合应用", 2, "medium"))
+            groups = [names[i:i + 4] for i in range(0, len(names), 4)]
+            for gidx, group in enumerate(groups, start=1):
+                unit = KnowledgePoint(
+                    name=f"{subj_name}·第{gidx}单元",
+                    grade_id=g.id, subject_id=s.id, level=1, parent_id=None,
+                    term=1, difficulty="medium", sort=gidx * 10,
+                    code=f"G{grade_num}-S{s.id}-U{gidx}",
+                    description=f"{g.name}{subj_name}第{gidx}单元",
+                    status="published", source="seed",
                 )
-                existing.add((g.id, s.id, name))
-                count += 1
-    if count:
+                db.add(unit)
+                db.flush()  # 需要 unit.id 作为 path 前缀与子级 parent_id
+                unit.path = str(unit.id)
+                for i, (name, _level, difficulty) in enumerate(group):
+                    child = KnowledgePoint(
+                        name=name, grade_id=g.id, subject_id=s.id, level=2,
+                        parent_id=unit.id, term=1, difficulty=difficulty,
+                        sort=i, code=f"G{grade_num}-S{s.id}-U{gidx}-K{i + 1}",
+                        description=f"{g.name}{subj_name}「{name}」知识点",
+                        keywords=name, status="published", source="seed",
+                    )
+                    db.add(child)
+                    db.flush()
+                    child.path = f"{unit.path}/{child.id}"
+                    total += 1
+                total += 1
+    if total:
         db.commit()
-        logger.info(f"知识点初始化完成（新增 {count} 条）")
+        logger.info(f"知识点树初始化完成（{total} 个节点，含单元）")
 
 
 def warn_default_admin_password(db: Session) -> None:

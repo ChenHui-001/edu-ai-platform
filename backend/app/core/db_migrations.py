@@ -34,7 +34,65 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
     # v1.0.42: AI 任务进度提示（前后端轮询要给出「正在做什么」）
     ("sys_agent_job", "progress", "INTEGER DEFAULT 0"),
     ("sys_agent_job", "stage", "VARCHAR(64)"),
+    # v1.1.0: 知识点 V2（树治理 / 状态 / 来源 / 创建者）
+    ("edu_knowledge_point", "textbook_version", "VARCHAR(64)"),
+    ("edu_knowledge_point", "status", "VARCHAR(16) DEFAULT 'published'"),
+    ("edu_knowledge_point", "source", "VARCHAR(16) DEFAULT 'manual'"),
+    ("edu_knowledge_point", "owner_id", "INTEGER"),
 ]
+
+
+# 知识点 V2 一次性迁移标记：旧数据是平铺结构且用户已确认不需要保留，
+# 首次升级时清空并按新层级重新播种；只执行一次，之后不再触碰业务数据。
+# 值即版本号：以后结构再升级时递增，旧值会自动触发对应迁移。
+_KNOWLEDGE_V2_MARKER = "knowledge_v2_migrated"
+_KNOWLEDGE_V2_MARKER_VALUE = "2"
+
+
+def run_knowledge_v2_migration(db: Session) -> bool:
+    """知识点结构升级：清空旧平铺数据 + 建索引 + 写迁移标记。
+
+    仅 SQLite 轻量迁移路径；全新库表为空，不会误删。返回是否执行了清空。
+    """
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        return False
+    try:
+        info = db.execute(text("PRAGMA table_info(edu_knowledge_point)")).fetchall()
+        if not info:
+            return False
+        applied = db.execute(text(
+            "SELECT value FROM sys_config WHERE key = :k"), {"k": _KNOWLEDGE_V2_MARKER}
+        ).first()
+        if applied and str(applied[0]) == _KNOWLEDGE_V2_MARKER_VALUE:
+            return False
+
+        # 旧结构（无 status 列）说明是从 V1 升级：按用户确认清空旧知识点。
+        # 新库 create_all 已带 status，表为空，DELETE 无副作用。
+        old_count = db.execute(text("SELECT COUNT(*) FROM edu_knowledge_point")).scalar() or 0
+        db.execute(text("DELETE FROM edu_knowledge_point"))
+
+        # 树查询/编码查重依赖的索引（create_all 只对新库生效，老库需显式补）
+        db.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_kp_grade_subject_parent "
+            "ON edu_knowledge_point (grade_id, subject_id, parent_id)"))
+        db.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_kp_subject_code "
+            "ON edu_knowledge_point (grade_id, subject_id, code) "
+            "WHERE code IS NOT NULL"))
+        db.execute(text(
+            "INSERT INTO sys_config "
+            "(key, value, value_type, category, is_public, created_at, updated_at) "
+            "VALUES (:k, :v, 'string', 'system', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value = :v, updated_at = CURRENT_TIMESTAMP"),
+            {"k": _KNOWLEDGE_V2_MARKER, "v": _KNOWLEDGE_V2_MARKER_VALUE})
+        db.commit()
+        logger.warning(
+            "知识点 V2 迁移完成：已清空 %s 条旧平铺数据并重建索引（按用户确认）", old_count)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        logger.error("知识点 V2 迁移失败: %s", exc)
+        return False
 
 
 def run_column_migrations(db: Session) -> List[str]:

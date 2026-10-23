@@ -2,7 +2,9 @@
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -59,24 +61,41 @@ class Class(Base):
 
 
 class KnowledgePoint(Base):
-    """多级知识点树：年级 - 学期 - 单元 - 章节 - 知识点。"""
+    """多级知识点树：年级 - 学科 - 单元 - 章节 - 知识点。"""
 
     __tablename__ = "edu_knowledge_point"
+    __table_args__ = (
+        Index("ix_kp_grade_subject_parent", "grade_id", "subject_id", "parent_id"),
+        # code 非空时在同一 grade+subject 下唯一；SQLite/PostgreSQL 都允许
+        # 多个 NULL，因此未填编码的知识点不受影响。
+        UniqueConstraint("grade_id", "subject_id", "code", name="uq_kp_subject_code"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), index=True)
-    level: Mapped[int] = mapped_column(Integer, default=4, comment="层级 1单元 2章节 3知识点")
+    level: Mapped[int] = mapped_column(Integer, default=1, comment="层级 1单元 2章节 3知识点")
     parent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True, comment="树形父级")
-    path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="物化路径 如 1-3-12")
+    path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="物化路径 如 1/3/12")
     grade_id: Mapped[int] = mapped_column(ForeignKey("edu_grade.id", ondelete="CASCADE"), index=True)
     subject_id: Mapped[int] = mapped_column(ForeignKey("edu_subject.id", ondelete="CASCADE"), index=True)
     term: Mapped[int] = mapped_column(Integer, default=1, comment="学期 1上 2下")
-    code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     difficulty: Mapped[str] = mapped_column(String(16), default="medium", comment="简单/中等/困难")
     keywords: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="检索关键词，逗号分隔")
     sort: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # V2 结构化治理字段
+    textbook_version: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, comment="教材版本：人教版/苏教版等")
+    status: Mapped[str] = mapped_column(
+        String(16), default="published", index=True, comment="draft/published/archived")
+    source: Mapped[str] = mapped_column(
+        String(16), default="manual", comment="manual/import/ai/seed")
+    owner_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True, index=True,
+        comment="创建者")
 
 
 class TeachingAssignment(Base):

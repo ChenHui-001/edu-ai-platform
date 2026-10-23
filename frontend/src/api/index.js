@@ -72,6 +72,30 @@ export const eduApi = {
   removeStudent: (cid, sid) => request.delete(`/edu/classes/${cid}/students/${sid}`)
 }
 
+// ---------------- 知识点 V2（树 / 批量 / 导入导出） ----------------
+// 契约见 docs/KNOWLEDGE_V2.md（阶段 1+2）。旧 eduApi.knowledge* 保留给其他页面兼容，
+// 知识点管理页统一走这里，不出现裸 URL。
+export const knowledgeApi = {
+  // 读取
+  tree: (params) => request.get('/edu/knowledge/tree', { params }),
+  list: (params) => request.get('/edu/knowledge', { params }),
+  get: (id) => request.get(`/edu/knowledge/${id}`),
+  stats: (params) => request.get('/edu/knowledge/stats', { params }),
+  // 写入
+  create: (data) => request.post('/edu/knowledge', data),
+  update: (id, data) => request.put(`/edu/knowledge/${id}`, data),
+  remove: (id) => request.delete(`/edu/knowledge/${id}`),
+  batch: (data) => request.post('/edu/knowledge/batch', data),
+  // 导入导出（二进制走 blob，模板/导出均为 xlsx）
+  import: (formData) => request.post('/edu/knowledge/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  template: () => request.get('/edu/knowledge/template', { responseType: 'blob' }),
+  export: (params) => request.get('/edu/knowledge/export',
+    { params, responseType: 'blob' }),
+  reindex: () => request.post('/edu/knowledge/reindex')
+}
+
 // ---------------- 题库与试卷 ----------------
 export const questionApi = {
   list: (params) => request.get('/question/questions', { params }),
