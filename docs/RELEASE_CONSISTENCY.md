@@ -236,17 +236,17 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（1.2.0）
+## 八、当前状态（1.3.0）
 
 | 项 | 值 |
 |---|---|
-| VERSION | `1.2.0` |
-| commit | `adac1cf`（知识点 V2 RAG 生命周期 + 语义搜索 + AI 生成/补全；镜像基于该 commit） |
-| 本地镜像 | `nanpo/edu-ai-platform:1.2.0` / `:latest` / `:sha-adac1cf`（digest `sha256:09e77c17…`） |
+| VERSION | `1.3.0` |
+| commit | `6be18dd`（知识点资料附件/学生知识资料页；镜像基于该 commit） |
+| 本地镜像 | `nanpo/edu-ai-platform:1.3.0` / `:latest` / `:sha-6be18dd`（digest `sha256:7f39504c…`） |
 | ghcr | 未推送（手动发布 Docker Hub；未触发 CI） |
-| Docker Hub | 已推送 `1.2.0`（manifest-list digest `sha256:09e77c17ddef055cf06419131c4219663a1a2e8e53e5cc7c492e3f523695ac6b`） |
-| latest | 已推送，与 `1.2.0` 同一 digest |
-| 发布后校验 | `docker buildx imagetools inspect` 已核对；真实 Chroma reindex/搜索/删除索引/覆盖率通过；容器 46 页浏览器冒烟通过 |
+| Docker Hub | 已推送 `1.3.0`（manifest-list digest `sha256:7f39504c180b9e484d0e471015473da069d502fb6ae21d1b9d612d764bdd8e25`） |
+| latest | 已推送，与 `1.3.0` 同一 digest |
+| 发布后校验 | 容器 health=`healthy`、version=`1.3.0`；学生附件预览/下载、教师越权 403、可见性开关、47 页浏览器冒烟通过 |
 | CI | 未触发（手动发布）；后续遵循 `docs/DELIVERY_RULES.md` |
 
 > 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：
