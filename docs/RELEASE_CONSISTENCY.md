@@ -236,17 +236,17 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（1.9.0）
+## 八、当前状态（2.0.0）
 
 | 项 | 值 |
 |---|---|
-| VERSION | `1.9.0` |
-| commit | `4bbc904`（AI 大模型配置 + AI 智能模块优化） |
-| 本地镜像 | `nanpo/edu-ai-platform:1.9.0` / `:latest` / `:sha-4bbc904`（digest `sha256:03a66939…`） |
+| VERSION | `2.0.0` |
+| commit | `02c4643`（教学管理 V2：任务/批改/教案） |
+| 本地镜像 | `nanpo/edu-ai-platform:2.0.0` / `:latest` / `:sha-02c4643`（digest `sha256:d17d3ad0…`） |
 | ghcr | 未推送（手动发布 Docker Hub；未触发 CI） |
-| Docker Hub | 已推送 `1.9.0`（manifest-list digest `sha256:03a66939f0bfceffd4b051b253bdddb17b3550d65eee6d8af1c871d5922f2351`） |
-| latest | 已推送，与 `1.9.0` 同一 digest |
-| 发布后校验 | 容器 health=`healthy`、version=`1.9.0`；AI 配置 DB key/status 验证、47 页浏览器冒烟通过 |
+| Docker Hub | 已推送 `2.0.0`（manifest-list digest `sha256:d17d3ad086e94c0a5411b280019189042d32c5ff2e2049c814ef747ee99a4d5c`） |
+| latest | 已推送，与 `2.0.0` 同一 digest |
+| 发布后校验 | 容器 health=`healthy`、version=`2.0.0`；三页教学统计/列表、47 页浏览器冒烟通过 |
 | CI | 未触发（手动发布）；后续遵循 `docs/DELIVERY_RULES.md` |
 
 > 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：
