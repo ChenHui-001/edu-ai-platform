@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ================================================================
-# 九年义务教育 AI 学习管理系统 - Docker Hub 一键推送脚本
+# 新芽学堂 · 九年义务教育 AI 学习平台 - Docker Hub 一键推送脚本
 #
 # ★ 本脚本**不编译任何镜像**：源镜像固定为 CI 构建的 ghcr 多架构镜像
 #   （ghcr.io/chenhui-001/edu-ai-platform:<tag>），用 imagetools 复制

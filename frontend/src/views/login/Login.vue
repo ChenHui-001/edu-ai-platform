@@ -3,8 +3,8 @@
     <div class="login-left">
       <div class="brand">
         <el-icon :size="46"><School /></el-icon>
-        <h1>九年义务教育学习管理系统</h1>
-        <p>AI Agent 版 · 覆盖教-学-练-考-评-改全教学流程</p>
+        <h1>新芽学堂</h1>
+        <p>九年义务教育 AI 学习平台 · 覆盖教-学-练-考-评-改全教学流程</p>
       </div>
       <ul class="feature-list">
         <li><el-icon><MagicStick /></el-icon> 6 大 AI Agent 协作智能引擎</li>

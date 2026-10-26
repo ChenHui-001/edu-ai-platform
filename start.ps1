@@ -1,5 +1,5 @@
 ﻿<#
-    九年义务教育 AI 学习管理系统 - PowerShell 启动器
+    新芽学堂 · 九年义务教育 AI 学习平台 - PowerShell 启动器
 
     定位：全部中文输出集中在这里。start.bat / stop.bat / manage.bat
     只做转发 —— .bat 必须保持「纯 ASCII 无 BOM」，因为 cmd 会把
@@ -96,7 +96,7 @@ function Write-Err   { param($msg) Write-Host "$script:Red[X]$script:Reset $msg"
 function Write-Banner {
     Write-Host ""
     Write-Host "$script:Cyan$( '═' * 60)$script:Reset"
-    Write-Host "$script:Cyan  九年义务教育 AI 学习管理系统   本地一键启动$script:Reset"
+    Write-Host "$script:Cyan  新芽学堂 · 九年义务教育 AI 学习平台   本地一键启动$script:Reset"
     Write-Host "$script:Cyan$( '═' * 60)$script:Reset"
     Write-Host ""
 }

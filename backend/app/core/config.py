@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     )
 
     # ---------------- 基础 ----------------
-    APP_NAME: str = "九年义务教育学习管理系统"
+    APP_NAME: str = "新芽学堂"
     # 留空则自动推导：环境变量 APP_VERSION > 根目录 VERSION 文件 > IMAGE_TAG > "dev"
     APP_VERSION: str = ""
     IMAGE_TAG: str = ""

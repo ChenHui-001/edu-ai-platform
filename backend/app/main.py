@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="九年义务教育学习管理系统（AI Agent 版）后端 API",
+    description="新芽学堂 · 九年义务教育 AI 学习平台（AI Agent 版）后端 API",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",

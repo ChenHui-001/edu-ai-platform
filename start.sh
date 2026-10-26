@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ================================================================
-# 九年义务教育 AI 学习管理系统 - 本地一键启动（macOS / Linux）
+# 新芽学堂 · 九年义务教育 AI 学习平台 - 本地一键启动（macOS / Linux）
 #
 # 用法：
 #   ./start.sh              启动服务
@@ -134,7 +134,7 @@ init_env() {
 do_start() {
   echo ""
   echo -e "${C_CYAN}$(printf '═%.0s' {1..60})${C_RESET}"
-  echo -e "${C_CYAN}  九年义务教育 AI 学习管理系统   本地一键启动${C_RESET}"
+  echo -e "${C_CYAN}  新芽学堂 · 九年义务教育 AI 学习平台   本地一键启动${C_RESET}"
   echo -e "${C_CYAN}$(printf '═%.0s' {1..60})${C_RESET}"
   echo ""
 

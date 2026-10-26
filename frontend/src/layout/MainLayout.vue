@@ -3,7 +3,7 @@
     <el-aside :width="collapsed ? '64px' : '220px'" class="aside">
       <div class="logo">
         <el-icon><School /></el-icon>
-        <span v-show="!collapsed">九年义务教育学习管理</span>
+        <span v-show="!collapsed">新芽学堂</span>
       </div>
       <el-scrollbar class="menu-scroll">
         <el-menu

@@ -104,7 +104,7 @@ STAGES = [    ("admin", "阶段一 · 管理员视角", "test_admin"),
 
 def banner():
     print("\033[1;95m" + "#" * 70)
-    print("#   九年义务教育 AI 学习管理系统 · 端到端自动化测试")
+    print("#   新芽学堂 · 九年义务教育 AI 学习平台 · 端到端自动化测试")
     print("#   admin → teacher1 → stu731 全链路验证")
     print("#" * 70 + "\033[0m")
 
