@@ -2,17 +2,23 @@
 # ================================================================
 # 九年义务教育 AI 学习管理系统 —— 自动交付流水线
 #
-# 流程：改动检测 → 端到端回归 → git commit → git push → 构建镜像 → (可选)推送
-# 设计原则：**测试不过就不提交、不构建、不推送**（fail fast，绝不带病上线）
+# 流程：改动检测 → 端到端回归(源码直跑) → git commit → git push
+#       → 等待 CI 发布 → 拉取 ghcr 多架构镜像 → (可选)复制到 Docker Hub
+# 设计原则：**测试不过就不提交、不推送**（fail fast，绝不带病上线）
+#
+# ★ 镜像唯一来源 = CI 构建的 ghcr 多架构镜像（ghcr.io/chenhui-001/edu-ai-platform）
+#   本机**不编译任何镜像**：回归用源码直跑，正式镜像等 CI 发布后 pull。
+#   好处：本地与服务器跑的是同一份（sha256 逐字节相同），杜绝
+#   「同版本号、不同内容」的两份镜像漂移。
 #
 # 用法：
-#   ./tools/auto_ship.sh                  # 全流程（不推送镜像）
-#   ./tools/auto_ship.sh --push           # 全流程 + 推送 Docker Hub
+#   ./tools/auto_ship.sh                  # 全流程（不推 Docker Hub）
+#   ./tools/auto_ship.sh --push           # 全流程 + 复制到 Docker Hub（多架构）
 #   ./tools/auto_ship.sh --no-push        # 不推 git（离线/临时验证用）
 #   ./tools/auto_ship.sh --msg "xxx"      # 自定义提交信息
-#   ./tools/auto_ship.sh --skip-test      # 跳过测试（仅提交+构建，慎用）
+#   ./tools/auto_ship.sh --skip-test      # 跳过测试（仅提交，慎用）
 #   ./tools/auto_ship.sh --bump patch     # 版本号 +1（1.0.8 -> 1.0.9）后交付
-#   ./tools/auto_ship.sh --dry-run        # 只跑测试，不提交不构建
+#   ./tools/auto_ship.sh --dry-run        # 只跑测试，不提交不拉镜像
 #   ./tools/auto_ship.sh --stages admin teacher
 #                                         # 只跑指定阶段（日常迭代用，快 5~10 倍）
 #   ./tools/auto_ship.sh --stages auto    # 按 git 改动自动选阶段
@@ -21,7 +27,7 @@
 #   1) 发版前；2) 改了 e2e_framework.py / 公共组件 / 数据模型；
 #   3) 连续改 3 个以上模块；4) CI 红了要在本地复现。
 #
-# 退出码：0 成功 / 1 测试失败 / 2 提交失败 / 3 构建失败 / 4 无改动
+# 退出码：0 成功 / 1 测试失败 / 2 提交失败 / 3 镜像拉取失败 / 4 无改动
 # ================================================================
 set -uo pipefail
 
@@ -36,6 +42,9 @@ MSG=""
 STAGES=""
 NAMESPACE="${DOCKERHUB_NAMESPACE:-nanpo}"
 REGISTRY="${DOCKERHUB_REPO:-edu-ai-platform}"
+# ghcr 是**唯一镜像来源**：镜像由 CI 构建（多架构 amd64+arm64），
+# 本地与服务器拉同一份，保证 sha256 逐字节一致。本地不再编译镜像。
+GHCR_IMAGE="${GHCR_IMAGE:-ghcr.io/chenhui-001/edu-ai-platform}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -220,76 +229,37 @@ if [ -n "$BUMP" ]; then
 fi
 
 # ---------- 1. 端到端回归 ----------
-TESTED_IMAGE=""
+# 回归**直接跑工作区源码**（uvicorn + 独立临时库），不构建任何本地镜像。
+# 理由：镜像的唯一来源是 CI 构建的 ghcr 多架构镜像 —— 本地与服务器必须跑
+# 同一份（sha256 逐字节相同），本地再编一份只会产生「两个同名不同内容的
+# 镜像」这种最危险的漂移。回归要验的是「即将提交的代码」，源码直跑更准确。
 if [ "$SKIP_TEST" -eq 1 ]; then
   step "1/5  端到端回归 —— 已跳过（--skip-test）"
   [ "$c_warn" ] && echo "  ${c_warn}⚠ 跳过测试直接交付，存在带病上线风险${c_reset}"
 else
-  step "1/5  端到端回归（按 --stages 选定；默认全量 811 项）"
+  step "1/5  端到端回归（源码直跑，不构建镜像）"
 
-  # 1.1 构建被测镜像
-  TESTED_IMAGE="edu-ai-platform:autoship-test"
-  echo "  构建被测镜像 ${TESTED_IMAGE} ..."
-  if ! docker build --target unified -t "$TESTED_IMAGE" \
-        --build-arg "APP_VERSION=$VERSION" -f Dockerfile . > /tmp/autoship_build.log 2>&1; then
-    tail -30 /tmp/autoship_build.log
-    die 3 "镜像构建失败，详见 /tmp/autoship_build.log"
-  fi
-  ok "被测镜像构建完成"
-
-  # 1.2 用独立数据目录启动（绝不复用开发库，避免污染 ./data）
-  CI_DATA="$(mktemp -d 2>/dev/null || echo "/tmp/autoship_data_$$")"
-  mkdir -p "$CI_DATA"
-  E2E_PORT="${E2E_PORT:-8099}"
-  CONTAINER="edu-autoship-$$"
-  echo "  启动容器 ${CONTAINER}（端口 ${E2E_PORT}，独立数据目录）..."
-  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-  docker run -d --name "$CONTAINER" -p "${E2E_PORT}:80" \
-    -e LLM_ENABLED=false -e SCHEDULER_ENABLED=false \
-    -e SECRET_KEY="autoship_secret_not_for_prod_$(date +%s)" \
-    -v "${CI_DATA}:/app/data" "$TESTED_IMAGE" >/dev/null
-
-  # 1.3 等待健康
-  READY=0
-  for i in $(seq 1 60); do
-    if curl -fsS --noproxy '*' "http://localhost:${E2E_PORT}/api/v1/health" >/dev/null 2>&1; then
-      READY=1; break
-    fi
-    [ $((i % 5)) -eq 0 ] && echo "  等待服务启动... ($i/60)"
-    sleep 2
-  done
-  if [ "$READY" -ne 1 ]; then
-    echo "  --- 容器日志 ---"; docker logs "$CONTAINER" --tail 80
-    docker rm -f "$CONTAINER" >/dev/null 2>&1
-    die 1 "服务启动超时"
-  fi
-  ok "服务就绪"
-
-  # 1.4 跑测试（e2e_framework 优先读 E2E_BASE 环境变量）
+  # 1.1 跑回归：复用 run_e2e.sh（内部已处理残留进程检查 → mktemp 独立数据目录
+  #      → 自动选空闲端口 → 校验 /health 的 server_time 契约 → 跑 run_all.py → 清理）
   PY="${PYTHON_BIN:-python3}"
   command -v "$PY" >/dev/null 2>&1 || PY=python
-  if [ -n "$STAGES" ] && [ "$STAGES" != "ALL" ]; then
-    RUN_ARGS="$STAGES"
-    echo "  运行 tests/run_all.py $RUN_ARGS（仅选定阶段）..."
-  else
-    RUN_ARGS=""
-    echo "  运行 tests/run_all.py（全量）..."
-  fi
   TEST_LOG="/tmp/autoship_test.log"
-  # shellcheck disable=SC2086  # RUN_ARGS 需要按空格拆成多个阶段名
-  E2E_BASE="http://localhost:${E2E_PORT}" "$PY" tests/run_all.py $RUN_ARGS > "$TEST_LOG" 2>&1
+  if [ -n "$STAGES" ] && [ "$STAGES" != "ALL" ]; then
+    echo "  运行 tests/run_all.py ${STAGES}（仅选定阶段）..."
+    PYTHON_BIN="$PY" bash tools/run_e2e.sh $STAGES > "$TEST_LOG" 2>&1
+  else
+    echo "  运行 tests/run_all.py（全量）..."
+    PYTHON_BIN="$PY" bash tools/run_e2e.sh > "$TEST_LOG" 2>&1
+  fi
   TEST_RC=$?
   tail -25 "$TEST_LOG"
-
-  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-  rm -rf "$CI_DATA"
 
   if [ $TEST_RC -ne 0 ]; then
     echo ""
     echo "  ${c_err}失败用例明细：${c_reset}"
     grep -A100 "失败用例" "$TEST_LOG" | head -40
     echo ""
-    echo "  ${c_err}测试未通过 —— 已中止，不提交、不构建、不推送${c_reset}"
+    echo "  ${c_err}测试未通过 —— 已中止，不提交、不推送${c_reset}"
     echo "  完整日志: ${TEST_LOG}"
     exit 1
   fi
@@ -298,8 +268,7 @@ else
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
-  step "dry-run 模式 —— 测试已跑完，跳过提交与构建"
-  docker rmi "$TESTED_IMAGE" >/dev/null 2>&1 || true
+  step "dry-run 模式 —— 测试已跑完，跳过提交与镜像拉取"
   echo ""
   echo "${c_ok}✓ dry-run 完成：测试通过，未做任何提交或构建${c_reset}"
   exit 0
@@ -346,44 +315,93 @@ else
   fi
 fi
 
-# ---------- 3. 构建正式镜像 ----------
-step "3/5  构建镜像 ${REGISTRY}:${VERSION}"
+# ---------- 3. 拉取 CI 构建的多架构镜像（唯一镜像来源） ----------
+# **本地不再编译任何镜像。** 镜像唯一来源 = CI 构建的 ghcr 多架构镜像，
+# 本地与服务器跑同一份（sha256 逐字节相同），从根本上消除
+# 「本地自建一份、远程一份，同版本号不同内容」这种最危险的漂移。
+step "3/5  拉取多架构镜像 ${GHCR_IMAGE}:${VERSION}"
 
-# 构建前一致性校验：确认 VERSION 已提交、已推送、tag 自洽。
+# 一致性校验：确认 VERSION 已提交、已推送、tag 自洽。
 # **必须在 git commit 之后**跑 —— 此时工作区应干净，commit 已是最终的。
-# 不通过就不构建：一个无法溯源的镜像会静默覆盖线上，比不构建更糟。
 GATE_PRE_RC=0
 "$GATE_PY" tools/check_release_consistency.py --pre --no-image || GATE_PRE_RC=$?
 if [ "$GATE_PRE_RC" -ne 0 ]; then
-  die 3 "发布前一致性校验未通过（见上方明细），已中止构建"
+  die 3 "发布前一致性校验未通过（见上方明细），已中止"
 fi
 
-FINAL_LOCAL="edu-ai-platform:${VERSION}"
 GIT_COMMIT="$(git rev-parse HEAD)"
-if docker build --target unified -t "$FINAL_LOCAL" \
-      --build-arg "APP_VERSION=${VERSION}" \
-      --build-arg "GIT_COMMIT=${GIT_COMMIT}" \
-      --build-arg "BUILD_TIME=$(date '+%Y-%m-%dT%H:%M:%S%z')" \
-      -f Dockerfile . > /tmp/autoship_final.log 2>&1; then
-  ok "镜像构建完成：$FINAL_LOCAL（commit ${GIT_COMMIT:0:7}）"
-else
-  tail -30 /tmp/autoship_final.log
-  die 3 "正式镜像构建失败，详见 /tmp/autoship_final.log"
-fi
 
-docker rmi "$TESTED_IMAGE" >/dev/null 2>&1 || true
-docker image prune -f >/dev/null 2>&1 || true
+# 3.1 等待 CI 把该版本发布到 ghcr。
+# 代码刚 push，CI 的 docker-publish 工作流此刻才开始构建（多架构 + QEMU，
+# 实测需 20~45 分钟）。这里轮询到 manifest 出现为止，超时即中止。
+WAIT_MAX="${CI_WAIT_MAX:-2700}"   # 默认 45 分钟
+WAITED=0
+while true; do
+  if docker manifest inspect "${GHCR_IMAGE}:${VERSION}" >/dev/null 2>&1; then
+    ok "CI 已发布 ${VERSION}（等待 ${WAITED}s）"
+    break
+  fi
+  if [ "$WAITED" -ge "$WAIT_MAX" ]; then
+    echo ""
+    echo "  ${c_err}等待 CI 发布镜像超时（${WAIT_MAX}s）${c_reset}"
+    echo "  ${GHCR_IMAGE}:${VERSION} 尚未出现在 registry"
+    echo "  请检查 GitHub Actions 的「Docker 镜像发布」工作流是否成功"
+    die 3 "CI 未发布镜像"
+  fi
+  [ $((WAITED % 60)) -eq 0 ] && echo "  等待 CI 发布镜像... (${WAITED}s/${WAIT_MAX}s)"
+  sleep 15
+  WAITED=$((WAITED + 15))
+done
+
+# 3.2 拉取（多架构 index，含 amd64/arm64）
+if ! docker pull "${GHCR_IMAGE}:${VERSION}"; then
+  die 3 "拉取镜像失败：${GHCR_IMAGE}:${VERSION}"
+fi
+ok "已拉取 ${GHCR_IMAGE}:${VERSION}"
+
+# 3.3 核对镜像内指纹：版本与 commit 必须等于本地 HEAD。
+# 不能只信拉取成功——拉到的可能是缓存的旧层。
+IMG_VER="$(docker run --rm --entrypoint sh "${GHCR_IMAGE}:${VERSION}" -c 'cat /app/VERSION' 2>/dev/null | tr -d '\r\n ')"
+IMG_COMMIT="$(docker run --rm --entrypoint sh "${GHCR_IMAGE}:${VERSION}" -c 'grep ^commit /app/BUILD_INFO | cut -d= -f2' 2>/dev/null | tr -d '\r\n ')"
+if [ "$IMG_VER" != "$VERSION" ] || [ "$IMG_COMMIT" != "$GIT_COMMIT" ]; then
+  die 3 "镜像指纹不匹配：镜像内 version=${IMG_VER:-?} commit=${IMG_COMMIT:-?}，期望 version=${VERSION} commit=${GIT_COMMIT}"
+fi
+ok "镜像指纹一致：version=${IMG_VER} commit=${IMG_COMMIT:0:7}"
+
+FINAL_LOCAL="${GHCR_IMAGE}:${VERSION}"
+
+# 3.4 清理历史遗留的本地自建镜像（只保留 ghcr 多架构镜像这一份来源）
+CLEANED="$(docker images --format '{{.Repository}}:{{.Tag}}' \
+  | grep -v '^ghcr\.io/chenhui-001/edu-ai-platform:' \
+  | grep -E '^(edu-ai-platform|nanpo/edu-ai-platform):' \
+  | wc -l | tr -d ' ')"
+if [ "${CLEANED:-0}" -gt 0 ]; then
+  docker images --format '{{.Repository}}:{{.Tag}}' \
+    | grep -v '^ghcr\.io/chenhui-001/edu-ai-platform:' \
+    | grep -E '^(edu-ai-platform|nanpo/edu-ai-platform):' \
+    | xargs -r docker rmi -f >/dev/null 2>&1 || true
+  ok "已清理 ${CLEANED} 个历史本地镜像（只保留 ghcr 多架构镜像）"
+fi
 
 # ---------- 4. 推送（可选） ----------
 if [ "$PUSH" -eq 1 ]; then
-  step "4/5  推送 Docker Hub"
+  step "4/5  推送 Docker Hub（复制 ghcr 的多架构 index，不重新编译）"
   if ! docker info 2>/dev/null | grep -q "Username:"; then
     die 1 "未登录 Docker Hub，请先 docker login"
   fi
   REMOTE="${NAMESPACE}/${REGISTRY}:${VERSION}"
-  docker tag "$FINAL_LOCAL" "$REMOTE" && docker tag "$FINAL_LOCAL" "${NAMESPACE}/${REGISTRY}:latest"
-  docker push "$REMOTE" && docker push "${NAMESPACE}/${REGISTRY}:latest" \
-    && ok "已推送 $REMOTE" || die 3 "推送失败"
+  # 用 imagetools **复制整个 manifest index**（含 amd64/arm64 两个子 manifest）。
+  # 若改用 docker tag + docker push，只会推当前平台的单架构镜像，
+  # 造成「Docker Hub 是单架构、ghcr 是多架构」的隐性降级。
+  if ! docker buildx imagetools create -t "$REMOTE" "$FINAL_LOCAL"; then
+    die 3 "复制 manifest index 失败：$REMOTE"
+  fi
+  docker buildx imagetools create -t "${NAMESPACE}/${REGISTRY}:latest" "$FINAL_LOCAL" || true
+  if ! docker buildx imagetools push "$REMOTE"; then
+    die 3 "推送失败：$REMOTE"
+  fi
+  docker buildx imagetools push "${NAMESPACE}/${REGISTRY}:latest" || true
+  ok "已推送 $REMOTE（多架构）"
 
   # 推送后回查：不能只信 docker push 的退出码——它只说明字节传上去了，
   # 不说明传上去的是不是这次的代码。这里比对远端镜像内的版本与 commit 指纹。
@@ -401,6 +419,6 @@ echo "${c_ok}══════════════════════�
 echo " ${c_ok}✓ 自动交付完成${c_reset}  版本 ${VERSION}"
 echo " ${c_ok}══════════════════════════════════════════════${c_reset}"
 echo "  提交：$(git log -1 --format='%h %s' | cut -c1-60)"
-echo "  镜像：$FINAL_LOCAL"
+echo "  镜像：$FINAL_LOCAL（ghcr 多架构，本地与服务器同源）"
 echo "  启动：docker run -d -p 8080:80 -v ./data:/app/data $FINAL_LOCAL"
 echo ""

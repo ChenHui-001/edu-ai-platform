@@ -18,7 +18,10 @@ services:
         # 写入镜像内 /app/BUILD_INFO，供「本地镜像是否落后于代码」判断与发版核对。
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
         BUILD_TIME: ${BUILD_TIME:-unknown}
-    image: ${DOCKERHUB_REPO:-edu-ai-platform}:${IMAGE_TAG:-latest}
+    # 镜像来源：**只有 ghcr 一处**（CI 构建的多架构镜像 amd64+arm64）。
+    # 本地与服务器拉同一份，sha256 逐字节相同 —— 不再本地编译，
+    # 杜绝「同版本号不同内容」的两份镜像漂移。
+    image: ${IMAGE_REGISTRY:-ghcr.io/chenhui-001/edu-ai-platform}:${IMAGE_TAG:-latest}
     container_name: edu-platform
     restart: unless-stopped
     ports:
