@@ -34,9 +34,9 @@ def run():
         if isinstance(c, dict) and c.get("key"):
             cfg[c["key"]] = c.get("value")
     mt = cfg.get("llm_max_tokens")
-    check("★ LLM max_tokens 已下调（默认 2048，非 4096）",
-          mt is None or str(mt) in ("2048", "2048.0"),
-          f"系统配置 llm_max_tokens={mt}（未配置时取 settings 默认 2048）")
+    check("★ LLM max_tokens 默认 8192（适配 reasoning 模型，2048 会被推理 token 吃光）",
+          mt is None or str(mt) in ("8192", "8192.0"),
+          f"系统配置 llm_max_tokens={mt}（未配置时取 settings 默认 8192）")
 
     # ============================================================
     # 2. 限流（逐次调用轻量接口，观察第 N+1 次被拒）

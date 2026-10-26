@@ -483,24 +483,86 @@ def log_agent_call(
 
 
 # ---------------------------------------------------------------- JSON 解析
-def extract_json(content: str) -> Optional[Any]:
-    """从模型输出中提取 JSON（兼容 ```json 包裹、额外文本）。"""
-    if not content:
-        return None
-    text = content.strip()
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE).strip()
+# 尾随逗号：模型输出 JSON 数组/对象末尾经常多打一个逗号（如 {"a":1,}），
+# 标准 JSON 解析器直接报错 → 明明有完整输出却被判为「无法解析」→ 静默降级。
+_TRAILING_COMMA = re.compile(r",\s*([}\]])")
+
+
+def _loads_lenient(text: str) -> Optional[Any]:
+    """宽容 JSON 解析：先原样解析，失败则去掉尾随逗号再解析。"""
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # 提取第一个 JSON 对象或数组
-    for pattern in (r"\{[\s\S]*\}", r"\[[\s\S]*\]"):
-        m = re.search(pattern, text)
-        if m:
-            try:
-                return json.loads(m.group())
-            except json.JSONDecodeError:
-                continue
+    fixed = _TRAILING_COMMA.sub(r"\1", text)
+    if fixed != text:
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _find_balanced(text: str, open_ch: str, close_ch: str) -> Optional[str]:
+    """从 text 中提取第一个**结构完整**的 JSON 片段（括号配对，跳过字符串内容）。
+
+    不用贪婪正则 r'\\[[\\s\\S]*\\]'：输出被 max_tokens 截断时，贪婪正则会
+    匹配到「半个数组」，再从残缺数组里捞出一个完整的小对象，把「输出被截断」
+    伪装成「解析成功但内容为空」——上层拿到空题目却不报错。配对扫描只接受
+    结构闭合的片段，截断时返回 None，交给上层按「解析失败」处理。
+    """
+    start = text.find(open_ch)
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
+def extract_json(content: str) -> Optional[Any]:
+    """从模型输出中提取 JSON（兼容 ```json 包裹、额外文字、尾随逗号）。"""
+    if not content:
+        return None
+    text = content.strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE).strip()
+    parsed = _loads_lenient(text)
+    if parsed is not None:
+        return parsed
+    # 模型常在 JSON 前后夹带说明文字。按「首个完整片段」提取：
+    # 文本以 [ 或 { 开头时只找同类型的外层结构（被截断就找不到 → 判失败），
+    # 否则两种都找（兼容「说明 + JSON + 说明」）。
+    stripped = text.lstrip()
+    if stripped.startswith("["):
+        candidates = (("[", "]"),)
+    elif stripped.startswith("{"):
+        candidates = (("{", "}"),)
+    else:
+        candidates = (("[", "]"), ("{", "}"))
+    for open_ch, close_ch in candidates:
+        snippet = _find_balanced(text, open_ch, close_ch)
+        if snippet:
+            parsed = _loads_lenient(snippet)
+            if parsed is not None:
+                return parsed
     return None
 
 

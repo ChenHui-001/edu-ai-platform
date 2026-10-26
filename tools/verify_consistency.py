@@ -19,7 +19,6 @@
     DEPLOY_PASS=xxx python tools/verify_consistency.py    # 服务器需要密码
 """
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -199,10 +198,8 @@ def main():
             BAD += 1
             print(f"  \033[91m✘\033[0m ③ ghcr 镜像 {GHCR_IMAGE}:{ver} 不存在：{err[:80]}")
 
-    local_img_sha = ""
     img_ver, img_commit, err = _img_fingerprint(f"{GHCR_IMAGE}:{ver}")
     if img_ver:
-        local_img_sha = img_commit
         check("   镜像内 VERSION", img_ver, ver)
         check("   镜像内 commit", img_commit, img_expect)
     else:

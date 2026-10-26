@@ -22,7 +22,9 @@ class QuestionGeneratorAgent(BaseAgent):
 1. 题目必须严格符合该年级该学科的教学大纲和认知水平，不超纲。
 2. 题干清晰准确，选项互斥且有区分度，干扰项合理。
 3. 解析要讲清解题思路和易错点。
-4. 只输出 JSON 数组，不要任何额外文字。
+4. 只输出 JSON 数组，不要任何额外文字；**不要换行和缩进**，请输出紧凑 JSON。
+   （缩进与换行会显著占用 max_tokens 预算，推理型模型的 thinking token 还要
+   再分走一部分，预算不足时正文会被截断成非法 JSON。）
 
 输出格式：
 [
@@ -112,9 +114,13 @@ difficulty 取值：easy / medium / hard"""
                                biz_type="question_generate", json_mode=True)
 
         if not result["success"] or not result.get("parsed"):
+            # 把真实原因带下去：「未配置 Key」「鉴权失败」「输出被截断」是三类
+            # 完全不同的问题，笼统报「请配置 LLM_API_KEY」会把运维引向错误方向
+            # （实测：Key 正常，只是 max_tokens 被推理 token 吃光导致正文为空）。
             return self.fallback(db, grade_id=grade_id, subject_id=subject_id,
                                  question_type=question_type, count=count,
-                                 difficulty=difficulty, save=save, user_id=user_id)
+                                 difficulty=difficulty, save=save, user_id=user_id,
+                                 reason=result.get("reason") or "")
 
         items = result["parsed"]
         if isinstance(items, dict):
@@ -151,6 +157,15 @@ difficulty 取值：easy / medium / hard"""
             if save:
                 db.add(q)
                 saved += 1
+
+        if not questions:
+            # 解析出了结构却没有一道可用题目（缺 stem 等必要字段），
+            # 同样按失败处理并说明原因 —— 否则前端会看到「生成成功但 0 道题」
+            # 的空结果，比降级提示更难排查。
+            return self.fallback(db, grade_id=grade_id, subject_id=subject_id,
+                                 question_type=question_type, count=count,
+                                 difficulty=difficulty, save=save, user_id=user_id,
+                                 reason="模型返回的题目缺少题干等必要字段")
 
         if save:
             db.commit()
@@ -200,12 +215,17 @@ difficulty 取值：easy / medium / hard"""
              "analysis": q.analysis, "options": q.options}
             for q in rows
         ]
+        reason = str(kwargs.get("reason") or "")
+        if not reason or "未配置" in reason or "API_KEY" in reason:
+            tip = "模型不可用，已从公共题库匹配相似题目。请配置 LLM_API_KEY 启用 AI 生成。"
+        else:
+            tip = f"AI 生成未成功（{reason}），已从公共题库匹配相似题目。"
         return {
             "questions": items,
             "total": len(items),
             "saved": 0,
             "reused": len(items),
-            "tip": "模型不可用，已从公共题库匹配相似题目。请配置 LLM_API_KEY 启用 AI 生成。",
+            "tip": tip,
         }
 
     # ---------------- 工具 ----------------

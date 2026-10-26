@@ -42,6 +42,11 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       LLM_ENABLED: ${LLM_ENABLED:-true}
+      # 推理型模型（reasoning）的 thinking token 与正文共享 max_tokens 预算，
+      # 2048 会被推理吃光导致正文为空 → AI 出题静默降级。默认给足预算。
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-8192}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.7}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-120}
       # 业务
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
@@ -50,9 +55,15 @@ services:
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
       TZ: Asia/Shanghai
     volumes:
-      # 数据持久化
-      - ./data:/app/data
-      # 日志
+      # 数据持久化：**用命名卷，而不是 ./data 绑定挂载**。
+      # SQLite 默认 WAL 模式，需要 -wal/-shm 旁文件与 POSIX  advisory 锁。
+      # Docker Desktop 的 Windows 绑定挂载（9p / gRPC-FUSE）不完整支持这些语义：
+      # 表现是「第一个连接正常、之后任何新连接一律 unable to open database file」，
+      # 于是 AI 配置读取（_get_db_value 走独立 SessionLocal）与 AI 调用日志写入
+      # （daemon 线程另开连接）静默失败 —— 前者让 LLM 配置读不到而误判「未配置」。
+      # 命名卷落在容器所在 Linux 文件系统上，锁语义完整，多连接正常工作。
+      - edu-data:/app/data
+      # 日志仍留在宿主机，便于直接排查
       - ./logs:/app/data/logs
     # 最小加固：禁止进程通过 setuid/setgid 二进制提权（容器内 root 仍可
     # 主动 setuid 降权给 app 用户，nginx master 照常绑定 80）。
@@ -73,3 +84,9 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+
+volumes:
+  # 数据卷（不写 name 时 compose 会按项目名生成 edu-ai-platform_edu-data；
+  # 显式命名便于跨项目/跨目录复用同一份数据）
+  edu-data:
+    name: edu-data

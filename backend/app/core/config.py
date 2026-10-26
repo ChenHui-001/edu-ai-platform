@@ -102,10 +102,15 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "https://api.deepseek.com/v1"
     LLM_MODEL: str = "deepseek-chat"
     LLM_TEMPERATURE: float = 0.7
-    # 输出 token 是 LLM 耗时的主要来源：4096 会让单次调用接近 60s 超时边界。
-    # 实测出题 5 题 / 笔记整理 / 组卷等任务输出均在 2k token 以内，
-    # 故默认调整为 2048（可通过系统配置 llm_max_tokens 覆盖）。
-    LLM_MAX_TOKENS: int = 2048
+    # 输出 token 预算决定**推理型模型能不能给出正文**，不能按非推理模型标定。
+    # MiniMax-M3.1-Flash 这类 reasoning 模型的 thinking token 与正文**共享同一
+    # max_tokens 预算**：实测 2048 时 reasoning 吃掉 2047，finish_reason=length
+    # 且正文 content 为空 → JSON 解析失败 → AI 出题静默降级为题库复用，
+    # 对外却报「模型不可用，请配置 LLM_API_KEY」（误导）。
+    # 原来的 2048 是在 deepseek-chat（无推理）上实测「输出均在 2k 以内」定的，
+    # 换成推理模型后该假设失效，故提高到 8192（实测 reasoning 1535 + 正文正常）。
+    # 超时由 LLM_TIMEOUT 与 max_retries=1 兜底，不靠压低预算来省时间。
+    LLM_MAX_TOKENS: int = 8192
     # AI 接口按用户限流（每分钟），防止高频触发生成刷 token
     AGENT_RATE_LIMIT_PER_MIN: int = 12
     LLM_TIMEOUT: int = 60

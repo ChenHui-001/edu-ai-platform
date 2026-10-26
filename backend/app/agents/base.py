@@ -94,7 +94,23 @@ class BaseAgent:
             parsed = extract_json(resp["content"])
             if parsed is not None:
                 return {"success": True, "parsed": parsed, "raw": resp["content"]}
-            return {"success": True, "parsed": None, "raw": resp["content"]}
+            # 解析失败**不等于**模型没干活：请求成功但正文不是可解析的 JSON。
+            # 常见成因是 max_tokens 预算被 reasoning token 吃光（正文为空），
+            # 或模型没按 JSON 格式输出。必须带上原因 —— 否则上层只能笼统报
+            # 「模型不可用」，把「没配 Key」和「输出被截断」混为一谈，
+            # 运维会被引向完全错误的方向。
+            empty = not (resp["content"] or "").strip()
+            return {
+                "success": True,
+                "parsed": None,
+                "raw": resp["content"],
+                "reason": (
+                    "模型返回了内容但不是可解析的 JSON"
+                    + ("（响应正文为空，通常是 max_tokens 预算被推理 token 耗尽）"
+                       if empty else
+                       "（可能是输出被 max_tokens 截断，或模型未按 JSON 格式输出）")
+                ),
+            }
         return {"success": False, "reason": resp.get("reason", "模型调用失败"), "raw": ""}
 
 
