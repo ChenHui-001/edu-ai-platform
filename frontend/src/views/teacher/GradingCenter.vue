@@ -13,9 +13,42 @@
           </template>
           <el-button :icon="QuestionFilled" circle />
         </el-tooltip>
-        <el-button :icon="Refresh" @click="load">刷新队列</el-button>
+        <el-button :icon="Refresh" :loading="loading" @click="refreshAll">刷新队列</el-button>
       </div>
     </div>
+
+    <!-- 统计卡 -->
+    <div class="gc-stats" v-loading="statsLoading">
+      <div v-for="c in statCards" :key="c.label" class="stat-card gc-stat">
+        <div class="stat-value">{{ c.value }}</div>
+        <div class="stat-label">{{ c.label }}</div>
+      </div>
+    </div>
+
+    <!-- 筛选：班级 / 任务 / 关键词 -->
+    <el-card shadow="never" class="filter-card">
+      <el-form :inline="true" :model="query">
+        <el-form-item label="班级">
+          <el-select v-model="query.class_id" placeholder="全部" clearable style="width:170px">
+            <el-option v-for="c in classes" :key="c.id"
+                       :label="`${c.grade_name || ''} ${c.name}`" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="任务">
+          <el-select v-model="query.task_id" placeholder="全部" clearable filterable style="width:220px">
+            <el-option v-for="t in tasks" :key="t.id" :label="t.title" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="关键词">
+          <el-input v-model="query.keyword" placeholder="学生 / 任务" clearable style="width:170px"
+                    @keyup.enter="refreshAll" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :icon="Search" @click="refreshAll">查询</el-button>
+          <el-button :icon="Refresh" @click="resetFilters">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
 
     <el-row :gutter="16">
       <!-- ============ 左：待批队列 ============ -->
@@ -24,11 +57,14 @@
           <template #header>
             <div class="flex-between">
               <b>待批改队列</b>
-              <el-tag type="warning" size="small">{{ filtered.length }} 份</el-tag>
+              <div class="queue-head-actions">
+                <el-tag type="warning" size="small">{{ filtered.length }} 份</el-tag>
+                <el-button size="small" :disabled="!nextItem" @click="select(nextItem)">
+                  下一份
+                </el-button>
+              </div>
             </div>
           </template>
-          <el-input v-model="filter" placeholder="搜索学生 / 任务" clearable
-                    :prefix-icon="Search" class="mb10" />
           <div class="queue-filters mb10">
             <el-radio-group v-model="queueFilter" size="small">
               <el-radio-button label="all">全部</el-radio-button>
@@ -36,11 +72,14 @@
             </el-radio-group>
           </div>
           <!-- 批量操作条 -->
-          <div class="batch-bar" v-if="checkedIds.length">
+          <div class="batch-bar" v-if="checkedIds.length && (can('grading:do') || can('grading:publish'))">
             <span class="tip">已选 <b>{{ checkedIds.length }}</b> 份</span>
             <div class="batch-actions">
-              <el-button size="small" @click="batchGrade" :loading="batching">批量采纳</el-button>
-              <el-button size="small" type="warning" @click="batchPublish" :loading="batching">
+              <el-button v-if="can('grading:do')" size="small" @click="batchGrade" :loading="batching">
+                批量采纳
+              </el-button>
+              <el-button v-if="can('grading:publish')" size="small" type="warning"
+                         @click="batchPublish" :loading="batching">
                 批量发布
               </el-button>
               <el-button size="small" text @click="checkedIds = []">清空</el-button>
@@ -198,7 +237,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, QuestionFilled } from '@element-plus/icons-vue'
-import { gradingApi } from '@/api'
+import { gradingApi, taskApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
 const { can } = useUserStore()
@@ -223,11 +262,26 @@ const detail = ref(null)
 const current = ref(null)
 const scores = reactive({})
 const comments = reactive({})
-const filter = ref('')
 const queueFilter = ref('all')
 const loading = ref(false)
 const detailLoading = ref(false)
 const saving = ref(false)
+// 筛选 + 统计
+const query = reactive({ class_id: null, task_id: null, keyword: '' })
+const classes = ref([])
+const tasks = ref([])
+const stats = ref({})
+const statsLoading = ref(false)
+const statCards = computed(() => {
+  const d = stats.value || {}
+  return [
+    { label: '待批改', value: d.pending ?? '-' },
+    { label: '批改中', value: d.grading ?? '-' },
+    { label: '已批改', value: d.graded ?? '-' },
+    { label: '已发布', value: d.published ?? '-' },
+    { label: '平均分', value: d.avg_score ?? '-' }
+  ]
+})
 // 批量 / 分页 / 快捷键
 const checkedIds = ref([])
 const batching = ref(false)
@@ -241,7 +295,7 @@ const needManualCount = computed(() => list.value.filter(i => i.needs_manual).le
 const hasMore = computed(() => list.value.length < total.value)
 
 const filtered = computed(() => {
-  const k = filter.value.trim().toLowerCase()
+  const k = query.keyword.trim().toLowerCase()
   let out = list.value
   if (queueFilter.value === 'manual') out = out.filter(i => i.needs_manual)
   if (!k) return out
@@ -318,11 +372,37 @@ function fmtAnswer(a) {
   return String(a)
 }
 
+function buildPendingParams(pageNo) {
+  const params = { page: pageNo, page_size: PAGE_SIZE }
+  if (query.class_id) params.class_id = query.class_id
+  if (query.task_id) params.task_id = query.task_id
+  const keyword = query.keyword.trim()
+  if (keyword) params.keyword = keyword
+  return params
+}
+
+async function loadStats() {
+  statsLoading.value = true
+  try {
+    const params = {}
+    if (query.class_id) params.class_id = query.class_id
+    if (query.task_id) params.task_id = query.task_id
+    const keyword = query.keyword.trim()
+    if (keyword) params.keyword = keyword
+    const res = await gradingApi.stats(params)
+    stats.value = res.data || {}
+  } catch {
+    // 统计接口未就绪时保持占位，不阻断批改
+  } finally {
+    statsLoading.value = false
+  }
+}
+
 async function load() {
   loading.value = true
   page.value = 1
   try {
-    const res = await gradingApi.pending({ page: 1, page_size: PAGE_SIZE })
+    const res = await gradingApi.pending(buildPendingParams(1))
     list.value = res.data?.items || []
     total.value = res.data?.total ?? list.value.length
     checkedIds.value = []
@@ -331,12 +411,36 @@ async function load() {
   }
 }
 
+async function refreshAll() {
+  await Promise.all([load(), loadStats()])
+}
+
+function resetFilters() {
+  Object.assign(query, { class_id: null, task_id: null, keyword: '' })
+  refreshAll()
+}
+
+async function loadOptions() {
+  try {
+    const [c, t] = await Promise.all([
+      eduApi.classes({ page_size: 100, mine: true }),
+      taskApi.list({ page: 1, page_size: 100 })
+    ])
+    const _cd = c.data
+    classes.value = Array.isArray(_cd) ? _cd : (_cd?.items || [])
+    tasks.value = t.data?.items || []
+  } catch {
+    classes.value = []
+    tasks.value = []
+  }
+}
+
 /** 分页追加：待批量大时不必一次全拉（此前固定 100 条，超出看不到） */
 async function loadMore() {
   loadingMore.value = true
   try {
     page.value += 1
-    const res = await gradingApi.pending({ page: page.value, page_size: PAGE_SIZE })
+    const res = await gradingApi.pending(buildPendingParams(page.value))
     const more = res.data?.items || []
     const seen = new Set(list.value.map(x => x.submission_id))
     list.value = [...list.value, ...more.filter(x => !seen.has(x.submission_id))]
@@ -363,7 +467,7 @@ async function batchGrade() {
     ElMessage.success(
       `批量批改 ${d.graded?.length || 0} 份` +
       (d.skipped?.length ? `，跳过 ${d.skipped.length} 份` : ''))
-    await load()
+    await refreshAll()
   } catch (e) {
     ElMessage.error(`批量批改失败：${e?.message || e}`)
   } finally {
@@ -384,7 +488,7 @@ async function batchPublish() {
     ElMessage.success(
       `已发布 ${d.published?.length || 0} 份` +
       (d.skipped?.length ? `，跳过 ${d.skipped.length} 份（未批改/已发布）` : ''))
-    await load()
+    await refreshAll()
   } catch (e) {
     ElMessage.error(`批量发布失败：${e?.message || e}`)
   } finally {
@@ -492,7 +596,7 @@ async function saveGrade(silent = false) {
     }))
     await gradingApi.grade(detail.value.submission_id, { answers })
     if (!silent) ElMessage.success('批改结果已保存')
-    await load()
+    await refreshAll()
     return true
   } catch (e) {
     ElMessage.error(`保存失败：${e?.message || e}`)
@@ -520,7 +624,7 @@ async function reject() {
   detail.value = null
   current.value = null
   router.replace({ query: {} })
-  load()
+  await refreshAll()
 }
 
 async function publish() {
@@ -530,11 +634,11 @@ async function publish() {
   detail.value = null
   current.value = null
   router.replace({ query: {} })
-  load()
+  await refreshAll()
 }
 
 onMounted(async () => {
-  await load()
+  await Promise.all([loadOptions(), refreshAll()])
   await focusFromQuery()
   window.addEventListener('keydown', onKeydown)
 })
@@ -549,6 +653,13 @@ onBeforeUnmount(() => {
 .queue-summary { font-size: 13px; color: #606266; }
 .queue-summary b { color: #2f6fd0; }
 .queue-summary b.warn { color: #e6a23c; }
+
+.gc-stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.gc-stat { min-width: 120px; padding: 10px 14px; }
+.gc-stat .stat-label { font-size: 12px; margin-top: 2px; }
+.filter-card { margin-bottom: 16px; }
+.filter-card :deep(.el-form-item) { margin-bottom: 8px; }
+.queue-head-actions { display: flex; align-items: center; gap: 8px; }
 
 .flex-between, .row-between { display: flex; align-items: center; justify-content: space-between; }
 .mb10 { margin-bottom: 10px; }

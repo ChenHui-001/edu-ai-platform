@@ -1,10 +1,20 @@
 <template>
   <div class="page-container">
-    <div class="page-header">
-      <h2 class="page-title">作业与考试</h2>
-      <div>
-        <el-button :icon="Refresh" @click="load">刷新</el-button>
-        <el-button v-if="can('task:write')" type="primary" :icon="Plus" @click="openDialog()">发布作业 / 考试</el-button>
+    <div class="page-header tm-header">
+      <div class="tm-title-wrap">
+        <h2 class="page-title">作业与考试</h2>
+        <div class="tm-stats" v-loading="statsLoading">
+          <div v-for="c in statCards" :key="c.label" class="stat-card tm-stat">
+            <div class="stat-value">{{ c.value }}</div>
+            <div class="stat-label">{{ c.label }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="tm-actions">
+        <el-button :icon="Refresh" :loading="loading" @click="refreshAll">刷新</el-button>
+        <el-button v-if="can('task:write')" type="primary" :icon="Plus" @click="openDialog()">
+          发布作业 / 考试
+        </el-button>
       </div>
     </div>
 
@@ -24,19 +34,41 @@
             <el-option label="草稿" value="draft" />
           </el-select>
         </el-form-item>
+        <el-form-item label="学科">
+          <el-select v-model="query.subject_id" placeholder="全部" clearable style="width:190px">
+            <el-option v-for="s in subjects" :key="s.id"
+                       :label="`${subjectGradeName(s.grade_id)} ${s.name}`" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="班级">
+          <el-select v-model="query.class_id" placeholder="全部" clearable style="width:180px">
+            <el-option v-for="c in classes" :key="c.id"
+                       :label="`${c.grade_name || ''} ${c.name}`" :value="c.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="关键词">
           <el-input v-model="query.keyword" placeholder="任务标题" clearable style="width:170px"
-                    @keyup.enter="load" />
+                    @keyup.enter="search" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :icon="Search" @click="load">查询</el-button>
+          <el-button type="primary" :icon="Search" @click="search">查询</el-button>
           <el-button :icon="Refresh" @click="reset">重置</el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="list" border stripe>
+      <div v-if="can('task:write')" class="batch-bar">
+        <span class="muted">已选 {{ selection.length }} 个任务</span>
+        <el-button size="small" :disabled="!selection.length" :loading="batchLoading"
+                   @click="batchAction('close')">批量结束</el-button>
+        <el-button size="small" type="danger" plain :disabled="!selection.length"
+                   :loading="batchLoading" @click="batchAction('delete')">批量删除</el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="list" border stripe
+                @selection-change="onSelectionChange">
+        <el-table-column type="selection" width="44" />
         <el-table-column prop="title" label="任务标题" min-width="200" show-overflow-tooltip />
         <el-table-column label="类型" width="90">
           <template #default="{ row }">
@@ -46,11 +78,16 @@
           </template>
         </el-table-column>
         <el-table-column prop="subject_name" label="学科" width="90" />
-        <el-table-column label="提交进度" width="200">
+        <el-table-column label="班级" width="170" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ Array.isArray(row.class_names) ? row.class_names.join('、') : (row.class_names || '-') }}
+          </template>
+        </el-table-column>
+        <el-table-column label="提交进度" width="190">
           <template #default="{ row }">
             <el-progress :percentage="Math.min(row.completion_rate || 0, 100)"
                          :status="(row.completion_rate || 0) >= 60 ? 'success' : ''" />
-            <span class="tip">{{ row.submission_count }}/{{ row.assignment_count }} 人已交</span>
+            <span class="tip">{{ row.submission_count }}/{{ row.assigned_count || row.assignment_count }} 人已交</span>
           </template>
         </el-table-column>
         <el-table-column prop="start_at" label="开始时间" width="160" />
@@ -60,18 +97,23 @@
             <el-tag :type="statusTag(row)" size="small">{{ statusLabel(row) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openSubs(row)">提交情况</el-button>
             <el-button link type="success" @click="openReport(row)">学情报告</el-button>
-            <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button v-if="canEditTask(row)" link type="primary" @click="openDialog(row)">编辑</el-button>
+            <el-button v-if="canEditTask(row)" link type="danger" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="暂无任务，点击右上角发布作业 / 考试" :image-size="70" />
+        </template>
       </el-table>
 
-      <el-pagination class="mt16" background layout="total, prev, pager, next"
-                     :total="total" v-model:current-page="query.page" @current-change="load" />
+      <el-pagination class="mt16" background layout="total, sizes, prev, pager, next, jumper"
+                     :total="total" v-model:current-page="query.page"
+                     v-model:page-size="query.page_size" :page-sizes="[20, 50, 100]"
+                     @current-change="load" @size-change="search" />
     </el-card>
 
     <!-- 发布 / 编辑 -->
@@ -244,17 +286,24 @@
 </template>
 
 <script setup>
-const { can } = useUserStore()
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { taskApi, questionApi, eduApi, gradingApi } from '@/api'
 import { useUserStore } from '@/store/user'
 
-// 按钮级权限统一取 store 的 can getter（见文件顶部解构）
+const userStore = useUserStore()
+// 按钮级权限统一取 store 的 can getter
+const { can } = userStore
+const isSysAdmin = computed(() => userStore.isAdmin === true)
+const meId = (() => {
+  try { return JSON.parse(localStorage.getItem('user') || '{}').id } catch { return null }
+})()
 
 const list = ref([])
 const papers = ref([])
+const subjects = ref([])
+const grades = ref([])
 const classes = ref([])
 const submissions = ref([])
 const report = ref(null)
@@ -271,8 +320,94 @@ const subLoading = ref(false)
 const reportLoading = ref(false)
 const answerLoading = ref(false)
 const currentTask = ref(null)
+const stats = ref({})
+const statsLoading = ref(false)
+const selection = ref([])
+const batchLoading = ref(false)
 
-const query = reactive({ page: 1, page_size: 20, task_type: '', status: '', keyword: '' })
+const query = reactive({
+  page: 1, page_size: 20, task_type: '', status: '',
+  subject_id: null, class_id: null, keyword: ''
+})
+
+function subjectGradeName(gradeId) {
+  return grades.value.find(g => g.id === gradeId)?.name || ''
+}
+
+const statCards = computed(() => {
+  const d = stats.value || {}
+  const avg = d.avg_completion
+  return [
+    { label: '任务总数', value: d.total ?? '-' },
+    { label: '进行中', value: d.ongoing ?? '-' },
+    { label: '已结束', value: d.finished ?? '-' },
+    { label: '平均提交率', value: avg === undefined || avg === null ? '-' : `${avg}%` }
+  ]
+})
+
+function buildParams() {
+  const params = {}
+  if (query.task_type) params.task_type = query.task_type
+  if (query.status) params.status = query.status
+  if (query.subject_id) params.subject_id = query.subject_id
+  if (query.class_id) params.class_id = query.class_id
+  const keyword = query.keyword.trim()
+  if (keyword) params.keyword = keyword
+  return params
+}
+
+async function loadStats() {
+  statsLoading.value = true
+  try {
+    const res = await taskApi.stats(buildParams())
+    stats.value = res.data || {}
+  } catch {
+    // 统计接口未就绪时保持占位，不阻断列表
+  } finally {
+    statsLoading.value = false
+  }
+}
+
+function isOwner(row) {
+  return row && (isSysAdmin.value || row.creator_id === meId)
+}
+
+function canEditTask(row) {
+  return can('task:write') && isOwner(row)
+}
+
+function onSelectionChange(rows) { selection.value = rows || [] }
+
+async function batchAction(action) {
+  const ids = selection.value.map(t => t.id)
+  if (!ids.length) return ElMessage.warning('请先勾选任务')
+  const isDelete = action === 'delete'
+  try {
+    await ElMessageBox.confirm(
+      isDelete
+        ? `确认删除 ${ids.length} 个任务？已有提交记录的任务会被跳过（不级联删除成绩），删除不可恢复。`
+        : `确认将 ${ids.length} 个任务批量结束？结束后学生不能继续作答。`,
+      isDelete ? '批量删除确认' : '批量结束确认', { type: 'warning' })
+  } catch { return }
+  batchLoading.value = true
+  try {
+    const res = await taskApi.batch({ action, ids })
+    const d = res.data || {}
+    const done = (d.done || []).length
+    const skipped = d.skipped || []
+    if (skipped.length) {
+      const reasons = skipped.slice(0, 3)
+        .map(s => `#${s.id} ${s.reason || '失败'}`).join('；')
+      ElMessage.warning(`已处理 ${done} 个，跳过 ${skipped.length} 个：${reasons}`)
+    } else {
+      ElMessage.success(`已${isDelete ? '删除' : '结束'} ${done} 个任务`)
+    }
+    selection.value = []
+    await refreshAll()
+  } finally {
+    batchLoading.value = false
+  }
+}
 const form = reactive({
   id: null, title: '', type: 'homework', paper_id: null, class_ids: [],
   start_at: '', end_at: '', duration: 60, pass_score: 60,
@@ -323,18 +458,27 @@ function statusTag(row) {
 async function load() {
   loading.value = true
   try {
-    const res = await taskApi.list(query)
+    const res = await taskApi.list({ ...buildParams(), page: query.page, page_size: query.page_size })
     const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
+    selection.value = []
   } finally {
     loading.value = false
   }
 }
 
+async function refreshAll() {
+  await Promise.all([load(), loadStats()])
+}
+
+function search() { query.page = 1; refreshAll() }
+
 function reset() {
-  Object.assign(query, { page: 1, task_type: '', status: '', keyword: '' })
-  load()
+  Object.assign(query, {
+    page: 1, task_type: '', status: '', subject_id: null, class_id: null, keyword: ''
+  })
+  refreshAll()
 }
 
 function openDialog(row) {
@@ -356,17 +500,18 @@ async function save() {
     else await taskApi.create(form)
     ElMessage.success('保存成功')
     dlg.value = false
-    load()
+    await refreshAll()
   } finally {
     saving.value = false
   }
 }
 
 async function remove(row) {
+  if (!canEditTask(row)) return ElMessage.warning('只能删除自己创建的任务')
   await ElMessageBox.confirm(`确认删除任务「${row.title}」？相关提交记录将一并删除。`, '提示', { type: 'warning' })
   await taskApi.remove(row.id)
   ElMessage.success('已删除')
-  load()
+  await refreshAll()
 }
 
 async function openSubs(row) {
@@ -442,16 +587,22 @@ const answerDetail = ref(null)
 const answer = computed(() => answerDetail.value)
 
 onMounted(async () => {
-  await load()
-  const p = await questionApi.papers({ page: 1, page_size: 100 })
+  await refreshAll()
+  const [p, c, s, g] = await Promise.all([
+    questionApi.papers({ page: 1, page_size: 100 }),
+    eduApi.classes({ page_size: 100, mine: true }),
+    eduApi.subjects(),
+    eduApi.grades()
+  ])
   papers.value = p.data?.items || []
   // mine=true 只返回本人任教的班级：后端发布时会校验「只能给自己任教的
   // 班级下发」，全量列出只会让教师选中后收到 400。
-  const c = await eduApi.classes({ page_size: 100, mine: true })
   // /edu/classes 返回数组（非分页 items）—— 只读 data.items 会得到 undefined，
   // 班级下拉恒为空且没有任何报错，教师因此完全无法发布作业/考试。
   const _cd = c.data
   classes.value = Array.isArray(_cd) ? _cd : (_cd?.items || [])
+  subjects.value = s.data || []
+  grades.value = g.data || []
 })
 </script>
 
@@ -460,10 +611,27 @@ onMounted(async () => {
 .mt12 { margin-top: 12px; }
 .mb12 { margin-bottom: 12px; }
 .tip { font-size: 12px; color: #909399; }
+.muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .filter-card :deep(.el-form-item) { margin-bottom: 12px; }
 .q-item { padding: 10px 0; border-bottom: 1px dashed #ebeef5; }
 .correct { color: #67c23a; margin: 4px 0; }
 .analysis { color: #909399; font-size: 13px; margin: 4px 0; }
 .advice-box { background: #f7f9fc; padding: 12px; border-radius: 8px; }
 .advice { white-space: pre-wrap; margin: 0; font-family: inherit; font-size: 13px; line-height: 1.8; }
+
+.tm-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.tm-title-wrap { display: flex; flex-direction: column; gap: 10px; }
+.tm-stats { display: flex; gap: 12px; flex-wrap: wrap; }
+.tm-stat { min-width: 110px; padding: 10px 14px; }
+.tm-stat .stat-label { font-size: 12px; margin-top: 2px; }
+.tm-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tm-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.batch-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 0 12px;
+}
+.batch-bar :deep(.el-button + .el-button) { margin-left: 0; }
 </style>

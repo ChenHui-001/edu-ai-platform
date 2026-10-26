@@ -3,7 +3,7 @@
   "info": {
     "title": "九年义务教育学习管理系统",
     "description": "九年义务教育学习管理系统（AI Agent 版）后端 API",
-    "version": "1.9.0"
+    "version": "2.0.0"
   },
   "paths": {
     "/api/v1/auth/captcha": {
@@ -6321,6 +6321,22 @@
             }
           },
           {
+            "name": "class_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Class Id"
+            }
+          },
+          {
             "name": "keyword",
             "in": "query",
             "required": false,
@@ -6334,6 +6350,16 @@
                 }
               ],
               "title": "Keyword"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "created_desc",
+              "title": "Sort"
             }
           },
           {
@@ -6422,13 +6448,176 @@
         }
       }
     },
+    "/api/v1/task/tasks/stats": {
+      "get": {
+        "tags": [
+          "作业与考试"
+        ],
+        "summary": "作业考试统计",
+        "description": "同列表筛选范围（不分页）的任务统计。",
+        "operationId": "task_stats_api_v1_task_tasks_stats_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Type"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "subject_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject Id"
+            }
+          },
+          {
+            "name": "class_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Class Id"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Keyword"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/task/tasks/batch": {
+      "post": {
+        "tags": [
+          "作业与考试"
+        ],
+        "summary": "批量操作作业考试",
+        "description": "批量结束/发布/删除任务。同批含有权任务 → 整体 403；业务失败进 skipped。",
+        "operationId": "batch_tasks_api_v1_task_tasks_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Data"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/task/tasks/{task_id}": {
       "get": {
         "tags": [
           "作业与考试"
         ],
         "summary": "任务详情",
-        "description": "任务详情：教师仅看自己创建的；管理员看全量。\n之前缺这个接口，前端编辑回查只能 405。",
+        "description": "任务详情：教师仅看自己创建的；grade_admin 可看本年级；sys_admin 全量。",
         "operationId": "get_task_api_v1_task_tasks__task_id__get",
         "security": [
           {
@@ -7039,6 +7228,22 @@
             }
           },
           {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Keyword"
+            }
+          },
+          {
             "name": "include_graded",
             "in": "query",
             "required": false,
@@ -7066,6 +7271,206 @@
               "type": "integer",
               "default": 20,
               "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/grading/submissions": {
+      "get": {
+        "tags": [
+          "智能批改"
+        ],
+        "summary": "作答提交列表（兼容/按任务、班级筛选）",
+        "description": "与 /grading/pending 同源；保留独立路径并支持 class_id/task_id/keyword 筛选。",
+        "operationId": "submission_list_api_v1_grading_submissions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "class_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Class Id"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "include_graded",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Graded"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/grading/stats": {
+      "get": {
+        "tags": [
+          "智能批改"
+        ],
+        "summary": "批改统计",
+        "description": "当前教师范围内的批改状态统计（含已发布）。",
+        "operationId": "grading_stats_api_v1_grading_stats_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "class_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Class Id"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Keyword"
             }
           }
         ],
@@ -7347,6 +7752,52 @@
         "summary": "批量发布成绩",
         "description": "批量发布已批改提交的成绩。只处理 fully_graded 且分数非空的记录。",
         "operationId": "batch_publish_api_v1_grading_batch_publish_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Data"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/grading/unpublish": {
+      "post": {
+        "tags": [
+          "智能批改"
+        ],
+        "summary": "退回已发布成绩（仅发布权限）",
+        "description": "把已发布成绩退回「已批改」，便于教师复核后重新发布（不删通知/成绩）。",
+        "operationId": "unpublish_scores_api_v1_grading_unpublish_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -12163,7 +12614,7 @@
           "教案管理"
         ],
         "summary": "教案列表（教师）",
-        "description": "教案列表。\n\n- 默认：当前教师自己 + 共享给同科教师的\n- only_mine=true：只看自己",
+        "description": "教案列表。\n\n- 默认：自己创建的 + 同科共享的（sys_admin 全量）\n- only_mine=true：只看自己\n- 新增筛选：grade_id/subject_id/source(manual/ai)/shared/sort",
         "operationId": "list_plans_api_v1_lesson_plans_get",
         "security": [
           {
@@ -12217,6 +12668,54 @@
                 }
               ],
               "title": "Keyword"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "name": "shared",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Shared"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort"
             }
           },
           {
@@ -12313,6 +12812,31 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/lesson/plans/stats": {
+      "get": {
+        "tags": [
+          "教案管理"
+        ],
+        "summary": "教案统计",
+        "description": "按当前用户可见范围统计：总数/我的/共享/AI/我的共享。",
+        "operationId": "plan_stats_api_v1_lesson_plans_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/v1/lesson/plans/{plan_id}": {
@@ -12463,7 +12987,7 @@
           "教案管理"
         ],
         "summary": "复制教案",
-        "description": "复制一份教案到当前教师名下。",
+        "description": "复制一份教案到当前教师名下（需 lesson:plan:copy）。",
         "operationId": "copy_plan_api_v1_lesson_plans__plan_id__copy_post",
         "security": [
           {
@@ -12520,7 +13044,7 @@
           "教案管理"
         ],
         "summary": "共享/取消共享",
-        "description": "共享开关：is_shared=true 时同科教师可在列表里看到并复制。",
+        "description": "共享开关：is_shared=true 时同科教师可在列表里看到并复制。\n\n权限：lesson:plan:share；且只有创建者可切换（sys_admin 也不能改他人共享状态，\n契约「共享/取消共享仅创建者」）。",
         "operationId": "toggle_share_api_v1_lesson_plans__plan_id__share_post",
         "security": [
           {
@@ -12569,6 +13093,52 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/lesson/plans/batch": {
+      "post": {
+        "tags": [
+          "教案管理"
+        ],
+        "summary": "批量操作教案",
+        "description": "批量删除/共享/取消共享。\n\n- 仅创建者或 sys_admin 可操作；同批存在越权节点 → 整体 403（不部分写入）；\n- delete 有引用（课程/任务/未来新增 lesson_plan_id 引用表）时进 skipped；\n- share/unshare 需要 lesson:plan:share，delete 需要 lesson:plan:write；\n- 返回 {done:[ids], skipped:[{id,reason}]}。",
+        "operationId": "batch_plans_api_v1_lesson_plans_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Data"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/v1/lesson/plans/{plan_id}/attachments": {

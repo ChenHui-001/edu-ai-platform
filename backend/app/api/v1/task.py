@@ -3,11 +3,11 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
-    DataScope, get_current_teacher, get_current_user, get_data_scope,
+    DataScope, get_current_user, get_data_scope, require_perm,
 )
 from app.core.config import settings
 from app.core.database import get_db
@@ -22,6 +22,132 @@ from app.utils.common import PageParams, dictify, now_local, ok
 router = APIRouter(prefix="/task", tags=["作业与考试"])
 
 TYPE_LABEL = {"homework": "作业", "exam": "考试", "practice": "随机练习"}
+
+# 教学管理 V2：任务读/写/批改权限点（与 docs/TEACHING_V2.md 一致）
+TASK_PERM_LIST = "task:list"
+TASK_PERM_WRITE = "task:write"
+
+TASK_SORT_MAP = {
+    "created_desc": (Task.created_at.desc(), Task.id.desc()),
+    "start_desc": (Task.start_at.desc().nullslast(), Task.id.desc()),
+    "end_desc": (Task.end_at.desc().nullslast(), Task.id.desc()),
+    "updated_desc": (Task.updated_at.desc(), Task.id.desc()),
+}
+
+
+def _is_sys_admin(user: User) -> bool:
+    return "sys_admin" in (user.role_codes or [])
+
+
+def _is_grade_admin(user: User) -> bool:
+    return "grade_admin" in (user.role_codes or [])
+
+
+def _task_scope_clause(user: User, scope: DataScope):
+    """任务读取范围：sys_admin 全量；grade_admin 按 DataScope 本年级；教师仅本人创建。"""
+    if _is_sys_admin(user):
+        return None
+    if _is_grade_admin(user):
+        grade_ids = scope.grade_ids() or []
+        return Task.grade_id.in_(grade_ids) if grade_ids else (Task.id == -1)
+    return Task.creator_id == user.id
+
+
+def _task_readable(task: Task, user: User, scope: DataScope) -> bool:
+    if _is_sys_admin(user) or task.creator_id == user.id:
+        return True
+    if _is_grade_admin(user):
+        return task.grade_id in (scope.grade_ids() or [])
+    return False
+
+
+def _task_editable(task: Task, user: User) -> bool:
+    """编辑/删除/批量写：仅创建者或 sys_admin（grade_admin 只读本年级）。"""
+    return _is_sys_admin(user) or task.creator_id == user.id
+
+
+def _task_submission_stats(db: Session, task_ids: List[int]) -> Dict[int, tuple]:
+    """批量统计任务提交数/平均分/已批改数/已发布数，避免逐任务查询。"""
+    if not task_ids:
+        return {}
+    rows = db.execute(
+        select(
+            Submission.task_id,
+            func.count(Submission.id),
+            func.avg(Submission.score),
+            func.sum(case(
+                (Submission.status.in_(("fully_graded", "published", "graded")), 1),
+                else_=0)),
+            func.sum(case((Submission.status == "published", 1), else_=0)),
+        ).where(Submission.task_id.in_(task_ids)).group_by(Submission.task_id)
+    ).all()
+    return {
+        int(tid): (int(cnt or 0), round(float(avg or 0), 2), int(g or 0), int(p or 0))
+        for tid, cnt, avg, g, p in rows
+    }
+
+
+def _task_assigned_sets(
+    db: Session, tasks: List[Task]
+) -> Dict[int, tuple]:
+    """返回 {task_id: (应交学生 id 集合, 班级名称列表)}（班级成员批量展开）。"""
+    class_ids: set = set()
+    for t in tasks:
+        for a in t.assignments:
+            if a.class_id and not a.student_id:
+                class_ids.add(a.class_id)
+    class_members: Dict[int, set] = {}
+    class_names: Dict[int, str] = {}
+    if class_ids:
+        for cid, uid in db.execute(
+            select(User.class_id, User.id).where(User.class_id.in_(class_ids))
+        ).all():
+            class_members.setdefault(cid, set()).add(uid)
+        class_names = {
+            c.id: c.name for c in db.scalars(
+                select(Class).where(Class.id.in_(class_ids))).all()
+        }
+    result: Dict[int, tuple] = {}
+    for t in tasks:
+        ids: set = set()
+        names: List[str] = []
+        for a in t.assignments:
+            if a.student_id:
+                ids.add(a.student_id)
+            elif a.class_id:
+                ids.update(class_members.get(a.class_id, set()))
+                if a.class_id in class_names:
+                    names.append(class_names[a.class_id])
+        result[t.id] = (ids, names)
+    return result
+
+
+def _filtered_tasks_stmt(
+    user: User, scope: DataScope, *, task_type: Optional[str] = None,
+    status: Optional[str] = None, subject_id: Optional[int] = None,
+    class_id: Optional[int] = None, keyword: Optional[str] = None,
+):
+    """任务列表/统计共用筛选构造（含读取范围）。"""
+    stmt = select(Task)
+    clause = _task_scope_clause(user, scope)
+    if clause is not None:
+        stmt = stmt.where(clause)
+    if task_type:
+        stmt = stmt.where(Task.type == task_type)
+    if status:
+        stmt = stmt.where(Task.status == status)
+    if subject_id:
+        stmt = stmt.where(Task.subject_id == subject_id)
+    if keyword:
+        stmt = stmt.where(Task.title.like(f"%{keyword}%"))
+    if class_id:
+        class_students = select(User.id).where(User.class_id == class_id)
+        assigned = select(TaskAssignment.task_id).where(or_(
+            TaskAssignment.class_id == class_id,
+            TaskAssignment.student_id.in_(class_students),
+        ))
+        stmt = stmt.where(Task.id.in_(assigned))
+    return stmt
 
 
 def is_task_assigned_to(db: Session, task: Task, user: User) -> bool:
@@ -61,56 +187,163 @@ def assert_task_accessible(db: Session, task: Task, user: User) -> None:
 def list_tasks(
     params: PageParams = Depends(), task_type: Optional[str] = None,
     status: Optional[str] = None, subject_id: Optional[int] = None,
-    keyword: Optional[str] = None, db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+    class_id: Optional[int] = None, keyword: Optional[str] = None,
+    sort: str = "created_desc", db: Session = Depends(get_db),
+    user: User = Depends(require_perm(TASK_PERM_LIST)),
+    scope: DataScope = Depends(get_data_scope),
 ):
-    stmt = select(Task)
-    if not scope.is_super:
-        stmt = stmt.where(Task.creator_id == user.id)
-    if task_type:
-        stmt = stmt.where(Task.type == task_type)
-    if status:
-        stmt = stmt.where(Task.status == status)
-    if subject_id:
-        stmt = stmt.where(Task.subject_id == subject_id)
-    if keyword:
-        stmt = stmt.where(Task.title.like(f"%{keyword}%"))
-
+    stmt = _filtered_tasks_stmt(
+        user, scope, task_type=task_type, status=status,
+        subject_id=subject_id, class_id=class_id, keyword=keyword,
+    )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
-        stmt.order_by(Task.created_at.desc()).offset(params.offset).limit(params.page_size)
+        stmt.order_by(*TASK_SORT_MAP.get(sort, TASK_SORT_MAP["created_desc"]))
+        .offset(params.offset).limit(params.page_size)
     ).all()
+
+    task_ids = [t.id for t in rows]
+    sub_stats = _task_submission_stats(db, task_ids)
+    assigned_map = _task_assigned_sets(db, rows)
+
     items = []
     for t in rows:
         d = dictify(t)
         d["type_label"] = TYPE_LABEL.get(t.type, t.type)
+        subs, avg_score, graded_count, published_count = sub_stats.get(
+            t.id, (0, 0.0, 0, 0))
+        assigned_ids, class_names = assigned_map.get(t.id, (set(), []))
         d["assignment_count"] = len(t.assignments)
-        subs = db.scalar(
-            select(func.count()).select_from(Submission).where(Submission.task_id == t.id)
-        ) or 0
         d["submission_count"] = subs
-        # 完成率分母必须展开班级成员（assignments 里一个班只算 1 条，
-        # 会导致与详情页口径不一致、甚至出现 200% 这种值）
-        assigned_ids = set()
-        for a in t.assignments:
-            if a.student_id:
-                assigned_ids.add(a.student_id)
-            elif a.class_id:
-                assigned_ids.update(db.scalars(
-                    select(User.id).where(User.class_id == a.class_id)).all())
         d["assigned_count"] = len(assigned_ids)
         d["completion_rate"] = (
             round(min(subs, len(assigned_ids)) / len(assigned_ids) * 100, 2)
             if assigned_ids else 0
         )
+        # V2 新增字段（旧字段全部保留）
+        d["class_names"] = class_names
+        d["avg_score"] = avg_score
+        d["graded_count"] = graded_count
+        d["published_count"] = published_count
         items.append(d)
     return ok({"items": items, "total": total, "page": params.page})
+
+
+@router.get("/tasks/stats", summary="作业考试统计")
+def task_stats(
+    task_type: Optional[str] = None, status: Optional[str] = None,
+    subject_id: Optional[int] = None, class_id: Optional[int] = None,
+    keyword: Optional[str] = None, db: Session = Depends(get_db),
+    user: User = Depends(require_perm(TASK_PERM_LIST)),
+    scope: DataScope = Depends(get_data_scope),
+):
+    """同列表筛选范围（不分页）的任务统计。"""
+    stmt = _filtered_tasks_stmt(
+        user, scope, task_type=task_type, status=status,
+        subject_id=subject_id, class_id=class_id, keyword=keyword,
+    )
+    rows = list(db.scalars(stmt).all())
+    total = len(rows)
+    draft = sum(1 for t in rows if t.status == TaskStatus.DRAFT.value)
+    finished = sum(1 for t in rows if t.status in (
+        TaskStatus.FINISHED.value, TaskStatus.ARCHIVED.value))
+    ongoing = max(0, total - draft - finished)
+
+    task_ids = [t.id for t in rows]
+    sub_stats = _task_submission_stats(db, task_ids)
+    assigned_map = _task_assigned_sets(db, rows)
+
+    submission_count = sum(v[0] for v in sub_stats.values())
+    assigned_count = sum(len(v[0]) for v in assigned_map.values())
+    rates = []
+    for t in rows:
+        subs = sub_stats.get(t.id, (0, 0.0, 0, 0))[0]
+        assigned = len(assigned_map.get(t.id, (set(), []))[0])
+        if assigned:
+            rates.append(min(subs, assigned) / assigned * 100)
+    return ok({
+        "total": total,
+        "ongoing": ongoing,
+        "finished": finished,
+        "draft": draft,
+        "assigned_count": assigned_count,
+        "submission_count": submission_count,
+        "avg_completion": round(sum(rates) / len(rates), 2) if rates else 0,
+    })
+
+
+@router.post("/tasks/batch", summary="批量操作作业考试")
+def batch_tasks(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm(TASK_PERM_WRITE)),
+):
+    """批量结束/发布/删除任务。同批含有权任务 → 整体 403；业务失败进 skipped。"""
+    action = str(data.get("action") or "").strip().lower()
+    if action not in {"close", "publish", "delete"}:
+        raise BusinessException("action 仅支持 close / publish / delete")
+    raw_ids = data.get("ids") or []
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise BusinessException("请选择要操作的任务")
+    ids: List[int] = []
+    for item in raw_ids:
+        try:
+            value = int(item)
+        except (TypeError, ValueError):
+            raise BusinessException("ids 必须为整数列表")
+        if value not in ids:
+            ids.append(value)
+
+    found = {
+        t.id: t for t in db.scalars(select(Task).where(Task.id.in_(ids))).all()
+    }
+    tasks = [found[i] for i in ids if i in found]
+    skipped: List[Dict[str, Any]] = [
+        {"id": i, "reason": "不存在"} for i in ids if i not in found]
+    if not tasks:
+        return ok({"done": [], "skipped": skipped})
+    # 同批只要有一个任务无权操作，整体 403（防部分写入歧义）
+    if any(not _task_editable(t, user) for t in tasks):
+        raise PermissionException("所选任务中存在无权操作的任务，已拒绝整批操作")
+
+    done: List[int] = []
+    if action == "delete":
+        sub_counts = dict(db.execute(
+            select(Submission.task_id, func.count()).where(
+                Submission.task_id.in_([t.id for t in tasks])
+            ).group_by(Submission.task_id)
+        ).all())
+        for t in tasks:
+            count = int(sub_counts.get(t.id, 0) or 0)
+            if count:
+                skipped.append({
+                    "id": t.id,
+                    "reason": f"该任务已有 {count} 份提交，删除会连带丢失成绩",
+                })
+                continue
+            db.delete(t)
+            done.append(t.id)
+    elif action == "close":
+        for t in tasks:
+            t.status = TaskStatus.FINISHED.value
+            done.append(t.id)
+    else:  # publish
+        for t in tasks:
+            if t.status != TaskStatus.DRAFT.value:
+                skipped.append({"id": t.id, "reason": "仅草稿任务可发布"})
+                continue
+            t.status = TaskStatus.PUBLISHED.value
+            t.publish_at = now_local()
+            done.append(t.id)
+
+    db.commit()
+    return ok({"done": done, "skipped": skipped},
+              message=f"批量操作完成 {len(done)} 个，跳过 {len(skipped)} 个")
 
 
 @router.post("/tasks", summary="发布作业 / 考试")
 def create_task(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(require_perm(TASK_PERM_WRITE)),
 ):
     paper = db.get(Paper, data.get("paper_id"))
     if not paper:
@@ -234,15 +467,14 @@ def create_task(
 @router.get("/tasks/{task_id}", summary="任务详情")
 def get_task(
     task_id: int, db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(require_perm(TASK_PERM_LIST)),
+    scope: DataScope = Depends(get_data_scope),
 ):
-    """任务详情：教师仅看自己创建的；管理员看全量。
-    之前缺这个接口，前端编辑回查只能 405。
-    """
+    """任务详情：教师仅看自己创建的；grade_admin 可看本年级；sys_admin 全量。"""
     task = db.get(Task, task_id)
     if not task:
         raise NotFoundException("任务不存在")
-    if task.creator_id != user.id and "sys_admin" not in user.role_codes:
+    if not _task_readable(task, user, scope):
         raise PermissionException("无权限查看该任务")
     return ok(dictify(task))
 
@@ -250,12 +482,12 @@ def get_task(
 @router.put("/tasks/{task_id}", summary="编辑任务")
 def update_task(
     task_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(require_perm(TASK_PERM_WRITE)),
 ):
     task = db.get(Task, task_id)
     if not task:
         raise NotFoundException("任务不存在")
-    if task.creator_id != user.id and "sys_admin" not in user.role_codes:
+    if not _task_editable(task, user):
         raise PermissionException("无权限编辑该任务")
 
     # 编辑接口此前直接 setattr：null/字符串可写进非空列、duration=0、
@@ -328,12 +560,13 @@ def update_task(
 
 @router.delete("/tasks/{task_id}", summary="删除任务")
 def delete_task(
-    task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    task_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm(TASK_PERM_WRITE)),
 ):
     task = db.get(Task, task_id)
     if not task:
         raise NotFoundException("任务不存在")
-    if task.creator_id != user.id and "sys_admin" not in user.role_codes:
+    if not _task_editable(task, user):
         raise PermissionException("无权限删除该任务")
     db.delete(task)
     db.commit()
@@ -343,14 +576,16 @@ def delete_task(
 @router.get("/tasks/{task_id}/submissions", summary="任务提交情况")
 def task_submissions(
     task_id: int, params: PageParams = Depends(), class_id: Optional[int] = None,
-    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(TASK_PERM_LIST)),
+    scope: DataScope = Depends(get_data_scope),
 ):
     task = db.get(Task, task_id)
     if not task:
         raise NotFoundException("任务不存在")
-    # 数据范围：只有任务创建者（或管理员）能看提交名单、分数与切屏记录。
-    # 此前缺此校验，任意教师遍历 task_id 即可获取他人任务的学生成绩。
-    if task.creator_id != user.id and "sys_admin" not in user.role_codes:
+    # 数据范围：任务创建者 / 本年级管理员（DataScope）/ sys_admin 可看提交名单，
+    # 其余教师遍历 task_id 不能获取他人任务的学生成绩。
+    if not _task_readable(task, user, scope):
         raise PermissionException("无权限查看该任务的提交情况")
 
     stmt = select(Submission).where(Submission.task_id == task_id)
@@ -576,6 +811,8 @@ def submit_answers(
         task.publish_at and task.publish_at > now_local()
     ):
         raise BusinessException("任务尚未发布，无法提交")
+    if task.status in (TaskStatus.FINISHED.value, TaskStatus.ARCHIVED.value):
+        raise BusinessException("任务已结束，无法提交")
     if task.end_at and task.end_at < now_local():
         raise BusinessException("任务已截止，无法提交")
     if task.start_at and task.start_at > now_local():

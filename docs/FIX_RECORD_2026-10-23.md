@@ -279,6 +279,16 @@
 - **验证**：E2E 850/836/0/14；后端动态 key/status 验证；前端 build/lint/test/bundle；浏览器 AI 三页无 console error。
 - **镜像**：`nanpo/edu-ai-platform:1.9.0` / `:latest` / `:sha-4bbc904` 已推送，manifest-list digest `sha256:03a66939f0bfceffd4b051b253bdddb17b3550d65eee6d8af1c871d5922f2351`（基于 commit `4bbc904`）；容器 health=`healthy`、version=`1.9.0`、47 页浏览器冒烟通过、AI 配置 DB key/状态验证通过。
 
+### 2.0.0 教学管理 V2 重构（作业/考试、批改中心、教案管理）
+
+- **权限**：任务 task:list/write；批改 grading:list/do/publish；教案 lesson:plan:list/write/copy/share；学生 403；教师仅本人任务/教案，grade_admin 任务本年级只读；按钮按权限+归属显隐。
+- **作业/考试**：统计卡、学科/班级/排序筛选、批量结束/删除（有提交 skipped）、班级名/平均分/批改数/发布数；已结束任务禁止交卷。
+- **批改中心**：统计卡（待批改/批改中/已批改/已发布/平均分）、班级/任务/关键词筛选、队列「下一份」、批量采纳/发布按权限。
+- **教案管理**：统计卡（我的/共享/全部/AI）、来源/共享筛选、批量共享/取消/删除（仅本人、越权整体 403）、只读详情禁用编辑、保留 AI 生成/记录/附件。
+- **验证**：E2E 850/836/0/14；API 动态 stats/batch/权限；前端 build/lint/test/bundle；浏览器三页正常。
+- **镜像**：2.0.0 构建/推送中（完成后回填 digest）。
+
+
 
 
 

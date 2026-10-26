@@ -161,6 +161,9 @@ export const questionApi = {
 // ---------------- 作业与考试 ----------------
 export const taskApi = {
   list: (params) => request.get('/task/tasks', { params }),
+  // 教学管理 V2：统计 / 批量（契约 docs/TEACHING_V2.md）
+  stats: (params) => request.get('/task/tasks/stats', { params }),
+  batch: (data) => request.post('/task/tasks/batch', data),
   create: (data) => request.post('/task/tasks', data),
   update: (id, data) => request.put(`/task/tasks/${id}`, data),
   remove: (id) => request.delete(`/task/tasks/${id}`),
@@ -179,6 +182,8 @@ export const taskApi = {
 // ---------------- 批改 ----------------
 export const gradingApi = {
   pending: (params) => request.get('/grading/pending', { params }),
+  // 教学管理 V2：批改统计
+  stats: (params) => request.get('/grading/stats', { params }),
   detail: (id) => request.get(`/grading/submissions/${id}`),
   grade: (id, data) => request.post(`/grading/submissions/${id}/grade`, data),
   reject: (id, data) => request.post(`/grading/submissions/${id}/reject`, data),
@@ -317,6 +322,9 @@ export const attachmentApi = {
 // ---------------- 教案 ----------------
 export const lessonApi = {
   list: (params) => request.get('/lesson/plans', { params }),
+  // 教学管理 V2：统计 / 批量（契约 docs/TEACHING_V2.md）
+  stats: (params) => request.get('/lesson/plans/stats', { params }),
+  batch: (data) => request.post('/lesson/plans/batch', data),
   detail: (id) => request.get(`/lesson/plans/${id}`),
   create: (data) => request.post('/lesson/plans', data),
   update: (id, data) => request.put(`/lesson/plans/${id}`, data),

@@ -8,12 +8,10 @@ import json
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import (
-    DataScope, get_current_teacher, get_data_scope,
-)
+from app.api.deps import DataScope, get_data_scope, require_perm
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
@@ -28,19 +26,22 @@ grading_router = APIRouter(prefix="/grading", tags=["智能批改"])
 # 主观题题型集合。与交卷 finalize / 详情接口的判定口径保持一致。
 SUBJECTIVE_TYPES = {"short", "calc", "material", "composition"}
 
-@grading_router.get("/pending", summary="待批改列表")
-def pending_submissions(
-    params: PageParams = Depends(), task_id: Optional[int] = None,
-    class_id: Optional[int] = None, include_graded: bool = False,
-    db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
-    scope: DataScope = Depends(get_data_scope),
+# 教学管理 V2：批改中心权限点（docs/TEACHING_V2.md）
+GRADING_PERM_LIST = "grading:list"
+GRADING_PERM_DO = "grading:do"
+GRADING_PERM_PUBLISH = "grading:publish"
+
+
+def _submission_filter_stmt(
+    user: User, scope: DataScope, *, task_id: Optional[int] = None,
+    class_id: Optional[int] = None, keyword: Optional[str] = None,
+    include_graded: bool = False,
 ):
+    """批改队列/统计共用筛选（含任务归属范围）。"""
     stmt = select(Submission).join(Task, Task.id == Submission.task_id).where(
         Task.status != "archived"
     )
     # 默认只返回「待批改」：已完全批改/已发布的不进队列
-    # （此前已批改 100/100 的记录也躺在待批列表里，语义矛盾）。
-    # include_graded=true 时返回全部（批改中心想看历史记录时用）。
     if not include_graded:
         stmt = stmt.where(Submission.status.notin_(("fully_graded", "published")))
     if not scope.is_super:
@@ -51,7 +52,19 @@ def pending_submissions(
         stmt = stmt.where(Submission.student_id.in_(
             select(User.id).where(User.class_id == class_id)
         ))
+    if keyword:
+        like = f"%{keyword}%"
+        stmt = stmt.where(or_(
+            Task.title.like(like),
+            Submission.student_id.in_(
+                select(User.id).where(User.real_name.like(like))),
+        ))
+    return stmt
 
+
+def _submission_list_payload(
+    db: Session, stmt, params: PageParams,
+) -> Dict[str, Any]:
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
         stmt.order_by(Submission.id.desc()).offset(params.offset).limit(params.page_size)
@@ -78,10 +91,78 @@ def pending_submissions(
     return ok({"items": items, "total": total, "page": params.page})
 
 
+@grading_router.get("/pending", summary="待批改列表")
+def pending_submissions(
+    params: PageParams = Depends(), task_id: Optional[int] = None,
+    class_id: Optional[int] = None, keyword: Optional[str] = None,
+    include_graded: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(GRADING_PERM_LIST)),
+    scope: DataScope = Depends(get_data_scope),
+):
+    stmt = _submission_filter_stmt(
+        user, scope, task_id=task_id, class_id=class_id, keyword=keyword,
+        include_graded=include_graded,
+    )
+    return _submission_list_payload(db, stmt, params)
+
+
+@grading_router.get("/submissions", summary="作答提交列表（兼容/按任务、班级筛选）")
+def submission_list(
+    params: PageParams = Depends(), task_id: Optional[int] = None,
+    class_id: Optional[int] = None, keyword: Optional[str] = None,
+    include_graded: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(GRADING_PERM_LIST)),
+    scope: DataScope = Depends(get_data_scope),
+):
+    """与 /grading/pending 同源；保留独立路径并支持 class_id/task_id/keyword 筛选。"""
+    stmt = _submission_filter_stmt(
+        user, scope, task_id=task_id, class_id=class_id, keyword=keyword,
+        include_graded=include_graded,
+    )
+    return _submission_list_payload(db, stmt, params)
+
+
+@grading_router.get("/stats", summary="批改统计")
+def grading_stats(
+    task_id: Optional[int] = None, class_id: Optional[int] = None,
+    keyword: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(GRADING_PERM_LIST)),
+    scope: DataScope = Depends(get_data_scope),
+):
+    """当前教师范围内的批改状态统计（含已发布）。"""
+    base = _submission_filter_stmt(
+        user, scope, task_id=task_id, class_id=class_id, keyword=keyword,
+        include_graded=True)
+    status_rows = db.execute(
+        base.with_only_columns(Submission.status, func.count())
+        .group_by(Submission.status)
+    ).all()
+    counts = {str(status): int(cnt or 0) for status, cnt in status_rows}
+    avg_score = db.scalar(
+        base.with_only_columns(func.avg(Submission.score))
+        .where(Submission.score.isnot(None))
+    )
+    pending = counts.get("not_graded", 0)
+    grading = counts.get("auto_graded", 0)
+    graded = counts.get("fully_graded", 0) + counts.get("graded", 0)
+    published = counts.get("published", 0)
+    return ok({
+        "pending": pending,
+        "grading": grading,
+        "graded": graded,
+        "published": published,
+        "avg_score": round(float(avg_score or 0), 2),
+        "submission_total": sum(counts.values()),
+    })
+
+
 @grading_router.get("/submissions/{submission_id}", summary="批改详情")
 def grading_detail(
     submission_id: int, db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher),
+    user: User = Depends(require_perm(GRADING_PERM_LIST)),
     scope: DataScope = Depends(get_data_scope),
 ):
     from app.models import Question
@@ -137,7 +218,8 @@ def grading_detail(
 @grading_router.post("/submissions/{submission_id}/grade", summary="手动批改 / 采纳 AI 建议")
 def grade_submission(
     submission_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+    user: User = Depends(require_perm(GRADING_PERM_DO)),
+    scope: DataScope = Depends(get_data_scope),
 ):
     sub = db.get(Submission, submission_id)
     if not sub:
@@ -189,7 +271,8 @@ def grade_submission(
 @grading_router.post("/submissions/{submission_id}/reject", summary="打回重做")
 def reject_submission(
     submission_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+    user: User = Depends(require_perm(GRADING_PERM_DO)),
+    scope: DataScope = Depends(get_data_scope),
 ):
     sub = db.get(Submission, submission_id)
     if not sub:
@@ -225,7 +308,8 @@ def reject_submission(
 @grading_router.post("/submissions/{submission_id}/publish", summary="发布成绩")
 def publish_score(
     submission_id: int, db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+    user: User = Depends(require_perm(GRADING_PERM_PUBLISH)),
+    scope: DataScope = Depends(get_data_scope),
 ):
     from app.models import Notification
 
@@ -273,7 +357,8 @@ def publish_score(
 @grading_router.post("/batch/grade", summary="批量采纳当前分数（快速批改）")
 def batch_grade(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+    user: User = Depends(require_perm(GRADING_PERM_DO)),
+    scope: DataScope = Depends(get_data_scope),
 ):
     """把选中提交的「当前已有分数」直接落库为已批改。
 
@@ -329,7 +414,8 @@ def batch_grade(
 @grading_router.post("/batch/publish", summary="批量发布成绩")
 def batch_publish(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+    user: User = Depends(require_perm(GRADING_PERM_PUBLISH)),
+    scope: DataScope = Depends(get_data_scope),
 ):
     """批量发布已批改提交的成绩。只处理 fully_graded 且分数非空的记录。"""
     from app.models import Notification
@@ -365,9 +451,41 @@ def batch_publish(
               message=f"批量发布 {len(done)} 份，跳过 {len(skipped)} 份")
 
 
+@grading_router.post("/unpublish", summary="退回已发布成绩（仅发布权限）")
+def unpublish_scores(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm(GRADING_PERM_PUBLISH)),
+    scope: DataScope = Depends(get_data_scope),
+):
+    """把已发布成绩退回「已批改」，便于教师复核后重新发布（不删通知/成绩）。"""
+    ids = data.get("submission_ids") or []
+    if not ids:
+        raise BusinessException("请选择要退回的提交")
+    done, skipped = [], []
+    for sid in ids:
+        sub = db.get(Submission, sid)
+        if not sub:
+            skipped.append({"id": sid, "reason": "不存在"})
+            continue
+        task = db.get(Task, sub.task_id)
+        if task and not scope.is_super and task.creator_id != user.id:
+            skipped.append({"id": sid, "reason": "非本人任务"})
+            continue
+        if sub.status != "published":
+            skipped.append({"id": sid, "reason": "未发布"})
+            continue
+        sub.status = "fully_graded"
+        sub.grade_time = now_local()
+        done.append(sid)
+    db.commit()
+    return ok({"unpublished": done, "skipped": skipped},
+              message=f"已退回 {len(done)} 份，跳过 {len(skipped)} 份")
+
+
 @grading_router.post("/tasks/{task_id}/report", summary="生成班级学情报告")
 def class_report(
-    task_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_teacher),
+    task_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm(GRADING_PERM_LIST)),
 ):
     task = db.get(Task, task_id)
     if not task:
@@ -386,7 +504,8 @@ def class_report(
 
 @grading_router.post("/tasks/{task_id}/ai-comment", summary="AI 生成学情教学建议")
 def ai_teaching_advice(
-    task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
+    task_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm(GRADING_PERM_LIST)),
 ):
 
     task = db.get(Task, task_id)
