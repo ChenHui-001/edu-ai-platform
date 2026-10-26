@@ -85,7 +85,14 @@ def _submission_list_payload(
             "score": s.score, "objective_score": s.objective_score,
             "subjective_score": s.subjective_score, "status": s.status,
             "class_rank": s.class_rank, "is_passed": s.is_passed,
-            "needs_manual": bool(s.subjective_score and s.subjective_score > 0),
+            # needs_manual：是否有主观题待教师批改。
+            # 此前用 subjective_score>0 判定，但交卷时主观分恒为 0（未批）→ 恒 false，
+            # 与「有主观题待批」的真实状态相反；批改后状态已成 fully_graded，
+            # 也不该再标 needs_manual。正确依据是 submission.status：
+            # not_graded = 存在 grader_type==auto 的主观题（待批）；
+            # auto_graded = 全客观题已机器判完（无主观题或已 AI 判）；
+            # fully_graded = 教师已批完。只有 not_graded 才 needs_manual。
+            "needs_manual": s.status == "not_graded",
             "submit_time": dictify(s.submit_time),
         })
     return ok({"items": items, "total": total, "page": params.page})
