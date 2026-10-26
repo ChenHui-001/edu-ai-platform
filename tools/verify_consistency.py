@@ -35,9 +35,17 @@ OK, BAD = 0, 0
 
 
 def _run(cmd, timeout=120):
-    """执行本地命令，返回 (rc, stdout)。"""
+    """执行本地命令，返回 (rc, stdout)。
+
+    必须设 MSYS_NO_PATHCONV=1：Git Bash 会把 /app/BUILD_INFO 这类参数
+    自动转成 Windows 路径（'C:/Program Files/.../app/BUILD_INFO'），
+    导致 docker run 读镜像内文件失败。
+    """
+    env = dict(os.environ)
+    env["MSYS_NO_PATHCONV"] = "1"
     try:
-        p = subprocess.run(cmd, shell=True, capture_output=True, timeout=timeout)
+        p = subprocess.run(cmd, shell=True, capture_output=True, timeout=timeout,
+                           env=env)
         return p.returncode, p.stdout.decode("utf-8", "replace").strip()
     except Exception as e:  # noqa: BLE001
         return 1, str(e)[:200]
@@ -67,6 +75,56 @@ def _ssh(host, user, cmd, timeout=120):
             c.close()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _docker(args, timeout=180):
+    """执行 docker 命令（shell=False 传 list）。
+
+    不能用 shell=True：Windows 下 shell=True 走 cmd.exe，单引号不是引号，
+    `sh -c 'cat /app/VERSION; ...'` 会被 cmd 截断成语法错误；Git Bash 又会把
+    /app/VERSION 转成 Windows 路径。list 形式两者都绕开。
+    """
+    try:
+        p = subprocess.run(["docker"] + list(args), capture_output=True,
+                           timeout=timeout)
+        return (p.returncode,
+                p.stdout.decode("utf-8", "replace").strip(),
+                p.stderr.decode("utf-8", "replace").strip())
+    except Exception as e:  # noqa: BLE001
+        return 1, "", str(e)[:200]
+
+
+def _img_fingerprint(image):
+    """取镜像内 /app/VERSION 与 BUILD_INFO 的 commit。"""
+    rc, out, err = _docker([
+        "run", "--rm", "--entrypoint", "sh", image, "-c",
+        "cat /app/VERSION; grep ^commit /app/BUILD_INFO | cut -d= -f2",
+    ])
+    parts = out.split() if out else []
+    return (parts[0] if parts else "",
+            parts[1] if len(parts) > 1 else "",
+            err)
+
+
+def _ctr_fingerprint(container):
+    """取运行中容器内同样的两个指纹。"""
+    rc, out, err = _docker([
+        "exec", container, "sh", "-c",
+        "cat /app/VERSION; grep ^commit /app/BUILD_INFO | cut -d= -f2",
+    ])
+    parts = out.split() if out else []
+    return (parts[0] if parts else "",
+            parts[1] if len(parts) > 1 else "",
+            err)
+
+
+def _ctr_hashes(container):
+    """取容器内关键文件 sha256 → {相对路径: 哈希}。"""
+    rc, out, err = _docker([
+        "exec", container, "sh", "-c",
+        "cd /app && sha256sum " + " ".join(KEY_FILES),
+    ])
+    return {l.split()[1]: l.split()[0] for l in out.splitlines() if l}
 
 
 def check(label, got, expect=None, extra=""):
@@ -108,6 +166,17 @@ def main():
     check("   工作区未提交改动", f"{dirty} 个",
           "0 个" if dirty == "0" else "← 有改动未提交，先提交再校验")
 
+    # 镜像内容对应的提交 = **最后一次改 VERSION 的提交**。
+    # 不能拿 HEAD 当期望值：HEAD 之后若只有 tools/docs 之类不进镜像的提交，
+    # 镜像理应保持上一个版本（版本号唯一对应一次内容），此时要求镜像
+    # 等于 HEAD 是错的，会把「正确的状态」误报成不一致。
+    rc, img_expect = _run("git log -1 --format=%H -- VERSION")
+    check("   镜像对应提交(最后改 VERSION)", img_expect[:7] if rc == 0 else "ERR")
+    rc, ahead = _run(f"git rev-list --count {img_expect}..HEAD")
+    if rc == 0 and ahead and ahead != "0":
+        print(f"  \033[93m!\033[0m HEAD 领先镜像 {ahead} 个提交"
+              f"（仅工具/文档类，无需重建镜像）")
+
     # ---------- ② 远程仓库 ----------
     rc, remote = _run("git ls-remote origin master")
     remote_sha = remote.split()[0] if rc == 0 and remote else ""
@@ -123,19 +192,14 @@ def main():
         print(f"  \033[91m✘\033[0m ③ ghcr 镜像 {GHCR_IMAGE}:{ver} 不存在")
 
     local_img_sha = ""
-    rc, out = _run(
-        f"docker run --rm --entrypoint sh {GHCR_IMAGE}:{ver} "
-        f"-c 'cat /app/VERSION; grep ^commit /app/BUILD_INFO | cut -d= -f2'")
-    if rc == 0 and out:
-        parts = out.split()
-        img_ver = parts[0] if parts else ""
-        img_commit = parts[1] if len(parts) > 1 else ""
+    img_ver, img_commit, err = _img_fingerprint(f"{GHCR_IMAGE}:{ver}")
+    if img_ver:
         local_img_sha = img_commit
         check("   镜像内 VERSION", img_ver, ver)
-        check("   镜像内 commit", img_commit, head)
+        check("   镜像内 commit", img_commit, img_expect)
     else:
         BAD += 1
-        print(f"  \033[91m✘\033[0m ③ 读取镜像内指纹失败: {out[:80]}")
+        print(f"  \033[91m✘\033[0m ③ 读取镜像内指纹失败: {err[:100]}")
 
     # ---------- ④ 服务器容器 ----------
     if args.host:
@@ -145,19 +209,15 @@ def main():
         parts = out.split()
         if rc == 0 and len(parts) >= 2:
             check("④ 服务器容器 VERSION", parts[0], ver)
-            check("   服务器容器 commit", parts[1], head)
+            check("   服务器容器 commit", parts[1], img_expect)
             # 两端关键文件 sha256 比对
             cmd = (f"docker exec {args.container} sh -c "
                    f"'cd /app && sha256sum {' '.join(KEY_FILES)}'")
             rc2, srv_hash = _ssh(args.host, args.user, cmd)
-            rc3, loc_hash = _run(
-                f"docker exec {args.container} sh -c "
-                f"'cd /app && sha256sum {' '.join(KEY_FILES)}'")
-            if rc2 == 0 and rc3 == 0 and srv_hash and loc_hash:
-                # sha256sum 输出：<hash>  <相对路径>
-                s_map = {l.split()[1]: l.split()[0] for l in srv_hash.splitlines() if l}
-                l_map = {l.split()[1]: l.split()[0] for l in loc_hash.splitlines() if l}
-                diff = [k for k in s_map if l_map.get(k) != s_map[k]]
+            loc_map = _ctr_hashes(args.container)
+            s_map = {l.split()[1]: l.split()[0] for l in srv_hash.splitlines() if l}
+            if rc2 == 0 and s_map and loc_map:
+                diff = [k for k in s_map if loc_map.get(k) != s_map[k]]
                 check("   两端关键文件 sha256", "全部一致" if not diff else f"不一致: {diff}",
                       "全部一致")
             else:
