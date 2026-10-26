@@ -151,6 +151,7 @@ if [ -n "$GATE_PY" ]; then
   "$GATE_PY" tools/check_hardcoded_host.py || GATE_RC=1
   "$GATE_PY" tools/check_weak_assertion.py || GATE_RC=1
   "$GATE_PY" tools/check_time_contract.py || GATE_RC=1
+  "$GATE_PY" tools/check_model_fk.py || GATE_RC=1
   # ruff 未安装时 lint_gate 返回 2 —— 那是「环境缺工具」而不是「代码有缺陷」，
   # 与 CI 不同（CI 里会先 pip install ruff，缺了就是流程错）。
   # 本地缺失只告警不阻断，避免为了跑一次交付先折腾环境。
@@ -163,7 +164,7 @@ if [ -n "$GATE_PY" ]; then
     fi
   }
   if [ "$GATE_RC" -ne 0 ]; then
-    die 1 "静态门禁未通过（硬编码地址 / 恒真断言 / F 类缺陷），修复后再交付"
+    die 1 "静态门禁未通过（硬编码地址 / 恒真断言 / 时间契约 / 模型输出写外键 / F 类缺陷），修复后再交付"
   fi
   ok "静态门禁通过"
 else

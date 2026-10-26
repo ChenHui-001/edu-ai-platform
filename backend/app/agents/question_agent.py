@@ -3,6 +3,7 @@ import hashlib
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
@@ -25,6 +26,8 @@ class QuestionGeneratorAgent(BaseAgent):
 4. 只输出 JSON 数组，不要任何额外文字；**不要换行和缩进**，请输出紧凑 JSON。
    （缩进与换行会显著占用 max_tokens 预算，推理型模型的 thinking token 还要
    再分走一部分，预算不足时正文会被截断成非法 JSON。）
+5. knowledge_point_id 只能填【参考资料】里【可选知识点】列出的 id；没有对应的
+   知识点就填 0。**绝对不要编造 id**，填错的 id 无法落库。
 
 输出格式：
 [
@@ -87,15 +90,25 @@ difficulty 取值：easy / medium / hard"""
                 )
             context.append(f"目标知识点：{kp.name}（{kp.description or '无描述'}）")
         else:
+            # 候选知识点：**不能按 level==3 过滤** —— 实测种子数据只到 level 1/2，
+            # level=3 恒为 0 条，过滤后候选永远为空，模型拿不到任何真实 id
+            # 只能凭空编造（实测编出不存在的 101），落库直接触发外键约束失败。
+            # 必须把 id 一起给模型：只给名称时模型无从选择 knowledge_point_id。
             kps = db.scalars(
                 select(KnowledgePoint).where(
                     KnowledgePoint.subject_id == subject_id,
-                    KnowledgePoint.level == 3,
                     KnowledgePoint.is_active.is_(True),
-                ).limit(10)
+                ).order_by(KnowledgePoint.level.desc(), KnowledgePoint.id)
+                .limit(12)
             ).all()
             if kps:
-                context.append("可选知识点：" + "、".join(k.name for k in kps[:10]))
+                context.append(
+                    "可选知识点（knowledge_point_id 只能取下列 id 之一，"
+                    "找不到对应知识点就填 0，不要编造 id）："
+                    + "、".join(f"{k.name}(id={k.id})" for k in kps)
+                )
+            else:
+                context.append("该学科暂无知识点，knowledge_point_id 必须填 0。")
             refs = search(
                 "常见考题", db, subject_id=subject_id, top_k=3,
                 types=["question"], student_id=user_id,
@@ -128,12 +141,24 @@ difficulty 取值：easy / medium / hard"""
         if not isinstance(items, list):
             items = []
 
-        owner_id = user_id or (db.query(User).filter(User.username == "admin").scalar() or User.id).first().id
+        owner_id = user_id or self._default_owner_id(db)
+        # grade_id 是**非空外键**：调用方没传时必须回落到学科所属年级，
+        # 写 0 会直接触发外键约束失败。
+        grade_id = grade_id or (subject.grade_id if subject else None)
+        if not grade_id:
+            raise BusinessException("该学科未绑定年级，无法生成题目")
         questions: List[Dict[str, Any]] = []
         saved = 0
         for it in items[:count]:
             if not isinstance(it, dict) or not it.get("stem"):
                 continue
+            # 模型给的知识点 id **不可信**：必须校验后再落库。
+            # 未校验时模型编造的 id 会让整批题目因外键约束失败而全军覆没。
+            kp_id = self._resolve_kp_id(
+                db, it.get("knowledge_point_id"), subject_id,
+                kp_name=it.get("knowledge_point_name"),
+                fallback_id=knowledge_point_id,
+            )
             q = Question(
                 type=it.get("type", question_type),
                 stem=it["stem"],
@@ -142,9 +167,9 @@ difficulty 取值：easy / medium / hard"""
                 analysis=it.get("analysis"),
                 score=float(it.get("score", 5)),
                 difficulty=it.get("difficulty", difficulty),
-                grade_id=grade_id or 0,
+                grade_id=grade_id,
                 subject_id=subject_id,
-                knowledge_point_id=it.get("knowledge_point_id") or knowledge_point_id,
+                knowledge_point_id=kp_id,
                 bank_type="private",
                 owner_id=owner_id,
                 status="draft",  # AI 生成题目先进待审核库
@@ -168,7 +193,16 @@ difficulty 取值：easy / medium / hard"""
                                  reason="模型返回的题目缺少题干等必要字段")
 
         if save:
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError as exc:
+                # 兜底：即便前置校验漏了某个外键，也不能让整批题目因
+                # 约束失败而 500 + 一句堆栈。回滚并给出可读的失败原因。
+                db.rollback()
+                raise BusinessException(
+                    "题目落库失败：关联数据（知识点/学科/属主）不存在或已删除，"
+                    "本次生成未保存，请重新选择知识点后重试"
+                ) from exc
             # 关键：把落库后的主键回填到返回值。
             # 下游（智能组卷）依赖 question_id 建立 PaperItem，
             # 不回填的话生成的题目无法被任何试卷引用。
@@ -229,6 +263,77 @@ difficulty 取值：easy / medium / hard"""
         }
 
     # ---------------- 工具 ----------------
+    @staticmethod
+    def _resolve_kp_id(
+        db: Session,
+        raw_id: Any,
+        subject_id: Optional[int],
+        kp_name: Optional[str] = None,
+        fallback_id: Optional[int] = None,
+    ) -> Optional[int]:
+        """校验模型给出的知识点 id，返回**可安全落库**的值（无效则回退或置空）。
+
+        模型会**编造**不存在的知识点 id（实测在候选为空时编出 101，而库里
+        只有 id ≤ 97）。直接写库会触发 `FOREIGN KEY constraint failed`，
+        **整批题目全部落库失败**，用户只看到一句 500 堆栈。
+
+        三重判据：
+          1. id 必须真实存在；
+          2. 必须属于当前学科（跨学科挂靠会让掌握度/复习计划按知识点统计错位）；
+          3. 都不过则回退：请求指定的知识点 → 按名称在同学科内匹配 → 留空。
+             留空是可接受的：题目照样入库，只是未挂知识点，用户可在审核台补挂。
+        """
+        def _valid(kp_id: Optional[int]) -> Optional[int]:
+            if not kp_id:
+                return None
+            kp = db.get(KnowledgePoint, int(kp_id))
+            if kp is None:
+                return None
+            if subject_id and kp.subject_id != subject_id:
+                return None
+            return kp.id
+
+        value = 0
+        try:
+            value = int(str(raw_id).strip()) if raw_id is not None and str(raw_id).strip() else 0
+        except (TypeError, ValueError):
+            value = 0
+        resolved = _valid(value) if value > 0 else None
+        if resolved:
+            return resolved
+        resolved = _valid(fallback_id)
+        if resolved:
+            return resolved
+        # 模型给了名称但 id 无效 → 在同学科内按名称匹配（与 question_ai 的
+        # _suggest_kp 同一思路，保证两条 AI 出题路径的挂靠口径一致）
+        name = str(kp_name or "").strip()
+        if name and subject_id:
+            rows = db.scalars(
+                select(KnowledgePoint).where(
+                    KnowledgePoint.subject_id == subject_id,
+                    KnowledgePoint.is_active.is_(True),
+                )
+            ).all()
+            matched = [k for k in rows if k.name and (k.name in name or name in k.name)]
+            if matched:
+                return max(matched, key=lambda k: len(k.name or "")).id
+        return None
+
+    @staticmethod
+    def _default_owner_id(db: Session) -> int:
+        """兜底属主：优先 admin 账号，其次第一个用户（保证 owner_id 外键有效）。
+
+        原实现 `(... or User.id).first().id` 在 user_id 为空时会对整数调
+        `.first()`（AttributeError），是一条走不通的分支。
+        """
+        row = db.scalar(select(User.id).where(User.username == "admin"))
+        if row:
+            return int(row)
+        row = db.scalar(select(User.id).order_by(User.id).limit(1))
+        if not row:
+            raise BusinessException("系统内没有任何用户，无法确定题目属主")
+        return int(row)
+
     @staticmethod
     def _type_name(t: str) -> str:
         return {
