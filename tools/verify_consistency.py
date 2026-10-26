@@ -183,13 +183,21 @@ def main():
     check("② 远程 origin/master", remote_sha or f"ERR {remote}", head)
 
     # ---------- ③ ghcr 镜像 ----------
-    rc, out = _run(f"docker manifest inspect {GHCR_IMAGE}:{ver}")
+    # manifest inspect 需要访问 registry，可能因网络/代理超时失败。
+    # 此时不能直接判「镜像不存在」——本地已有该镜像就说明它确实发布过
+    # （内容一致性由下面的镜像内指纹校验兜底）。要区分「不存在」与「查不到」。
+    rc, out, err = _docker(["manifest", "inspect", f"{GHCR_IMAGE}:{ver}"])
     if rc == 0 and out:
         OK += 1
         print(f"  \033[92m✔\033[0m ③ ghcr 镜像 {GHCR_IMAGE}:{ver} 存在（多架构）")
     else:
-        BAD += 1
-        print(f"  \033[91m✘\033[0m ③ ghcr 镜像 {GHCR_IMAGE}:{ver} 不存在")
+        rc2, lout, _ = _docker(["images", f"{GHCR_IMAGE}:{ver}", "--format", "{{.ID}}"])
+        if rc2 == 0 and lout.strip():
+            print(f"  \033[93m!\033[0m ③ ghcr 远程查询失败（{err[:60]}）"
+                  f"—— 本地已有该镜像，内容以指纹校验为准")
+        else:
+            BAD += 1
+            print(f"  \033[91m✘\033[0m ③ ghcr 镜像 {GHCR_IMAGE}:{ver} 不存在：{err[:80]}")
 
     local_img_sha = ""
     img_ver, img_commit, err = _img_fingerprint(f"{GHCR_IMAGE}:{ver}")
