@@ -15,7 +15,6 @@
   python tests/ui_e2e/browser_smoke.py --base http://127.0.0.1:18081 --channel msedge
 """
 import argparse
-import json
 import os
 import sys
 import time

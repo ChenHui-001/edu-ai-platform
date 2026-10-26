@@ -24,8 +24,8 @@ from app.core.exception import BusinessException, NotFoundException, PermissionE
 from app.core.logger import get_logger
 from app.core.rate_limit import check_agent_rate
 from app.models import (
-    Grade, KnowledgePoint, Paper, PaperItem, PaperShare, Question, QuestionBankType,
-    QuestionStatus, Subject, User,
+    KnowledgePoint, Paper, PaperItem, PaperShare, Question, QuestionBankType,
+    QuestionStatus, User,
 )
 from app.utils.common import ok
 
@@ -468,9 +468,6 @@ def _recommend_rules(
             x["knowledge_point_id"] for x in coverage
             if x["count"] == min_count
         ][:3]
-    weak_kp_names = {
-        kp_id: (kps[kp_id].name if kp_id in kps else None) for kp_id in weak_kp_ids
-    }
 
     stmt = select(Question).where(
         Question.grade_id == paper.grade_id,

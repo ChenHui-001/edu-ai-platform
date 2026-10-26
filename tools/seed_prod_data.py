@@ -191,7 +191,6 @@ def main():
 
     # 教师：每个班一个班主任（数学）
     teachers = []  # [(grade_num, class_obj, teacher_obj)]
-    stu_role_check = False
     for idx, (gn, k, _) in enumerate(classes):
         tname = f"t{gn}{k.get('class_no','1')}"
         # 查是否已建
@@ -458,7 +457,7 @@ def main():
             continue
         ginfo = scope[gn]
         st, r = call("POST", "/learning/notes", {
-            "title": f"一元一次方程学习笔记",
+            "title": "一元一次方程学习笔记",
             "content": "## 知识要点\n- 一元一次方程标准形式 ax+b=0\n- 移项要变号\n\n## 易错\n合并同类项时系数计算",
             "format": "markdown", "subject_id": ginfo["math_id"],
             "knowledge_point_id": ginfo["kp_id"],
