@@ -41,6 +41,28 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
     ("edu_knowledge_point", "owner_id", "INTEGER"),
     # v1.3.0: 知识点附件学生可见性（默认可见，旧数据升级后不改变行为）
     ("sys_attachment", "visible_to_student", "INTEGER DEFAULT 1"),
+    # v2.1.0: 标准组卷 V3 —— 试卷扩展维度（来源标准 / 学段 / 审核态 / 共享范围 / 版本）
+    # status 默认 published：存量试卷升级后必须仍然可见可用，不能因为新增审核态而"消失"。
+    ("edu_paper", "description", "TEXT"),
+    ("edu_paper", "exam_type", "VARCHAR(32)"),
+    ("edu_paper", "stage", "VARCHAR(16)"),
+    ("edu_paper", "textbook_version", "VARCHAR(64)"),
+    ("edu_paper", "status", "VARCHAR(16) DEFAULT 'published'"),
+    ("edu_paper", "standard_id", "INTEGER"),
+    ("edu_paper", "share_scope", "VARCHAR(16) DEFAULT 'private'"),
+    ("edu_paper", "review_comment", "TEXT"),
+    ("edu_paper", "review_by", "INTEGER"),
+    ("edu_paper", "review_at", "DATETIME"),
+    ("edu_paper", "current_version", "INTEGER DEFAULT 1"),
+    ("edu_paper", "generation_params", "TEXT"),
+    ("edu_paper", "type_report", "TEXT"),
+    # v2.1.0: 题项大题分组（按题型 code 分组，改大题名不会打散分组）
+    ("edu_paper_item", "section_code", "VARCHAR(32)"),
+    ("edu_paper_item", "section_sort", "INTEGER DEFAULT 0"),
+    ("edu_paper_item", "score_override", "INTEGER DEFAULT 0"),
+    # v2.1.0: 共享权限级别（仅查看 / 可另存 / 可编辑）
+    ("edu_paper_share", "permission", "VARCHAR(16) DEFAULT 'view'"),
+    ("edu_paper_share", "scope", "VARCHAR(16)"),
 ]
 
 

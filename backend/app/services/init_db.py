@@ -560,7 +560,30 @@ def init_all(db: Session) -> None:
     init_roles(db)
     init_grades_subjects(db)
     init_knowledge_points(db)
+    # level3 考点层：必须在 level1/2 播完后再补（依赖父章节已存在）。
+    # 单独一步而不是塞进 init_knowledge_points，是因为它的幂等策略不同：
+    # 前者「空表才播」，后者「逐条比对、只补缺」，存量库升级也能被补齐。
+    try:
+        from app.services.knowledge_level3_seed import seed_knowledge_level3
+        seed_knowledge_level3(db)
+    except Exception as exc:  # noqa: BLE001  播种失败不能阻断启动
+        logger.warning(f"知识点 level3 播种失败（不影响启动）：{exc}")
     init_admin(db)
     init_jobs(db)
+    init_exam_standards(db)
     init_demo_data(db)
     warn_default_admin_password(db)
+
+
+def init_exam_standards(db: Session) -> None:
+    """播种湖北命题标准（幂等，只播一次）。
+
+    放在 init_knowledge_points 之后、init_demo_data 之前：标准本身不依赖
+    知识点，但演示数据里的试卷可能引用标准，顺序上不能颠倒。
+    管理员之后在后台改的标准**不会被后续升级覆盖**——播种函数有标记位。
+    """
+    from app.services.exam_standard_seed import seed_exam_standards
+
+    result = seed_exam_standards(db)
+    if result.get("errors"):
+        logger.warning("命题标准播种存在校验失败项：%s", result["errors"])

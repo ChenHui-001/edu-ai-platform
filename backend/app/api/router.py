@@ -2,8 +2,9 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
-    agent, attachment, auth, edu, grading, knowledge, knowledge_ai, lesson,
-    lesson_ai, logs, paper_ai, question, question_ai, report, system, task,
+    agent, attachment, auth, edu, exam_standard, grading, knowledge, knowledge_ai,
+    lesson, lesson_ai, logs, paper_ai, paper_compose, question, question_ai, report,
+    system, task,
 )
 
 api_router = APIRouter()
@@ -24,6 +25,10 @@ api_router.include_router(question_ai.router)
 # 试卷 AI（分析/推荐）：独立文件，路径 /question/papers/{paper_id}/ai/*。
 # 只读接口，不修改 question.py 的 paper CRUD/导出/LLM 行为。
 api_router.include_router(paper_ai.router)
+# 标准组卷 V3：命题标准配置 + 双模式组卷 + 预览编辑 + 导出 + 共享。
+# 全部新增路径，不改动 question.py 既有 CRUD 的契约与行为。
+api_router.include_router(exam_standard.router)
+api_router.include_router(paper_compose.router)
 api_router.include_router(task.router)
 api_router.include_router(grading.grading_router)
 api_router.include_router(grading.learning_router)

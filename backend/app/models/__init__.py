@@ -15,8 +15,11 @@ from app.models.ops import (  # noqa: F401
     AgentJob, AgentRate, Notification, OperationLog, ScheduledJob,
 )
 from app.models.question import (  # noqa: F401
-    Difficulty, Paper, PaperItem, PaperShare, Question, QuestionBankType,
-    QuestionKnowledge, QuestionStatus, QuestionType,
+    Difficulty, Paper, PaperItem, PaperShare, PaperStatus, Question, QuestionBankType,
+    QuestionKnowledge, QuestionStatus, QuestionType, SharePermission, ShareScope,
+)
+from app.models.paper_ext import (  # noqa: F401
+    ExamStandard, PaperFavorite, PaperVersion,
 )
 from app.models.system import (  # noqa: F401
     IdentityType, Permission, PermissionType, Registration, Role,
@@ -38,6 +41,9 @@ __all__ = [
     # question
     "Question", "QuestionKnowledge", "Paper", "PaperItem", "PaperShare",
     "QuestionType", "QuestionStatus", "QuestionBankType", "Difficulty",
+    "PaperStatus", "ShareScope", "SharePermission",
+    # paper_ext（V3 标准组卷）
+    "ExamStandard", "PaperVersion", "PaperFavorite",
     # task
     "Task", "TaskAssignment", "Submission", "Answer", "WrongQuestion",
     "TaskType", "TaskStatus", "GradeStatus",

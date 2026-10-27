@@ -155,7 +155,55 @@ export const questionApi = {
   removePaper: (id) => request.delete(`/question/papers/${id}`),
   copyPaper: (id, data) => request.post(`/question/papers/${id}/copy`, data),
   sharePaper: (id, data) => request.post(`/question/papers/${id}/share`, data),
-  exportPaperUrl: (id) => `/api/v1/question/papers/${id}/export`
+  exportPaperUrl: (id) => `/api/v1/question/papers/${id}/export`,
+
+  // ---- 标准组卷 V3（命题标准 / 双模式组卷 / 预览编辑 / 导出 / 共享审核）----
+  standards: (params) => request.get('/question/standards', { params }),
+  standardOptions: (params) => request.get('/question/standards/options', { params }),
+  standardDetail: (id) => request.get(`/question/standards/${id}`),
+  createStandard: (data) => request.post('/question/standards', data),
+  updateStandard: (id, data) => request.put(`/question/standards/${id}`, data),
+  removeStandard: (id) => request.delete(`/question/standards/${id}`),
+  duplicateStandard: (id, data) => request.post(`/question/standards/${id}/duplicate`, data),
+  resetStandard: (id) => request.post(`/question/standards/${id}/reset`),
+  seedStandards: (force = false) => request.post('/question/standards/seed', null,
+    { params: { force } }),
+
+  composePreview: (data) => request.post('/question/papers/compose/preview', data),
+  composeAi: (data) => request.post('/question/papers/compose/ai', data),
+  composeSave: (data) => request.post('/question/papers/compose/save', data),
+
+  paperPreview: (id, params) => request.get(`/question/papers/${id}/preview`, { params }),
+  updatePaperItems: (id, data) => request.post(`/question/papers/${id}/items`, data),
+  regenerateItem: (id, itemId, data) => request.post(
+    `/question/papers/${id}/items/${itemId}/regenerate`, data || {}),
+  removePaperItem: (id, itemId) => request.delete(`/question/papers/${id}/items/${itemId}`),
+  renameSection: (id, data) => request.post(`/question/papers/${id}/sections/rename`, data),
+  restructurePaper: (id, data) => request.post(`/question/papers/${id}/restructure`, data || {}),
+
+  paperVersions: (id) => request.get(`/question/papers/${id}/versions`),
+  paperVersionDetail: (id, v) => request.get(`/question/papers/${id}/versions/${v}`),
+  restorePaperVersion: (id, v) => request.post(`/question/papers/${id}/versions/${v}/restore`),
+
+  paperLibrary: (params) => request.get('/question/papers/library/list', { params }),
+  toggleFavorite: (id, favorite) => request.post(`/question/papers/${id}/favorite`, { favorite }),
+  reviewPaper: (id, data) => request.post(`/question/papers/${id}/review`, data),
+  setShareScope: (id, scope) => request.post(`/question/papers/${id}/share-scope`, { scope }),
+  shareInfo: (id) => request.get(`/question/papers/${id}/share-info`),
+
+  exportDocxUrl: (id, params) => `/api/v1/question/papers/${id}/export/docx`,
+  exportPdf: (id, params) => request.get(`/question/papers/${id}/export/pdf`,
+    { params, responseType: 'blob' }),
+  exportDocx: (id, params) => request.get(`/question/papers/${id}/export/docx`,
+    { params, responseType: 'blob' }),
+  // 答题卡是 PDF 流，同样必须走 blob 请求（window.open 不带 Authorization → 401）
+  exportAnswerSheet: (id, params) => request.get(`/question/papers/${id}/export/answer-sheet`,
+    { params, responseType: 'blob' }),
+  exportAnswerSheetUrl: (id, params) => `/api/v1/question/papers/${id}/export/answer-sheet`,
+  // 打印 HTML：取文本后在浏览器新窗口渲染（避免 window.open 直连 401）
+  exportPrintHtml: (id, params) => request.get(`/question/papers/${id}/export/html`,
+    { params, responseType: 'text' }),
+  exportPrintHtmlUrl: (id, params) => `/api/v1/question/papers/${id}/export/html`
 }
 
 // ---------------- 作业与考试 ----------------

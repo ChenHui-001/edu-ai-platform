@@ -13,8 +13,8 @@
       </div>
       <div class="pm-actions">
         <el-button :icon="Refresh" @click="refreshAll">刷新</el-button>
-        <el-button v-if="canWrite || canAI" :icon="DocumentCopy" @click="openAI">AI 智能组卷</el-button>
-        <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openDialog()">手动组卷</el-button>
+        <el-button v-if="canAI" :icon="MagicStick" @click="goWizardAi">AI 智能组卷</el-button>
+        <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openDialog()">新建试卷</el-button>
       </div>
     </div>
 
@@ -496,6 +496,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, DocumentCopy, MagicStick } from '@element-plus/icons-vue'
 import { questionApi, eduApi, agentApi } from '@/api'
@@ -508,6 +509,7 @@ import { downloadBlob } from '@/utils/download'
 function safeStem(s) { return sanitizeHtml(s) }
 
 const userStore = useUserStore()
+const router = useRouter()
 const { can } = userStore
 const canWrite = computed(() => can('paper:write'))
 const canShare = computed(() => can('paper:share'))
@@ -889,7 +891,19 @@ function onFormGradeChange() {
   loadFormSubjects(form.grade_id)
 }
 
+// 进入标准组卷向导（AI 模式直接落到第 2 步）
+function goWizardAi() {
+  router.push({ path: '/teacher/papers/new', query: { mode: 'ai' } })
+}
+
 async function openDialog(row) {
+  // 新建试卷改走「标准组卷向导」（双模式 + 命题标准 + 预览编辑）。
+  // 编辑仍留在此对话框：它承载的是「增删单题/改分」的轻量场景，
+  // 与向导的「重新生成整卷」是两种心智模型，合并会让两者都变笨重。
+  if (!row?.id) {
+    router.push('/teacher/papers/new')
+    return
+  }
   dlg.value = true
   qFilter.qtype = ''
   qFilter.difficulty = ''

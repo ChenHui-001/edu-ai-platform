@@ -57,6 +57,12 @@ const routes = [
         meta: { title: '题库管理', icon: 'Notebook', perm: 'question:bank:list' } },
       { path: 'teacher/papers', name: 'PaperManage', component: () => import('@/views/teacher/PaperManage.vue'),
         meta: { title: '试卷管理', icon: 'Tickets', perm: 'paper:list' } },
+      // 标准组卷向导：不进菜单（hidden），由试卷管理的「新建试卷」进入
+      { path: 'teacher/papers/new', name: 'PaperWizard', component: () => import('@/views/teacher/PaperWizard.vue'),
+        meta: { title: '新建试卷', hidden: true, perm: 'paper:write' } },
+      // 试卷编辑页：向导保存后跳转，或列表页「编辑」
+      { path: 'teacher/papers/:id/edit', name: 'PaperEdit', component: () => import('@/views/teacher/PaperEdit.vue'),
+        meta: { title: '编辑试卷', hidden: true, perm: 'paper:write' } },
       { path: 'teacher/tasks', name: 'TaskManage', component: () => import('@/views/teacher/TaskManage.vue'),
         meta: { title: '作业考试', icon: 'List', perm: 'task:list' } },
       { path: 'teacher/grading', name: 'GradingCenter', component: () => import('@/views/teacher/GradingCenter.vue'),

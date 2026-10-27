@@ -989,33 +989,39 @@ def delete_knowledge(
         raise NotFoundException("知识点不存在")
     _assert_write(db, user, kp.grade_id, kp.subject_id)
 
+    # 阻断原因**一次性全部报出**，不要"先报子节点、删完再说被引用"。
+    # level3 补齐后，绝大多数章节下都有子节点，若仍按 old 顺序检查，
+    # 用户会先看到"请先删除子级"，辛苦删完才被告知"还被题目引用"——
+    # 两次往返、且子节点已不可恢复。这里把所有原因拼成一条消息。
     child_cnt = db.scalar(
         select(func.count()).select_from(KnowledgePoint).where(
             KnowledgePoint.parent_id == kp.id)
     ) or 0
-    if child_cnt:
-        raise BusinessException("该知识点还有子节点，请先删除子级")
     q_cnt = db.scalar(
         select(func.count()).select_from(Question).where(
             Question.knowledge_point_id == kp.id)
     ) or 0
-    if q_cnt:
-        raise BusinessException(
-            f"该知识点已被 {q_cnt} 道题目引用，请先调整相关题目后再删除")
     m_cnt = db.scalar(
         select(func.count()).select_from(KnowledgeMastery).where(
             KnowledgeMastery.knowledge_point_id == kp.id)
     ) or 0
-    if m_cnt:
-        raise BusinessException(
-            f"该知识点已有 {m_cnt} 条学生掌握度记录引用，删除会导致学情数据丢失")
     r_cnt = db.scalar(
         select(func.count()).select_from(ReviewPlan).where(
             ReviewPlan.knowledge_point_id == kp.id)
     ) or 0
+
+    blockers = []
+    if q_cnt:
+        blockers.append(f"已被 {q_cnt} 道题目引用，请先调整相关题目后再删除")
+    if m_cnt:
+        blockers.append(f"已有 {m_cnt} 条学生掌握度记录引用，删除会导致学情数据丢失")
     if r_cnt:
-        raise BusinessException(
-            f"该知识点已有 {r_cnt} 条复习计划引用，请先处理相关计划后再删除")
+        blockers.append(f"已有 {r_cnt} 条复习计划引用，请先处理相关计划后再删除")
+    if child_cnt:
+        blockers.append(f"还有 {child_cnt} 个子节点，请先删除子级")
+    if blockers:
+        raise BusinessException("该知识点无法删除：" + "；".join(blockers))
+
     db.delete(kp)
     db.commit()
     # RAG 生命周期：删除后清理知识点与附件向量索引（失败只告警，不阻断业务）
