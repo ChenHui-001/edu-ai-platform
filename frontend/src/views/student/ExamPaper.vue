@@ -126,6 +126,17 @@
       </div>
     </template>
 
+    <!-- 次数已用完：明确告知，并给出查看解析 / 返回列表两个出口 -->
+    <div v-else-if="state === 'exhausted'" class="exhausted-wrap">
+      <el-result icon="warning" title="作答次数已用完"
+                 :sub-title="`本场考试共允许 ${task.max_attempt || 1} 次作答，当前得分 ${task.my_submission?.score ?? '-'} 分`">
+        <template #extra>
+          <el-button @click="$router.push('/student/exams')">返回模拟考试</el-button>
+          <el-button type="primary" @click="$router.push('/student/scores')">查看解析</el-button>
+        </template>
+      </el-result>
+    </div>
+
     <el-empty v-else-if="!loading" description="任务不可用" />
 
     <!-- 交卷确认 -->
@@ -148,7 +159,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, CircleCheckFilled, CircleCloseFilled, DocumentChecked, Timer } from '@element-plus/icons-vue'
 import { taskApi } from '@/api'
@@ -160,7 +171,6 @@ function safeStem(s) { return sanitizeHtml(s) }
 
 
 const route = useRoute()
-const router = useRouter()
 const taskId = route.params.taskId
 
 const TYPE_LABEL = {
@@ -247,7 +257,14 @@ function scrollTo(i) {
 function stateOf(i) {
   const it = items.value[i]
   if (!answered.value.includes(it.paper_item_id)) return 'todo'
-  return answers.value[it.paper_item_id] || multiAnswers.value[it.paper_item_id] ? 'done' : 'todo'
+  // 多选题答案是数组：空数组是 truthy，直接判 truthy 会把「勾了又取消」
+  // 的题算成已完成。必须按类型分别判空。
+  if (it.type === 'multiple') {
+    const arr = multiAnswers.value[it.paper_item_id]
+    return Array.isArray(arr) && arr.length ? 'done' : 'todo'
+  }
+  const v = answers.value[it.paper_item_id]
+  return v !== undefined && v !== null && String(v).trim() !== '' ? 'done' : 'todo'
 }
 function isAnswered(it) { return answered.value.includes(it.paper_item_id) }
 function isRight(it) {
@@ -259,9 +276,19 @@ function scoreOf(it) {
   return a ? a.score : 0
 }
 function myAnswer(it) {
+  // 结果页的「我的答案」必须优先读后端回传的作答，而不是本地内存：
+  // 交卷后草稿已清空、且刷新页面会重建组件，只读 answers/multiAnswers
+  // 会让客观题全部显示「未作答」（学生看到自己的答案凭空消失）。
+  const a = (result.value.answers || []).find(x => x.paper_item_id === it.paper_item_id)
+  if (a && a.content !== undefined && a.content !== null && a.content !== '') {
+    const c = a.content
+    if (Array.isArray(c)) return c.join('')
+    if (typeof c === 'object') return c.text || c.value || ''
+    return String(c).replace(/^"|"$/g, '')
+  }
   return it.type === 'multiple'
     ? (multiAnswers.value[it.paper_item_id] || []).join('')
-    : answers.value[it.paper_item_id]
+    : (answers.value[it.paper_item_id] || '')
 }
 function parseOpts(v) {
   if (!v) return []
@@ -306,13 +333,19 @@ async function load() {
     task.value = res.data.task
     items.value = res.data.items
 
-    // 已交卷且次数已用完：直接回列表，避免学生白做一场
-    // （后端交卷时才 400「最多允许作答 N 次，已用完次数」）
+    // 已交卷且次数已用完：给出明确的「查看解析」入口，而不是静默弹回列表。
+    // 原先直接 router.replace 返回，学生点「重考」后页面一闪回到列表，
+    // 观感就是「重考按钮点了没反应」。这里改为停留在结果态并说明原因。
+    // attempt 由服务端判定，前端不传，避免被改参绕过次数限制。
     const sub = task.value.my_submission
     const maxAttempt = task.value.max_attempt || 1
-    if (sub && sub.submit_time && (sub.attempt || 1) >= maxAttempt) {
-      ElMessage.info(`该考试已交卷（得分 ${sub.score ?? '-'}），不能重复作答`)
-      router.replace('/student/exams')
+    const usedAttempt = Number(sub?.attempt) || 1
+    if (sub && sub.submit_time && usedAttempt >= maxAttempt) {
+      ElMessage.warning(
+        `该考试共允许 ${maxAttempt} 次作答，已全部用完（本次得分 ${sub.score ?? '-'}）。` +
+        '可在「模拟考试 → 已完成」中查看逐题解析。'
+      )
+      state.value = 'exhausted'
       return
     }
 
@@ -332,8 +365,6 @@ async function load() {
 
     // 始终监听可见性：后台恢复时立即按墙钟重算（防作弊记录逻辑在 onVisibility 内）
     document.addEventListener('visibilitychange', onVisibility)
-    // 进入即保存一次，让顶栏「已保存」指示灯即时可用
-    saveDraft()
     // 进入即保存一次，让顶栏「已保存」指示灯即时可用
     saveDraft()
     // 捕获阶段监听：任何滚动容器（含 .el-main）的 scroll 都能收到
@@ -394,8 +425,10 @@ async function doSubmit(auto = false) {
 
   try {
     const elapsed = Math.floor((Date.now() - start.value) / 1000)
+    // 不传 attempt：服务端一律自行判定（客户端传值可被改成 99 绕过次数限制）。
+    // 草稿/重考时后端会自动沿用或递增 attempt。
     const res = await taskApi.submit(taskId, {
-      answers: payload, duration_seconds: elapsed, attempt: 1
+      answers: payload, duration_seconds: elapsed
     })
     result.value = res.data
     grading.value = res.data.grading
