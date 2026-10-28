@@ -515,6 +515,15 @@ def run():
           f"最近模块={oi[0].get('module') if oi else '-'} "
           f"动作={oi[0].get('action') if oi else '-'}")
 
+    # 导出类 GET 必须留痕：原实现对所有 GET 直接 return 不落库，而导出/下载
+    # 恰恰是数据外流风险最高的动作 —— 事后无法回答「谁导走了哪个班名单」。
+    p, _, sc = admin.get("/logs/export")
+    check("日志导出可下载（前置）", sc == 200, f"{sc}")
+    p, _, _ = admin.get("/logs/operation", params={"page_size": 5})
+    actions = [x.get("action") for x in rows_of(p)]
+    check("★ 导出类 GET 被写入操作日志（数据外流可追溯）",
+          any("/export" in str(a) for a in actions), f"最近动作={actions}")
+
     p, _, _ = admin.get("/logs/error", params={"page_size": 20})
     ei = rows_of(p)
     check("错误日志可查询", p.get("success"), f"{len(ei)} 条")

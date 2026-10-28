@@ -7,6 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.api.deps import get_client_ip
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
@@ -43,6 +44,11 @@ _SENSITIVE_KEY_MARKS = (
 _SAFE_KEYS = {"token_type"}
 # 大字段不落审计日志，避免日志表膨胀
 _IGNORED_BODY_KEYS = {"content", "stem", "analysis"}
+
+# 必须留痕的读接口特征。导出与下载是数据外流风险最高、却最需要事后追溯
+# 的动作（谁在什么时候导走了哪个班的学生名单），因此不受「GET 不记日志」
+# 的写放大优化豁免。用路径特征而不是端点清单，新增导出接口自动纳入。
+_AUDITED_READ_MARKERS = ("/export", "/download")
 
 
 def _redact(value: Any) -> Any:
@@ -103,11 +109,19 @@ class AuditMiddleware(BaseHTTPMiddleware):
             raise
 
         duration_ms = int((time.perf_counter() - start) * 1000)
-        # 读接口不写操作日志：日志只用于「谁改了什么」的审计追溯，
+        # 读接口默认不写操作日志：日志只用于「谁改了什么」的审计追溯，
         # 而 GET（尤其是前端轮询 /agent/status、通知列表）按请求写库会
         # 在 SQLite 单写者下形成写放大；5xx 仍要落错误日志便于排查。
+        #
+        # 但「导出/下载」必须例外：这两种 GET 恰是**数据外流风险最高**的动作
+        # （班级学生 CSV、成绩、操作日志、错题、附件原件…），按原实现它们
+        # 是唯一一类完全不记录的操作 —— 事后无法回答「谁在什么时候导走了
+        # 哪个班的名单」。导出本身低频，写放大可忽略。
+        # 用路径特征匹配而非逐个列端点：新增导出接口会自动纳入。
         if request.method in ("GET", "HEAD", "OPTIONS") and response.status_code < 500:
             response.headers["X-Process-Time"] = str(duration_ms)
+            if any(m in request.url.path for m in _AUDITED_READ_MARKERS):
+                await self._log(request, response.status_code, duration_ms)
             return response
         if response.status_code >= 500:
             await self._log(
@@ -146,9 +160,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 except (ValueError, UnicodeDecodeError):
                     body = "<binary>"
 
-            ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
-                request.client.host if request.client else ""
-            )
+            # 与 deps.get_client_ip 共用同一份取值逻辑：此处原先又自己写了
+            # 一遍 `X-Forwarded-For.split(",")[0]`，取到的正是客户端自填值，
+            # 审计里的 IP 因此可被任意伪造（改 deps 而不改这里等于没修）。
+            ip = get_client_ip(request)
             success = status_code < 400
             action = f"{request.method} {request.url.path}"
 
