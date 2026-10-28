@@ -751,7 +751,7 @@ def list_knowledge_attachments(
 
 
 @router.post("/knowledge/{kp_id}/attachments", summary="上传知识点附件")
-async def upload_knowledge_attachment(
+def upload_knowledge_attachment(
     kp_id: int, background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     visible_to_student: bool = Form(True),
@@ -766,7 +766,7 @@ async def upload_knowledge_attachment(
     if ext not in settings.ALLOWED_UPLOAD_TYPES:
         raise BusinessException(
             f"不支持的文件类型 {ext or '未知'}，允许：{'、'.join(settings.ALLOWED_UPLOAD_TYPES)}")
-    content = await file.read()
+    content = file.file.read()
     if not content:
         raise BusinessException("文件为空")
     max_bytes = settings.MAX_UPLOAD_SIZE * 1024 * 1024
@@ -1332,12 +1332,17 @@ def _import_row_hierarchy(row: Dict[str, str]) -> List[str]:
 
 
 @router.post("/knowledge/import", summary="导入知识点")
-async def import_knowledge(
+def import_knowledge(
     file: UploadFile = File(...), dry_run: bool = Form(False),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm(WRITE_PERM)),
 ):
-    # 本端点无大小上限：_parse_import_file 的格式白名单在 read() 之后才生效，
+    # 同步端点（def）而非 async：本函数后续是 openpyxl 解析 + 逐行查重写库，
+    # 属 CPU/IO 密集。写成 async def 却在里面跑同步代码会**卡死事件循环**：
+    # 导入 5000 行期间全站（含 /health）完全无响应。改成 def 由 FastAPI
+    # 丢线程池执行，await file.read() 相应换成同步读。
+    #
+    # 本端点原无大小上限：_parse_import_file 的格式白名单在 read() 之后才生效，
     # 超大 xlsx 会先整份读进内存 + 交给 openpyxl 解压，单请求即可 OOM 单进程
     # 容器（整站不可用，无需并发）。对照同文件 upload_knowledge_attachment
     # 是有 MAX_UPLOAD_SIZE 的，导入这条漏了。
@@ -1345,7 +1350,7 @@ async def import_knowledge(
     max_bytes = settings.MAX_UPLOAD_SIZE * 1024 * 1024
     if file.size is not None and file.size > max_bytes:
         raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
-    content = await file.read()
+    content = file.file.read()
     if len(content) > max_bytes:
         raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
     data_rows = _parse_import_file(content, file.filename or "")

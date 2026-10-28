@@ -697,7 +697,7 @@ def check_duplicate(
 
 
 @router.post("/questions/import", summary="Excel 批量导入题目")
-async def import_questions(
+def import_questions(
     request: Request,
     file: UploadFile = File(...),
     grade_id: Optional[int] = Form(None),
@@ -717,7 +717,12 @@ async def import_questions(
     max_bytes = settings.MAX_UPLOAD_SIZE * 1024 * 1024
     if file.size is not None and file.size > max_bytes:
         raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
-    content = await file.read()
+    # 同步端点（def）而非 async：本函数后续是 openpyxl 解析 + 逐行查库的
+    # CPU/IO 密集逻辑。写成 async def 却在里面跑同步代码，会**卡死整个
+    # 事件循环** —— 导入 5000 行期间全站所有请求（含 /health）都无响应，
+    # 比"这个接口慢"严重得多。改成 def 后 FastAPI 自动丢线程池执行，
+    # 同时把 await file.read() 换成同步的 file.file.read()。
+    content = file.file.read()
     if len(content) > max_bytes:
         raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
     try:

@@ -539,7 +539,7 @@ def _plan_editable(plan: LessonPlan, user: User) -> None:
 
 
 @router.post("/plans/{plan_id}/attachments", summary="上传教案附件（图片/PPT/文档）")
-async def upload_plan_attachment(
+def upload_plan_attachment(
     plan_id: int, file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm(LESSON_WRITE)),
@@ -565,7 +565,7 @@ async def upload_plan_attachment(
     if ext not in settings.ALLOWED_UPLOAD_TYPES:
         raise BusinessException(
             f"不支持的文件类型 {ext}，允许：{'、'.join(settings.ALLOWED_UPLOAD_TYPES)}")
-    content = await file.read()
+    content = file.file.read()
     if len(content) > settings.MAX_UPLOAD_SIZE * 1024 * 1024:
         raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
 

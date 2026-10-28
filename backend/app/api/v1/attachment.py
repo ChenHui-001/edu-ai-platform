@@ -84,7 +84,7 @@ def _assert_attachment_visible(db: Session, att: Attachment, user: User) -> None
 
 
 @router.post("/public-upload", summary="注册证明材料上传（匿名，仅图片）")
-async def public_upload(
+def public_upload(
     file: UploadFile = File(...), db: Session = Depends(get_db),
     request: Request = None,
 ):
@@ -110,7 +110,7 @@ async def public_upload(
     if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
         raise BusinessException("证明材料仅支持 jpg/png/webp/gif 图片")
 
-    content = await file.read()
+    content = file.file.read()
     max_bytes = min(settings.MAX_UPLOAD_SIZE, 5) * 1024 * 1024
     if len(content) > max_bytes:
         raise BusinessException(f"文件大小超过限制（{max_bytes // 1024 // 1024}MB）")
@@ -142,7 +142,7 @@ async def public_upload(
 
 
 @router.post("/upload", summary="上传附件")
-async def upload(
+def upload(
     file: UploadFile = File(...), category: str = Form("common"),
     biz_type: Optional[str] = Form(None), biz_id: Optional[int] = Form(None),
     db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
@@ -159,7 +159,7 @@ async def upload(
             f"不支持的文件类型 {ext}，允许：{'、'.join(settings.ALLOWED_UPLOAD_TYPES)}"
         )
 
-    content = await file.read()
+    content = file.file.read()
     max_bytes = settings.MAX_UPLOAD_SIZE * 1024 * 1024
     if len(content) > max_bytes:
         raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
@@ -197,7 +197,7 @@ async def upload(
 
 
 @router.post("/batch", summary="批量上传")
-async def batch_upload(
+def batch_upload(
     files: List[UploadFile] = File(...), category: str = Form("common"),
     db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
@@ -208,7 +208,7 @@ async def batch_upload(
             if ext not in settings.ALLOWED_UPLOAD_TYPES:
                 results.append({"filename": f.filename, "success": False, "reason": "类型不支持"})
                 continue
-            content = await f.read()
+            content = f.file.read()
             if len(content) > settings.MAX_UPLOAD_SIZE * 1024 * 1024:
                 results.append({"filename": f.filename, "success": False, "reason": "文件过大"})
                 continue
