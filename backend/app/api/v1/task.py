@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy import case, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, noload
 
 from app.api.deps import (
     DataScope, get_current_user, get_data_scope, require_perm,
@@ -666,16 +666,30 @@ def my_tasks(
     status: Optional[str] = None, db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    my_ids = set()
-    stmt = select(TaskAssignment).where(TaskAssignment.student_id == user.id)
-    for a in db.scalars(stmt).all():
-        my_ids.add(a.task_id)
-    # 班级下发的任务
+    """学生端任务列表。
+
+    原实现有两处放大：
+
+    ① **只取 task_id，却把整行 TaskAssignment 载入内存**：两次全量查询
+       （本人 + 本班）各自 `select(TaskAssignment)` 取回全部列并实例化 ORM
+       对象，实际只用了一个 `a.task_id`。班级下发记录数 = 任务数 × 班级人数，
+       一个 50 人班发 200 个任务就是 1 万行对象，全为了凑一个 id 集合。
+       两条查询还共用同一张表、同一类条件，按 `or_` 合并成一条即可。
+
+    ② **每个任务 2 条 Submission 查询**（取最近一次作答 + 数尝试次数），
+       一页 20 个任务就是 40 条。改为一次 `task_id IN (...)` 取回本页任务
+       下该生的全部作答（数量 = 任务数 × 本人尝试次数，天然有界），
+       再在内存里分组求「最大 attempt」与「条数」。
+
+    查询数从 `2 + 2N` 降为固定 5 条，与页内任务数无关。
+    """
+    # 本人直属下发 + 班级下发，合一条查询只取 task_id 列
+    assign_cond = TaskAssignment.student_id == user.id
     if user.class_id:
-        for a in db.scalars(
-            select(TaskAssignment).where(TaskAssignment.class_id == user.class_id)
-        ).all():
-            my_ids.add(a.task_id)
+        assign_cond = or_(assign_cond, TaskAssignment.class_id == user.class_id)
+    my_ids = set(db.scalars(
+        select(TaskAssignment.task_id).where(assign_cond)
+    ).all())
     if not my_ids:
         return ok({"items": [], "total": 0})
 
@@ -691,27 +705,54 @@ def my_tasks(
     if status:
         q = q.where(Task.status == status)
 
+    # 出参只用 Task 本表字段（dictify 只取 __table__.columns），但 Task.paper/
+    # Task.assignments 是 lazy="selectin"：不关掉预加载，ORM 会连带拉回
+    # 整卷明细（Paper.items/question 又是一层 selectin）和全部下发记录 ——
+    # 实测一页 10 个任务因此多出 3 条大查询。这里显式 noload。
+    q = q.options(noload(Task.paper), noload(Task.assignments))
+
     total = db.scalar(select(func.count()).select_from(q.subquery())) or 0
     rows = db.scalars(
         q.order_by(Task.end_at.desc().nullslast())
         .offset(params.offset).limit(params.page_size)
     ).all()
 
+    # 本页任务下「我」的全部作答，一次取回后分组。
+    # 不做 SQL 侧窗口函数：SQLite 老版本与 MySQL 5.7 都不支持 ROW_NUMBER()，
+    # 而这里的行数 = 任务数 × 本人尝试次数，量级本来就在十几行以内。
+    # Submission.answers 同为 selectin，而这里的 my_submission 只是作答概要
+    # （dictify 取本表列），不需要逐题答案 —— 同样 noload，否则每次多拉整张
+    # edu_answer 表。
+    page_task_ids = [t.id for t in rows]
+    latest: Dict[int, Submission] = {}
+    attempts: Dict[int, int] = {}
+    if page_task_ids:
+        subs = db.scalars(
+            select(Submission).where(
+                Submission.student_id == user.id,
+                Submission.task_id.in_(page_task_ids),
+            ).order_by(Submission.task_id, Submission.attempt)
+            .options(noload(Submission.answers))
+        ).all()
+        for s in subs:
+            attempts[s.task_id] = attempts.get(s.task_id, 0) + 1
+            prev = latest.get(s.task_id)
+            # 按 (attempt, id) 取最大：attempt 并列时用 id 兜底，保证确定性。
+            # 旧实现是 `order_by(attempt.desc()).limit(1)`，attempt 并列时由
+            # SQLite 自行决定返回哪一行 —— 同一份数据可能返回不同记录。
+            if prev is None or (s.attempt or 0, s.id) > (prev.attempt or 0, prev.id):
+                latest[s.task_id] = s
+
     items = []
     for t in rows:
         d = dictify(t)
         d["type_label"] = TYPE_LABEL.get(t.type, t.type)
-        sub = db.scalar(
-            select(Submission).where(
-                Submission.task_id == t.id, Submission.student_id == user.id
-            ).order_by(Submission.attempt.desc()).limit(1)
-        )
+        # 语义与旧实现的 order_by(attempt.desc()).limit(1) 一致：同 attempt 时
+        # 取 id 更大的那条（ORDER BY attempt DESC 在并列时的结果不确定，
+        # 这里显式取最大 id，把不确定性变成确定行为）
+        sub = latest.get(t.id)
         d["my_submission"] = dictify(sub) if sub else None
-        d["attempt_count"] = db.scalar(
-            select(func.count()).select_from(Submission).where(
-                Submission.task_id == t.id, Submission.student_id == user.id
-            )
-        ) or 0
+        d["attempt_count"] = attempts.get(t.id, 0)
         # 距截止
         if t.end_at:
             delta = (t.end_at - now_local()).total_seconds()

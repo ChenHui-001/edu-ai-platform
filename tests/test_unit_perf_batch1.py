@@ -69,9 +69,10 @@ import app.models  # noqa: F401,E402  确保全部表注册到 Base.metadata
 from app.core.database import Base, engine  # noqa: E402
 from app.models import (  # noqa: E402
     Class, Grade, IdentityType, Paper, Question, Submission, Subject, Task,
-    User, UserStatus,
+    TaskAssignment, User, UserStatus,
 )
 from app.services.grading_service import _calc_rank  # noqa: E402
+from app.utils.common import now_local  # noqa: E402
 
 _FAILED = []
 _PASSED = 0
@@ -709,9 +710,204 @@ def case_question_stats():
        f"/ AI {full['ai_source']} / 总计 {full['total']}")
 
 
+def _seed_my_tasks(n_tasks=12, attempts=None):
+    """给一个学生造 n_tasks 个已下发任务，并按 attempts 造多次作答。
+
+    `attempts` 是 `{task 序号: 作答次数}`；未列出的任务造 0 次（未作答）。
+    返回 `(学生 id, [task_id, ...])`，task_id 顺序即创建顺序。
+    """
+    from app.models import TaskAssignment, TaskStatus, TaskType
+
+    db = Session()
+    try:
+        grade = db.scalars(select(Grade).where(Grade.name == "rank1年级")).first()
+        subject = db.scalars(select(Subject).where(Subject.name == "rank1学科")).first()
+        teacher = db.scalars(select(User).where(User.username == "rank1_teacher")).first()
+        klass = db.scalars(select(Class).where(Class.name == "rank1班A")).first()
+        paper = db.scalars(select(Paper).where(Paper.name == "rank1试卷")).first()
+
+        stu = User(
+            username="rank1_mytasks_stu", password="x", real_name="任务列表学生",
+            identity=IdentityType.STUDENT.value, status=UserStatus.ACTIVE.value,
+            grade_id=grade.id, class_id=klass.id,
+        )
+        db.add(stu)
+        db.flush()
+
+        task_ids = []
+        for i in range(n_tasks):
+            t = Task(
+                title=f"任务列表用例 {i:02d}", type=TaskType.EXAM.value,
+                paper_id=paper.id, subject_id=subject.id, grade_id=grade.id,
+                creator_id=teacher.id, status=TaskStatus.PUBLISHED.value,
+                total_score=100.0, pass_score=60.0,
+            )
+            db.add(t)
+            db.flush()
+            # 一半走「班级下发」、一半走「学生直属下发」—— 两条路径最终都要
+            # 合并进同一个 task_id 集合，原实现为此发了两次全表查询
+            if i % 2 == 0:
+                db.add(TaskAssignment(task_id=t.id, class_id=klass.id))
+            else:
+                db.add(TaskAssignment(task_id=t.id, student_id=stu.id))
+            db.flush()
+            task_ids.append(t.id)
+
+            for a in range(1, (attempts or {}).get(i, 0) + 1):
+                db.add(Submission(
+                    task_id=t.id, student_id=stu.id, attempt=a,
+                    score=60.0 + a, submit_time=FIXED_NOW,
+                ))
+        db.commit()
+        return stu.id, task_ids
+    finally:
+        db.close()
+
+
+def _reference_my_tasks(db, user, page_size):
+    """`my_tasks` 的**旧实现**（逐字复制取数形态），返回 `{task_id: (sub_id, attempts)}`。
+
+    与生产实现的差别只在「怎么取数」：旧版是 2 次全表 TaskAssignment 载入
+    + 每任务 2 条 Submission 查询。这里保留它的取数形态，用来对拍输出。
+    """
+    my_ids = set()
+    for a in db.scalars(
+            select(TaskAssignment).where(TaskAssignment.student_id == user.id)).all():
+        my_ids.add(a.task_id)
+    if user.class_id:
+        for a in db.scalars(
+                select(TaskAssignment).where(
+                    TaskAssignment.class_id == user.class_id)).all():
+            my_ids.add(a.task_id)
+
+    q = select(Task).where(
+        Task.id.in_(my_ids),
+        Task.type != "practice",
+        Task.status != "draft",
+        (Task.publish_at.is_(None)) | (Task.publish_at <= now_local()),
+    )
+    rows = db.scalars(
+        q.order_by(Task.end_at.desc().nullslast()).limit(page_size)
+    ).all()
+
+    out = {}
+    for t in rows:
+        sub = db.scalar(
+            select(Submission).where(
+                Submission.task_id == t.id, Submission.student_id == user.id,
+            ).order_by(Submission.attempt.desc()).limit(1)
+        )
+        cnt = db.scalar(
+            select(func.count()).select_from(Submission).where(
+                Submission.task_id == t.id, Submission.student_id == user.id,
+            )
+        ) or 0
+        out[t.id] = (sub.id if sub else None, cnt)
+    return out
+
+
+def case_my_tasks():
+    print("\n七、学生端任务列表：查询数不随页内任务数增长 + 输出逐项等价")
+
+    from app.api.v1.task import my_tasks
+    from app.utils.common import PageParams
+
+    stu_id, task_ids = _seed_my_tasks(n_tasks=12, attempts={0: 1, 1: 3, 4: 2})
+
+    def run_new(page=1, page_size=10):
+        s = Session()
+        try:
+            user = s.get(User, stu_id)
+            del _SQL[:]
+            out = my_tasks(params=PageParams(page=page, page_size=page_size),
+                           db=s, user=user)
+            data = out["data"]
+            got = {
+                it["id"]: (it["my_submission"]["id"] if it.get("my_submission") else None,
+                           it.get("attempt_count"))
+                for it in data["items"]
+            }
+            return got, data["total"], list(_SQL)
+        finally:
+            s.close()
+
+    def run_ref(page_size=10):
+        s = Session()
+        try:
+            user = s.get(User, stu_id)
+            del _SQL[:]
+            got = _reference_my_tasks(s, user, page_size)
+            return got, list(_SQL)
+        finally:
+            s.close()
+
+    got_new, total, sql_new = run_new()
+    got_ref, sql_ref = run_ref()
+
+    # ① 等价性：每条任务的「最近一次作答 id」与「尝试次数」都必须一致
+    ok("用例造齐 12 个任务（含班级下发与学生直属两条路径）",
+       len(task_ids) == 12 and total == 12,
+       f"建了 {len(task_ids)} 个，接口 total={total}")
+    ok("★ 与旧实现逐任务等价（最近作答 id + 尝试次数）",
+       got_new == got_ref, f"新={got_new} 旧={got_ref}")
+    # 有区分度的前提：必须真的存在「多次作答」的任务，否则等价性只是
+    # 「两边都取了同一条唯一记录」，抓不到「取错 attempt」这类 bug
+    ok("用例含多次作答任务（存在 attempt>=2 的任务）",
+       any(v[1] >= 2 for v in got_new.values()),
+       f"尝试次数分布={sorted(v[1] for v in got_new.values())}")
+
+    # ② 复杂度：旧实现 2 + 2N，新实现固定条数
+    #    一页 10 → 12 个任务时旧实现继续涨，新实现必须不变，才叫「与 N 无关」
+    got_new12, _, sql_new12 = run_new(page_size=12)
+    _, sql_ref12 = run_ref(page_size=12)
+    ok("★ 查询数与页内任务数无关（10 个 vs 12 个任务条数相同）",
+       len(sql_new) == len(sql_new12),
+       f"10 任务 {len(sql_new)} 条 / 12 任务 {len(sql_new12)} 条")
+    ok("★ 查询数显著低于旧实现的 2+2N",
+       len(sql_new) <= 4 and len(sql_ref) >= 2 + 2 * 10,
+       f"新 {len(sql_new)} 条 / 旧 {len(sql_ref)} 条（10 个任务）")
+    ok("★ 任务数增加时旧实现线性增长，新实现不变",
+       len(sql_ref12) > len(sql_ref) and len(sql_new12) == len(sql_new),
+       f"旧 {len(sql_ref)}→{len(sql_ref12)} / 新 {len(sql_new)}→{len(sql_new12)}")
+    # 两个「换汤不换药」的退路都要堵住：
+    #  ① 把整行 TaskAssignment 载入内存 —— 成本从 SQL 次数搬到 Python 对象数，
+    #     班级人数一多反而更糟（本条盯 SELECT 列表只取 task_id）；
+    #  ② 靠 ORM 的 selectin 预加载顺带取回关联表 —— Task.paper/assignments、
+    #     Submission.answers 全是 selectin，一页 10 个任务实测多出 3 条大查询，
+    #     而 dictify 只读本表列。整行 TaskAssignment 与 edu_answer 的查询都必须消失。
+    def _fullrow(statements, table):
+        hits = []
+        for s in statements:
+            low = s.lower()
+            if f"from {table}" not in low:
+                continue
+            head = low.split(f"from {table}", 1)[0]
+            if head.count(f"{table}.") >= 2:
+                hits.append(s.strip().split("\n")[0][:80])
+        return hits
+
+    ok("★ 下发关系只取 task_id 列，不载入整行实体",
+       not _fullrow(sql_new, "edu_task_assignment"),
+       f"命中 {len(_fullrow(sql_new, 'edu_task_assignment'))} 条整行查询")
+    ok("★ 不预加载逐题答案（edu_answer 查询数为 0）",
+       not [s for s in sql_new if "from edu_answer" in s.lower()],
+       f"命中 {len([s for s in sql_new if 'from edu_answer' in s.lower()])} 条")
+    ok("★ 不预加载试卷明细（edu_paper_item 查询数为 0）",
+       not [s for s in sql_new if "from edu_paper_item" in s.lower()],
+       f"命中 {len([s for s in sql_new if 'from edu_paper_item' in s.lower()])} 条")
+    # 分页边界：第 2 页只查本页任务的作答，不得重复扫第 1 页
+    got_p2, _tp2, sql_p2 = run_new(page=2, page_size=10)
+    overlap = set(got_p2) & set(got_new)
+    ok("分页第 2 页与第 1 页无任务重叠", not overlap, f"重叠 {len(overlap)} 个")
+    ok("★ 第 2 页查询数与第 1 页相同（不随页码/页内任务数变化）",
+       len(sql_p2) == len(sql_new),
+       f"第 2 页 {len(sql_p2)} 条 / 第 1 页 {len(sql_new)} 条 / "
+       f"第 2 页 {len(got_p2)} 个任务")
+
+
 def main():
     print("=" * 72)
-    print("离线单元回归：第一批性能修复（排名语义 / 排名复杂度 / 日报时间窗）")
+    print("离线单元回归：性能修复的语义锁与复杂度锁")
     print("=" * 72)
     Base.metadata.create_all(bind=engine)
     case_rank_semantics()
@@ -720,6 +916,7 @@ def main():
     case_heartbeat_noop()
     case_weekly_report_window()
     case_question_stats()
+    case_my_tasks()
     print("\n" + "-" * 72)
     total = _PASSED + len(_FAILED)
     print(f"单元回归完成：共 {total} 项 | 通过 {_PASSED} | 失败 {len(_FAILED)}")
