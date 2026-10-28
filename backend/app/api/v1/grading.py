@@ -493,10 +493,16 @@ def unpublish_scores(
 def class_report(
     task_id: int, db: Session = Depends(get_db),
     user: User = Depends(require_perm(GRADING_PERM_LIST)),
+    scope: DataScope = Depends(get_data_scope),
 ):
     task = db.get(Task, task_id)
     if not task:
         raise NotFoundException("任务不存在")
+    # 数据范围校验：报告含班级均分/及格率/薄弱知识点，属他班学情。
+    # 原实现只校验 grading:list 权限就聚合作答，任意教师遍历 task_id
+    # 即可读取全校各班的学情结论。与批改/打回/发布保持同一归属口径。
+    if not scope.is_super and task.creator_id != user.id:
+        raise PermissionException("只能查看自己发布任务的学情报告")
     sub = db.scalar(
         select(Submission).where(
             Submission.task_id == task_id, Submission.score.isnot(None)
@@ -513,11 +519,16 @@ def class_report(
 def ai_teaching_advice(
     task_id: int, db: Session = Depends(get_db),
     user: User = Depends(require_perm(GRADING_PERM_LIST)),
+    scope: DataScope = Depends(get_data_scope),
 ):
 
     task = db.get(Task, task_id)
     if not task:
         raise NotFoundException("任务不存在")
+    # 与 /report 同源：本接口同样聚合作答并调用大模型，
+    # 缺归属校验时既泄露他班学情，又会被用来消耗他人/公共 LLM 配额。
+    if not scope.is_super and task.creator_id != user.id:
+        raise PermissionException("只能分析自己发布任务的学情")
     sub = db.scalar(
         select(Submission).where(
             Submission.task_id == task_id, Submission.score.isnot(None)

@@ -674,6 +674,17 @@ def run():
                 check("teacher2 删除他人题目被拒绝", p.get("success") is not True,
                       p.get("message", ""))
 
+        # 批改中心学情报告 / AI 建议：同文件另外 9 个批改端点都校验了
+        # Task.creator_id，唯独这两条只校验 grading:list 权限，
+        # teacher2 拿 teacher1 的 task_id 即可读取他班均分/及格率/薄弱知识点，
+        # /ai-comment 还会真实消耗一次 LLM 调用。
+        tid = R.context.get("task_id")
+        if tid:
+            expect_denied("teacher2 读取他人任务学情报告被拒绝", tea2, "POST",
+                          f"/grading/tasks/{tid}/report")
+            expect_denied("teacher2 用他人任务生成 AI 学情建议被拒绝", tea2, "POST",
+                          f"/grading/tasks/{tid}/ai-comment")
+
     # 学生不能建题
     stu = Client("stu731")
     ok3, d3 = stu.login("stu731", "Student@123")
