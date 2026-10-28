@@ -345,7 +345,19 @@ def finalize_submission(
 
 
 def _calc_rank(db: Session, submission: Submission) -> Optional[int]:
-    """班级排名计算。"""
+    """班级排名计算（竞赛排名，并列同名次：1/1/3）。
+
+    原实现把该任务下同班所有提交**整行**取回内存，再 ``sorted`` + ``list.index``
+    求名次：每个学生交卷都要做一遍全量取行，N 个学生全班交卷退化成 O(N²)
+    （取回的行数随 N 增长，总代价随 N² 增长）。现改为让数据库用 COUNT 直接
+    回答「比我高的人有几个」，只回传一个整数，复杂度从 O(N) 行 / 次降为
+    O(log N) 索引计数 / 次。
+
+    peers 集合与原实现逐字对齐：本任务下、且提交者属于「class_ids」集合的学生、
+    且 ``score`` 非空。``class_ids`` 仍保留原两段式子查询（先取本任务所有提交者
+    的 class_id 再去筛学生）—— 它在逻辑上近乎恒真，但简化它会改变行为，
+    不属于本次性能优化的范围。
+    """
     task = db.get(Task, submission.task_id)
     if not task:
         return None
@@ -358,17 +370,30 @@ def _calc_rank(db: Session, submission: Submission) -> Optional[int]:
             User.id.in_(select(Submission.student_id).where(Submission.task_id == task.id)),
         )
     ).all()
-    peers = db.scalars(
-        select(Submission).where(
-            Submission.task_id == task.id,
-            Submission.student_id.in_(select(User.id).where(User.class_id.in_(class_ids))),
-            Submission.score.isnot(None),
+    # peers 的公共过滤条件：与原 peers 查询完全一致（仅去掉取行）
+    peers_filter = (
+        Submission.task_id == task.id,
+        Submission.student_id.in_(select(User.id).where(User.class_id.in_(class_ids))),
+        Submission.score.isnot(None),
+    )
+
+    if submission.score is None:
+        # 原实现走不到这个分支（score 为 None 时 index 必然找不到）。
+        # 语义补齐为「排在所有有分者之后」，与原 ``len(scores) + 1`` 的兜底一致。
+        total = db.scalar(
+            select(func.count()).select_from(Submission).where(*peers_filter)
         )
-    ).all()
-    scores = sorted([s.score for s in peers if s.score is not None], reverse=True)
-    if submission.score in scores:
-        return scores.index(submission.score) + 1
-    return len(scores) + 1
+        return (total or 0) + 1
+
+    # 名次 = 严格高于本人分数的人数 + 1。
+    # 并列同名次成立：同分者之间不计入「严格高于」，故 95/95/90 得到 1/1/3，
+    # 与原 ``scores.index(score) + 1``（降序列表里首次出现的下标）完全等价。
+    better = db.scalar(
+        select(func.count())
+        .select_from(Submission)
+        .where(*peers_filter, Submission.score > submission.score)
+    )
+    return (better or 0) + 1
 
 
 def generate_review_plan_for_wrong(db: Session, wrong: WrongQuestion) -> List[ReviewPlan]:
