@@ -48,9 +48,21 @@ def generate_daily_report() -> Dict[str, Any]:
         total_questions = sum(r.question_count for r in rows)
         total_correct = sum(r.correct_count for r in rows)
 
+        # 原实现用 `func.date(Submission.submit_time) == yesterday`：函数包裹列，
+        # SQLite 无法用 submit_time 上的索引，等于日报每次全表扫描 + 逐行求值。
+        # 改为半开区间 [昨日 00:00, 今日 00:00) —— 与「日期部分等于昨日」等价，
+        # 但变成纯粹的列比较，索引可用。
+        # 时间基准必须与写库一致：全库 submit_time 都由 now_local() 写入的
+        # **naive 本地时间**，因此这里也用 naive 本地零点，不引入 UTC/tzinfo
+        # （否则会整体偏移一个时区，把边界附近的交卷统计错位）。
+        day_start = (now_local() - timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        day_end = day_start + timedelta(days=1)
         subs = db.scalars(
             select(Submission).where(
-                func.date(Submission.submit_time) == yesterday,
+                Submission.submit_time >= day_start,
+                Submission.submit_time < day_end,
                 Submission.score.isnot(None),
             )
         ).all()
