@@ -68,8 +68,8 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 import app.models  # noqa: F401,E402  确保全部表注册到 Base.metadata
 from app.core.database import Base, engine  # noqa: E402
 from app.models import (  # noqa: E402
-    Class, Grade, IdentityType, Paper, Question, Submission, Subject, Task,
-    TaskAssignment, User, UserStatus,
+    Class, Grade, IdentityType, KnowledgePoint, Paper, Question, Role,
+    Submission, Subject, Task, TaskAssignment, User, UserStatus,
 )
 from app.services.grading_service import _calc_rank  # noqa: E402
 from app.utils.common import now_local  # noqa: E402
@@ -905,6 +905,235 @@ def case_my_tasks():
        f"第 2 页 {len(got_p2)} 个任务")
 
 
+def _seed_knowledge():
+    """造覆盖 年级 × 学科 × 状态 的知识点，并给其中一部分挂题。"""
+    from app.models import KnowledgePoint
+
+    db = Session()
+    try:
+        grades = []
+        for i in range(3):
+            g = Grade(name=f"统计年级{i}", stage="junior", grade_num=7 + i)
+            db.add(g)
+            db.flush()
+            grades.append(g)
+        subjects = []
+        for i in range(2):
+            s = Subject(name=f"统计学科{i}", grade_id=grades[0].id)
+            db.add(s)
+            db.flush()
+            subjects.append(s)
+        owner = db.scalars(select(User).where(User.username == "rank1_teacher")).first()
+
+        # 每个 (年级, 学科) 造 3 种状态各 2 条 = 3×2×3×2 = 36 条
+        rows = []
+        for g in grades:
+            for s in subjects:
+                for st in ("published", "draft", "archived"):
+                    for k in range(2):
+                        rows.append(KnowledgePoint(
+                            name=f"统计知识点 {g.id}-{s.id}-{st}-{k}",
+                            level=3, grade_id=g.id, subject_id=s.id,
+                            status=st, is_active=True, owner_id=owner.id,
+                        ))
+        db.add_all(rows)
+        db.flush()
+        # 只给「published 且 k=0」的 6 条挂题，其余不挂 —— 让 with_questions
+        # 既不等于 0 也不等于 total
+        with_q = [r for r in rows if r.status == "published" and r.name.endswith("-0")]
+        subject = db.scalars(select(Subject).where(Subject.name == "rank1学科")).first()
+        for i, kp in enumerate(with_q):
+            for j in range(i % 2 + 1):   # 分别挂 1 / 2 道题，制造「多题同知识点」
+                db.add(Question(
+                    type="single", stem=f"知识点挂题 {i}-{j}", answer="[]",
+                    difficulty="easy", score=5.0, grade_id=grades[0].id,
+                    subject_id=subject.id, knowledge_point_id=kp.id,
+                    bank_type="public", status="published", owner_id=owner.id,
+                ))
+        db.commit()
+        # 管理员账号：知识点统计的「可见 draft/archived」分支只能由
+        # sys_admin / grade_admin 走到，教师和学生都只看 published。
+        admin_role = db.scalars(select(Role).where(Role.code == "sys_admin")).first()
+        if admin_role is None:
+            admin_role = Role(code="sys_admin", name="系统管理员", is_builtin=True)
+            db.add(admin_role)
+            db.flush()
+        admin = User(
+            username="rank1_kp_admin", password="x", real_name="知识点管理员",
+            identity=IdentityType.SYS_ADMIN.value, status=UserStatus.ACTIVE.value,
+        )
+        admin.roles = [admin_role]
+        db.add(admin)
+        db.commit()
+        return [(g.id, g.name) for g in grades], [(s.id, s.name) for s in subjects], len(rows)
+    finally:
+        db.close()
+
+
+def _reference_knowledge_stats(db, user, filters):
+    """`knowledge_stats` 的**旧实现**（逐字复制，含 _forced_grade 语义），
+    作等价性基准。
+
+    注意 `_forced_grade` 不是可选项：学生会**绕过** grade_id 参数被强制
+    收敛到本年级，显式请求其他年级还会 403。漏掉这一步，reference 就会
+    在「学生 + 跨年级」组合上算出完全不同的 total —— 我第一次写漏了，
+    断言报出「新=1 旧=13」时才查到。
+    """
+    grade_id = filters.get("grade_id")
+    visible_grade = _forced_grade_ref(user, grade_id)
+    stmt = select(KnowledgePoint).where(KnowledgePoint.is_active.is_(True))
+    if visible_grade:
+        stmt = stmt.where(KnowledgePoint.grade_id == visible_grade)
+    if filters.get("subject_id"):
+        stmt = stmt.where(KnowledgePoint.subject_id == filters["subject_id"])
+    if filters.get("term"):
+        stmt = stmt.where(KnowledgePoint.term == filters["term"])
+    rows = list(db.scalars(stmt).all())
+    if not _is_admin_ref(user):
+        rows = [r for r in rows if r.status == "published"]
+
+    counts = {}
+    if rows:
+        for kp_id, cnt in db.execute(
+                select(Question.knowledge_point_id, func.count()).where(
+                    Question.knowledge_point_id.in_([r.id for r in rows])
+                ).group_by(Question.knowledge_point_id)).all():
+            if kp_id:
+                counts[int(kp_id)] = int(cnt or 0)
+
+    grade_ids = {r.grade_id for r in rows if r.grade_id}
+    subject_ids = {r.subject_id for r in rows if r.subject_id}
+    grade_names = {
+        g.id: g.name for g in db.scalars(
+            select(Grade).where(Grade.id.in_(grade_ids))).all()
+    } if grade_ids else {}
+    subject_names = {
+        s.id: s.name for s in db.scalars(
+            select(Subject).where(Subject.id.in_(subject_ids))).all()
+    } if subject_ids else {}
+
+    by_grade, by_subject = {}, {}
+    for r in rows:
+        by_grade[r.grade_id] = by_grade.get(r.grade_id, 0) + 1
+        by_subject[r.subject_id] = by_subject.get(r.subject_id, 0) + 1
+
+    return {
+        "total": len(rows),
+        "published": sum(1 for r in rows if r.status == "published"),
+        "draft": sum(1 for r in rows if r.status == "draft"),
+        "archived": sum(1 for r in rows if r.status == "archived"),
+        "with_questions": sum(1 for r in rows if counts.get(r.id)),
+        "by_grade": [
+            {"grade_id": gid, "grade_name": grade_names.get(gid), "count": cnt}
+            for gid, cnt in sorted(by_grade.items())
+        ],
+        "by_subject": [
+            {"subject_id": sid, "subject_name": subject_names.get(sid), "count": cnt}
+            for sid, cnt in sorted(by_subject.items())
+        ],
+    }
+
+
+def _is_admin_ref(user):
+    from app.api.v1.knowledge import _is_admin
+    return _is_admin(user)
+
+
+def _forced_grade_ref(user, grade_id):
+    from app.api.v1.knowledge import _forced_grade
+    return _forced_grade(user, grade_id)
+
+
+def _full_row_scans(statements, table, full_cols=8):
+    """是否存在「把 table 整行取回」的查询。
+
+    判据用 **SELECT 列表里的列引用数 >= full_cols**（表的总列数附近），
+    而不是「>= 2 或 >= 3」这种小阈值 —— 后者会把「按 3 个维度聚合」的
+    查询误判成整行载入（新实现那条 GROUP BY 就带 3 个 `t.col` 引用，
+    我第一版写 `>= 3` 时它自己报了自己）。
+
+    这里 full_cols 取 8：edu_knowledge_point 共 17 列、edu_question 共 15 列、
+    edu_task_assignment 共 6 列（另配 4 单独传入），聚合查询的 SELECT 列表
+    通常只有维度列 + count，远达不到这个量级。
+    """
+    hits = []
+    for st in statements:
+        low = st.lower()
+        if f"from {table}" not in low:
+            continue
+        head = low.split(f"from {table}", 1)[0]
+        if head.count(f"{table}.") >= full_cols:
+            hits.append(st.strip().split("\n")[0][:80])
+    return hits
+
+
+def case_knowledge_stats():
+    print("\n八、知识点统计：不整行载入 + 与旧实现逐字段等价")
+
+    from app.api.v1.knowledge import knowledge_stats
+
+    grades, subjects, seeded = _seed_knowledge()
+
+    def _user(s, admin):
+        name = "rank1_kp_admin" if admin else "rank1_teacher"
+        return s.scalars(select(User).where(User.username == name)).first()
+
+    def run_new(filters, admin=False):
+        s = Session()
+        try:
+            del _SQL[:]
+            out = knowledge_stats(db=s, user=_user(s, admin), **filters)
+            return out["data"], list(_SQL)
+        finally:
+            s.close()
+
+    def run_ref(filters, admin=False):
+        s = Session()
+        try:
+            del _SQL[:]
+            out = _reference_knowledge_stats(s, _user(s, admin), filters)
+            return out, list(_SQL)
+        finally:
+            s.close()
+
+    filter_sets = [
+        ("（无筛选·教师）", {}, False),
+        ("（无筛选·管理员）", {}, True),
+        ("按年级", {"grade_id": grades[0][0]}, False),
+        ("按年级+学科", {"grade_id": grades[1][0], "subject_id": subjects[1][0]}, False),
+    ]
+    for tag, f, admin in filter_sets:
+        new, sql_new = run_new(f, admin)
+        ref, sql_ref = run_ref(f, admin)
+        for key in ref:
+            ok(f"字段 {key} 与旧实现一致 | {tag}", new.get(key) == ref.get(key),
+               f"新={new.get(key)} 旧={ref.get(key)}")
+        # 判别器：旧实现必然把整行 KnowledgePoint（17 列）取回内存
+        ok(f"★ 不再整行载入知识点（改为聚合下推）| {tag}",
+           not _full_row_scans(sql_new, "edu_knowledge_point"),
+           f"命中 {len(_full_row_scans(sql_new, 'edu_knowledge_point'))} 条整行查询")
+        ok(f"★ 旧实现确实整行载入（本条判据有区分度）| {tag}",
+           bool(_full_row_scans(sql_ref, "edu_knowledge_point")),
+           f"旧实现命中 {len(_full_row_scans(sql_ref, 'edu_knowledge_point'))} 条")
+
+    # 非管理员范围：旧实现是「取回后再筛 published」，新实现改为 SQL 条件。
+    # 必须验证总量真的变小了，否则等于把可见性过滤掉了。
+    new_t, _ = run_new({}, admin=False)
+    new_a, _ = run_new({}, admin=True)
+    ref_t, _ = run_ref({}, admin=False)
+    ok("非管理员的统计与旧实现一致（含 status 可见性收敛）",
+       new_t == ref_t, f"新 total={new_t.get('total')} 旧 total={ref_t.get('total')}")
+    ok("★ 管理员看得到 draft/archived，教师看不到（可见性未被聚合绕过）",
+       new_a.get("draft", 0) > 0 and new_t.get("draft", 0) == 0
+       and new_a.get("archived", 0) > 0 and new_t.get("archived", 0) == 0,
+       f"管理员 draft={new_a.get('draft')} archived={new_a.get('archived')} / "
+       f"教师 draft={new_t.get('draft')} archived={new_t.get('archived')}")
+    # with_questions 必须是「挂了题的**知识点个数**」，不是题目总数
+    ok("★ with_questions 统计的是知识点数而非题目数",
+       0 < new_a.get("with_questions", 0) < new_a.get("total", 0),
+       f"with_questions={new_a.get('with_questions')} total={new_a.get('total')}")
+
+
 def main():
     print("=" * 72)
     print("离线单元回归：性能修复的语义锁与复杂度锁")
@@ -917,6 +1146,7 @@ def main():
     case_weekly_report_window()
     case_question_stats()
     case_my_tasks()
+    case_knowledge_stats()
     print("\n" + "-" * 72)
     total = _PASSED + len(_FAILED)
     print(f"单元回归完成：共 {total} 项 | 通过 {_PASSED} | 失败 {len(_FAILED)}")

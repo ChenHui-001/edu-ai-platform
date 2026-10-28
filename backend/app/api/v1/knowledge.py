@@ -448,6 +448,17 @@ def knowledge_stats(
 
     状态维度始终输出完整分布（管理员可见 draft/archived），因此这里不套用
     status 过滤；非管理员按读取契约只看得到 published。
+
+    原实现把满足条件的**全部知识点整行载入内存**（`select(KnowledgePoint)`
+    再 `.all()`），然后纯为计数在 Python 里遍历 —— 生产上知识点有 1800+
+    行，每行含 description/keywords/path 等 Text 列，实例化成 ORM 对象后
+    只为 `len()`、`sum()` 和一个计数器服务。
+
+    现改为一次 `GROUP BY (grade_id, subject_id, status)` 后回卷：
+    每行恰好落入一个组合，故沿任一维度求和精确还原该维度的边缘分布；
+    组合数上界约 9 年级 × 60 学科 × 3 状态，实际远小于知识点行数。
+    `with_questions` 单独用一次 `COUNT(DISTINCT ...)` 解决，不再需要先拿到
+    全部 id 列表再喂给 `_question_counts`。
     """
     stmt = select(KnowledgePoint).where(KnowledgePoint.is_active.is_(True))
     visible_grade = _forced_grade(user, grade_id)
@@ -462,13 +473,47 @@ def knowledge_stats(
         stmt = stmt.where(or_(
             KnowledgePoint.name.like(like), KnowledgePoint.keywords.like(like),
             KnowledgePoint.code.like(like)))
-    rows = list(db.scalars(stmt).all())
+    # 非管理员只看 published：改成 SQL 条件，而不是取回后在 Python 里筛
     if not _is_admin(user):
-        rows = [r for r in rows if r.status == "published"]
+        stmt = stmt.where(KnowledgePoint.status == "published")
 
-    question_counts = _question_counts(db, [r.id for r in rows])
-    grade_ids = {r.grade_id for r in rows if r.grade_id}
-    subject_ids = {r.subject_id for r in rows if r.subject_id}
+    combos = db.execute(
+        stmt.with_only_columns(
+            KnowledgePoint.grade_id, KnowledgePoint.subject_id,
+            KnowledgePoint.status, func.count(),
+        ).select_from(KnowledgePoint).group_by(
+            KnowledgePoint.grade_id, KnowledgePoint.subject_id,
+            KnowledgePoint.status,
+        )
+    ).all()
+
+    total = 0
+    by_status: Dict[str, int] = {}
+    by_grade: Dict[int, int] = {}
+    by_subject: Dict[int, int] = {}
+    grade_ids: set = set()
+    subject_ids: set = set()
+    for gid, sid, st, cnt in combos:
+        n = int(cnt or 0)
+        total += n
+        by_status[str(st)] = by_status.get(str(st), 0) + n
+        if gid:
+            by_grade[int(gid)] = by_grade.get(int(gid), 0) + n
+            grade_ids.add(int(gid))
+        if sid:
+            by_subject[int(sid)] = by_subject.get(int(sid), 0) + n
+            subject_ids.add(int(sid))
+
+    # 「挂了题的知识点数」：一次 COUNT(DISTINCT)，直接把筛选集作为子查询，
+    # 省掉「先取全部 id 再 IN (...)」那一步
+    with_questions = db.scalar(
+        select(func.count(func.distinct(Question.knowledge_point_id))).where(
+            Question.knowledge_point_id.in_(
+                stmt.with_only_columns(KnowledgePoint.id).select_from(KnowledgePoint)
+            )
+        )
+    ) or 0
+
     grade_names = {
         g.id: g.name for g in db.scalars(
             select(Grade).where(Grade.id.in_(grade_ids))).all()
@@ -478,18 +523,12 @@ def knowledge_stats(
             select(Subject).where(Subject.id.in_(subject_ids))).all()
     } if subject_ids else {}
 
-    by_grade: Dict[int, int] = {}
-    by_subject: Dict[int, int] = {}
-    for r in rows:
-        by_grade[r.grade_id] = by_grade.get(r.grade_id, 0) + 1
-        by_subject[r.subject_id] = by_subject.get(r.subject_id, 0) + 1
-
     return ok({
-        "total": len(rows),
-        "published": sum(1 for r in rows if r.status == "published"),
-        "draft": sum(1 for r in rows if r.status == "draft"),
-        "archived": sum(1 for r in rows if r.status == "archived"),
-        "with_questions": sum(1 for r in rows if question_counts.get(r.id)),
+        "total": total,
+        "published": by_status.get("published", 0),
+        "draft": by_status.get("draft", 0),
+        "archived": by_status.get("archived", 0),
+        "with_questions": int(with_questions),
         "by_grade": [
             {"grade_id": gid, "grade_name": grade_names.get(gid), "count": cnt}
             for gid, cnt in sorted(by_grade.items())
