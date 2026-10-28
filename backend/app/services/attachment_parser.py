@@ -69,14 +69,41 @@ def _xlsx_text(path: str) -> str:
     return _truncate("\n".join(parts))
 
 
+# 解压体积上限。docx/pptx 本质是 zip，压缩比可达 1000:1 —— 一个 1MB 的
+# 文件能解出 1GB。附件本身受 MAX_UPLOAD_SIZE（50MB）约束，但那只管
+# **压缩后**大小，挡不住 zip bomb。提取阶段必须按解压后体积再设一道闸，
+# 否则索引/RAG 的 BackgroundTask 会把单进程容器直接 OOM（整站不可用）。
+_MAX_XML_ENTRY_BYTES = 8 * 1024 * 1024    # 单个 XML 条目
+_MAX_XML_TOTAL_BYTES = 32 * 1024 * 1024   # 整包累计
+_MAX_PLAIN_BYTES = 4 * 1024 * 1024        # 纯文本类附件
+
+
 def _zip_xml_text(path: str, prefix: str, tag: str) -> str:
     """从 docx/pptx 的 zip 包里提取指定 XML 标签文本。"""
     texts: List[str] = []
+    total = 0
     try:
         with zipfile.ZipFile(path) as zf:
             names = [n for n in zf.namelist()
                      if n.startswith(prefix) and n.endswith(".xml") and "/_rels/" not in n]
             for name in sorted(names):
+                try:
+                    info = zf.getinfo(name)
+                except KeyError:
+                    continue
+                # 必须用 ZipInfo.file_size 在 read() **之前**判断：
+                # 读完再判断，内存已经被撑爆了。
+                if info.file_size > _MAX_XML_ENTRY_BYTES:
+                    logger.warning(
+                        "跳过超大 XML 条目 %s（解压后 %d bytes，上限 %d）",
+                        name, info.file_size, _MAX_XML_ENTRY_BYTES)
+                    continue
+                total += info.file_size
+                if total > _MAX_XML_TOTAL_BYTES:
+                    logger.warning(
+                        "Office XML 累计解压体积超限（%d bytes），停止提取：%s",
+                        total, path)
+                    break
                 try:
                     root = ET.fromstring(zf.read(name))
                 except ET.ParseError:
@@ -92,8 +119,17 @@ def _zip_xml_text(path: str, prefix: str, tag: str) -> str:
 
 
 def _plain_text(path: str) -> str:
+    # 超大纯文本同样会整份进内存（上传侧限的是 50MB，仍够撑爆小内存容器），
+    # 提取阶段只处理前 4MB —— 索引/RAG 用不到更多。
     try:
-        raw = open(path, "rb").read()
+        if os.path.getsize(path) > _MAX_PLAIN_BYTES:
+            logger.warning(
+                "纯文本附件超过提取上限（%d bytes），只读取前 %d bytes：%s",
+                os.path.getsize(path), _MAX_PLAIN_BYTES, path)
+            with open(path, "rb") as f:
+                raw = f.read(_MAX_PLAIN_BYTES)
+        else:
+            raw = open(path, "rb").read()
     except OSError as exc:
         logger.warning("读取附件失败 %s: %s", path, exc)
         return ""
