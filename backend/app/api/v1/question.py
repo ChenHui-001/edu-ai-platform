@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Body, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session, noload
 
 from app.agents.rag import delete_question_index, index_question
@@ -333,32 +333,78 @@ def question_stats(
     db: Session = Depends(get_db),
     user: User = Depends(require_perm(QUESTION_PERM_LIST)),
 ):
-    """与列表同筛选范围（不分页）的题库统计。"""
+    """与列表同筛选范围（不分页）的题库统计。
+
+    原实现对同一批筛选结果扫了 **8 遍**：1 次 COUNT + 4 次 GROUP BY +
+    3 次带额外条件的 COUNT，每一条都是「同一 WHERE 下的全量聚合」。
+    现合并为 **2 遍**：
+
+      ① 一次无条件聚合，同时算出 total 与三个「满足某条件的行数」
+         （`SUM(CASE WHEN 条件 THEN 1 ELSE 0 END)`）—— 这四项本质是同一批
+         行上的不同计数，没有理由分四次扫；
+      ② 一次 `GROUP BY type, difficulty, status, bank_type`，再由 Python
+         把每个组合的计数分别累加到四个维度上。
+
+    ②之所以等价：每一行恰好落入**一个**组合分组，所以把组合计数按任一维度
+    求和，必然精确还原该维度的边缘分布（含并列与并集关系，不存在漏计或重计）。
+    组合数上界是各维度取值数的乘积（题型 8 × 难度 3 × 状态 3 × 题库 2 = 144），
+    远小于题量，因此回传行数可控；这比再扫四遍全表划算得多。
+
+    空集时行为保持一致：`SUM` 返回 NULL 由 `coalesce` 兜成 0，四个分布都为空
+    字典（原实现的 `_group` 同样返回 {}）。
+    """
     stmt = _filtered_question_stmt(
         user, keyword=keyword, grade_id=grade_id, subject_id=subject_id,
         knowledge_point_id=knowledge_point_id, qtype=qtype,
         difficulty=difficulty, bank_type=bank_type, status=status, source=source,
     )
 
-    def _count(extra=None) -> int:
-        target = stmt if extra is None else stmt.where(extra)
-        return db.scalar(select(func.count()).select_from(target.subquery())) or 0
+    def _sum_case(cond):
+        """统计满足 cond 的行数；空集时为 0 而不是 None。"""
+        return func.coalesce(func.sum(case((cond, 1), else_=0)), 0)
 
-    def _group(column) -> Dict[str, int]:
-        rows = db.execute(
-            stmt.with_only_columns(column, func.count()).group_by(column)
-        ).all()
-        return {str(key): int(cnt or 0) for key, cnt in rows}
+    # ① total + 三个条件计数，一次扫描
+    total, with_analysis, with_knowledge, ai_source = db.execute(
+        stmt.with_only_columns(
+            func.count(),
+            _sum_case(and_(Question.analysis.isnot(None), Question.analysis != "")),
+            _sum_case(Question.knowledge_point_id.isnot(None)),
+            _sum_case(Question.source.like("ai%")),
+        ).select_from(Question)
+    ).one()
+
+    # ② 四维分布，一次扫描后按维度回卷
+    combos = db.execute(
+        stmt.with_only_columns(
+            Question.type, Question.difficulty, Question.status,
+            Question.bank_type, func.count(),
+        ).select_from(Question).group_by(
+            Question.type, Question.difficulty, Question.status, Question.bank_type,
+        )
+    ).all()
+
+    by_type: Dict[str, int] = {}
+    by_difficulty: Dict[str, int] = {}
+    by_status: Dict[str, int] = {}
+    by_bank: Dict[str, int] = {}
+    for q_type, q_diff, q_status, q_bank, cnt in combos:
+        n = int(cnt or 0)
+        # 与原 `_group` 一致：键取 str(value)，缺失的分组不出现（不是补 0）
+        for bucket, key in (
+            (by_type, q_type), (by_difficulty, q_diff),
+            (by_status, q_status), (by_bank, q_bank),
+        ):
+            bucket[str(key)] = bucket.get(str(key), 0) + n
 
     return ok({
-        "total": _count(),
-        "by_type": _group(Question.type),
-        "by_difficulty": _group(Question.difficulty),
-        "by_status": _group(Question.status),
-        "by_bank": _group(Question.bank_type),
-        "with_analysis": _count(Question.analysis.isnot(None) & (Question.analysis != "")),
-        "with_knowledge": _count(Question.knowledge_point_id.isnot(None)),
-        "ai_source": _count(Question.source.like("ai%")),
+        "total": int(total or 0),
+        "by_type": by_type,
+        "by_difficulty": by_difficulty,
+        "by_status": by_status,
+        "by_bank": by_bank,
+        "with_analysis": int(with_analysis or 0),
+        "with_knowledge": int(with_knowledge or 0),
+        "ai_source": int(ai_source or 0),
     })
 
 

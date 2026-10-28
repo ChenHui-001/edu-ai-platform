@@ -62,13 +62,14 @@ _BACKEND = os.path.join(
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
 
-from sqlalchemy import event, select  # noqa: E402
+from sqlalchemy import event, func, select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import app.models  # noqa: F401,E402  确保全部表注册到 Base.metadata
 from app.core.database import Base, engine  # noqa: E402
 from app.models import (  # noqa: E402
-    Class, Grade, IdentityType, Paper, Submission, Subject, Task, User, UserStatus,
+    Class, Grade, IdentityType, Paper, Question, Submission, Subject, Task,
+    User, UserStatus,
 )
 from app.services.grading_service import _calc_rank  # noqa: E402
 
@@ -528,6 +529,186 @@ def case_weekly_report_window():
        f"命中 {len(weekly_sql)} 条 edu_submission 查询")
 
 
+# ============================================================
+# 六、题库统计：2 次扫描 + 与旧实现逐字段等价
+# ============================================================
+def _reference_question_stats(db, stmt):
+    """question_stats 的**旧实现**，逐字复制，作等价性基准。
+
+    8 次扫描（1 COUNT + 4 GROUP BY + 3 条件 COUNT）。不要"优化"它：
+    它的价值是「旧行为本身」，两边同时改就失去对拍意义。
+    """
+    def _count(extra=None):
+        target = stmt if extra is None else stmt.where(extra)
+        return db.scalar(select(func.count()).select_from(target.subquery())) or 0
+
+    def _group(column):
+        rows = db.execute(
+            stmt.with_only_columns(column, func.count()).group_by(column)
+        ).all()
+        return {str(k): int(c or 0) for k, c in rows}
+
+    return {
+        "total": _count(),
+        "by_type": _group(Question.type),
+        "by_difficulty": _group(Question.difficulty),
+        "by_status": _group(Question.status),
+        "by_bank": _group(Question.bank_type),
+        "with_analysis": _count(
+            Question.analysis.isnot(None) & (Question.analysis != "")),
+        "with_knowledge": _count(Question.knowledge_point_id.isnot(None)),
+        "ai_source": _count(Question.source.like("ai%")),
+    }
+
+
+def _seed_questions():
+    """造覆盖全部维度的题目：题型 × 难度 × 状态 × 题库 × 有/无解析 × 来源。
+
+    96 行 = 8 题型 × 3 难度 × 2 状态 × 2 题库。三个「可空字段」按不同周期
+    取值，保证它们与四个分组维度**互相穿插**（不共线），否则边缘分布对上
+    了也说明不了问题：
+      - `analysis`：每 3 题留一道空（周期 3）
+      - `knowledge_point_id`：每 4 题留一道空（周期 4）
+      - `source`：按 (ai / ai_import / manual / manual) 循环（周期 4）
+    两个刻意设计：
+
+    · `analysis` 掺一个**空字符串**。旧实现的条件是 `isnot(None) AND != ""`，
+      只留 NULL 会漏掉「空串被当成有解析」这个错法（已用注入验证：删掉
+      后半段条件时本组断言会红）。
+
+    · `source` 必须**同时出现两个以上的 `ai*` 变体**。生产里 `question_agent`
+      写的是 `"ai"`、`paper_compose` 也写 `"ai"`，而 `question.py` 的注释提到
+      还有 `ai_import`，所以真实统计口径是**前缀匹配**（`LIKE 'ai%'`）。
+      如果只造一个 `ai_*` 值，`LIKE 'ai%'` 与 `== "那个值"` 结果相同，就把
+      「前缀语义」变成了「碰巧等价」（已用注入验证：把 `LIKE 'ai%'` 改成
+      `== "ai_gen"` 时，早期只有单一 ai 值的数据**全绿漏报**）。
+    """
+    from app.models import KnowledgePoint, Question
+
+    db = Session()
+    try:
+        grade = db.scalars(select(Grade).where(Grade.name == "rank1年级")).first()
+        subject = db.scalars(select(Subject).where(Subject.name == "rank1学科")).first()
+        owner = db.scalars(select(User).where(User.username == "rank1_A1")).first()
+
+        kp = KnowledgePoint(
+            name="统计用例知识点", level=3,
+            grade_id=grade.id, subject_id=subject.id,
+        )
+        db.add(kp)
+        db.flush()
+
+        qtypes = ["single", "multiple", "judge", "blank", "short", "calc",
+                  "material", "composition"]
+        sources = ["ai", "ai_import", "manual", "manual"]
+        rows = []
+        for qtype in qtypes:
+            for diff in ("easy", "medium", "hard"):
+                for st in ("published", "draft"):
+                    for bank in ("public", "private"):
+                        n = len(rows)
+                        if n % 3 == 0:
+                            analysis = None          # 无解析
+                        elif n % 3 == 1:
+                            analysis = ""            # 空串：不算「有解析」
+                        else:
+                            analysis = "解析内容"
+                        rows.append(Question(
+                            type=qtype, stem=f"统计用例题目 {n:03d} {qtype}-{diff}-{st}-{bank}",
+                            answer="[]", difficulty=diff, score=5.0,
+                            grade_id=grade.id, subject_id=subject.id,
+                            knowledge_point_id=None if n % 4 == 0 else kp.id,
+                            bank_type=bank, status=st, owner_id=owner.id,
+                            analysis=analysis,
+                            source=sources[n % len(sources)],
+                        ))
+        db.add_all(rows)
+        db.commit()
+        return grade.id, subject.id, owner.id, len(rows)
+    finally:
+        db.close()
+
+
+def case_question_stats():
+    print("\n六、题库统计：与旧实现逐字段等价 + 扫描次数减半")
+
+    from app.api.v1.question import _filtered_question_stmt, question_stats
+
+    grade_id, subject_id, owner_id, seeded = _seed_questions()
+
+    def run_new(filters):
+        s = Session()
+        try:
+            user = s.get(User, owner_id)
+            del _SQL[:]
+            out = question_stats(db=s, user=user, **filters)
+            return out["data"], list(_SQL)
+        finally:
+            s.close()
+
+    def run_ref(filters):
+        s = Session()
+        try:
+            user = s.get(User, owner_id)
+            stmt = _filtered_question_stmt(user, **filters)
+            del _SQL[:]
+            out = _reference_question_stats(s, stmt)
+            return out, list(_SQL)
+        finally:
+            s.close()
+
+    # 四组筛选：无筛选（全量）/ 单维度 / 组合维度 / 必然为空的一组
+    filter_sets = [
+        ("（无筛选）", {}),
+        ("题型=single", {"qtype": "single"}),
+        ("本年级+本学科+hard", {"grade_id": grade_id, "subject_id": subject_id,
+                                "difficulty": "hard"}),
+        ("状态=archived（空集）", {"status": "archived"}),
+    ]
+    for tag, f in filter_sets:
+        new, sql_new = run_new(f)
+        ref, sql_ref = run_ref(f)
+        for key in ref:
+            ok(f"字段 {key} 与旧实现一致 | {tag}", new.get(key) == ref.get(key),
+               f"新={new.get(key)} 旧={ref.get(key)}")
+        # 判别器：只数语句数不够，还得确认「两次扫描都真的落在同一 WHERE 上」。
+        # 若有人把过滤条件丢在一次扫描里，结果仍然可能对上（当筛选为空时），
+        # 所以另配一条：非空的筛选必须体现在两张查询的 SQL 文本里。
+        ok(f"★ 扫描次数 8→2 | {tag}",
+           len(sql_new) == 2 and len(sql_ref) == 8,
+           f"新 {len(sql_new)} 条 / 旧 {len(sql_ref)} 条")
+        if f:
+            missing = [s for s in sql_new if "WHERE" not in s.upper()]
+            ok(f"★ 两次扫描都带筛选条件（无 WHERE 视为丢条件）| {tag}",
+               not missing, f"缺 WHERE 的语句 {len(missing)} 条")
+
+    # 空集语义：旧实现是 4 个 {} + 4 个 0，不能因为 coalesce 变成 None
+    empty, _ = run_new({"status": "archived"})
+    ok("★ 空集时 total 为 0 而非 None", empty.get("total") == 0,
+       f"total={empty.get('total')!r}")
+    ok("★ 空集时四个分布都是空字典（不是 None、不是补 0 键）",
+       all(empty.get(k) == {} for k in
+           ("by_type", "by_difficulty", "by_status", "by_bank")),
+       f"{ {k: empty.get(k) for k in ('by_type','by_difficulty','by_status','by_bank')} }")
+
+    # 非空集的规模自检：这段数据是断言的立论基础，造错了等于白测
+    full, _ = run_new({})
+    ok("用例数据覆盖 8 题型 / 3 难度 / 2 状态 / 2 题库",
+       len(full["by_type"]) == 8 and len(full["by_difficulty"]) == 3
+       and len(full["by_status"]) == 2 and len(full["by_bank"]) == 2,
+       f"题型 {len(full['by_type'])} / 难度 {len(full['by_difficulty'])} "
+       f"/ 状态 {len(full['by_status'])} / 题库 {len(full['by_bank'])}")
+    ok("用例数据造齐 96 行且与 total 一致",
+       full["total"] == seeded == sum(full["by_type"].values()),
+       f"seed={seeded} total={full['total']} 分布合计={sum(full['by_type'].values())}")
+    # 三个条件计数必须各自「既不等于 0、也不等于 total」，否则等于没区分
+    ok("三个条件计数均有区分度（0 < 命中 < total）",
+       all(0 < full[k] < full["total"]
+           for k in ("with_analysis", "with_knowledge", "ai_source")),
+       f"解析 {full['with_analysis']} / 知识点 {full['with_knowledge']} "
+       f"/ AI {full['ai_source']} / 总计 {full['total']}")
+
+
 def main():
     print("=" * 72)
     print("离线单元回归：第一批性能修复（排名语义 / 排名复杂度 / 日报时间窗）")
@@ -538,6 +719,7 @@ def main():
     case_daily_report_window()
     case_heartbeat_noop()
     case_weekly_report_window()
+    case_question_stats()
     print("\n" + "-" * 72)
     total = _PASSED + len(_FAILED)
     print(f"单元回归完成：共 {total} 项 | 通过 {_PASSED} | 失败 {len(_FAILED)}")
