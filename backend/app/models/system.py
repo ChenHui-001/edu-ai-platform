@@ -72,7 +72,16 @@ class User(Base):
 
     @property
     def role_codes(self) -> List[str]:
-        return [r.code for r in self.roles]
+        """当前**生效**的角色编码（已停用的角色不计入）。
+
+        必须过滤 Role.is_active：Permission 表没有 is_active 字段，
+        「停用某个权限点」这个运维动作在本系统并不存在，因此停用角色
+        是唯一的中间档降权手段。此前这里不过滤，停用角色只改了一个
+        标志位，成员仍然凭旧权限调接口，降权完全失效；
+        且 DataScope 复用本属性，停用 sys_admin 后仍会 data_scope=all
+        全校放行。
+        """
+        return [r.code for r in self.roles if r.is_active]
 
 
 class Role(Base):

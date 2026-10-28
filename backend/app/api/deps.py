@@ -232,10 +232,12 @@ def get_data_scope(user: User = Depends(get_current_user), db: Session = Depends
 
 
 def has_perm(user: User, perm_code: str) -> bool:
-    """判断用户是否拥有指定权限点。"""
+    """判断用户是否拥有指定权限点（已停用角色不提供权限）。"""
     if ROLE_SYS_ADMIN in user.role_codes:
         return True
     for role in user.roles:
+        if not role.is_active:  # 停用角色必须立刻失效，否则降权形同虚设
+            continue
         for p in role.permissions:
             if p.code == perm_code:
                 return True

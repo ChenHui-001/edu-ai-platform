@@ -254,6 +254,10 @@ def build_permission_context(user: User) -> Dict[str, Any]:
     menus: List[Dict[str, Any]] = []
     perms: List[str] = []
     for role in user.roles:
+        # 停用角色不下发任何权限点，否则前端仍会显示可点的按钮，
+        # 而后端 has_perm 已拒绝 —— 形成「菜单进得去、接口 403」的错配。
+        if not role.is_active:
+            continue
         for p in role.permissions:
             if p.type == "menu":
                 menus.append({"code": p.code, "name": p.name, "path": p.path, "icon": p.icon})
