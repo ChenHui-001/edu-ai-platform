@@ -236,6 +236,16 @@ class Client:
             self.refresh_token = d.get("refresh_token")
             self.user = d.get("user")
             self.permission = d.get("permission")
+            # 出厂/被重置的账号带 must_change_password=True，deps.get_current_user
+            # 会拦下除白名单外的一切请求（生产安全默认，见 services/init_db.py）。
+            # 这里真实走一遍「强制改密」闭环再继续，而不是在种子阶段绕过它：
+            # 新密码与旧密码相同，避免影响其他阶段硬编码的口令常量。
+            # 专门验证强制改密拦截行为的用例请直接用 client.post("/auth/login")
+            # （test_requirements.py 的三处即如此），不走本方法。
+            if (self.user or {}).get("must_change_password"):
+                self.put("/auth/password",
+                         {"old_password": password, "new_password": password})
+                self.user["must_change_password"] = False
             return True, f"{self.user.get('real_name')}（{','.join(self.permission.get('roles', []))}）"
         return False, payload.get("message", "登录失败")
 

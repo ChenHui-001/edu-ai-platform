@@ -387,9 +387,12 @@ def init_admin(db: Session) -> None:
         identity="sys_admin",
         status="active",
         school_name="示范学校",
-        # 初始管理员不强制改密，避免部署后首轮登录即被锁死；
-        # 改密由部署文档另行提示，管理员可在「个人中心」主动修改。
-        must_change_password=False,
+        # 必须强制改密：出厂口令是公开写在 README/QUICKSTART 里的常量，
+        # 而本系统公网可达、承载未成年人真实数据。原实现置 False，意味着
+        # 「部署完不改密就一直可用公开口令登入 sys_admin」——等于后门。
+        # 置 True 后 deps.get_current_user 会拦下除白名单（改密/资料/登出/
+        # 健康检查/文档）外的一切请求，管理员登录后第一件事必须改密。
+        must_change_password=True,
     )
     db.add(admin)
     db.flush()
@@ -397,7 +400,10 @@ def init_admin(db: Session) -> None:
     if role:
         db.add(UserRole(user_id=admin.id, role_id=role.id))
     db.commit()
-    logger.info("默认管理员已创建：账号 admin / 密码 Admin@123456（首次登录须改密）")
+    logger.info(
+        "默认管理员已创建：账号 admin / 密码 Admin@123456"
+        "（已标记强制改密，首登必须修改后才能使用其他接口）"
+    )
 
 
 def init_jobs(db: Session) -> None:
