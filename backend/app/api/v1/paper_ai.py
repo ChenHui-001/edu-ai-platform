@@ -2,13 +2,15 @@
 
 契约见 docs/PAPER_V2.md §3：
 
-- 权限：`paper:ai`（teacher/sys_admin）+ 试卷可读校验（创建者 / 公开共享 /
-  `PaperShare` 接收人 / sys_admin）；学生无 `paper:ai`，403。
+- 权限：`paper:ai`（teacher/sys_admin）+ 试卷可读校验。可读判定**复用**
+  `paper_compose._paper_visibility_clause`（全仓唯一真源：创建者 / 显式分享 /
+  范围共享 / 存量共享，且逐级比对 grade_id 与 share_scope）；学生无
+  `paper:ai`，403。
+  历史教训：本文件曾自己实现一套（只看 `paper.is_shared` 布尔），于是同一张
+  卷在 /question/papers/{id} 403、在 /ai/analyze 却 200 —— 判定一旦有第二份
+  拷贝就必然漂移，新增入口必须走同一个条件。
 - `check_agent_rate`；无 LLM 时规则结果照常返回并标记 `is_fallback=true`；
   LLM 失败只降级，绝不 500；两个接口都**只读**（不落库、不改试卷）。
-- 为与 question.py 的 paper 权限口径保持一致，本文件本地实现可读校验
-  （不 import 并行改造中的 question.py 私有 helper），逻辑与
-  `_assert_paper_readable` 相同。
 """
 import json
 from typing import Any, Dict, List, Optional, Tuple
@@ -24,7 +26,7 @@ from app.core.exception import BusinessException, NotFoundException, PermissionE
 from app.core.logger import get_logger
 from app.core.rate_limit import check_agent_rate
 from app.models import (
-    KnowledgePoint, Paper, PaperItem, PaperShare, Question, QuestionBankType,
+    KnowledgePoint, Paper, PaperItem, Question, QuestionBankType,
     QuestionStatus, User,
 )
 from app.utils.common import ok
@@ -113,18 +115,25 @@ def _load_questions(db: Session, items: List[PaperItem]) -> List[Question]:
 
 
 def _assert_paper_readable(db: Session, paper: Paper, user: User) -> None:
-    """可读校验：创建者 / 公开共享 / PaperShare 接收人 / sys_admin。"""
-    if paper.creator_id == user.id or "sys_admin" in _codes(user):
+    """可读校验 —— 复用 paper_compose 的**唯一真源**判定。
+
+    这里原本自己写了一套：`if paper.is_shared: return`，只看布尔标志、
+    完全不看 grade_id / share_scope。于是出现同一张卷在
+    /question/papers/{id} 被 403、却在 /ai/analyze 能 200 打开的分裂
+    （跨年级/跨学科读取他人卷结构与知识点覆盖）。
+
+    现在改为拿 _paper_visibility_clause 生成的条件回查一次：
+    判定逻辑只有一份，入口再多也不会漂移。
+    """
+    from app.api.v1.paper_compose import _paper_visibility_clause
+
+    clause = _paper_visibility_clause(user)
+    if clause is None:  # sys_admin 不受限
         return
-    if paper.is_shared:
-        return
-    shared = db.scalar(
-        select(PaperShare.id).where(
-            PaperShare.paper_id == paper.id,
-            PaperShare.to_user_id == user.id,
-        )
+    visible = db.scalar(
+        select(Paper.id).where(Paper.id == paper.id, clause)
     )
-    if not shared:
+    if not visible:
         raise PermissionException("无权查看该试卷")
 
 

@@ -662,6 +662,13 @@ def run():
                           f"/question/papers/{pid}/export")
             expect_denied("teacher2 删除他人试卷被拒绝", tea2, "DELETE",
                           f"/question/papers/{pid}")
+            # paper_ai 曾自带第三份可读判定（只看 is_shared 布尔，不看
+            # grade_id/share_scope），导致同一张卷"详情 403、AI 分析 200"。
+            # 现已改为复用 paper_compose 的唯一真源，两个入口必须一致。
+            expect_denied("teacher2 用他人试卷做 AI 分析被拒绝", tea2, "POST",
+                          f"/question/papers/{pid}/ai/analyze")
+            expect_denied("teacher2 用他人试卷推荐候选题被拒绝", tea2, "POST",
+                          f"/question/papers/{pid}/ai/recommend")
 
             # 他人私有题目详情
             qid = R.context.get("q_single")
