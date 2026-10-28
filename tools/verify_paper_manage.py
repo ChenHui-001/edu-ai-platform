@@ -412,6 +412,9 @@ def main():
                   str([s.get("code") for s in (fd.get("sections") or [])]))
             check("提示语说明用的是通用结构",
                   "通用结构" in str(fd.get("message") or ""), str(fd.get("message"))[:120])
+            check("提示语不自相矛盾（不能既说按命题标准又说没有标准）",
+                  "按所选年级学科的命题标准" not in str(fd.get("message") or ""),
+                  str(fd.get("message"))[:160])
             # 注意别拿 total_score 比：它是「已抽到题目的分值和」，无题时为 0。
             # 这里要校验的是「结构本身折算出的卷面分」是否等于请求的总分。
             sec_total = sum(float(s.get("count") or 0) * float(s.get("score_per") or 0)

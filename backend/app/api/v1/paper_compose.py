@@ -547,8 +547,10 @@ def compose_ai(
     message = ""
     if parse_error:
         message = f"AI 参数解析未成功（{parse_error}），已按命题标准与默认难度组卷"
-    elif not request:
-        # 让教师知道"没写描述"不等于"没生效"：结构来自命题标准，不是随手拼的
+    elif not request and not ctx.get("standard_fallback"):
+        # 让教师知道"没写描述"不等于"没生效"：结构来自命题标准，不是随手拼的。
+        # ★ 必须排除 fallback 场景：那里根本没有标准，再说"按命题标准生成"
+        #   会与紧随其后的"尚未配置命题标准"自相矛盾（实测同一条 message 里两句并列）。
         message = "未填写需求描述，已按所选年级学科的命题标准生成题型结构与分值"
     return ok(_plan_response(ctx, ai_message=message))
 
