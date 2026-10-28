@@ -346,8 +346,10 @@ def _assert_biz_owned(
 
         if not db.get(KnowledgePoint, biz_id):
             raise BusinessException("知识点不存在")
-    elif biz_type != "register":
-        raise BusinessException(f"不支持的绑定类型：{biz_type}")
+    # 其余 biz_type（question / paper / register / 自定义业务）保持原有的
+    # 开放语义：这些值不会被按 biz_type+biz_id 聚合进某个"他人可见列表"，
+    # 因此不构成跨用户投放面。强制白名单会打断既有调用方
+    # （题目附件实际使用 biz_type="question"），属过度收紧。
 
 
 @router.put("/{att_id}/bind", summary="绑定业务（转正式附件）")
