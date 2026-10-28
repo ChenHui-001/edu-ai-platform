@@ -340,18 +340,29 @@ def run():
     # 上限取 settings.MAX_UPLOAD_SIZE（默认 50MB），超 1MB 即应被拒。
     # 关键在于后端用 UploadFile.size 在 read() 之前拦截：文件落
     # SpooledTemporaryFile（磁盘），不会被整份读进内存再报错。
+    #
+    # 状态码必须同时接受 400 与 413：本地 run_e2e.sh 直连 uvicorn，
+    # 由应用层拦住（400）；CI/生产经 nginx，client_max_body_size 50m
+    # 会先把它打成 413，请求根本到不了应用层。两者都表示"超大请求被拒"，
+    # 安全目标一致；只认 400 会让 CI 假红（曾实际发生）。
     oversized = b"0" * (51 * 1024 * 1024)
+
+    def _rejected(sc, msg, keywords):
+        """413 = 反代层拦截；400 = 应用层拦截，此时必须校验具体原因，
+        否则"学科缺失也返回 400"会造成假绿。"""
+        return sc == 413 or (sc == 400 and any(k in str(msg) for k in keywords))
+
     p, _, sc = tea1.upload("/question/questions/import", "huge.xlsx",
                            oversized, fields={"subject_id": subj_for_import},
                            timeout=120)
     check("★ 题目导入拒绝超过大小上限的文件",
-          sc == 400 and "超过限制" in str(p.get("message", "")),
+          _rejected(sc, p.get("message", ""), ("超过限制",)),
           f"{sc} {p.get('message', '')}")
 
     p, _, sc = admin.upload("/edu/knowledge/import", "huge.xlsx", oversized,
                             fields={"dry_run": "true"}, timeout=120)
     check("★ 知识点导入拒绝超过大小上限的文件",
-          sc == 400 and "超过限制" in str(p.get("message", "")),
+          _rejected(sc, p.get("message", ""), ("超过限制",)),
           f"{sc} {p.get('message', '')}")
     del oversized
 
