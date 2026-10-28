@@ -486,6 +486,29 @@ def run():
     check("可按失败状态筛选登录日志", p.get("success"),
           f"失败记录 {len(fl)} 条（应含前面的错误密码尝试）")
 
+    # 真实 IP 取值：X-Real-IP 优先（nginx 用 $remote_addr 覆盖写入，
+    # 客户端自带的值会被顶掉）；仅 XFF 时取**最后一段**（nginx 追加的真值）。
+    # 原实现取 split(",")[0] 即客户端自填值 —— 每次换一个假 IP 就能绕过
+    # 匿名上传/找回密码等所有按 IP 的限流，审计 IP 也全部失真。
+    probe_ip = "203.0.113.77"
+    probe = Client("ip-probe")
+    probe.request("POST", "/auth/login",
+                  {"username": "admin", "password": ACCT["admin"]},
+                  headers={"X-Real-IP": probe_ip,
+                           "X-Forwarded-For": "10.0.0.1, 10.0.0.2"})
+    p, _, _ = admin.get("/logs/login", params={"page_size": 5})
+    ips = [x.get("ip") for x in rows_of(p)]
+    check("★ 登录日志记录 X-Real-IP（不采信可伪造的 XFF）",
+          probe_ip in ips, f"最近 IP={ips}")
+
+    probe.request("POST", "/auth/login",
+                  {"username": "admin", "password": ACCT["admin"]},
+                  headers={"X-Forwarded-For": "10.0.0.1, 198.51.100.9"})
+    p, _, _ = admin.get("/logs/login", params={"page_size": 5})
+    ips = [x.get("ip") for x in rows_of(p)]
+    check("★ 仅有 XFF 时取最后一段（追加的真值，非首段伪造值）",
+          "198.51.100.9" in ips, f"最近 IP={ips}")
+
     p, _, _ = admin.get("/logs/operation", params={"page_size": 20})
     oi = rows_of(p)
     check("操作日志记录写操作", len(oi) > 0,

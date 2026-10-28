@@ -256,11 +256,30 @@ def require_perm(*perm_codes: str):
 
 
 def get_client_ip(request: Request) -> str:
-    """获取真实客户端 IP（兼容 Nginx 反代）。"""
+    """获取真实客户端 IP。
+
+    取值优先级不可随意调换，它与 deploy/nginx/default.conf 的写头方式绑定：
+
+    1. **X-Real-IP**：nginx 用 `$remote_addr`（连接对端地址）**覆盖**写入，
+       客户端自带的值会被顶掉，是唯一不可伪造的来源。
+    2. **X-Forwarded-For 的最后一段**：nginx 用 `$proxy_add_x_forwarded_for`
+       在原有值后**追加**真实 IP，所以真值在末尾。
+       原实现取 `split(",")[0]`（第一段）—— 那正是客户端自己写的值：
+       攻击者每次换一个 `X-Forwarded-For: 10.0.0.N` 就能绕过所有按 IP 的
+       限流（匿名上传 10 次/10min、找回密码 5 次/10min、登录日志），
+       审计里的 IP 也全是假的，事后无法溯源。
+    3. `request.client.host`：仅直连兜底（生产由 nginx 反代，
+       且 uvicorn 已只信任 127.0.0.1 的转发头，正常走不到这里）。
+    """
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip and real_ip.strip():
+        return real_ip.strip()
     xff = request.headers.get("X-Forwarded-For")
     if xff:
-        return xff.split(",")[0].strip()
-    return request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+    return request.client.host if request.client else "unknown"
 
 
 def get_user_agent(request: Request) -> str:
