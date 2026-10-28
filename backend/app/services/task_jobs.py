@@ -2,7 +2,7 @@
 from datetime import timedelta
 from typing import Any, Dict
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
@@ -90,11 +90,22 @@ def generate_weekly_report() -> Dict[str, Any]:
     """生成学情周报。"""
     db = SessionLocal()
     try:
-        since = (now_local() - timedelta(days=7)).strftime("%Y-%m-%d")
+        # 与日报同一处坑：`func.date(Submission.submit_time) >= since` 把列包进
+        # 函数，SQLite 无法用 submit_time 上的索引（全表扫描 + 逐行求值）。
+        # `date(col) >= 'YYYY-MM-DD'` 等价于 `col >= 'YYYY-MM-DD 00:00:00'`，
+        # 故改为纯列比较的半开下界；上界本来就是开放区间（只含「近 7 天以来」），
+        # 不引入 `< 今天`，否则会把今天的数据漏掉 —— 这与日报的
+        # 「统计昨天一整天」是不同语义，不能照抄。
+        # 时间基准仍用写库时的 naive 本地时间（now_local），不引入 UTC。
+        now = now_local()
+        since_day = (now - timedelta(days=7)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        since = since_day.strftime("%Y-%m-%d")
         rows = db.scalars(select(StudyRecord).where(StudyRecord.study_date >= since)).all()
         subs = db.scalars(
             select(Submission).where(
-                func.date(Submission.submit_time) >= since,
+                Submission.submit_time >= since_day,
                 Submission.score.isnot(None),
             )
         ).all()

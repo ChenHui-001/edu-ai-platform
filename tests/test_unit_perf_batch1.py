@@ -462,6 +462,72 @@ def case_heartbeat_noop():
        f"写语句 {len(writes_dur)} 条")
 
 
+def case_weekly_report_window():
+    print("\n五、周报下界（索引可用 + 不得引入上界）")
+
+    from datetime import timedelta as _td
+
+    from app.services import task_jobs
+
+    calls = {"n": 0}
+
+    def fake_now():
+        calls["n"] += 1
+        return FIXED_NOW
+
+    def run_report():
+        origin = task_jobs.now_local
+        task_jobs.now_local = fake_now
+        del _SQL[:]
+        try:
+            return task_jobs.generate_weekly_report(), list(_SQL)
+        finally:
+            task_jobs.now_local = origin
+
+    # 必须用**增量**而不是绝对值：同一个库里已经有其它用例造的交卷记录
+    # （日报用例那批落在 03-13/03-14，正好也在周报窗口内）。写死期望值
+    # 等于让本用例依赖用例执行顺序 —— 排序一变就红，且红得毫无信息量。
+    # 唯一跨用例共享的状态是「新增了几条」，这才是本用例真正要断言的东西。
+    before, _ = run_report()
+
+    db = Session()
+    try:
+        stu = db.scalars(select(User).where(User.username == "rank1_A1")).first()
+        task = db.scalars(select(Task).where(Task.title == "rank1任务")).first()
+        base = FIXED_NOW.replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = [
+            (base - _td(days=7), 60.0),                  # 左边界（第 7 天 00:00）→ 计入
+            (base - _td(days=7) - _td(seconds=1), 10.0),  # 左边界前一秒 → 排除
+            (FIXED_NOW, 100.0),                          # 今天 → 计入（周报无上界）
+        ]
+        for submit_time, score in rows:
+            db.add(Submission(
+                task_id=task.id, student_id=stu.id, attempt=1,
+                score=score, submit_time=submit_time,
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+    after, sql = run_report()
+    weekly_sql = [s for s in sql if "edu_submission" in s.lower()]
+    delta = (after.get("submissions") or 0) - (before.get("submissions") or 0)
+
+    ok("周期标签为 7 天前的日期", after.get("period") == "2026-03-08",
+       f"period={after.get('period')}")
+    # 注意与日报的区别：日报统计「昨天一整天」（上界必需），周报统计
+    # 「近 7 天以来」（不该有上界）。照抄日报的上界会把**今天**的数据漏掉。
+    ok("★ 周报计入今天的数据（未误加 7 天前上界）", delta == 2,
+       f"新增命中 {delta} 条（期望 2：左边界 + 今天；左边界前一秒应被排除）")
+    wrapped = [s for s in weekly_sql
+               if "date(edu_submission.submit_time)" in s.lower()]
+    ok("★ 周报不再把 submit_time 包进函数（否则索引失效）",
+       not wrapped, f"命中 {len(wrapped)} 条" if wrapped else "无函数包裹")
+    ok("★ 周报下界为纯列比较", any("edu_submission.submit_time >=" in s.lower()
+                                    for s in weekly_sql),
+       f"命中 {len(weekly_sql)} 条 edu_submission 查询")
+
+
 def main():
     print("=" * 72)
     print("离线单元回归：第一批性能修复（排名语义 / 排名复杂度 / 日报时间窗）")
@@ -471,6 +537,7 @@ def main():
     case_rank_read_cost()
     case_daily_report_window()
     case_heartbeat_noop()
+    case_weekly_report_window()
     print("\n" + "-" * 72)
     total = _PASSED + len(_FAILED)
     print(f"单元回归完成：共 {total} 项 | 通过 {_PASSED} | 失败 {len(_FAILED)}")
