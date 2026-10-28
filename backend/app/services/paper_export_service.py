@@ -98,6 +98,18 @@ def _plain(text: Any) -> str:
     return s.strip()
 
 
+def _h(text: Any) -> str:
+    """`_plain` 之后再按 HTML 语义转义（供 build_print_html 这类拼 HTML 的场景）。
+
+    **不能直接把 `_plain` 的结果塞进 HTML**：`_plain` 会把 `&lt;` 反解成 `<`，
+    于是题干里的 `&lt;script&gt;alert(1)&lt;/script&gt;` 会变成可执行标签。
+    导出页由前端 `document.write` 打开（about:blank 继承同源），可窃取登录态。
+    docx/pdf 走的是纯文本 API，不能用本函数（否则会打印出 &lt; 字面量）。
+    """
+    import html as _html
+    return _html.escape(_plain(text), quote=False)
+
+
 def _option_text(options: Any) -> List[str]:
     if not options:
         return []
@@ -191,12 +203,12 @@ def build_print_html(preview: Dict[str, Any], *, mode: str = "teacher",
 
     parts: List[str] = [
         "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-        f"<title>{_plain(paper.get('name'))}</title>",
+        f"<title>{_h(paper.get('name'))}</title>",
         f"<style>{css}</style></head><body>",
     ]
 
     parts.append("<div class='hdr'>")
-    parts.append(f"<h1>{_plain(paper.get('name'))}</h1>")
+    parts.append(f"<h1>{_h(paper.get('name'))}</h1>")
     meta = (f"{paper.get('grade_name') or ''} {paper.get('subject_name') or ''}"
             f"<span>总分：{paper.get('total_score')}</span>"
             f"<span>时间：{paper.get('duration')} 分钟</span>")
@@ -214,13 +226,13 @@ def build_print_html(preview: Dict[str, Any], *, mode: str = "teacher",
     qno = 0
     for sec in paper.get("sections") or []:
         body_parts.append(
-            f"<div class='sec-title'>{_plain(sec.get('section_name'))}"
+            f"<div class='sec-title'>{_h(sec.get('section_name'))}"
             f"<span class='sec-note'>（共 {sec.get('item_count')} 题，"
             f"共 {sec.get('section_score')} 分）</span></div>")
         for it in sec.get("items") or []:
             qno += 1
             body_parts.append("<div class='q'>")
-            stem = _plain(it.get("stem"))
+            stem = _h(it.get("stem"))
             body_parts.append(
                 f"<div class='q-stem'><span class='q-no'>{qno}.</span>"
                 f"<span style='color:#555;font-size:9.5pt'>（{it.get('score')}分）</span>"
@@ -229,17 +241,17 @@ def build_print_html(preview: Dict[str, Any], *, mode: str = "teacher",
             if opts:
                 body_parts.append("<div class='opts'>")
                 for o in opts:
-                    body_parts.append(f"<span class='opt'>{o}</span>")
+                    body_parts.append(f"<span class='opt'>{_h(o)}</span>")
                 body_parts.append("</div>")
             if mode == "teacher":
                 ans = _answer_text(it.get("answer"), it.get("type"))
-                ana = _plain(it.get("analysis"))
+                ana = _h(it.get("analysis"))
                 kp = it.get("knowledge_point_name")
-                block = f"<div class='ans'><b>答案：</b>{ans or '（略）'}"
+                block = f"<div class='ans'><b>答案：</b>{_h(ans) or '（略）'}"
                 if ana:
                     block += f"<br/><b>解析：</b>{ana}"
                 if kp:
-                    block += f"<br/><b>知识点：</b>{kp}"
+                    block += f"<br/><b>知识点：</b>{_h(kp)}"
                 block += "</div>"
                 body_parts.append(block)
             body_parts.append("</div>")
@@ -249,7 +261,7 @@ def build_print_html(preview: Dict[str, Any], *, mode: str = "teacher",
     else:
         parts.append("".join(body_parts))
 
-    parts.append(f"<div class='foot'>{_plain(paper.get('name'))}</div>")
+    parts.append(f"<div class='foot'>{_h(paper.get('name'))}</div>")
     parts.append("</body></html>")
     return "\n".join(parts)
 

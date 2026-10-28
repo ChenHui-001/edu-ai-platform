@@ -155,7 +155,9 @@ export const questionApi = {
   removePaper: (id) => request.delete(`/question/papers/${id}`),
   copyPaper: (id, data) => request.post(`/question/papers/${id}/copy`, data),
   sharePaper: (id, data) => request.post(`/question/papers/${id}/share`, data),
-  exportPaperUrl: (id) => `/api/v1/question/papers/${id}/export`,
+  // 注意：**没有** exportPaperUrl 这类"只拼 URL"的辅助函数。
+  // 导出的所有格式都必须走 axios 带 Token 取流（见 questionApi.exportPaper），
+  // 用 window.open(url) 不会带 Authorization 头，必然 401。
 
   // ---- 标准组卷 V3（命题标准 / 双模式组卷 / 预览编辑 / 导出 / 共享审核）----
   standards: (params) => request.get('/question/standards', { params }),

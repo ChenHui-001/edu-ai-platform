@@ -685,7 +685,9 @@ function onFilterGradeChange() {
 function onSelectionChange(val) { selection.value = val || [] }
 
 // ---------------- 导出 ----------------
-const EXPORT_EXT = { excel: 'xlsx', word: 'doc', pdf: 'pdf', html: 'html' }
+// word 现在是真正的 .docx（后端用 python-docx 生成，不再是改名的 HTML），
+// 扩展名必须同步，否则 Word 会提示"文件格式与扩展名不符"。
+const EXPORT_EXT = { excel: 'xlsx', word: 'docx', pdf: 'pdf', html: 'html' }
 async function exportPaper(row, fmt = 'excel') {
   const ext = EXPORT_EXT[fmt] || 'xlsx'
   await downloadBlob(questionApi.exportPaper(row.id, fmt), `试卷-${row.name}.${ext}`)

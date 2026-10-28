@@ -89,16 +89,42 @@ def _scope_clause(user: User):
     return or_(*clauses)
 
 
+def _legacy_shared_clause(user: User):
+    """存量兼容：`is_shared=True` 且 `share_scope` 仍是默认 private 的老卷。
+
+    这类卷由旧接口 `/papers/{id}/share` 产生，语义是「共享给同科教师」。
+    旧可见性实现只要 `is_shared` 为真就放行**所有人**（跨年级、跨学科都能读到
+    标准答案）。这里收窄为**同年级**可见：既贴合「同科」原意，又不再越界。
+    返回 None 表示该用户无年级信息、不适用本条。
+    """
+    if not user.grade_id:
+        return None
+    return and_(
+        Paper.is_shared.is_(True),
+        Paper.share_scope == ShareScope.PRIVATE.value,
+        Paper.grade_id == user.grade_id,
+    )
+
+
 def _paper_visibility_clause(user: User):
-    """可见性：sys_admin 全量；其他 = 本人 / 被显式分享 / 范围共享。"""
+    """可见性：sys_admin 全量；其他 = 本人 / 被显式分享 / 范围共享 / 存量共享。
+
+    **这是全仓唯一的试卷可见性判定**：`question.py` 的试卷列表与详情、
+    试卷库分类、导出校验全部复用本函数，避免两套条件漂移出
+    「列表看不到但详情能打开」的越权。
+    """
     if _is_sys_admin(user):
         return None
-    return or_(
+    clauses = [
         Paper.creator_id == user.id,
         Paper.id.in_(select(PaperShare.paper_id).where(
             PaperShare.to_user_id == user.id)),
         _scope_clause(user),
-    )
+    ]
+    legacy = _legacy_shared_clause(user)
+    if legacy is not None:
+        clauses.append(legacy)
+    return or_(*clauses)
 
 
 def _share_permission(db: Session, paper: Paper, user: User) -> Optional[str]:
@@ -555,7 +581,8 @@ def _normalize_items(
 
 
 def _write_items(db: Session, paper: Paper, items: List[Dict[str, Any]],
-                 *, migrate_answers: bool = True) -> Dict[str, int]:
+                 *, migrate_answers: bool = True,
+                 renumber: bool = True) -> Dict[str, int]:
     """写入题项（插入新 → 迁移作答 → 删旧），并重排大题序号。
 
     **顺序至关重要**：`Answer.paper_item_id` 是 ON DELETE CASCADE。
@@ -571,6 +598,10 @@ def _write_items(db: Session, paper: Paper, items: List[Dict[str, Any]],
     **被移除题目的作答无法保留**：`paper_item_id` 非空且 CASCADE，
     题项删除后作答必然被级联清除。这里不假装保住，而是如实计数上报，
     让调用方能告诉教师「这次修改作废了 N 条作答」。
+
+    `renumber=False` 供旧入口（`PUT /papers/{id}`）复用：那条路径按**入参顺序**
+    决定题序、原样保留大题名，若套用 `_renumber` 会按 question_id 重排题目
+    并把大题名改写成「一、…」，属于破坏既有契约的副作用。
     """
     # 1) 旧题项快照：question_id → 旧 item id 列表
     old_rows = db.execute(
@@ -583,7 +614,8 @@ def _write_items(db: Session, paper: Paper, items: List[Dict[str, Any]],
     old_ids = [r[0] for r in old_rows]
 
     # 2) 插入新题项
-    compose_svc._renumber(items)
+    if renumber:
+        compose_svc._renumber(items)
     new_map: Dict[int, int] = {}   # question_id → 新 item id
     for idx, it in enumerate(items, start=1):
         row = PaperItem(

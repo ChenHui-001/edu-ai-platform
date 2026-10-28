@@ -880,23 +880,27 @@ def _dump_json_field(value: Any) -> Optional[str]:
 
 
 def _paper_visibility_clause(user: User):
-    """试卷可见性：sys_admin 全量；其他用户 = 本人创建 / 公开共享 / PaperShare 接收。"""
-    if _is_sys_admin(user):
-        return None
-    return or_(
-        Paper.creator_id == user.id,
-        Paper.is_shared.is_(True),
-        Paper.id.in_(select(PaperShare.paper_id).where(
-            PaperShare.to_user_id == user.id)),
-    )
+    """试卷可见性：**复用标准组卷的单一判定**，不在这里另写一套。
+
+    旧实现 `or_(..., Paper.is_shared.is_(True))` 等于「共享即全员可见」：
+    只要 `is_shared=True`（`/papers/{id}/share` 定向分享给某一位教师也会置真），
+    任意年级、任意学科的教师都能读到该卷及标准答案（实测七年级卷出现在
+    九年级教师列表与详情接口）。
+
+    两套判定并存必然漂移（试卷库 `/papers/library/list` 与试卷列表 `/papers`
+    会给出不一致的结果），因此统一收口到 `paper_compose._paper_visibility_clause`。
+    """
+    from app.api.v1.paper_compose import _paper_visibility_clause as _canonical
+    return _canonical(user)
 
 
 def _can_edit_paper(paper: Paper, user: User) -> bool:
-    """编辑/删除：创建者 / sys_admin；grade_admin 仅公共卷（is_shared）或本人。"""
+    """编辑/删除：创建者 / sys_admin；grade_admin 限**本年级**的共享卷。"""
     if _is_sys_admin(user) or paper.creator_id == user.id:
         return True
     if _is_grade_admin(user):
-        return bool(paper.is_shared)
+        # 只判断 is_shared 会让年级管理员改到**其他年级**的共享卷（越权写）。
+        return bool(paper.is_shared) and paper.grade_id == user.grade_id
     return False
 
 
@@ -965,6 +969,12 @@ def _normalize_paper_items(
             "section_name": str(section)[:64] if section else None,
         })
         total += score
+    # 总分为 0 的试卷能建出来，但永远发不出去：`create_task` 里
+    # `pass_score` 必须满足 `0 < pass_score <= total`，total=0 时无解，
+    # 教师会卡在「及格分应在 0~0 之间」且不知道是自己没设分值。
+    # 在源头拦掉，提示直接指向原因。
+    if total <= 0:
+        raise BusinessException("试卷总分必须大于 0，请为题目设置分值")
     return prepared, round(total, 2)
 
 
@@ -1323,16 +1333,19 @@ def update_paper(
     if "duration" in data:
         paper.duration = _validate_duration(data.get("duration"), default=paper.duration)
 
+    dropped_answers = 0
     if "items" in data:
         items, total = _normalize_paper_items(
             db, user, data.get("items"), effective_grade, effective_subject)
-        db.execute(PaperItem.__table__.delete().where(
-            PaperItem.paper_id == paper_id))
-        for i, item in enumerate(items, start=1):
-            db.add(PaperItem(
-                paper_id=paper_id, question_id=item["question_id"],
-                sort_order=i, score=item["score"], section_name=item["section_name"],
-            ))
+        # **不能直接 DELETE 再插**：`Answer.paper_item_id` 是 ON DELETE CASCADE，
+        # 旧实现 `PaperItem.__table__.delete()` 会把该卷所有学生作答一并级联清空
+        # （实测 3 道题的卷子改一次题目，作答 3→0，成绩单变空壳）。
+        # 复用标准组卷的 `_write_items`：插新 → 把作答迁到同 question_id 的新题项 →
+        # 最后才删旧题项，保住能保的、如实上报保不住的。
+        # renumber=False：旧入口按入参顺序定题序并原样保留大题名，保持既有契约。
+        from app.api.v1.paper_compose import _write_items
+        write_stat = _write_items(db, paper, items, renumber=False)
+        dropped_answers = int(write_stat.get("dropped") or 0)
         paper.total_score = total
     elif "grade_id" in data or "subject_id" in data:
         # 仅改年级/学科而题目不变时，必须保证现存题目与新年级/学科一致
@@ -1355,7 +1368,12 @@ def update_paper(
         paper.difficulty_ratio = _dump_json_field(data.get("difficulty_ratio"))
     # 不改变 creator_id / source（契约要求）
     db.commit()
-    return ok({"id": paper.id, "total_score": paper.total_score}, message="试卷已更新")
+    message = "试卷已更新"
+    if dropped_answers:
+        # 被移除题目的作答无法保留（FK 非空 + CASCADE 决定），如实告知而不是静默丢
+        message = f"试卷已更新；移除的题目导致 {dropped_answers} 条学生作答被作废"
+    return ok({"id": paper.id, "total_score": paper.total_score,
+               "dropped_answers": dropped_answers}, message=message)
 
 
 @router.delete("/papers/{paper_id}", summary="删除试卷")
@@ -1480,16 +1498,20 @@ def share_paper(
     return ok(message=f"已共享给 {len(targets)} 名教师")
 
 
-@router.get("/papers/{paper_id}/export", summary="导出试卷（Excel/Word/PDF）")
+@router.get("/papers/{paper_id}/export", summary="导出试卷（Excel/Word/PDF/HTML）")
 def export_paper(
-    paper_id: int, fmt: str = Query("excel", regex="^(excel|word|pdf|html)$"),
+    paper_id: int, fmt: str = Query("excel", pattern="^(excel|word|pdf|html)$"),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:export")),
 ):
-    """导出试卷：
-    - excel：xlsx 文件（默认）
-    - word/pdf/html：HTML 文档（浏览器打印为 PDF，Word 可直接打开为 .doc）
-    轻量化方案：HTML 兼容 Word 与 PDF 打印，无需额外依赖。
+    """导出试卷。
+
+    - excel：xlsx（本文件实现，题库风格带答案与解析）
+    - word / pdf / html：**复用** `paper_export_service`（与标准组卷导出同一套渲染）
+      旧实现自己手拼 HTML 后把 `fmt` 直接当扩展名回传：
+        · `fmt=pdf` 返回的其实是 HTML，前端按 `.pdf` 保存 → 文件打不开；
+        · 题干里的 `&lt;script&gt;` 会被拼进 HTML，导出页可执行脚本（存储型 XSS）。
+      改为一处渲染，两种问题同时消失。
     """
     paper = db.get(Paper, paper_id)
     if not paper:
@@ -1518,7 +1540,10 @@ def export_paper(
             ws.append([f"{idx}. （{it.score}分）{q.stem}"])
             if opt_text:
                 ws.append([f"    {opt_text}"])
-            ws.append([f"    答案：{q.answer or ''}"])
+            # 答案在库里是 JSON 文本（多选存 ["A","B"]），必须解码后再写，
+            # 否则导出成品会出现 `答案：["A", "B"]` 这种带方括号引号的原文
+            ans = _load(q.answer)
+            ws.append([f"    答案：{_answer_display(ans)}"])
             if q.analysis:
                 ws.append([f"    解析：{q.analysis}"])
             ws.append([])
@@ -1531,58 +1556,52 @@ def export_paper(
             headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}.xlsx"},
         )
 
-    # word / pdf / html → HTML 文档
-    sub = db.get(Subject, paper.subject_id)
-    gr = db.get(Grade, paper.grade_id)
-    rows = ["<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            f"<title>{paper.name}</title></head><body>"]
-    rows.append(f"<h1 style='text-align:center'>{paper.name}</h1>")
-    rows.append(f"<p style='text-align:center'>{gr.name if gr else ''} {sub.name if sub else ''}"
-                f"　总分：{paper.total_score}　时间：{paper.duration} 分钟</p><hr/>")
-    current_section = None
-    idx = 1
-    for it in sorted(paper.items, key=lambda x: x.sort_order):
-        if it.section_name and it.section_name != current_section:
-            current_section = it.section_name
-            rows.append(f"<h3>{current_section}</h3>")
-        q = it.question
-        opts = _load(q.options) or []
-        rows.append(f"<p><b>{idx}.</b>（{it.score}分）{q.stem}</p>")
-        if opts:
-            rows.append("<ol type='A'>" + "".join(
-                f"<li>{o.get('text', '')}</li>" for o in opts) + "</ol>")
-        rows.append(f"<p><i>答案：{q.answer or ''}</i></p>")
-        if q.analysis:
-            rows.append(f"<p><i>解析：{q.analysis}</i></p><hr/>")
-        idx += 1
-    rows.append("</body></html>")
-    html = "\n".join(rows)
-    ext = "doc" if fmt == "word" else "html"
-    mt = "application/msword" if fmt == "word" else "text/html"
+    # word / pdf / html → 统一走 paper_export_service（含 HTML 转义与真实 PDF）
+    from app.api.v1.paper_compose import _build_preview
+    from app.services.paper_export_service import build_docx, build_pdf, build_print_html
+
+    preview = _build_preview(db, paper, mode="teacher")
+    if fmt == "word":
+        buf = build_docx(preview, mode="teacher")
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition":
+                     f"attachment; filename=paper_{paper_id}.docx"},
+        )
+    if fmt == "pdf":
+        buf = build_pdf(preview, mode="teacher")
+        return StreamingResponse(
+            buf, media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}.pdf"},
+        )
+    html = build_print_html(preview, mode="teacher")
     return StreamingResponse(
-        io.BytesIO(html.encode("utf-8")), media_type=mt,
-        headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}.{ext}"},
+        io.BytesIO(html.encode("utf-8")), media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": f"inline; filename=paper_{paper_id}.html"},
     )
 
 
 # ---------------------------------------------------------------- 工具
 def _assert_paper_readable(db: Session, paper: Paper, user: User) -> None:
-    """试卷读取归属校验：仅创建者、被共享者、公开卷或管理员可读。
+    """试卷读取归属校验：与 `_paper_visibility_clause` **同一套判定**。
 
     试卷详情含标准答案，缺少校验会导致任意教师遍历 paper_id
     读取他人试卷答案。复制与导出同样受此保护。
+
+    这里刻意复用同一个 clause 而不是另写一份 if 分支：两处各写一遍必然漂移
+    （旧实现就是详情用 `is_shared` 放行、列表用另一套条件，导致「列表看不到
+    但详情能打开」的越权）。写入 key 与读取 key 同源。
     """
-    if paper.creator_id == user.id or "sys_admin" in user.role_codes:
+    if paper.creator_id == user.id or _is_sys_admin(user):
         return
-    if paper.is_shared:
+    visibility = _paper_visibility_clause(user)
+    if visibility is None:
         return
-    shared = db.scalar(
-        select(PaperShare.id).where(
-            PaperShare.paper_id == paper.id,
-            PaperShare.to_user_id == user.id,
-        )
+    allowed = db.scalar(
+        select(Paper.id).where(Paper.id == paper.id, visibility)
     )
-    if not shared:
+    if not allowed:
         raise PermissionException("无权查看该试卷")
 
 
@@ -1599,6 +1618,17 @@ def _load(v: Optional[str]) -> Any:
         return json.loads(v)
     except json.JSONDecodeError:
         return v
+
+
+def _answer_display(value: Any) -> str:
+    """答案展示文本：数组拼成连写（["A","B"] → AB），去掉 JSON 引号。"""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "".join(str(x) for x in value)
+    if isinstance(value, dict):
+        return str(value.get("text") or value.get("value") or "")
+    return str(value).replace('"', "").strip()
 
 
 def _fingerprint(stem: str) -> str:
