@@ -68,9 +68,10 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 import app.models  # noqa: F401,E402  确保全部表注册到 Base.metadata
 from app.core.database import Base, engine  # noqa: E402
 from app.models import (  # noqa: E402
-    Class, Grade, IdentityType, KnowledgePoint, Paper, Question, Role,
+    Answer, Class, Grade, IdentityType, KnowledgePoint, Paper, Question, Role,
     Submission, Subject, Task, TaskAssignment, User, UserStatus,
 )
+from app.api.v1.grading import SUBJECTIVE_TYPES  # noqa: E402
 from app.services.grading_service import _calc_rank  # noqa: E402
 from app.utils.common import now_local  # noqa: E402
 
@@ -1134,6 +1135,238 @@ def case_knowledge_stats():
        f"with_questions={new_a.get('with_questions')} total={new_a.get('total')}")
 
 
+def _seed_batch_grade(n_subs=8):
+    """造 n_subs 份「待批改」提交，每份 3 道题（客观 auto + 主观 auto + 已批 manual）。
+
+    刻意让主观题停在 `grader_type="auto"` —— 这正是 batch_grade 要改标
+    manual 的分支；若全是 auto 或全是 manual，那段逻辑就测不到。
+    """
+    from app.models import Answer, GradeStatus, PaperItem, Question
+
+    db = Session()
+    try:
+        grade = db.scalars(select(Grade).where(Grade.name == "rank1年级")).first()
+        subject = db.scalars(select(Subject).where(Subject.name == "rank1学科")).first()
+        teacher = db.scalars(select(User).where(User.username == "rank1_teacher")).first()
+        paper = db.scalars(select(Paper).where(Paper.name == "rank1试卷")).first()
+        task = db.scalars(select(Task).where(Task.title == "rank1任务")).first()
+
+        # 三道题：objective(single) / subjective(short) / subjective(material)
+        # 每题都必须挂一条真实 PaperItem —— Answer.paper_item_id 有外键约束，
+        # 随手写 id=1 会直接 IntegrityError（第一版就是这么挂的）
+        qs, items = [], []
+        for qtype, extra in (("single", "客观"), ("short", "简答"), ("material", "材料")):
+            q = Question(
+                type=qtype, stem=f"批量批改用例-{extra}", answer="[]",
+                difficulty="easy", score=10.0, grade_id=grade.id,
+                subject_id=subject.id, bank_type="public", status="published",
+                owner_id=teacher.id,
+            )
+            db.add(q)
+            db.flush()
+            it = PaperItem(paper_id=paper.id, question_id=q.id, score=10.0,
+                           sort_order=len(items))
+            db.add(it)
+            db.flush()
+            qs.append(q)
+            items.append(it)
+
+        subs = []
+        for i in range(n_subs):
+            stu = User(
+                username=f"rank1_bg_stu{i}", password="x", real_name=f"批改学生{i}",
+                identity=IdentityType.STUDENT.value, status=UserStatus.ACTIVE.value,
+                grade_id=grade.id,
+            )
+            db.add(stu)
+            db.flush()
+            sub = Submission(
+                task_id=task.id, student_id=stu.id, attempt=1,
+                status=GradeStatus.NOT_GRADED.value,
+            )
+            db.add(sub)
+            db.flush()
+            # 每题一条作答：客观 6 分 auto；两道主观各 4 分 auto
+            for q, it, sc in zip(qs, items, (6.0, 4.0, 4.0)):
+                db.add(Answer(
+                    submission_id=sub.id, paper_item_id=it.id, question_id=q.id,
+                    content="x", score=sc, full_score=10.0, grader_type="auto",
+                ))
+            subs.append(sub.id)
+        db.commit()
+        return teacher.id, subs
+    finally:
+        db.close()
+
+
+def _reference_batch_grade(db, ids, user, scope):
+    """`batch_grade` 的**旧实现**（逐字复制取数形态），返回 (done, skipped, 分数表)。
+
+    分数表取 `{sid: (objective, subjective, total, passed, status)}`，
+    用来对拍「改标 manual 后的重新归集」是否完全一致。
+    """
+    done, skipped = [], []
+    for sid in ids:
+        sub = db.get(Submission, sid)
+        if not sub:
+            skipped.append({"id": sid, "reason": "不存在"})
+            continue
+        task = db.get(Task, sub.task_id)
+        if task and not scope.is_super and task.creator_id != user.id:
+            skipped.append({"id": sid, "reason": "非本人任务"})
+            continue
+        if sub.status == "published":
+            skipped.append({"id": sid, "reason": "已发布"})
+            continue
+        answers = db.scalars(
+            select(Answer).where(Answer.submission_id == sid)).all()
+        qids = {a.question_id for a in answers}
+        if qids:
+            qtypes = {
+                qid: qtype for qid, qtype in db.execute(
+                    select(Question.id, Question.type).where(Question.id.in_(qids))
+                ).all()
+            }
+            for a in answers:
+                if a.grader_type == "auto" and qtypes.get(a.question_id) in SUBJECTIVE_TYPES:
+                    a.grader_type = "manual"
+        objective = sum(a.score or 0 for a in answers if a.grader_type == "auto")
+        subjective = sum(a.score or 0 for a in answers if a.grader_type in ("ai", "manual"))
+        sub.objective_score = objective
+        sub.subjective_score = subjective
+        sub.score = round(objective + subjective, 2)
+        sub.is_passed = sub.score >= (task.pass_score if task else 60.0)
+        sub.status = "fully_graded"
+        done.append(sid)
+    db.commit()
+    return done, skipped
+
+
+def _score_snapshot(db, ids):
+    return {
+        s.id: (s.objective_score, s.subjective_score, s.score,
+               s.is_passed, s.status)
+        for s in db.scalars(select(Submission).where(Submission.id.in_(ids))).all()
+    }
+
+
+def case_batch_grade():
+    print("\n九、批量采纳批改：查询数与份数无关 + 分数归集逐项等价")
+
+    from app.api.deps import DataScope
+
+    teacher_id, ids = _seed_batch_grade(n_subs=8)
+
+    # 旧实现跑在前：它会把 grader_type 改成 manual，所以后面测新实现前
+    # 必须把数据复位，否则第二轮跑的是「已改标」的状态，测不出改标逻辑。
+    s = Session()
+    try:
+        user = s.get(User, teacher_id)
+        del _SQL[:]
+        scope = DataScope(user, s)
+        done_ref, skipped_ref = _reference_batch_grade(s, ids, user, scope)
+        snap_ref = _score_snapshot(s, ids)
+        sql_ref = list(_SQL)
+    finally:
+        s.close()
+
+    # 复位成「待批改 + 主观题 auto」，与新实现要处理的初始状态一致
+    _reset_batch_grade(ids)
+
+    s = Session()
+    try:
+        from app.api.v1.grading import batch_grade
+
+        user = s.get(User, teacher_id)
+        del _SQL[:]
+        out = batch_grade({"submission_ids": ids}, s, user, DataScope(user, s))
+        sql_new = list(_SQL)
+    finally:
+        s.close()
+    s2 = Session()
+    try:
+        snap_new = _score_snapshot(s2, ids)
+    finally:
+        s2.close()
+
+    ok("用例造齐 8 份待批改提交（每份 3 题）", len(ids) == 8, f"{len(ids)} 份")
+    ok("★ 批改结果与旧实现逐份等价（客观/主观/总分/及格/状态）",
+       snap_new == snap_ref, f"新={snap_new} 旧={snap_ref}")
+    ok("★ 主观题仍为 auto 的作答被改标 manual（否则批量发布判为未批改）",
+       all(v[2] == 14.0 for v in snap_new.values()),
+       f"分数分布={sorted({v[2] for v in snap_new.values()})}")
+    ok("全部 8 份都进入 done（无被误跳过）",
+       len(out["data"]["graded"]) == 8, f"graded={out['data']['graded']}")
+
+    # 复杂度：真正的判别器是「1 份与 8 份条数相同」。绝对上界只作辅助 ——
+    # 用「新 < 旧」写是不行的：退回旧实现后**两边同时变大**，比值不变，
+    # 断言永远为真（实测只抓到 1 条，就是因为这条 `<` 漏了）。
+    ok("★ 不再逐份查询（8 份的 SELECT 条数有绝对上界，旧实现 4N）",
+       _select_count(sql_new) <= 10 and _select_count(sql_ref) >= 4 * 8,
+       f"新 {_select_count(sql_new)} 条 / 旧 {_select_count(sql_ref)} 条（8 份）")
+
+    # 单份与多份的 SELECT 条数必须相同 —— 这才是「批量」的定义
+    _reset_batch_grade(ids)
+    s = Session()
+    try:
+        from app.api.v1.grading import batch_grade
+
+        user = s.get(User, teacher_id)
+        del _SQL[:]
+        batch_grade({"submission_ids": ids[:1]}, s, user, DataScope(user, s))
+        sql_one = list(_SQL)
+    finally:
+        s.close()
+    ok("★ 1 份与 8 份的 SELECT 条数完全相同（真正的批量）",
+       _select_count(sql_one) == _select_count(sql_new),
+       f"1 份 {_select_count(sql_one)} 条 / 8 份 {_select_count(sql_new)} 条")
+
+    # 边界：不存在的 id 与已发布的 id 都必须照样进 skipped，且不影响其他份
+    _reset_batch_grade(ids)
+    s = Session()
+    try:
+        from app.api.v1.grading import batch_grade
+
+        user = s.get(User, teacher_id)
+        s.get(Submission, ids[0]).status = "published"
+        s.commit()
+        out2 = batch_grade({"submission_ids": [ids[0], 99999999] + ids[1:]},
+                           s, user, DataScope(user, s))
+        reasons = {x["id"]: x["reason"] for x in out2["data"]["skipped"]}
+    finally:
+        s.close()
+    ok("★ 已发布 → 跳过「已发布」；不存在 → 跳过「不存在」",
+       reasons.get(ids[0]) == "已发布" and reasons.get(99999999) == "不存在"
+       and len(out2["data"]["graded"]) == 7,
+       f"skipped={reasons} graded={len(out2['data']['graded'])}")
+
+
+def _select_count(statements):
+    return sum(1 for s in statements if s.lstrip().upper().startswith("SELECT"))
+
+
+def _reset_batch_grade(ids):
+    """把提交复位成「待批改」，全部作答复位成 auto（还原被测初始状态）。"""
+    from app.models import Answer
+
+    db = Session()
+    try:
+        for sub in db.scalars(
+                select(Submission).where(Submission.id.in_(ids))).all():
+            sub.status = "not_graded"
+            sub.score = None
+            sub.objective_score = None
+            sub.subjective_score = None
+            sub.is_passed = None
+            sub.grade_time = None
+        for a in db.scalars(
+                select(Answer).where(Answer.submission_id.in_(ids))).all():
+            a.grader_type = "auto"
+        db.commit()
+    finally:
+        db.close()
+
+
 def main():
     print("=" * 72)
     print("离线单元回归：性能修复的语义锁与复杂度锁")
@@ -1147,6 +1380,7 @@ def main():
     case_question_stats()
     case_my_tasks()
     case_knowledge_stats()
+    case_batch_grade()
     print("\n" + "-" * 72)
     total = _PASSED + len(_FAILED)
     print(f"单元回归完成：共 {total} 项 | 通过 {_PASSED} | 失败 {len(_FAILED)}")

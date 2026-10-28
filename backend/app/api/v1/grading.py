@@ -5,7 +5,7 @@
 `learning_router` 作为兼容别名继续从这里导出，`api/router.py` 无需改动。
 """
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy import func, or_, select
@@ -15,7 +15,7 @@ from app.api.deps import DataScope, get_data_scope, require_perm
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
-from app.models import (Answer, KnowledgePoint, Submission, Task, User)
+from app.models import (Answer, KnowledgePoint, Question, Submission, Task, User)
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, load_json, now_local, ok
 
@@ -371,39 +371,63 @@ def batch_grade(
 
     典型场景：AI 已批大部分题目、教师抽检确认后批量采纳，避免逐份打开。
     submission_ids: [1,2,3]；只处理属于自己任务、且非 published 的记录。
+
+    原实现是 4N 条查询（每份提交 1 次 get(Submission) + 1 次 get(Task) +
+    1 次 Answer 列表 + 1 次 Question 类型映射）。批量采纳一次几十份就是
+    上百条往返。改为按 id 各预取一次：提交、任务、答案、题型全部批量载入
+    后在内存里组装 —— 查询数固定为 4 条，与选中份数无关。
     """
     ids = data.get("submission_ids") or []
     if not ids:
         raise BusinessException("请选择要批改的提交")
+
+    # 预取：顺序保留调用方给的 ids 顺序（响应里的 done/skipped 顺序不变）
+    subs = {
+        s.id: s for s in db.scalars(
+            select(Submission).where(Submission.id.in_(ids))
+        ).all()
+    }
+    task_ids = {s.task_id for s in subs.values() if s.task_id}
+    tasks = {
+        t.id: t for t in db.scalars(
+            select(Task).where(Task.id.in_(task_ids))
+        ).all()
+    } if task_ids else {}
+    # 答案按 submission_id 批量取回后分组（一次查询）
+    answers_by_sub: Dict[int, List[Answer]] = {}
+    if subs:
+        for a in db.scalars(
+            select(Answer).where(Answer.submission_id.in_(list(subs)))
+        ).all():
+            answers_by_sub.setdefault(a.submission_id, []).append(a)
+    # 只查真实出现过的题型（题目本体不取，只要 type 一列）
+    qids = {a.question_id for ans in answers_by_sub.values() for a in ans}
+    qtypes = {
+        qid: qtype for qid, qtype in db.execute(
+            select(Question.id, Question.type).where(Question.id.in_(qids))
+        ).all()
+    } if qids else {}
+
     done, skipped = [], []
     for sid in ids:
-        sub = db.get(Submission, sid)
+        sub = subs.get(sid)
         if not sub:
             skipped.append({"id": sid, "reason": "不存在"})
             continue
-        task = db.get(Task, sub.task_id)
+        task = tasks.get(sub.task_id)
         if task and not scope.is_super and task.creator_id != user.id:
             skipped.append({"id": sid, "reason": "非本人任务"})
             continue
         if sub.status == "published":
             skipped.append({"id": sid, "reason": "已发布"})
             continue
-        answers = db.scalars(
-            select(Answer).where(Answer.submission_id == sid)).all()
+        answers = answers_by_sub.get(sid, [])
         # 快速采纳：主观题若仍是 auto（AI 未成功或未配置时按 0 分待批），
         # 教师批量采纳即视为确认当前分数，改标 manual，保证随后的批量发布
         # 不再被判为「未批改」（考试 E2E 依赖此行为）。
-        from app.models import Question
-        qids = {a.question_id for a in answers}
-        if qids:
-            qtypes = {
-                qid: qtype for qid, qtype in db.execute(
-                    select(Question.id, Question.type).where(Question.id.in_(qids))
-                ).all()
-            }
-            for a in answers:
-                if a.grader_type == "auto" and qtypes.get(a.question_id) in SUBJECTIVE_TYPES:
-                    a.grader_type = "manual"
+        for a in answers:
+            if a.grader_type == "auto" and qtypes.get(a.question_id) in SUBJECTIVE_TYPES:
+                a.grader_type = "manual"
         objective = sum(a.score or 0 for a in answers if a.grader_type == "auto")
         subjective = sum(a.score or 0 for a in answers if a.grader_type in ("ai", "manual"))
         sub.objective_score = objective
