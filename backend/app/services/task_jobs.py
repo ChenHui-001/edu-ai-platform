@@ -42,7 +42,10 @@ def generate_daily_report() -> Dict[str, Any]:
     """生成学习日报：统计前一日学习数据。"""
     db = SessionLocal()
     try:
-        yesterday = (now_local() - timedelta(days=1)).strftime("%Y-%m-%d")
+        # 只取一次当前时间：日报的「日期标签」与「统计窗口」必须来自同一个
+        # 时间点，否则跨零点执行时标签与统计可能落在不同的一天。
+        now = now_local()
+        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         rows = db.scalars(select(StudyRecord).where(StudyRecord.study_date == yesterday)).all()
         active_students = len(rows)
         total_questions = sum(r.question_count for r in rows)
@@ -55,7 +58,7 @@ def generate_daily_report() -> Dict[str, Any]:
         # 时间基准必须与写库一致：全库 submit_time 都由 now_local() 写入的
         # **naive 本地时间**，因此这里也用 naive 本地零点，不引入 UTC/tzinfo
         # （否则会整体偏移一个时区，把边界附近的交卷统计错位）。
-        day_start = (now_local() - timedelta(days=1)).replace(
+        day_start = (now - timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         day_end = day_start + timedelta(days=1)

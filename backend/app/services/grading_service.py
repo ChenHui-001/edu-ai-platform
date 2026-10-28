@@ -3,7 +3,7 @@ import json
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.agents.grading_agent import OBJECTIVE_TYPES, GradingAgent
@@ -385,15 +385,31 @@ def _calc_rank(db: Session, submission: Submission) -> Optional[int]:
         )
         return (total or 0) + 1
 
-    # 名次 = 严格高于本人分数的人数 + 1。
-    # 并列同名次成立：同分者之间不计入「严格高于」，故 95/95/90 得到 1/1/3，
-    # 与原 ``scores.index(score) + 1``（降序列表里首次出现的下标）完全等价。
-    better = db.scalar(
-        select(func.count())
+    # 名次 = 严格高于本人分数的人数 + 1，并列同名次成立：同分者之间不计入
+    # 「严格高于」，故 95/95/90 得到 1/1/3，与原 ``scores.index(score) + 1``
+    # （降序列表里首次出现的下标）完全等价。
+    #
+    # 还需保留原实现的兜底分支：``score in scores`` 是**按分值**判断本人是否
+    # 落在 peers 里，而不是按行。当交卷学生没有班级（class_id 为 NULL，不会
+    # 进入 peers）且全班没有第二个人同分时，原实现返回 len(scores)+1（末位）；
+    # 只算「比我高的人数」会给出一个中间名次，属于行为变更。因此一次性聚合出
+    # 三个数（总人数 / 严格更高人数 / 同分人数），仍只回传一行、只走一次查询。
+    total, better, same = db.execute(
+        select(
+            func.count(),
+            func.coalesce(
+                func.sum(case((Submission.score > submission.score, 1), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(case((Submission.score == submission.score, 1), else_=0)), 0
+            ),
+        )
         .select_from(Submission)
-        .where(*peers_filter, Submission.score > submission.score)
-    )
-    return (better or 0) + 1
+        .where(*peers_filter)
+    ).one()
+    if same:
+        return int(better) + 1
+    return int(total) + 1
 
 
 def generate_review_plan_for_wrong(db: Session, wrong: WrongQuestion) -> List[ReviewPlan]:
