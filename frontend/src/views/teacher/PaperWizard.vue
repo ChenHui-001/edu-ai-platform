@@ -59,6 +59,9 @@
           <el-input v-model="form.request" ref="requestRef" type="textarea" :rows="4"
                     placeholder="例如：出一份七年级数学期末试卷，重点考有理数和整式，难度中等偏易，100分，90分钟" />
         </el-form-item>
+        <div class="ai-hint">
+          不写描述也可以：选好下面的<b>年级与学科</b>，直接按该学科命题标准生成题型结构与分值。
+        </div>
       </div>
 
       <el-form :model="form" label-width="110px" class="param-form">
@@ -907,6 +910,11 @@ function goBack() { router.push('/teacher/papers') }
   color: var(--el-text-color-secondary);
 }
 .ai-input-block { margin-bottom: 8px; }
+.ai-hint {
+  margin: -4px 0 12px 110px;
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
+}
 .std-tip { margin-bottom: 16px; }
 .std-sections { margin-top: 8px; font-size: 12.5px; line-height: 2; }
 .block-title { font-size: 14px; font-weight: 600; margin: 20px 0 10px; }

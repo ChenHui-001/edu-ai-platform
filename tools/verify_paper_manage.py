@@ -154,7 +154,8 @@ def main():
         HS = {"Authorization": f"Bearer {tok_s}"}
         check("三个教师 + 学生均可登录", all([tok_a, tok_b, tok_c, tok_s]))
 
-        def new_question(stem, answer, qtype="single", score=10, grade_id=None, subj_id=None, tok=None):
+        def new_question(stem, answer, qtype="single", score=10, grade_id=None,
+                         subj_id=None, tok=None):
             body = {
                 "type": qtype, "difficulty": "easy", "score": score, "stem": stem,
                 "options": [{"key": "A", "text": "甲"}, {"key": "B", "text": "乙"}],
@@ -162,7 +163,9 @@ def main():
                 "grade_id": grade_id or g7["id"], "subject_id": subj_id or s7["id"],
                 "bank_type": "public",
             }
-            r = httpx.post(f"{api}/question/questions", headers=tok or HAa, json=body, timeout=30)
+            # 用管理员建题：教师建"公共题"会被强制降级为 draft（待审核），
+            # 而组卷引擎只抽 published —— 用教师令牌会让组卷永远 0 题，测不到真实路径。
+            r = httpx.post(f"{api}/question/questions", headers=tok or HA, json=body, timeout=30)
             return data_of(r.json()).get("id")
 
         q1 = new_question("【试卷管理】1+1=？", "B")
@@ -317,10 +320,19 @@ def main():
         ra = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa, json={
             "request": "出一份七年级数学期末试卷，难度中等偏易，100 分，90 分钟",
         }, timeout=120)
-        check("只给描述（LLM 关闭）时给出可理解的错误而非静默失败",
-              ra.status_code == 400, f"实际 {ra.status_code} {ra.text[:120]}")
-        check("错误信息指明「识别年级或学科」",
-              "识别" in (ra.text or ""), ra.text[:140])
+        # LLM 关闭时解析为空，但文本兜底（年级序号/学科名）仍能定位到真实记录，
+        # 所以这里应当是 200 而不是 400 —— 这正是"模型不可用也能出卷"的关键。
+        check("只给描述（LLM 关闭）也能靠文本兜底出卷",
+              ra.status_code == 200, f"实际 {ra.status_code} {ra.text[:120]}")
+        rd0 = data_of(ra.json())
+        check("兜底解析出的是七年级数学（不是同名其他年级的数学）",
+              rd0.get("grade_name") == g7["name"] and rd0.get("subject_name") == s7["name"],
+              f"{rd0.get('grade_name')}/{rd0.get('subject_name')}")
+        rx2 = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa, json={
+            "request": "出一份随堂练习",
+        }, timeout=60)
+        check("描述里既没年级也没学科 → 400 且提示明确",
+              rx2.status_code == 400 and "年级" in (rx2.text or ""), rx2.text[:140])
 
         rb2 = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa, json={
             "request": "出一份七年级数学期末试卷，难度中等偏易，100 分，90 分钟",
@@ -333,6 +345,51 @@ def main():
               bool(ai_data.get("items") is not None)
               and "difficulty_report" in ai_data and "type_report" in ai_data,
               str(sorted(ai_data.keys()))[:200])
+
+        # ---------------- 不写描述、只选年级学科 ----------------
+        print("\n=== 8. 不写描述、只选年级+学科也能组卷 ===")
+        rn = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa, json={
+            "request": "", "grade_id": g7["id"], "subject_id": s7["id"],
+        }, timeout=120)
+        check("无描述但有年级学科 → 200", rn.status_code == 200, rn.text[:160])
+        nd = data_of(rn.json())
+        check("返回结构与命题标准一致（有大题结构）",
+              bool(nd.get("sections")), str(nd.get("sections"))[:120])
+        check("提示语说明按命题标准生成",
+              "命题标准" in str(nd.get("message") or ""), str(nd.get("message"))[:120])
+
+        rn2 = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa,
+                         json={"request": ""}, timeout=60)
+        check("既无描述也无年级学科 → 400 并说明两条路径",
+              rn2.status_code == 400 and "年级" in (rn2.text or ""), rn2.text[:140])
+
+        # ---------------- 去重把整段清空时自动放宽 ----------------
+        print("\n=== 9. 「避免近 3 次重复」清空整段时应放宽并说明 ===")
+        # 先制造"最近真题"：把本学科题目都用进一份试卷并发布任务，使其进入 recent 集合。
+        # 简化做法：直接用 avoid_recent=True 且题库只有这几道题 —— 此时若不放宽，
+        # 整卷会一道都抽不到（历史故障）。
+        rv = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa, json={
+            "request": "", "grade_id": g7["id"], "subject_id": s7["id"],
+            "avoid_recent": True,
+        }, timeout=120)
+        vd = data_of(rv.json())
+        check("开启去重后仍能抽出题目（或明确报缺口）",
+              rv.status_code == 200, rv.text[:160])
+        # 本脚本前面已把该学科题目全部用于一份已交卷的试卷 → 它们都在"近 3 次"集合里。
+        # 若不放宽，整卷必然 0 题（历史故障）。这里要求确实抽到了题。
+        got_items = len(vd.get("items") or [])
+        check("去重把整段清空时已放宽并抽出题目", got_items > 0,
+              f"items={got_items} relaxed={vd.get('relaxed_count')}")
+        check("放宽题量如实回传 relaxed_count > 0",
+              int(vd.get("relaxed_count") or 0) > 0, str(vd.get("relaxed_count")))
+        check("提示语告知已放宽去重",
+              "放宽" in str(vd.get("message") or ""), str(vd.get("message"))[:140])
+        total_got = sum(int(g.get("got") or 0) for g in (vd.get("gaps") or []))
+        total_need = sum(int(g.get("need") or 0) for g in (vd.get("gaps") or []))
+        check("缺口统计自洽（got <= need）", total_got <= total_need,
+              f"got={total_got} need={total_need}")
+        check("放宽复用量有字段回传（0 或 >0 都可，但字段必须存在）",
+              "relaxed_count" in vd, str(sorted(vd.keys()))[:160])
 
         print("\n" + "=" * 58)
         if FAILED:

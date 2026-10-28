@@ -426,6 +426,11 @@ def _plan_response(ctx: Dict[str, Any], *, ai_message: str = "") -> Dict[str, An
     }
     if ai_message:
         body["message"] = ai_message
+    # 去重曾把整大题清空、已自动放宽：必须告诉教师，否则"复用了老题"是隐形的
+    if getattr(plan, "relaxed_count", 0):
+        note = (f"「避免近 3 次考试重复」把部分大题清空，已自动放宽去重并复用 "
+                f"{plan.relaxed_count} 题；如需完全不重复，请先补充题库。")
+        body["message"] = f"{body['message']}；{note}" if body.get("message") else note
     return body
 
 
@@ -460,8 +465,11 @@ def compose_ai(
     from app.agents.paper_agent import PaperComposerAgent
 
     request = str(data.get("request") or "").strip()
-    if not request:
-        raise BusinessException("请描述您的组卷需求")
+    # 允许「不写描述、只选年级+学科」直接出卷：这时 AI 只省掉"翻译自然语言"这一步，
+    # 结构与分值照样由命题标准决定，本质是规则组卷。强制写小作文属于无谓门槛
+    # （用户明确反馈：选好年级科目就该能出卷）。
+    if not request and not (data.get("grade_id") and data.get("subject_id")):
+        raise BusinessException("请填写组卷需求描述，或至少选择年级与学科")
 
     parsed: Dict[str, Any] = {}
     parse_error = ""
@@ -527,6 +535,9 @@ def compose_ai(
     message = ""
     if parse_error:
         message = f"AI 参数解析未成功（{parse_error}），已按命题标准与默认难度组卷"
+    elif not request:
+        # 让教师知道"没写描述"不等于"没生效"：结构来自命题标准，不是随手拼的
+        message = "未填写需求描述，已按所选年级学科的命题标准生成题型结构与分值"
     return ok(_plan_response(ctx, ai_message=message))
 
 

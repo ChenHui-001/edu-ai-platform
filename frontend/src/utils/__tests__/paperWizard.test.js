@@ -18,8 +18,20 @@ describe('composeBlockReason（组卷按钮可用性）', () => {
     })).toBe('')
   })
 
-  it('AI 模式：描述为空时给出可操作原因', () => {
-    expect(composeBlockReason({ mode: 'ai', request: '   ' })).toBe('请先填写组卷需求描述')
+  it('AI 模式：描述为空时给出可操作原因（两条合法路径都没满足）', () => {
+    expect(composeBlockReason({ mode: 'ai', request: '   ' }))
+      .toBe('请填写组卷需求描述，或选择年级与学科')
+  })
+
+  it('AI 模式：不写描述、只选年级+学科也能提交（按命题标准出结构）', () => {
+    // 用户明确反馈：选好年级科目就该能出卷，不该被迫写一段自然语言
+    expect(composeBlockReason({ mode: 'ai', request: '', gradeId: 7, subjectId: 34 }))
+      .toBe('')
+  })
+
+  it('AI 模式：只选了年级但没学科、也没描述 → 仍提示补齐', () => {
+    expect(composeBlockReason({ mode: 'ai', request: '', gradeId: 7 }))
+      .toBe('请填写组卷需求描述，或选择年级与学科')
   })
 
   it('AI 模式：描述有内容但年级/学科都为空，仍然可以提交', () => {

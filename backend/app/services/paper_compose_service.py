@@ -183,6 +183,8 @@ class ComposePlan:
         self.used_question_ids: set = set()
         self.kp_coverage: Dict[str, int] = {}
         self.excluded_count = 0                    # 因"近 3 次重复"被排除的题量
+        # 去重把某大题整段清空时，放宽去重后复用的题量（0 = 没放宽）
+        self.relaxed_count = 0
 
     @property
     def total_score(self) -> float:
@@ -196,6 +198,7 @@ class ComposePlan:
             "gaps": self.gaps,
             "kp_coverage": self.kp_coverage,
             "excluded_count": self.excluded_count,
+            "relaxed_count": self.relaxed_count,
         }
 
 
@@ -326,6 +329,11 @@ def compose(
             prefer_difficulty=sec_difficulty, exclude=exclude,
             kp_used=kp_used, kp_cap=kp_cap,
         )
+        # 「忽略近 N 次去重」的兜底在 `_pick_for_section` 第三级内完成；
+        # 这里只统计「本应被去重排除、但为了不出白卷而复用」的题量，
+        # 由上层如实告知教师（复用老题必须是可见的，不能悄悄发生）。
+        if exclude:
+            plan.relaxed_count += sum(1 for q in picked if q.id in exclude)
 
         for q in picked:
             kp_name = plan.kp_coverage
@@ -380,11 +388,15 @@ def _pick_for_section(
     picked: List[Question] = []
     picked_ids: set = set()
 
-    def _take(candidates: List[Question], limit: int) -> None:
+    def _take(candidates: List[Question], limit: int, *,
+              ignore_exclude: bool = False) -> None:
         for q in candidates:
             if len(picked) >= want:
                 return
-            if q.id in picked_ids or q.id in exclude:
+            # ignore_exclude=True 用于第三级兜底：SQL 已经不再过滤"近 N 次重复"，
+            # 这里若仍按 exclude 丢弃，整个兜底就是空操作（实测：小题库开去重后
+            # 整卷 0 题，且 gaps 显示"题库仅有 0 题"，实际有题只是全被排除）。
+            if q.id in picked_ids or (not ignore_exclude and q.id in exclude):
                 continue
             # 知识点限流
             kp_id = q.knowledge_point_id
@@ -417,14 +429,14 @@ def _pick_for_section(
         ).all()
         _take(list(rows), want - len(picked))
 
-    # 3) 最后兜底：忽略"近 N 次重复"限制
+    # 3) 最后兜底：忽略"近 N 次重复"限制（题库实在不足时宁可重复，也不能交白卷）
     if len(picked) < want and exclude:
         rows = db.scalars(
             _base_stmt(grade_id=grade_id, subject_id=subject_id, qtype=qtype,
                        kp_ids=kp_ids, difficulty=None, exclude_ids=set())
             .limit((want - len(picked)) * 5)
         ).all()
-        _take(list(rows), want - len(picked))
+        _take(list(rows), want - len(picked), ignore_exclude=True)
 
     return picked
 

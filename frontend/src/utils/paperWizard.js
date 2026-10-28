@@ -18,9 +18,13 @@
 export function composeBlockReason({ mode, request = '', gradeId = null,
                                     subjectId = null, hasSections = false } = {}) {
   if (mode === 'ai') {
-    // AI 模式只要求「有描述」：年级/学科留空时由后端解析，
-    // 解析不出来会返回「无法从描述中识别年级或学科」，比前端拦死更有指导性。
-    return String(request || '').trim() ? '' : '请先填写组卷需求描述'
+    // AI 模式两条合法路径：
+    //   1) 写了描述 → 后端用大模型把描述翻译成年级/学科/难度等参数
+    //   2) 没写描述但选了年级+学科 → 直接按命题标准出结构（等价规则组卷）
+    // 强制写一段自然语言属于无谓门槛：用户明确反馈"选好年级科目就该能出卷"。
+    if (String(request || '').trim()) return ''
+    if (gradeId && subjectId) return ''
+    return '请填写组卷需求描述，或选择年级与学科'
   }
   if (!gradeId) return '请选择年级'
   if (!subjectId) return '请选择学科'
