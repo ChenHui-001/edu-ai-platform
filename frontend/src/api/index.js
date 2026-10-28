@@ -168,6 +168,8 @@ export const questionApi = {
   removeStandard: (id) => request.delete(`/question/standards/${id}`),
   duplicateStandard: (id, data) => request.post(`/question/standards/${id}/duplicate`, data),
   resetStandard: (id) => request.post(`/question/standards/${id}/reset`),
+  // 为「有学科但没有命题标准」的组合批量生成草案（管理员）
+  generateMissingStandards: () => request.post('/question/standards/generate-missing'),
   seedStandards: (force = false) => request.post('/question/standards/seed', null,
     { params: { force } }),
 

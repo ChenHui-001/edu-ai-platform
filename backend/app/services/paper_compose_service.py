@@ -173,6 +173,43 @@ def default_sections(total_score: float = 100, count: int = 20) -> List[Dict[str
     }]
 
 
+def generic_sections(total_score: float = 100) -> List[Dict[str, Any]]:
+    """通用题型结构（无命题标准可用时）：单选 40% / 填空 20% / 解答 40%。
+
+    **这是 A（组卷兜底）与 B（标准草案生成）共用的唯一实现**：两处各写一套
+    必然漂移——兜底卷与按草案生成的卷结构不一致，教师会以为是 bug。
+
+    题量刻意取 10/5/5（共 20 题）：这样每档 `score_per = 总分×占比/题量`
+    恰好等于「总分×0.04 / 0.04 / 0.08」，对任意整数总分都能精确到两位小数，
+    不会出现「合计 99.98 分、与总分差两分钱」这种教师一眼就会质疑的问题。
+    （早期用 10/6/4，20÷6 除不尽，实测合计 99.98。）
+
+    它不是权威结构，只保证「结构完整、总分对得上、题型不至于单一」，
+    因此调用方必须把「已使用通用结构」明确告诉教师。
+    """
+    plan = [
+        ("single", "一、单选题", 0.40, 10, "easy"),
+        ("blank", "二、填空题", 0.20, 5, "medium"),
+        ("short", "三、解答题", 0.40, 5, "medium"),
+    ]
+    total = float(total_score or 100)
+    out: List[Dict[str, Any]] = []
+    prev_sum = 0.0
+    for idx, (code, name, share, count, diff) in enumerate(plan, start=1):
+        if idx == len(plan):
+            # 最后一档用「总分 - 前面各档之和」，吸收任何取整误差
+            sec_total = round(total - prev_sum, 2)
+        else:
+            sec_total = round(total * share, 2)
+        score_per = round(sec_total / count, 2) if count else 0
+        prev_sum = round(prev_sum + count * score_per, 2)
+        out.append({
+            "code": code, "name": name, "count": count,
+            "score_per": score_per, "difficulty": diff, "sort": idx,
+        })
+    return out
+
+
 # ---------------------------------------------------------------- 组卷引擎
 class ComposePlan:
     """组卷结果（预览态）。"""

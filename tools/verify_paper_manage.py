@@ -391,6 +391,71 @@ def main():
         check("放宽复用量有字段回传（0 或 >0 都可，但字段必须存在）",
               "relaxed_count" in vd, str(sorted(vd.keys()))[:160])
 
+        # ---------------- A. 无命题标准时用通用结构兜底 ----------------
+        print("\n=== 10. [A] 没有命题标准的学科也能出卷（通用结构兜底）===")
+        # 选一个当前库确实没有标准的学科：七年级生物
+        subs7 = subjects_of(g7["id"])
+        bio = next((s for s in subs7 if s["name"] == "生物"), None)
+        if not bio:
+            print("  [SKIP] 当前库没有七年级生物学科，跳过")
+        else:
+            rf = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa, json={
+                "request": "", "grade_id": g7["id"], "subject_id": bio["id"],
+                "total_score": 100,
+            }, timeout=120)
+            check("无标准学科组卷不再 400", rf.status_code == 200, rf.text[:160])
+            fd = data_of(rf.json())
+            check("返回 standard_fallback=true 明确标注结构来源",
+                  fd.get("standard_fallback") is True, str(fd.get("standard_fallback")))
+            check("兜底结构含三类大题（单选/填空/解答）",
+                  len(fd.get("sections") or []) == 3,
+                  str([s.get("code") for s in (fd.get("sections") or [])]))
+            check("提示语说明用的是通用结构",
+                  "通用结构" in str(fd.get("message") or ""), str(fd.get("message"))[:120])
+            # 注意别拿 total_score 比：它是「已抽到题目的分值和」，无题时为 0。
+            # 这里要校验的是「结构本身折算出的卷面分」是否等于请求的总分。
+            sec_total = sum(float(s.get("count") or 0) * float(s.get("score_per") or 0)
+                            for s in (fd.get("sections") or []))
+            check("兜底结构分值合计等于目标总分（不因取整跑偏）",
+                  abs(sec_total - 100.0) < 0.01, f"sum={sec_total}")
+
+        # ---------------- B. 一键生成缺失学科的标准草案 ----------------
+        print("\n=== 11. [B] 为缺失学科批量生成标准草案 ===")
+        rg = httpx.post(f"{api}/question/standards/generate-missing",
+                        headers=HA, timeout=60)
+        check("管理员可生成草案", rg.status_code == 200, rg.text[:200])
+        gd = data_of(rg.json())
+        check("返回创建条数与明细",
+              "created_count" in gd and isinstance(gd.get("created"), list),
+              str(sorted(gd.keys()))[:120])
+        if bio:
+            made = [c for c in (gd.get("created") or [])
+                    if c.get("subject_name") == "生物" and c.get("stage") == "junior"]
+            check("七年级生物的标准草案已生成", bool(made), str(gd.get("created"))[:160])
+            check("草案带总分与时长（可直接用于组卷）",
+                  bool(made) and float(made[0].get("total_score") or 0) > 0
+                  and int(made[0].get("duration") or 0) > 0, str(made)[:160])
+            # 生成后再组卷：应使用真实标准而不是兜底
+            rf2 = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa, json={
+                "request": "", "grade_id": g7["id"], "subject_id": bio["id"],
+            }, timeout=120)
+            fd2 = data_of(rf2.json())
+            check("补标准后 standard_fallback=false（结构来自标准）",
+                  fd2.get("standard_fallback") is False, str(fd2.get("standard_fallback")))
+            check("补标准后能拿到 standard_id",
+                  bool(fd2.get("standard_id")), str(fd2.get("standard_id")))
+
+        rg2 = httpx.post(f"{api}/question/standards/generate-missing",
+                         headers=HA, timeout=60)
+        gd2 = data_of(rg2.json())
+        check("重复调用幂等（不再新建）",
+              int(gd2.get("created_count") or 0) == 0, str(gd2.get("created_count")))
+
+        rg3 = httpx.post(f"{api}/question/standards/generate-missing",
+                         headers=HAa, timeout=60)
+        check("非管理员被拒（教师无组织级配置权）",
+              rg3.status_code in (403, 400), f"实际 {rg3.status_code}")
+
         print("\n" + "=" * 58)
         if FAILED:
             print(f"失败 {len(FAILED)} 项：")

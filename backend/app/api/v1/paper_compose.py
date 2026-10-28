@@ -349,9 +349,14 @@ def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict
     standard = _resolve_standard(
         db, grade=grade, subject=subject, standard_id=data.get("standard_id"))
     sections = _parse_sections_input(data.get("sections")) or compose_svc.parse_sections(standard)
+    # 没有任何可用结构（该学段学科没配命题标准、也没手填题型）时**不再直接报错**：
+    # 旧行为是 400「请先在命题标准中配置」，把补配置的成本转嫁给一线教师，
+    # 而引擎里本来就有兜底能力。改为用通用结构出卷，并明确标注结构来源，
+    # 让教师先能拿到卷子，再由管理员补标准（B 提供一键生成草案）。
+    standard_fallback = False
     if not sections:
-        raise BusinessException(
-            "该学段学科暂未配置命题标准，请先在「命题标准」中配置，或手工指定题型结构")
+        sections = compose_svc.generic_sections(float(data.get("total_score") or 100))
+        standard_fallback = True
 
     source_strategy = str(data.get("source") or compose_svc.SOURCE_BANK_FIRST).strip()
     if source_strategy not in compose_svc.VALID_SOURCES:
@@ -403,6 +408,7 @@ def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict
         "sections": sections, "difficulty": difficulty_norm,
         "plan": plan, "reports": reports,
         "source_strategy": source_strategy, "kp_ids": kp_ids,
+        "standard_fallback": standard_fallback,
     }
 
 
@@ -423,9 +429,15 @@ def _plan_response(ctx: Dict[str, Any], *, ai_message: str = "") -> Dict[str, An
         **ctx["reports"],
         "suggested_duration": std.duration if std else 90,
         "standard_total_score": std.total_score if std else None,
+        # true = 该学段学科没有命题标准，结构来自通用模板（不是权威结构）
+        "standard_fallback": bool(ctx.get("standard_fallback")),
     }
     if ai_message:
         body["message"] = ai_message
+    if body.get("standard_fallback"):
+        note = ("该学段学科尚未配置命题标准，本次已用通用结构（单选/填空/解答）生成卷面；"
+                "建议管理员在「命题标准」中补配后再生成一次。")
+        body["message"] = f"{body['message']}；{note}" if body.get("message") else note
     # 去重曾把整大题清空、已自动放宽：必须告诉教师，否则"复用了老题"是隐形的
     if getattr(plan, "relaxed_count", 0):
         note = (f"「避免近 3 次考试重复」把部分大题清空，已自动放宽去重并复用 "

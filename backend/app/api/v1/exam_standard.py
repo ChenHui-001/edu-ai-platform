@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_perm
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
-from app.models import ExamStandard, Paper, User
+from app.models import ExamStandard, Grade, Paper, Subject, User
 from app.services.exam_standard_seed import (
     DEFAULT_DIFFICULTY, VALID_TYPES, seed_exam_standards,
 )
@@ -399,6 +399,95 @@ def duplicate_standard(
     db.commit()
     db.refresh(new)
     return ok({"id": new.id}, message="已复制命题标准")
+
+
+@router.post("/generate-missing", summary="为缺失学科批量生成标准草案")
+def generate_missing_standards(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:write")),
+):
+    """给「有学科但没有命题标准」的组合各生成一条草案（幂等）。
+
+    为什么需要它：内置种子只覆盖小学 4 科 / 初中 6 科，而中小学实际开设
+    十几门学科。缺标准的学科在组卷时会落到通用结构兜底（结构不权威），
+    教师也没有可编辑的基准。这里按学段学科一次性铺出草案，管理员再按
+    教研要求改分值/题量即可，避免逐个手填。
+
+    草案口径（全部可编辑，**不是权威结构**）：
+    - 学段：由 edu_grade.stage 推导（primary/junior）
+    - 考试类型：小学 final（期末）、初中 hsee（学业水平考试），与内置种子一致
+    - 总分：初中语数英 120，物理 70、化学 50、道法/历史 60、地理/生物 50，
+      其余 100；小学统一 100
+    - 时长：小学 90 分钟；初中 120 分卷 120 分钟、其余 60 分钟
+    - 题型结构：与组卷兜底**同一实现**（paper_compose_service.generic_sections）
+    """
+    from app.services.paper_compose_service import generic_sections
+
+    _require_admin(user)
+
+    # 1) 枚举真实存在的 (stage, subject_name) —— 以学科表为准，不凭空造学科
+    pairs = db.execute(
+        select(Grade.stage, Subject.name)
+        .join(Subject, Subject.grade_id == Grade.id)
+        .where(Subject.is_active.is_(True))
+        .distinct()
+    ).all()
+
+    existing = {
+        (s, n, t) for s, n, t in db.execute(
+            select(ExamStandard.stage, ExamStandard.subject_name, ExamStandard.exam_type)
+        ).all()
+    }
+
+    junior_score = {"物理": 70, "化学": 50, "道德与法治": 60,
+                    "历史": 60, "地理": 50, "生物": 50}
+    stage_label = {"primary": "小学", "junior": "初中"}
+
+    created: List[Dict[str, Any]] = []
+    skipped = 0
+    for stage, subject_name in sorted(set((str(s or ""), str(n or "")) for s, n in pairs)):
+        if not stage or not subject_name:
+            continue
+        exam_type = "final" if stage == "primary" else "hsee"
+        if (stage, subject_name, exam_type) in existing:
+            skipped += 1
+            continue
+        if stage == "primary":
+            total = 100.0
+            duration = 90
+        else:
+            total = float(120 if subject_name in ("语文", "数学", "英语")
+                          else junior_score.get(subject_name, 100))
+            duration = 120 if total >= 120 else 60
+        sections = generic_sections(total)
+        std = ExamStandard(
+            name=f"湖北省{stage_label.get(stage, '')}{subject_name}"
+                 f"{EXAM_TYPE_LABEL.get(exam_type, '')}（草案）"[:128],
+            region="hubei", stage=stage, subject_name=subject_name,
+            exam_type=exam_type, total_score=total, duration=duration,
+            sections=json.dumps(sections, ensure_ascii=False),
+            difficulty_ratio=json.dumps(DEFAULT_DIFFICULTY, ensure_ascii=False),
+            description="系统按通用结构自动生成的草案：题量/分值请按教研要求修订。",
+            is_active=True, is_default=True,
+            # 用 manual 而不是新造 source 值：reset 只认 seed，
+            # 草案本就不该有"恢复内置值"的语义（它没有内置值）。
+            source="manual", owner_id=user.id, sort=99,
+        )
+        db.add(std)
+        db.flush()
+        _clear_other_defaults(db, std)
+        existing.add((stage, subject_name, exam_type))
+        created.append({
+            "id": std.id, "stage": stage, "subject_name": subject_name,
+            "exam_type": exam_type, "total_score": total, "duration": duration,
+        })
+
+    db.commit()
+    if not created:
+        return ok({"created": [], "created_count": 0, "skipped": skipped},
+                  message=f"没有缺失的标准（已覆盖 {skipped} 个学段学科组合）")
+    return ok({"created": created, "created_count": len(created), "skipped": skipped},
+              message=f"已生成 {len(created)} 条标准草案，请按教研要求核对分值")
 
 
 @router.post("/seed", summary="播种/补齐内置湖北标准")

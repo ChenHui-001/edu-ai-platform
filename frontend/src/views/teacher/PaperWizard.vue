@@ -118,6 +118,23 @@
           </div>
         </el-alert>
 
+        <!-- 该学科没有命题标准：不阻断组卷（会用通用结构），但必须说清楚，
+             并给管理员一个就地补草案的入口 -->
+        <el-alert v-if="standardMissing" type="warning" :closable="false" show-icon
+                  class="std-tip">
+          <template #title>
+            「{{ currentSubjectName }}」暂无命题标准
+          </template>
+          <div class="std-sections">
+            组卷会用<b>通用结构</b>（单选 10 / 填空 6 / 解答 4，分值按总分均摊），
+            结构与分值不是教研口径。
+            <el-button v-if="isAdmin" text type="primary" size="small"
+                       :loading="genStdLoading" @click="generateStandards">
+              一键生成标准草案
+            </el-button>
+            <span v-else class="muted">请联系管理员配置命题标准。</span>
+          </div>
+        </el-alert>
         <!-- 自定义模式：题型结构可编辑 -->
         <div v-if="form.mode === 'custom'" class="sections-editor">
           <div class="block-title">
@@ -457,6 +474,7 @@ import {
   Back, Delete, Edit, MagicStick, Plus, Refresh, Sort, Tickets
 } from '@element-plus/icons-vue'
 import { eduApi, knowledgeApi, questionApi } from '@/api'
+import { useUserStore } from '@/store/user'
 import {
   composeBlockReason as wizardComposeBlockReason,
   buildComposePayload as wizardBuildComposePayload,
@@ -466,6 +484,7 @@ import {
 
 const router = useRouter()
 const route = useRoute()
+const userStore = useUserStore()
 
 const typeLabel = {
   single: '单选题', multiple: '多选题', judge: '判断题', blank: '填空题',
@@ -548,6 +567,39 @@ const composeBlockReason = computed(() => wizardComposeBlockReason({
   subjectId: form.subject_id,
   hasSections: form.sections.length > 0
 }))
+
+const isAdmin = computed(() => userStore.isAdmin)
+const genStdLoading = ref(false)
+
+/** 当前学科名（用于"暂无命题标准"提示） */
+const currentSubjectName = computed(() =>
+  (subjects.value.find(s => s.id === form.subject_id) || {}).name || '')
+
+/**
+ * 有学科但一条标准都没有 —— 组卷会落到通用结构兜底。
+ * 让管理员能就地补草案，而不是让一线教师去别处找配置入口。
+ */
+const standardMissing = computed(() =>
+  Boolean(form.grade_id && form.subject_id
+    && !matchedStandards.value.length && !metaLoading.value))
+
+async function generateStandards() {
+  genStdLoading.value = true
+  try {
+    const res = await questionApi.generateMissingStandards()
+    const n = res.data?.created_count ?? 0
+    ElMessage.success(n ? `已生成 ${n} 条标准草案，可继续使用` : '已无缺失的标准')
+    await loadStandards()
+    // 生成后自动选中本学科的标准，省掉再点一次下拉
+    if (matchedStandards.value.length === 1) {
+      form.standard_id = matchedStandards.value[0].id
+    }
+  } catch (e) {
+    ElMessage.error('生成标准草案失败：' + (e.message || '未知错误'))
+  } finally {
+    genStdLoading.value = false
+  }
+}
 
 /** 是否置灰：AI 模式恒可点（缺描述时点击给提示），自定义模式才禁用 */
 const composeDisabled = computed(() => isComposeButtonDisabled({
@@ -645,6 +697,13 @@ function itemNo(secCode, idx) {
 }
 
 // ---------------- 数据加载 ----------------
+/** 拉取命题标准选项（初始化与"一键生成草案"后都要用，抽出来避免两处口径漂移） */
+async function loadStandards() {
+  const std = await questionApi.standardOptions()
+  const byStage = std.data?.by_stage || {}
+  standards.value = Object.values(byStage).flat()
+}
+
 onMounted(async () => {
   // 从试卷管理点「AI 智能组卷」进来时直接预选 AI 模式并跳到参数步
   if (route.query.mode === 'ai') {
@@ -653,13 +712,11 @@ onMounted(async () => {
   }
   metaLoading.value = true
   try {
-    const [g, s, std] = await Promise.all([
-      eduApi.grades(), eduApi.subjects(), questionApi.standardOptions()
+    const [g, s] = await Promise.all([
+      eduApi.grades(), eduApi.subjects(), loadStandards()
     ])
     grades.value = g.data?.items || g.data || []
     allSubjects.value = s.data?.items || s.data || []
-    const byStage = std.data?.by_stage || {}
-    standards.value = Object.values(byStage).flat()
   } catch (e) {
     ElMessage.error('加载基础数据失败：' + (e.message || '未知错误'))
   } finally {
@@ -917,6 +974,7 @@ function goBack() { router.push('/teacher/papers') }
 }
 .std-tip { margin-bottom: 16px; }
 .std-sections { margin-top: 8px; font-size: 12.5px; line-height: 2; }
+.muted { color: var(--el-text-color-secondary); font-size: 12.5px; }
 .block-title { font-size: 14px; font-weight: 600; margin: 20px 0 10px; }
 .block-sub { font-weight: normal; font-size: 12px; color: var(--el-text-color-secondary); margin-left: 8px; }
 .sections-foot { margin-top: 10px; display: flex; justify-content: space-between; align-items: center; }
