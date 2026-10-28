@@ -95,6 +95,26 @@ def _assert_subject_scope(user: User, grade_id: int) -> None:
     raise PermissionException("只能维护本年级的学科")
 
 
+def _assert_grade_write_scope(user: User, grade_id: Optional[int]) -> None:
+    """班级写操作的年级范围：sys_admin 不限；grade_admin 仅本年级。
+
+    `resource:class:write` 这个权限点年级管理员也持有（前端菜单对年级管理员
+    开放班级管理），但接口此前**完全不校验年级**：任何年级管理员都能给任意
+    年级建班、改班、删班、批量导学生 —— 可跨年级污染组织结构，甚至向他人
+    年级的班级里注入自己可控的学生账号（叠加导入默认口令即为接管链）。
+    与同文件 `_assert_subject_scope` 保持同一口径。
+    """
+    codes = set(user.role_codes or [])
+    if "sys_admin" in codes:
+        return
+    if "grade_admin" in codes:
+        scope_grade = user.grade_admin_grade_id or user.grade_id
+        if scope_grade and grade_id == scope_grade:
+            return
+        raise PermissionException("只能维护本年级的班级")
+    raise PermissionException("无权维护班级")
+
+
 # ---------------------------------------------------------------- 年级
 @router.get("/grades", summary="年级列表")
 def list_grades(
@@ -586,11 +606,12 @@ def class_stats(
 @router.post("/classes", summary="新增班级")
 def create_class(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(require_perm("resource:class:write")),
+    user: User = Depends(require_perm("resource:class:write")),
 ):
     grade_id = data.get("grade_id")
     if not grade_id or not db.get(Grade, grade_id):
         raise BusinessException("请选择年级")
+    _assert_grade_write_scope(user, int(grade_id))
     auto_name = bool(data.get("auto_name"))
     strict_name = bool(data.get("strict_name"))
     if auto_name:
@@ -620,12 +641,17 @@ def create_class(
 @router.put("/classes/{class_id}", summary="编辑班级")
 def update_class(
     class_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(require_perm("resource:class:write")),
+    user: User = Depends(require_perm("resource:class:write")),
 ):
     k = db.get(Class, class_id)
     if not k:
         raise NotFoundException("班级不存在")
+    # 先校验「这个班级本来归不归我管」，再校验「要搬去的年级归不归我管」——
+    # 只校验前者会留下「把本年级班级改挂到别的年级」的越权口子。
+    _assert_grade_write_scope(user, k.grade_id)
     target_grade = data.get("grade_id", k.grade_id)
+    if target_grade != k.grade_id:
+        _assert_grade_write_scope(user, int(target_grade))
     if target_grade != k.grade_id and not db.get(Grade, target_grade):
         raise BusinessException("目标年级不存在")
     auto_name = bool(data.get("auto_name"))
@@ -669,7 +695,7 @@ def update_class(
 @router.post("/classes/batch", summary="批量启用/停用/删除班级")
 def batch_classes(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    _: User = Depends(require_perm("resource:class:write")),
+    user: User = Depends(require_perm("resource:class:write")),
 ):
     action = str(data.get("action") or "").lower()
     if action not in {"enable", "disable", "delete"}:
@@ -683,6 +709,9 @@ def batch_classes(
         if not c:
             skipped.append({"id": cid, "reason": "班级不存在"})
             continue
+        # 越权直接抛 403，不能静默 skip —— 否则调用方会把"被拒绝"
+        # 误解为"班级有问题"，也会掩盖越权尝试。
+        _assert_grade_write_scope(user, c.grade_id)
         if action == "delete":
             cnt = _class_student_count(db, cid)
             if cnt:
@@ -700,11 +729,13 @@ def batch_classes(
 
 @router.delete("/classes/{class_id}", summary="删除班级")
 def delete_class(
-    class_id: int, db: Session = Depends(get_db), _: User = Depends(require_perm("resource:class:write")),
+    class_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm("resource:class:write")),
 ):
     k = db.get(Class, class_id)
     if not k:
         raise NotFoundException("班级不存在")
+    _assert_grade_write_scope(user, k.grade_id)
     student_cnt = db.scalar(select(func.count()).select_from(User).where(
         User.class_id == class_id, User.identity == "student")) or 0
     if student_cnt:
@@ -718,7 +749,8 @@ def delete_class(
 @router.post("/classes/{class_id}/students", summary="批量导入学生")
 def import_students(
     class_id: int, students: List[Dict[str, Any]] = Body(...),
-    db: Session = Depends(get_db), _: User = Depends(require_perm("resource:class:write")),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("resource:class:write")),
 ):
     """students: [{username, real_name, password?}]"""
     from app.core.security import hash_password
@@ -727,6 +759,7 @@ def import_students(
     k = db.get(Class, class_id)
     if not k:
         raise NotFoundException("班级不存在")
+    _assert_grade_write_scope(user, k.grade_id)
 
     role = db.scalar(select(Role).where(Role.code == "student"))
     created, skipped = 0, []
