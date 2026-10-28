@@ -496,6 +496,29 @@ def run():
         p, _, _ = stu731.post(f"/task/tasks/{tid}/heartbeat", {"switch": True, "duration_seconds": 30})
         check("★ 心跳记录切屏次数", p.get("success"), p.get("message", ""))
 
+# 心跳写放大回归（e8cebae）：前端每几十秒打一次心跳，逐次写 OperationLog 等于
+# 全班几十个客户端轮流抢 SQLite 唯一的写锁。这里断言「成功心跳不留痕」，
+# 并配**反向对照**（普通写操作必须照样留痕）—— 没有反向对照的话，这条断言在
+# 「审计整体坏掉」时也会绿，属于典型的假绿。
+        def _op_total():
+            return total_of(admin.get("/logs/operation", params={"page_size": 1})[0])
+
+        b0 = _op_total()
+        # 发两条成功心跳：一条真切屏（会改 switch_count）、一条零变更。
+        # 两条都在端点侧正常返回，中间件这一层都必须跳过落库。
+        stu731.post(f"/task/tasks/{tid}/heartbeat", {"switch": True, "duration_seconds": 41})
+        stu731.post(f"/task/tasks/{tid}/heartbeat", {"switch": False, "duration_seconds": 42})
+        b1 = _op_total()
+        check("★ 成功心跳不写操作日志（写放大源头已掐断）", b1 == b0,
+              f"心跳前 {b0} 条 / 心跳后 {b1} 条")
+
+        # 反向对照：普通写操作必须照样留痕。少了这一条，上面那条断言在
+        # 「审计中间件整体失效」时也会 PASS —— 那才是更严重的问题。
+        stu731.put("/system/notifications/read-all")
+        b2 = _op_total()
+        check("★ 反向对照：普通写操作照样留痕（审计未被整体关掉）", b2 > b1,
+              f"写操作后 {b2} 条（此前 {b1} 条）")
+
 
 # ============================================================
 # 16. 越权回归：教师不能访问他人未共享试卷（修复已存在）

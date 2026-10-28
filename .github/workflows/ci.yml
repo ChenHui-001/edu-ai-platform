@@ -67,6 +67,20 @@ jobs:
           SCHEDULER_ENABLED: 'false'
         run: python ../tests/test_unit_ip_login.py
 
+      - name: 离线单元回归（排名语义 / 索引可用性 / 日报时间窗）
+        # 这一类性质在 e2e 里**测不出来**，与上一步同因但角度不同：
+        # - 排名对拍：e2e 的学生都有班级，永远走不到「本人不在 peers 中」
+        #   的末位兜底分支，而语义偏差恰好只在这一分支暴露；
+        # - 索引可用性：`func.date(submit_time)` 与半开区间的结果完全一致，
+        #   只有看发出的 SQL 才知道索引是否被函数包裹破坏；
+        # - 日报零点边界：取决于运行时刻，正常回归几乎不可能落在零点整。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+          SECRET_KEY: ci_unit_secret_key_0123456789abcdef
+        run: python ../tests/test_unit_perf_batch1.py
+
   frontend:
     name: 前端构建
     runs-on: ubuntu-latest
