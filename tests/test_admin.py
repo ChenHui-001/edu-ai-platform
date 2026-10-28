@@ -490,24 +490,43 @@ def run():
     # 客户端自带的值会被顶掉）；仅 XFF 时取**最后一段**（nginx 追加的真值）。
     # 原实现取 split(",")[0] 即客户端自填值 —— 每次换一个假 IP 就能绕过
     # 匿名上传/找回密码等所有按 IP 的限流，审计 IP 也全部失真。
+    #
+    # ⚠ 拓扑差异（这一条曾在 CI 上红过，别再改回精确等于）：
+    #   本地 tools/run_e2e.sh 直连 uvicorn → 客户端自带的头原样到达应用；
+    #   CI 是 docker run -p 8080:80，链路为 nginx→uvicorn，而 nginx 配了
+    #   `proxy_set_header X-Real-IP $remote_addr`，探针 IP 在这一跳就被
+    #   覆盖成容器看到的对端地址（172.17.0.1）。
+    # 所以这里只断言**拓扑无关的安全性质**：客户端伪造值绝不入库。
+    # 「X-Real-IP 确实被优先读取」「XFF 确实取末段」是纯函数行为，
+    # 由 tests/test_unit_ip_login.py 用构造的 Request 精确断言（CI 也跑）。
     probe_ip = "203.0.113.77"
     probe = Client("ip-probe")
+    # 基线：不带任何转发头，得到「本拓扑下应用实际看到的对端地址」
+    probe.request("POST", "/auth/login",
+                  {"username": "admin", "password": ACCT["admin"]})
+    p, _, _ = admin.get("/logs/login", params={"page_size": 5})
+    ip_base = rows_of(p)[0].get("ip") if rows_of(p) else "-"
+
     probe.request("POST", "/auth/login",
                   {"username": "admin", "password": ACCT["admin"]},
                   headers={"X-Real-IP": probe_ip,
                            "X-Forwarded-For": "10.0.0.1, 10.0.0.2"})
     p, _, _ = admin.get("/logs/login", params={"page_size": 5})
     ips = [x.get("ip") for x in rows_of(p)]
-    check("★ 登录日志记录 X-Real-IP（不采信可伪造的 XFF）",
-          probe_ip in ips, f"最近 IP={ips}")
+    check("★ 客户端伪造的 XFF 首段不进入审计",
+          "10.0.0.1" not in ips and "10.0.0.2" not in ips, f"最近 IP={ips}")
+    check("★ 审计 IP 取自可信来源（直连=探针值 / 反代=对端地址）",
+          probe_ip in ips or ip_base in ips,
+          f"探针={probe_ip} 无头基线={ip_base} 最近 IP={ips}")
 
     probe.request("POST", "/auth/login",
                   {"username": "admin", "password": ACCT["admin"]},
                   headers={"X-Forwarded-For": "10.0.0.1, 198.51.100.9"})
     p, _, _ = admin.get("/logs/login", params={"page_size": 5})
     ips = [x.get("ip") for x in rows_of(p)]
-    check("★ 仅有 XFF 时取最后一段（追加的真值，非首段伪造值）",
-          "198.51.100.9" in ips, f"最近 IP={ips}")
+    check("★ 仅有 XFF 时不采信首段（末段真值或上游对端地址）",
+          "10.0.0.1" not in ips and ("198.51.100.9" in ips or ip_base in ips),
+          f"最近 IP={ips}")
 
     p, _, _ = admin.get("/logs/operation", params={"page_size": 20})
     oi = rows_of(p)

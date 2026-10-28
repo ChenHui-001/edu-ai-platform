@@ -54,6 +54,19 @@ jobs:
           print('建表成功')
           "
 
+      - name: 离线单元回归（真实 IP 取值 / 异地登录判定）
+        # 这两项各有一半在反代拓扑下**无法端到端验证**：nginx 的
+        # `proxy_set_header X-Real-IP $remote_addr` 会把客户端自带的头覆盖成
+        # 容器看到的对端地址，e2e 里塞的探针 IP 到不了应用层；异地登录判据是
+        # 「本次 IP != 上次 IP」，IP 被统一后也造不出「两地」。
+        # 于是 e2e 只断言「伪造值没入库」这个拓扑无关的性质，取值优先级与
+        # 告警判据在这一层用构造的 Request / 直接调 authenticate() 精确断言。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+        run: python ../tests/test_unit_ip_login.py
+
   frontend:
     name: 前端构建
     runs-on: ubuntu-latest

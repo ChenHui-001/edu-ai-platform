@@ -21,6 +21,11 @@
 #   bash tools/run_e2e.sh admin teacher        # 多阶段
 #   bash tools/run_e2e.sh --keep               # 保留临时目录便于排查
 #
+# 本脚本直连 uvicorn（不经 nginx），因此会传 E2E_DIRECT=1 给用例：
+# 「X-Real-IP 优先 / 异地登录告警」这类依赖客户端自带头的用例只有直连
+# 拓扑下才造得出来；CI 走 nginx 反代，这些头会被覆盖，用例会改判反例。
+# 详见 tests/test_unit_ip_login.py 与 test_admin.py 里的拓扑说明。
+#
 # 退出码：同 run_all.py（0 通过 / 1 失败）
 # ================================================================
 set -uo pipefail
@@ -33,7 +38,7 @@ STAGES=()
 for arg in "$@"; do
   case "$arg" in
     --keep) KEEP=1 ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) STAGES+=("$arg") ;;
   esac
 done
@@ -55,7 +60,7 @@ fi
 # ---------- 1. 残留进程检查（最关键的一步）----------
 # 注意：`Get-Process` 只查进程名，必须看 CommandLine 才能分辨是 uvicorn
 # 还是 run_all —— 两者都叫 python。
-step "1/5  检查残留回归进程"
+step "1/6  检查残留回归进程"
 RESIDUAL=""
 if command -v powershell >/dev/null 2>&1; then
   RESIDUAL="$(powershell -NoProfile -Command \
@@ -79,7 +84,14 @@ else
 fi
 
 # ---------- 2. 独立数据目录 ----------
-step "2/5  准备独立数据目录"
+step "2/6  离线单元回归（真实 IP 取值 / 异地登录判定）"
+# 不吃端口、不建正式库、不依赖 nginx：纯函数与纯服务层的精确断言。
+# 这类断言放在这里而不是 e2e 里，是因为反代拓扑下头的值会被覆盖，
+# e2e 只能断言「伪造值未入库」这个较弱但拓扑无关的性质。
+"$PY" tests/test_unit_ip_login.py || die 1 "离线单元回归未通过"
+
+# ---------- 3. 独立数据目录 ----------
+step "3/6  准备独立数据目录"
 DATA_DIR="$(mktemp -d 2>/dev/null || echo "/tmp/e2e_data_$$")"
 # Windows 路径给 SQLite 与 uvicorn 用，需要反斜杠格式
 case "$(uname -s)" in
@@ -94,7 +106,7 @@ esac
 ok "数据目录: $DATA_DIR"
 
 # ---------- 3. 选空闲端口并启动后端 ----------
-step "3/5  启动被测服务"
+step "4/6  启动被测服务"
 PORT="${E2E_PORT:-}"
 if [ -z "$PORT" ]; then
   for p in 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010; do
@@ -148,22 +160,22 @@ case "$HEALTH" in
 esac
 
 # ---------- 4. 跑回归 ----------
-step "4/5  运行回归"
+step "5/6  运行回归"
 if [ ${#STAGES[@]} -gt 0 ]; then
   echo "  阶段: ${STAGES[*]}（增量）"
-  E2E_BASE="http://127.0.0.1:${PORT}" "$PY" -u tests/run_all.py "${STAGES[@]}"
+  E2E_BASE="http://127.0.0.1:${PORT}" E2E_DIRECT=1 "$PY" -u tests/run_all.py "${STAGES[@]}"
 else
   echo "  阶段: 全部（全量）"
   # ⚠️ 必须走独立分支，不能写 `"${STAGES[@]:-}"`：空数组时该写法会展开成
   # **一个空字符串参数**，run_all.py 拿到 sys.argv[1:] == [""] → only=[""]
   # → 没有任何阶段名匹配 → 跑 0 项用例并以「全部通过」退出。
   # 这是典型的「参数展开看似无害、实际静默改变语义」。
-  E2E_BASE="http://127.0.0.1:${PORT}" "$PY" -u tests/run_all.py
+  E2E_BASE="http://127.0.0.1:${PORT}" E2E_DIRECT=1 "$PY" -u tests/run_all.py
 fi
 RC=$?
 
 # ---------- 5. 结果 ----------
-step "5/5  结果"
+step "6/6  结果"
 if [ "$RC" -eq 0 ]; then
   ok "回归通过"
 else
