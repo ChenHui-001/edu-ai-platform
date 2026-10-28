@@ -918,10 +918,20 @@ def heartbeat(
     # 已交卷记录不允许再改切屏次数/时长（否则交卷后可篡改考试行为数据）
     if sub.submit_time is not None:
         return ok({"switch_count": sub.switch_count}, message="已交卷，心跳忽略")
+    # 心跳由前端每几十秒打一次，其中绝大多数请求既没切屏、时长也没变化。
+    # 原实现无条件 commit：即使零变更也要抢一次 SQLite 写锁并提交空事务，
+    # 全班同时答题时这条空写会被几十个客户端同时触发。现只在真有变更时提交，
+    # 无变更直接返回当前值（返回结构与文案不变）。
+    changed = False
     if data.get("switch"):
         sub.switch_count += 1
-    sub.duration_seconds = int(data.get("duration_seconds") or sub.duration_seconds or 0)
-    db.commit()
+        changed = True
+    duration = int(data.get("duration_seconds") or sub.duration_seconds or 0)
+    if duration != sub.duration_seconds:
+        sub.duration_seconds = duration
+        changed = True
+    if changed:
+        db.commit()
     return ok({"switch_count": sub.switch_count})
 
 
