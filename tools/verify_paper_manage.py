@@ -309,6 +309,31 @@ def main():
         }, timeout=30)
         check("零分卷创建被拒（应 400）", rz.status_code == 400, f"实际 {rz.status_code}")
 
+        # ---------------- AI 一键组卷 ----------------
+        print("\n=== 7. AI 一键组卷：年级/学科可由 AI 从描述识别 ===")
+        # 前端曾把「必须手选年级+学科」当硬门槛（canCompose），而后端 /compose/ai
+        # 本来支持用大模型把「七年级数学期末卷」解析成 grade_id/subject_id。
+        # 前端一拦，用户填了描述也只能对着灰按钮 —— 这里验证后端两条路径都成立。
+        ra = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa, json={
+            "request": "出一份七年级数学期末试卷，难度中等偏易，100 分，90 分钟",
+        }, timeout=120)
+        check("只给描述（LLM 关闭）时给出可理解的错误而非静默失败",
+              ra.status_code == 400, f"实际 {ra.status_code} {ra.text[:120]}")
+        check("错误信息指明「识别年级或学科」",
+              "识别" in (ra.text or ""), ra.text[:140])
+
+        rb2 = httpx.post(f"{api}/question/papers/compose/ai", headers=HAa, json={
+            "request": "出一份七年级数学期末试卷，难度中等偏易，100 分，90 分钟",
+            "grade_id": g7["id"], "subject_id": s7["id"],
+        }, timeout=120)
+        check("补齐年级/学科后 AI 组卷成功（LLM 关闭走规则降级）",
+              rb2.status_code == 200, rb2.text[:160])
+        ai_data = data_of(rb2.json())
+        check("AI 组卷返回题目与三份报告字段",
+              bool(ai_data.get("items") is not None)
+              and "difficulty_report" in ai_data and "type_report" in ai_data,
+              str(sorted(ai_data.keys()))[:200])
+
         print("\n" + "=" * 58)
         if FAILED:
             print(f"失败 {len(FAILED)} 项：")

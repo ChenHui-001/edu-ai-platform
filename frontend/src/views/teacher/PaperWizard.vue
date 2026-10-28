@@ -64,17 +64,23 @@
       <el-form :model="form" label-width="110px" class="param-form">
         <el-row :gutter="20">
           <el-col :span="8">
-            <el-form-item label="年级" required>
-              <el-select v-model="form.grade_id" placeholder="请选择年级" style="width:100%"
-                         @change="onGradeChange">
+            <!-- AI 模式：年级可由大模型从描述中识别，不必强制手选 -->
+            <el-form-item label="年级" :required="requiresGradeSubject(form.mode)">
+              <el-select v-model="form.grade_id"
+                         :placeholder="form.mode === 'ai' ? '可留空，由 AI 识别' : '请选择年级'"
+                         style="width:100%" @change="onGradeChange">
                 <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
               </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="学科" required>
-              <el-select v-model="form.subject_id" placeholder="先选年级" style="width:100%"
-                         :disabled="!form.grade_id" @change="onSubjectChange">
+            <el-form-item label="学科" :required="requiresGradeSubject(form.mode)">
+              <el-select v-model="form.subject_id"
+                         :placeholder="form.mode === 'ai' ? '可留空，由 AI 识别'
+                           : (form.grade_id ? '请选择学科' : '先选年级')"
+                         style="width:100%"
+                         :disabled="!form.grade_id"
+                         @change="onSubjectChange">
                 <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
             </el-form-item>
@@ -241,6 +247,8 @@
 
       <div class="step-actions">
         <el-button @click="step = 0">上一步</el-button>
+        <!-- 灰键必须给出原因：否则用户只看到一个点不动的按钮 -->
+        <span v-if="composeBlockReason" class="block-reason">{{ composeBlockReason }}</span>
         <el-button type="primary" size="large" :loading="composing"
                    :disabled="!canCompose" @click="doCompose">
           {{ form.mode === 'ai' ? 'AI 一键组卷' : '生成试卷预览' }}
@@ -349,7 +357,7 @@
             </div>
             <div v-if="it.answer" class="pv-answer">
               <b>答案：</b>{{ answerText(it.answer) }}
-              <span v-if="it.analysis">　<b>解析：</b>{{ it.analysis }}</span>
+              <span v-if="it.analysis"> <b>解析：</b>{{ it.analysis }}</span>
             </div>
           </div>
         </div>
@@ -444,6 +452,11 @@ import {
   Back, Delete, Edit, MagicStick, Plus, Refresh, Sort, Tickets
 } from '@element-plus/icons-vue'
 import { eduApi, knowledgeApi, questionApi } from '@/api'
+import {
+  composeBlockReason as wizardComposeBlockReason,
+  buildComposePayload as wizardBuildComposePayload,
+  requiresGradeSubject,
+} from '@/utils/paperWizard'
 
 const router = useRouter()
 const route = useRoute()
@@ -516,11 +529,20 @@ const sectionsTotal = computed(() =>
 const scoreMismatch = computed(() =>
   form.sections.length > 0 && Math.abs(sectionsTotal.value - form.total_score) > 0.01)
 
-const canCompose = computed(() => {
-  if (!form.grade_id || !form.subject_id) return false
-  if (form.mode === 'ai') return !!form.request.trim()
-  return form.sections.length > 0
-})
+/**
+ * 按钮禁用原因（空串 = 可提交）。判定实体在 `utils/paperWizard.js`，
+ * 由 vitest 单测锁死 —— 这段逻辑一旦回归，表现就是「按钮恒灰」，
+ * 只靠点页面很难在 CI 里发现。
+ */
+const composeBlockReason = computed(() => wizardComposeBlockReason({
+  mode: form.mode,
+  request: form.request,
+  gradeId: form.grade_id,
+  subjectId: form.subject_id,
+  hasSections: form.sections.length > 0
+}))
+
+const canCompose = computed(() => !composeBlockReason.value)
 
 const previewTotal = computed(() =>
   round2(previewItems.value.reduce((s, i) => s + (i.score || 0), 0)))
@@ -712,19 +734,10 @@ function checkedKpIds() {
 
 // ---------------- 组卷 ----------------
 function buildPayload() {
-  return {
-    grade_id: form.grade_id,
-    subject_id: form.subject_id,
-    standard_id: form.standard_id,
-    sections: form.mode === 'custom' ? form.sections : undefined,
-    total_score: form.total_score,
-    duration: form.duration,
-    source: form.source,
-    difficulty_ratio: form.difficulty_ratio,
-    knowledge_point_ids: checkedKpIds(),
-    avoid_recent: form.avoid_recent,
-    avoid_duplicate_kp: form.avoid_duplicate_kp
-  }
+  return wizardBuildComposePayload(form, {
+    sections: form.sections,
+    knowledgePointIds: checkedKpIds()
+  })
 }
 
 async function doCompose() {
@@ -734,7 +747,10 @@ async function doCompose() {
       `题型分值合计 ${sectionsTotal.value} 分，与总分 ${form.total_score} 不一致`)
   }
   if (difficultySum.value !== 100) {
-    return ElMessage.warning(`难度分布合计需为 100%，当前 ${difficultySum.value}%`)
+    // AI 模式下难度滑块禁用且不参与提交，此时拦人只会让用户对着改不动的控件报错
+    if (form.mode === 'custom') {
+      return ElMessage.warning(`难度分布合计需为 100%，当前 ${difficultySum.value}%`)
+    }
   }
 
   composing.value = true
@@ -871,6 +887,12 @@ function goBack() { router.push('/teacher/papers') }
 .mode-card p { margin: 0 0 10px; color: var(--el-text-color-regular); font-size: 13px; line-height: 1.7; }
 .mode-card ul { margin: 0; padding-left: 18px; color: var(--el-text-color-secondary); font-size: 12.5px; line-height: 1.9; }
 .step-actions { margin-top: 22px; text-align: right; }
+/* 灰键原因提示：贴在按钮左侧，弱化但可见，避免用户对着灰键猜 */
+.block-reason {
+  margin-right: 12px;
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
+}
 .ai-input-block { margin-bottom: 8px; }
 .std-tip { margin-bottom: 16px; }
 .std-sections { margin-top: 8px; font-size: 12.5px; line-height: 2; }
