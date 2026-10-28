@@ -316,6 +316,45 @@ def run():
     p, _, sc = tea1.get("/question/questions/template")
     check("题目导入模板可下载", sc == 200 and "bytes" in str(p.get("data", {})), p.get("message", ""))
 
+# ============================================================
+# 10b. 导入接口资源上限（防单请求 OOM 整站）
+# ============================================================
+    R.set_phase("补充 · 需求覆盖回归 | 10b. 导入接口资源上限")
+    # 两条导入路径（题目/知识点）原本既无大小上限也无格式校验：
+    # 单个已认证教师提交超大 xlsx 或 zip 炸弹，即可在 load_workbook
+    # 阶段把单进程容器 OOM（无需并发，整站不可用）。
+    # 断言必须匹配 message：否则若学科缺失也会 400，用例会假绿。
+    subj_for_import = R.context.get("subject_id")
+    if not subj_for_import:
+        _s, _, _ = admin.get("/edu/subjects", params={"page_size": 1})
+        _srows = rows_of(_s)
+        subj_for_import = _srows[0]["id"] if _srows else None
+
+    p, _, sc = tea1.upload("/question/questions/import", "evil.docx",
+                           b"this is not an excel file",
+                           fields={"subject_id": subj_for_import})
+    check("★ 题目导入拒绝非 xlsx 文件（格式白名单）",
+          sc == 400 and "仅支持" in str(p.get("message", "")),
+          f"{sc} {p.get('message', '')}")
+
+    # 上限取 settings.MAX_UPLOAD_SIZE（默认 50MB），超 1MB 即应被拒。
+    # 关键在于后端用 UploadFile.size 在 read() 之前拦截：文件落
+    # SpooledTemporaryFile（磁盘），不会被整份读进内存再报错。
+    oversized = b"0" * (51 * 1024 * 1024)
+    p, _, sc = tea1.upload("/question/questions/import", "huge.xlsx",
+                           oversized, fields={"subject_id": subj_for_import},
+                           timeout=120)
+    check("★ 题目导入拒绝超过大小上限的文件",
+          sc == 400 and "超过限制" in str(p.get("message", "")),
+          f"{sc} {p.get('message', '')}")
+
+    p, _, sc = admin.upload("/edu/knowledge/import", "huge.xlsx", oversized,
+                            fields={"dry_run": "true"}, timeout=120)
+    check("★ 知识点导入拒绝超过大小上限的文件",
+          sc == 400 and "超过限制" in str(p.get("message", "")),
+          f"{sc} {p.get('message', '')}")
+    del oversized
+
 
 # ============================================================
 # 11. 试卷共享/复制/导出

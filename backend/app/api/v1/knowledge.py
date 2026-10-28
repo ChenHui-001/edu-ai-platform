@@ -1337,7 +1337,17 @@ async def import_knowledge(
     db: Session = Depends(get_db),
     user: User = Depends(require_perm(WRITE_PERM)),
 ):
+    # 本端点无大小上限：_parse_import_file 的格式白名单在 read() 之后才生效，
+    # 超大 xlsx 会先整份读进内存 + 交给 openpyxl 解压，单请求即可 OOM 单进程
+    # 容器（整站不可用，无需并发）。对照同文件 upload_knowledge_attachment
+    # 是有 MAX_UPLOAD_SIZE 的，导入这条漏了。
+    # 用 file.size 在读入前拦截，读后再兜底一次长度。
+    max_bytes = settings.MAX_UPLOAD_SIZE * 1024 * 1024
+    if file.size is not None and file.size > max_bytes:
+        raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
     content = await file.read()
+    if len(content) > max_bytes:
+        raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
     data_rows = _parse_import_file(content, file.filename or "")
 
     grades = {g.name: g for g in db.scalars(select(Grade)).all()}

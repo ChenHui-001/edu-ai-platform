@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime
 
 BASE_HOST = os.environ.get("E2E_BASE", "http://localhost")
@@ -223,6 +224,36 @@ class Client:
 
     def delete(self, path, **kw):
         return self.request("DELETE", path, **kw)
+
+    def upload(self, path, filename, content, fields=None, timeout=60):
+        """multipart/form-data 上传。
+
+        手写 multipart 边界而不引入 requests：本项目测试只依赖标准库，
+        且 self.request 已支持 raw_body + 自定义 headers，够用。
+        用于覆盖「导入接口的大小上限/格式白名单」这类只能靠真实上传
+        才能验证的行为（此前导入只有模板下载用例，从未真正上传过文件）。
+        """
+        boundary = "----e2eBoundary" + uuid.uuid4().hex
+        chunks = []
+        for k, v in (fields or {}).items():
+            if v is None:
+                continue
+            chunks.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; "
+                f"name=\"{k}\"\r\n\r\n{v}\r\n".encode("utf-8")
+            )
+        chunks.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; "
+            f"name=\"file\"; filename=\"{filename}\"\r\n"
+            f"Content-Type: application/octet-stream\r\n\r\n".encode("utf-8")
+        )
+        chunks.append(content if isinstance(content, bytes) else content.encode())
+        chunks.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+        return self.request(
+            "POST", path, raw_body=b"".join(chunks), timeout=timeout,
+            headers={"Content-Type":
+                     f"multipart/form-data; boundary={boundary}"},
+        )
 
     def login(self, username, password):
         payload, ms, _ = self.post("/auth/login",

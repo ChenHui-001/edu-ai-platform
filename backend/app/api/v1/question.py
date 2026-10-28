@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, noload
 
 from app.agents.rag import delete_question_index, index_question
 from app.api.deps import has_perm, require_perm
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
@@ -704,9 +705,25 @@ async def import_questions(
     db: Session = Depends(get_db),
     user: User = Depends(require_perm(QUESTION_PERM_IMPORT)),
 ):
+    # 导入是唯一会真正解析 Excel 的入口，此前既无大小上限也无格式白名单：
+    # 单个已认证教师提交一个超大 xlsx / zip 炸弹，就能在
+    # load_workbook 解压阶段把单进程容器 OOM 掉（整站不可用，无需并发）。
+    # 对照：attachment.upload 有 MAX_UPLOAD_SIZE，唯独这里漏了。
+    # 校验必须在 read() 之前用 UploadFile.size 拦住，否则文件已经进内存，
+    # 再报错等于没防。
+    filename = (file.filename or "").lower()
+    if filename and not filename.endswith((".xlsx", ".xlsm")):
+        raise BusinessException("仅支持 .xlsx 格式的题目导入模板")
+    max_bytes = settings.MAX_UPLOAD_SIZE * 1024 * 1024
+    if file.size is not None and file.size > max_bytes:
+        raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
     content = await file.read()
+    if len(content) > max_bytes:
+        raise BusinessException(f"文件大小超过限制（{settings.MAX_UPLOAD_SIZE}MB）")
     try:
-        wb = load_workbook(io.BytesIO(content), data_only=True)
+        # read_only=True：与原 knowledge 导入保持一致。默认模式会为整张表
+        # 构建单元格对象树，几十万行的 xlsx 可吃掉数 GB 内存；只读模式流式解析。
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception as exc:
         raise BusinessException(f"Excel 解析失败：{exc}")
 
@@ -725,6 +742,8 @@ async def import_questions(
 
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
+    # read_only 模式持有压缩包句柄，读完必须显式关闭
+    wb.close()
     if not rows:
         raise BusinessException("文件为空")
 
