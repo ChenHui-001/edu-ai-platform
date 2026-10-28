@@ -29,6 +29,19 @@ export function composeBlockReason({ mode, request = '', gradeId = null,
 }
 
 /**
+ * 按钮是否应置灰。
+ *
+ * **AI 模式不置灰**：用户已经两次把"灰色按钮"直接判定为"功能坏了"（且分不清是
+ * 自己没填描述还是真故障）。AI 模式的缺项只有「描述」一个，且就在按钮上方一眼可见，
+ * 让按钮保持可点、点击时给出明确提示（并聚焦输入框）比静默置灰可诊断得多。
+ * 自定义模式有多个必填项分散在表单里，置灰 + 旁边写明缺什么更合适。
+ */
+export function isComposeButtonDisabled({ mode, reason } = {}) {
+  if (mode === 'ai') return false
+  return Boolean(reason)
+}
+
+/**
  * 是否会命中「必须手选年级/学科」的硬门槛（仅自定义模式为真）。
  * 模板里用它决定表单标签是否显示必填星号。
  */

@@ -56,7 +56,7 @@
       <!-- AI 模式：自然语言 -->
       <div v-if="form.mode === 'ai'" class="ai-input-block">
         <el-form-item label="组卷需求描述">
-          <el-input v-model="form.request" type="textarea" :rows="4"
+          <el-input v-model="form.request" ref="requestRef" type="textarea" :rows="4"
                     placeholder="例如：出一份七年级数学期末试卷，重点考有理数和整式，难度中等偏易，100分，90分钟" />
         </el-form-item>
       </div>
@@ -247,10 +247,12 @@
 
       <div class="step-actions">
         <el-button @click="step = 0">上一步</el-button>
-        <!-- 灰键必须给出原因：否则用户只看到一个点不动的按钮 -->
-        <span v-if="composeBlockReason" class="block-reason">{{ composeBlockReason }}</span>
+        <!-- 自定义模式缺项时置灰并写明缺什么；AI 模式始终可点（点击后给提示） -->
+        <span v-if="composeBlockReason && composeDisabled" class="block-reason">
+          {{ composeBlockReason }}
+        </span>
         <el-button type="primary" size="large" :loading="composing"
-                   :disabled="!canCompose" @click="doCompose">
+                   :disabled="composeDisabled" @click="doCompose">
           {{ form.mode === 'ai' ? 'AI 一键组卷' : '生成试卷预览' }}
         </el-button>
       </div>
@@ -456,6 +458,7 @@ import {
   composeBlockReason as wizardComposeBlockReason,
   buildComposePayload as wizardBuildComposePayload,
   requiresGradeSubject,
+  isComposeButtonDisabled,
 } from '@/utils/paperWizard'
 
 const router = useRouter()
@@ -477,6 +480,7 @@ const allSubjects = ref([])
 const standards = ref([])
 const kpTree = ref([])
 const kpTreeRef = ref(null)
+const requestRef = ref(null)
 
 const form = reactive({
   mode: 'custom',
@@ -542,7 +546,11 @@ const composeBlockReason = computed(() => wizardComposeBlockReason({
   hasSections: form.sections.length > 0
 }))
 
-const canCompose = computed(() => !composeBlockReason.value)
+/** 是否置灰：AI 模式恒可点（缺描述时点击给提示），自定义模式才禁用 */
+const composeDisabled = computed(() => isComposeButtonDisabled({
+  mode: form.mode,
+  reason: composeBlockReason.value
+}))
 
 const previewTotal = computed(() =>
   round2(previewItems.value.reduce((s, i) => s + (i.score || 0), 0)))
@@ -741,7 +749,12 @@ function buildPayload() {
 }
 
 async function doCompose() {
-  if (!canCompose.value) return
+  // AI 模式按钮始终可点，缺描述时在这里给明确反馈（而不是让用户对着灰键猜）
+  if (composeBlockReason.value) {
+    ElMessage.warning(composeBlockReason.value)
+    if (form.mode === 'ai') requestRef.value?.focus()
+    return
+  }
   if (form.mode === 'custom' && scoreMismatch.value) {
     return ElMessage.warning(
       `题型分值合计 ${sectionsTotal.value} 分，与总分 ${form.total_score} 不一致`)

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  composeBlockReason, requiresGradeSubject, buildComposePayload
+  composeBlockReason, requiresGradeSubject, buildComposePayload,
+  isComposeButtonDisabled,
 } from '../paperWizard'
 
 /**
@@ -45,6 +46,27 @@ describe('composeBlockReason（组卷按钮可用性）', () => {
     expect(composeBlockReason({
       mode: 'custom', gradeId: 1, subjectId: 2, hasSections: true,
     })).toBe('')
+  })
+})
+
+describe('isComposeButtonDisabled（按钮是否置灰）', () => {
+  it('AI 模式永不置灰：缺描述也要可点，点了再提示', () => {
+    // 用户两次把"灰色按钮"直接当成"功能坏了"，AI 模式只有描述一个缺项，
+    // 点击后给 toast + 聚焦输入框，比静默置灰可诊断。
+    expect(isComposeButtonDisabled({ mode: 'ai', reason: '请先填写组卷需求描述' }))
+      .toBe(false)
+  })
+
+  it('AI 模式描述齐全时当然可点', () => {
+    expect(isComposeButtonDisabled({ mode: 'ai', reason: '' })).toBe(false)
+  })
+
+  it('自定义模式缺项时置灰', () => {
+    expect(isComposeButtonDisabled({ mode: 'custom', reason: '请选择年级' })).toBe(true)
+  })
+
+  it('自定义模式条件齐备时可点', () => {
+    expect(isComposeButtonDisabled({ mode: 'custom', reason: '' })).toBe(false)
   })
 })
 

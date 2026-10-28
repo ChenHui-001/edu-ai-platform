@@ -193,6 +193,18 @@ def _stage_of(grade: Grade) -> str:
     return grade.stage or ("primary" if (grade.grade_num or 1) <= 6 else "junior")
 
 
+# ---------------------------------------------------------------- AI 参数可信化
+# **模型给出的 id 一律当"猜测"处理**：提示词里只写了「学科ID」，而模型看不到我们的
+# id 空间，只能瞎猜小整数。实测它给七年级数学卷返回 subject_id=2 —— 那是**一年级**
+# 数学的 id，于是 `_grade_subject` 直接 400「学科「数学」不属于七年级」，
+# 用户看到的就是"AI 组卷用不了"。模型能可靠输出的只有**名称**，因此这里按
+# 「年级 + 学科名」重新解析，id 仅在没有名称时才作为线索使用。
+_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+           "六": 6, "七": 7, "八": 8, "九": 9}
+_GRADE_ALIAS = {"小一": 1, "小二": 2, "小三": 3, "小四": 4, "小五": 5, "小六": 6,
+                "初一": 7, "初二": 8, "初三": 9}
+
+
 def _resolve_standard(
     db: Session, *, grade: Grade, subject: Subject, standard_id: Optional[int],
 ) -> Optional[ExamStandard]:
@@ -249,6 +261,86 @@ def _parse_sections_input(raw: Any) -> Optional[List[Dict[str, Any]]]:
             "sort": idx,
         })
     return result or None
+
+
+def _resolve_ai_grade(db: Session, parsed: Dict[str, Any], request: str) -> Optional[Grade]:
+    """把 AI 解析结果归一到真实的 Grade 记录上（按年级序号，不按主键猜）。"""
+    import re
+
+    def by_num(num: Optional[int]) -> Optional[Grade]:
+        if not num or not (1 <= int(num) <= 9):
+            return None
+        return db.scalar(select(Grade).where(Grade.grade_num == int(num)))
+
+    # 1) 显式年级序号字段（提示词优先要求 grade_num）
+    for key in ("grade_num", "grade"):
+        val = parsed.get(key)
+        if isinstance(val, (int, float)) or (isinstance(val, str) and val.isdigit()):
+            hit = by_num(int(val))
+            if hit:
+                return hit
+    # 2) grade_id 当年级序号用：`Grade.id` 与 `grade_num` 目前恰好同值，
+    #    但按 grade_num 查才是语义正确的（主键顺序不保证）。
+    raw = parsed.get("grade_id")
+    if isinstance(raw, (int, float)) or (isinstance(raw, str) and str(raw).isdigit()):
+        hit = by_num(int(raw))
+        if hit:
+            return hit
+    # 3) 年级名称
+    name = str(parsed.get("grade_name") or "").strip()
+    if name:
+        hit = db.scalar(select(Grade).where(Grade.name == name))
+        if hit:
+            return hit
+    # 4) 从原始需求文本里抠「七年级 / 7年级 / 初一」
+    text = str(request or "")
+    m = re.search(r"([一二三四五六七八九1-9])\s*年级", text)
+    if m:
+        ch = m.group(1)
+        hit = by_num(_CN_NUM.get(ch) or int(ch))
+        if hit:
+            return hit
+    for alias, num in _GRADE_ALIAS.items():
+        if alias in text:
+            hit = by_num(num)
+            if hit:
+                return hit
+    return None
+
+
+def _resolve_ai_subject(
+    db: Session, grade: Optional[Grade], parsed: Dict[str, Any], request: str,
+) -> Optional[Subject]:
+    """在**指定年级内**按名称解析学科；id 只在名称缺失时作线索。"""
+    if not grade:
+        return None
+    subs = db.scalars(select(Subject).where(Subject.grade_id == grade.id)).all()
+    if not subs:
+        return None
+    by_name = {s.name: s for s in subs}
+
+    # 1) 名称字段（提示词优先要求 subject_name）
+    for key in ("subject_name", "subject", "course", "subject_text"):
+        val = str(parsed.get(key) or "").strip()
+        if not val:
+            continue
+        if val in by_name:
+            return by_name[val]
+        for s in subs:               # 容忍「数学学科」「初中数学」这类写法
+            if val in s.name or s.name in val:
+                return s
+    # 2) id 只有落在本年级内才可信
+    raw = parsed.get("subject_id")
+    if isinstance(raw, (int, float)) or (isinstance(raw, str) and str(raw).isdigit()):
+        s = db.get(Subject, int(raw))
+        if s and s.grade_id == grade.id:
+            return s
+    # 3) 需求文本里出现的学科名（长名优先，避免"数学"被"数学与生活"抢走）
+    text = str(request or "")
+    for s in sorted(subs, key=lambda x: -len(x.name)):
+        if s.name and s.name in text:
+            return s
+    return None
 
 
 def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -389,7 +481,32 @@ def compose_ai(
             parse_error = str(exc)
 
     merged = dict(data)
-    for key in ("grade_id", "subject_id", "standard_id", "difficulty_ratio",
+    # 年级/学科单独处理：**客户端的显式选择优先**，只有没给的时候才用 AI 的推断，
+    # 且推断结果必须按「年级+名称」落到真实记录上（模型给的 id 不可信）。
+    merged.pop("grade_id", None)
+    merged.pop("subject_id", None)
+    anchor_grade = None
+    if data.get("grade_id"):
+        try:
+            anchor_grade = db.get(Grade, int(data["grade_id"]))
+        except (TypeError, ValueError):
+            anchor_grade = None
+    if anchor_grade is None:
+        anchor_grade = _resolve_ai_grade(db, parsed, request)
+    anchor_subject = None
+    if data.get("subject_id"):
+        # 用户明确选了学科就尊重它，交给 _grade_subject 给出精确的错配提示
+        try:
+            anchor_subject = db.get(Subject, int(data["subject_id"]))
+        except (TypeError, ValueError):
+            anchor_subject = None
+    if anchor_subject is None:
+        anchor_subject = _resolve_ai_subject(db, anchor_grade, parsed, request)
+    if anchor_grade:
+        merged["grade_id"] = anchor_grade.id
+    if anchor_subject:
+        merged["subject_id"] = anchor_subject.id
+    for key in ("standard_id", "difficulty_ratio",
                 "knowledge_point_ids", "source", "total_score"):
         if not merged.get(key) and parsed.get(key):
             merged[key] = parsed[key]
