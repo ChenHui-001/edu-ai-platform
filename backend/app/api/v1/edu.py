@@ -2,6 +2,8 @@
 import csv
 import io
 import re
+import secrets
+import string
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -93,6 +95,21 @@ def _assert_subject_scope(user: User, grade_id: int) -> None:
     if "grade_admin" in codes and grade_id and user.grade_id == grade_id:
         return
     raise PermissionException("只能维护本年级的学科")
+
+
+def _random_initial_password(length: int = 12) -> str:
+    """生成符合密码强度要求的随机初始口令。
+
+    此前批量导入不传 password 时固定用 "Student@123"：账号名由导入方自定
+    且高度可预测（stu{年级}{班}{序号}），知道规则的人就能在真学生首次登录
+    之前抢登 —— 登录后 must_change_password 允许调 /auth/password 把口令
+    改掉，真学生从此进不来。随机口令让这条链走不通。
+    """
+    alphabet = string.ascii_letters + string.digits
+    while True:
+        pwd = "".join(secrets.choice(alphabet) for _ in range(length))
+        if any(c.isalpha() for c in pwd) and any(c.isdigit() for c in pwd):
+            return pwd
 
 
 def _assert_grade_write_scope(user: User, grade_id: Optional[int]) -> None:
@@ -762,7 +779,7 @@ def import_students(
     _assert_grade_write_scope(user, k.grade_id)
 
     role = db.scalar(select(Role).where(Role.code == "student"))
-    created, skipped = 0, []
+    created, skipped, issued = 0, [], []
     for s in students:
         username = s.get("username")
         if not username or not s.get("real_name"):
@@ -771,8 +788,10 @@ def import_students(
         if db.scalar(select(User).where(User.username == username)):
             skipped.append({"username": username, "reason": "账号已存在"})
             continue
+        # 未指定口令 → 随机生成（不再固定 Student@123，见 _random_initial_password）
+        raw_pwd = s.get("password") or _random_initial_password()
         u = User(
-            username=username, password=hash_password(s.get("password", "Student@123")),
+            username=username, password=hash_password(raw_pwd),
             real_name=s["real_name"], identity="student", status="active",
             grade_id=k.grade_id, class_id=class_id,
             email=s.get("email"), phone=s.get("phone"), must_change_password=True,
@@ -782,9 +801,15 @@ def import_students(
         if role:
             db.add(UserRole(user_id=u.id, role_id=role.id))
         created += 1
+        if not s.get("password"):
+            # 只回显系统生成的口令，不回显调用方自己传入的
+            issued.append({"username": username, "initial_password": raw_pwd})
     db.commit()
-    return ok({"created": created, "skipped": skipped},
-              message=f"成功导入 {created} 名学生")
+    msg = f"成功导入 {created} 名学生"
+    if issued:
+        msg += "；未指定口令的账号已生成随机初始口令，请及时告知学生"
+    return ok({"created": created, "skipped": skipped,
+               "issued_passwords": issued}, message=msg)
 
 
 @router.get("/classes/{class_id}/students", summary="班级学生列表（分页/搜索）")
