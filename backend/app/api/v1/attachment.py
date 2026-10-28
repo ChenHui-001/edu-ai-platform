@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_client_ip, get_current_teacher, get_current_user
@@ -287,8 +287,7 @@ def preview(
     _assert_attachment_visible(db, att, user)
     if not os.path.exists(att.file_path):
         raise NotFoundException("文件已被清理")
-    att.download_count += 1
-    db.commit()
+    _bump_download_count(db, att_id)
 
     ext = os.path.splitext(att.stored_name)[1].lower()
     media = {
@@ -311,11 +310,34 @@ def download(
     _assert_attachment_visible(db, att, user)
     if not os.path.exists(att.file_path):
         raise NotFoundException("文件已被清理")
-    att.download_count += 1
-    db.commit()
+    _bump_download_count(db, att_id)
     return FileResponse(
         att.file_path, filename=att.filename, media_type="application/octet-stream",
     )
+
+
+def _bump_download_count(db: Session, att_id: int) -> None:
+    """下载计数原子自增。
+
+    原写法 `att.download_count += 1; db.commit()` 是 **读-改-写**：
+    先由 ORM 把当前值读进内存，再在 Python 里加 1，最后写回绝对值。
+    两个并发下载都读到 N，就都写回 N+1 —— 计数少记一次，而且是无锁
+    静默丢失（SQLite 单写者只保证不写成脏数据，不保证不丢更新）。
+
+    改为 `UPDATE ... SET download_count = download_count + 1`，
+    自增在数据库端完成，并发下不会互相覆盖。
+
+    不用 `att.download_count = Attachment.download_count + 1` 这种 ORM 写法：
+    那要求把实体保持在会话里并 flush，语义上等价但会让调用点仍持有实体
+    的旧值（后续若再读 att.download_count 会拿到未过期的旧数），
+    直接用 Core update 还顺带跳过整行 UPDATE 的字段比对。
+    """
+    db.execute(
+        update(Attachment)
+        .where(Attachment.id == att_id)
+        .values(download_count=Attachment.download_count + 1)
+    )
+    db.commit()
 
 
 def _assert_biz_owned(

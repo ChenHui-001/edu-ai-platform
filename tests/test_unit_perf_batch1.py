@@ -1367,6 +1367,126 @@ def _reset_batch_grade(ids):
         db.close()
 
 
+def _seed_attachment():
+    """造一个真实附件文件 + Attachment 记录，供下载计数测试使用。"""
+    from app.models import Attachment
+
+    db = Session()
+    try:
+        teacher = db.scalars(select(User).where(User.username == "rank1_teacher")).first()
+        tmpdir = tempfile.mkdtemp(prefix="att_")
+        path = os.path.join(tmpdir, "cnt.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("download counter test")
+        att = Attachment(
+            filename="计数用例.txt", stored_name="cnt.txt", file_path=path,
+            file_size=20, file_type=".txt", category="business",
+            uploader_id=teacher.id, download_count=0, is_temp=False,
+        )
+        db.add(att)
+        db.commit()
+        return att.id, path
+    finally:
+        db.close()
+
+
+def _reference_bump(db, att_id):
+    """旧写法（读-改-写）的逐字复制，作对照。"""
+    from app.models import Attachment
+
+    att = db.get(Attachment, att_id)
+    att.download_count += 1
+    db.commit()
+
+
+def case_attachment_counter():
+    print("\n十、附件下载计数：原子自增不丢更新（并发下也不丢）")
+
+    from app.models import Attachment
+    from app.api.v1.attachment import _bump_download_count
+
+    att_id, _path = _seed_attachment()
+
+    def count():
+        s = Session()
+        try:
+            return s.get(Attachment, att_id).download_count
+        finally:
+            s.close()
+
+    # ① 单线程连续 5 次，必须精确累加
+    for _ in range(5):
+        s = Session()
+        try:
+            _bump_download_count(s, att_id)
+        finally:
+            s.close()
+    ok("★ 连续 5 次自增后计数为 5", count() == 5, f"count={count()}")
+
+    # ② 不整行 UPDATE：只 SET download_count 一列，不把 filename/路径等
+    #    全部字段写上（否则每次下载都是一次全字段写锁）
+    s = Session()
+    try:
+        del _SQL[:]
+        _bump_download_count(s, att_id)
+        sql = list(_SQL)
+    finally:
+        s.close()
+    upd = [x for x in sql if x.lstrip().upper().startswith("UPDATE")]
+    ok("★ 只有一条 UPDATE", len(upd) == 1, f"{len(upd)} 条")
+    flat = " ".join((upd[0] if upd else "").split()).lower()
+    set_clause = flat.split("set", 1)[-1].split("where", 1)[0]
+    # 判据：SET 子句里 **引用了自身列**（download_count = <self>.download_count + ?）。
+    # 不能直接找字面 "download_count + 1" —— SQLite 方言把常量 1 参数化成
+    # `+ ?`，字面量匹配会误判成「写死绝对值」（第一版就是这么假红的）。
+    ok("★ 自增在数据库端完成（SET 子句引用自身列，不是写死绝对值）",
+       "download_count=(sys_attachment.download_count + ?)" in flat
+       or ("download_count=" in set_clause
+           and "sys_attachment.download_count" in set_clause),
+       f"SET 子句={set_clause}")
+    # 不得把其它列一起改写（整行 UPDATE = 无谓写锁 + 覆盖并发修改）
+    ok("★ UPDATE 不附带其它列（避免全字段写锁）",
+       bool(flat) and "filename" not in flat and "file_path" not in flat,
+       f"SET 子句={flat.split('set', 1)[-1][:120] if flat else '-'}")
+
+    # ③ 并发语义：旧写法「读到 N 再写 N+1」会丢更新，原子自增不会。
+    #    这里用「预读到内存 + 延迟写」精确复现丢更新，而不是靠真线程竞争
+    #    （线程调度不确定，测不稳）。
+    base = count()
+    s1, s2 = Session(), Session()
+    try:
+        from app.models import Attachment as A
+
+        a1 = s1.get(A, att_id)
+        a2 = s2.get(A, att_id)          # 两个会话都读到同一个旧值
+        ok("两个会话读到同一个旧值（复现丢更新的前提）",
+           a1.download_count == a2.download_count == base,
+           f"{a1.download_count} / {a2.download_count}")
+        a1.download_count += 1
+        s1.commit()
+        a2.download_count += 1          # 旧写法：基于过期的 base，写回 base+1
+        s2.commit()
+    finally:
+        s1.close()
+        s2.close()
+    after_rr = count()
+    ok("（对照）读-改-写会丢一次更新：5+2 次操作只涨到 6",
+       after_rr == base + 1, f"base={base} 两次操作后={after_rr}")
+
+    # 原子自增在同样场景下不丢：两次独立语句，各自在库里 +1
+    s1, s2 = Session(), Session()
+    try:
+        _bump_download_count(s1, att_id)
+        _bump_download_count(s2, att_id)
+    finally:
+        s1.close()
+        s2.close()
+    after_atomic = count()
+    ok("★ 原子自增不丢更新：+2 就是 +2",
+       after_atomic == after_rr + 2,
+       f"{after_rr} → {after_atomic}（期望 +2）")
+
+
 def main():
     print("=" * 72)
     print("离线单元回归：性能修复的语义锁与复杂度锁")
@@ -1381,6 +1501,7 @@ def main():
     case_my_tasks()
     case_knowledge_stats()
     case_batch_grade()
+    case_attachment_counter()
     print("\n" + "-" * 72)
     total = _PASSED + len(_FAILED)
     print(f"单元回归完成：共 {total} 项 | 通过 {_PASSED} | 失败 {len(_FAILED)}")
