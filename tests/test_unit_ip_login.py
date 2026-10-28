@@ -183,27 +183,32 @@ def case_abnormal_login():
             alert = s.scalars(
                 select(Notification).where(Notification.title == "异常登录提醒")
             ).all()
-            return bool(last and last.is_abnormal), len(alert)
+            latest = alert[-1].content if alert else ""
+            return bool(last and last.is_abnormal), len(alert), latest
         finally:
             s.close()
 
     # 首次登录：没有历史 IP，不能算异常
-    abnormal1, alert1 = login("10.0.0.100")
+    abnormal1, alert1, _ = login("10.0.0.100")
     ok("首次登录不判定为异常", abnormal1 is False and alert1 == 0,
        f"is_abnormal={abnormal1} 告警数={alert1}")
 
     # 换 IP 再登：判为异常并写通知
-    abnormal2, alert2 = login("10.0.0.200")
+    abnormal2, alert2, content2 = login("10.0.0.200")
     ok("IP 变化判定为异常登录", abnormal2 is True, f"is_abnormal={abnormal2}")
     ok("IP 变化写入异常登录提醒通知", alert2 == 1, f"告警数={alert2}")
+    # 回归防线：auth_service 曾在把 last_login_ip 改成本次 IP 之后才去打印
+    # 「上次 IP -> 本次 IP」，于是日志与通知里永远是「X -> X」，溯源线索作废。
+    ok("告警内容带上「上次 IP」而非同值重复",
+       "10.0.0.200" in content2 and "10.0.0.100" in content2, f"内容={content2}")
 
     # 同 IP 再登：不能重复报警（否则每次登录都骚扰）
-    abnormal3, alert3 = login("10.0.0.200")
+    abnormal3, alert3, _ = login("10.0.0.200")
     ok("同一 IP 重复登录不重复告警", abnormal3 is False and alert3 == 1,
        f"is_abnormal={abnormal3} 告警数={alert3}")
 
     # 换回旧 IP 仍是变化 → 还要报（判据只看相邻两次，不做白名单）
-    abnormal4, alert4 = login("10.0.0.100")
+    abnormal4, alert4, _ = login("10.0.0.100")
     ok("回切到另一 IP 仍算异常", abnormal4 is True, f"is_abnormal={abnormal4}")
 
 

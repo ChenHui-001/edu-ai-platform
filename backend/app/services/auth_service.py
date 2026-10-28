@@ -189,9 +189,10 @@ def authenticate(
         raise AuthException("账号或密码错误")
 
     # 异地登录检测：IP 变化且 24 小时内有其他 IP 成功登录
+    prev_ip = user.last_login_ip
     is_abnormal = bool(
-        user.last_login_ip
-        and user.last_login_ip != ip
+        prev_ip
+        and prev_ip != ip
         and user.last_login_at
         and (now_local() - user.last_login_at) < timedelta(days=1)
     )
@@ -209,12 +210,17 @@ def authenticate(
     db.refresh(user)
 
     if is_abnormal:
-        logger.warning(f"用户 {username} 异地登录：{user.last_login_ip} -> {ip}")
+        # 必须用赋值前取到的 prev_ip：user.last_login_ip 在上面 8 行处已经被
+        # 写成本次 IP，再读它打出来的永远是「X -> X」，唯一的溯源线索作废。
+        logger.warning(f"用户 {username} 异地登录：{prev_ip} -> {ip}")
         db.add(
             Notification(
                 user_id=user.id,
                 title="异常登录提醒",
-                content=f"检测到您的账号在新 IP（{ip}）登录，如非本人操作请立即修改密码。",
+                content=(
+                    f"检测到您的账号在新 IP（{ip}，上次为 {prev_ip}）登录，"
+                    "如非本人操作请立即修改密码。"
+                ),
                 type="system",
             )
         )
