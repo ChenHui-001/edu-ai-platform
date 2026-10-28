@@ -50,6 +50,17 @@ _IGNORED_BODY_KEYS = {"content", "stem", "analysis"}
 # 的写放大优化豁免。用路径特征而不是端点清单，新增导出接口自动纳入。
 _AUDITED_READ_MARKERS = ("/export", "/download")
 
+# 高频噪声写路径（按路径**后缀**匹配）：这些接口由前端定时器按几十秒级频率
+# 持续调用，逐次写 OperationLog 会造成严重的写放大 —— SQLite 是单写者，每条
+# 日志都要抢一次写锁 + 提交一次事务，而日志表本身又被无界写入（每个在线学生
+# 都在持续产行），答题高峰期整库写入都会被这批噪声行拖慢。
+# 它们也没有审计价值：「页面还开着」不是业务状态变更，事后无从追溯谁改了什么。
+# 注意：只跳过**成功**响应的操作日志，4xx/5xx 仍照原样记录（5xx 的 ErrorLog
+# 与操作日志都保留），排查线上错误的能力不受影响。
+# 行为数据没有丢：心跳带来的切屏次数/答题时长落在 Submission.switch_count、
+# Submission.duration_seconds 上，属于业务表可查数据，不依赖操作日志。
+_NOISY_WRITE_SUFFIXES = ("/heartbeat",)
+
 
 def _redact(value: Any) -> Any:
     """递归脱敏：命中敏感关键字的键统一替换为 ******。"""
@@ -123,12 +134,17 @@ class AuditMiddleware(BaseHTTPMiddleware):
             if any(m in request.url.path for m in _AUDITED_READ_MARKERS):
                 await self._log(request, response.status_code, duration_ms)
             return response
+        # 高频噪声路径的成功请求不写操作日志（见 _NOISY_WRITE_SUFFIXES）：
+        # 请求已正常放行，这里只是跳过审计落库。失败响应仍走原逻辑。
+        noisy_success = response.status_code < 400 and any(
+            request.url.path.endswith(sfx) for sfx in _NOISY_WRITE_SUFFIXES
+        )
         if response.status_code >= 500:
             await self._log(
                 request, response.status_code, duration_ms,
                 error="服务端异常", raw_body=raw_body,
             )
-        else:
+        elif not noisy_success:
             await self._log(
                 request, response.status_code, duration_ms, raw_body=raw_body,
             )
