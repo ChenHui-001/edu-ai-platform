@@ -93,21 +93,38 @@ _REVOKED_JTIS: "OrderedDict[str, datetime]" = OrderedDict()
 
 
 def revoke_token(payload: Optional[Dict[str, Any]]) -> bool:
-    """把令牌加入吊销名单。payload 为 None 时静默返回 False。"""
+    """把令牌加入吊销名单。payload 为 None 时静默返回 False。
+
+    名单里存的是**绝对过期时刻**，不是剩余时长 —— 存剩余时长的话它只是
+    一个快照、永不递减，清理逻辑永远清不掉任何条目（旧实现即如此：
+    `ttl.total_seconds() <= 0` 恒为 False，名单只增不减）。
+    """
     if not payload:
         return False
     jti = payload.get("jti")
     if not jti:
         return False
-    exp = payload.get("exp")
-    # 统一换算成 naive UTC 便于比较
-    if isinstance(exp, datetime):
-        ttl = exp - datetime.now(timezone.utc)
-    else:
-        ttl = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    _REVOKED_JTIS[jti] = ttl
+    _REVOKED_JTIS[jti] = _token_expiry(payload)
     _purge_revoked()
     return True
+
+
+def _token_expiry(payload: Dict[str, Any]) -> datetime:
+    """取令牌的真实过期时刻（aware UTC）。
+
+    必须优先用 payload 里的 exp：JWT decode 后 exp 是 **int 时间戳**，
+    旧实现只判 `isinstance(exp, datetime)`，走不到该分支就一律回落成
+    ACCESS_TOKEN_EXPIRE_MINUTES（12h）。于是 **refresh token（7 天）的
+    吊销记录只保留 12h**：一旦清理逻辑修好，登出 12h 后那个 refresh
+    就能重新换出 access —— 登出等于没登出。两个 bug 必须一起修。
+    """
+    exp = payload.get("exp")
+    now = datetime.now(timezone.utc)
+    if isinstance(exp, datetime):
+        return exp if exp.tzinfo else exp.replace(tzinfo=timezone.utc)
+    if isinstance(exp, (int, float)):
+        return datetime.fromtimestamp(exp, timezone.utc)
+    return now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
 
 def is_revoked(payload: Optional[Dict[str, Any]]) -> bool:
@@ -115,10 +132,11 @@ def is_revoked(payload: Optional[Dict[str, Any]]) -> bool:
 
 
 def _purge_revoked() -> None:
-    """清理已过期（TTL<=0）的吊销记录，避免集合无限增长。"""
+    """清理已过期（到期时刻已过）的吊销记录，避免集合无限增长。"""
     if not _REVOKED_JTIS:
         return
-    dead = [j for j, ttl in _REVOKED_JTIS.items() if ttl.total_seconds() <= 0]
+    now = datetime.now(timezone.utc)
+    dead = [j for j, expires_at in _REVOKED_JTIS.items() if expires_at <= now]
     for j in dead:
         _REVOKED_JTIS.pop(j, None)
 
