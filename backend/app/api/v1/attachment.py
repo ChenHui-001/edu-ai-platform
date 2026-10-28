@@ -149,16 +149,10 @@ async def upload(
 ):
     # 上传属于教师/管理端能力：此前只校验登录，学生账号也能上传任意文件，
     # 与学生端「只能提交文本作答/学习数据」的权限模型不符。
-    # 绑定教案附件时必须校验教案归属，避免绕过 lesson.py 的专用端点
-    # 把附件挂到他人教案下（列表按 biz_type+biz_id 聚合，会直接暴露）。
-    if biz_type == "lesson_plan" and biz_id:
-        from app.models import LessonPlan
-
-        plan = db.get(LessonPlan, biz_id)
-        if not plan:
-            raise BusinessException("教案不存在")
-        if plan.creator_id != user.id and "sys_admin" not in user.role_codes:
-            raise PermissionException("只能给自己教案上传附件")
+    # 绑定业务对象时校验归属：避免绕过 lesson.py 的专用端点把附件挂到
+    # 他人教案下（列表按 biz_type+biz_id 聚合，会直接暴露）。
+    # 与 PUT /{id}/bind 共用同一份判定，防止两处漂移。
+    _assert_biz_owned(db, biz_type, biz_id, user)
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in settings.ALLOWED_UPLOAD_TYPES:
         raise BusinessException(
@@ -324,6 +318,38 @@ def download(
     )
 
 
+def _assert_biz_owned(
+    db: Session, biz_type: Optional[str], biz_id: Optional[int], user: User,
+) -> None:
+    """校验附件要绑定的业务对象存在且属于当前用户。
+
+    **上传与「转正」(PUT /{id}/bind) 必须共用这一份判定。**
+    历史缺口：upload 校验了教案归属，但 bind 完全没有 ——
+    先上传一个临时附件，再 bind 到他人的 biz_id，附件就会出现在
+    他人教案的附件列表里（列表按 biz_type+biz_id 聚合）。
+    """
+    if not biz_type or not biz_id:
+        return
+    is_admin = "sys_admin" in (user.role_codes or [])
+    if biz_type == "lesson_plan":
+        from app.models import LessonPlan
+
+        plan = db.get(LessonPlan, biz_id)
+        if not plan:
+            raise BusinessException("教案不存在")
+        if plan.creator_id != user.id and not is_admin:
+            raise PermissionException("只能绑定到自己的教案")
+    elif biz_type == "knowledge_point":
+        # 知识点附件属教研资料，读写权限由知识库端点单独判定；
+        # 这里只拦「挂到不存在的 id」，避免产生悬空引用。
+        from app.models import KnowledgePoint
+
+        if not db.get(KnowledgePoint, biz_id):
+            raise BusinessException("知识点不存在")
+    elif biz_type != "register":
+        raise BusinessException(f"不支持的绑定类型：{biz_type}")
+
+
 @router.put("/{att_id}/bind", summary="绑定业务（转正式附件）")
 def bind(
     att_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
@@ -334,8 +360,11 @@ def bind(
         raise NotFoundException("附件不存在")
     if att.uploader_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("无权操作该附件")
-    att.biz_type = data.get("biz_type")
-    att.biz_id = data.get("biz_id")
+    biz_type = data.get("biz_type")
+    biz_id = data.get("biz_id")
+    _assert_biz_owned(db, biz_type, biz_id, user)
+    att.biz_type = biz_type
+    att.biz_id = biz_id
     att.is_temp = False
     db.commit()
     return ok(message="附件已绑定")
