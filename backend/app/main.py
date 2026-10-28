@@ -102,9 +102,13 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="新芽学堂 · 九年义务教育 AI 学习平台（AI Agent 版）后端 API",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    # 生产（DEBUG=false）关闭交互式文档：/docs、/redoc、/openapi.json 会把
+    # 全部端点连同参数结构完整暴露给**匿名**访问者，攻击者可直接拿到
+    # 「198 个接口的全图」再逐个试探归属校验缺失的接口（本系统历史漏洞
+    # 多为此类）。本地开发保留，便于联调与按需导出 openapi.json。
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 

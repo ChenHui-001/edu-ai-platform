@@ -82,3 +82,8 @@ ui_shots/
 .playwright-cli/
 login.yaml
 
+# 后端路由快照（本地按需生成，不入库）
+# 374KB 的全量接口清单入库 = 把 198 个端点连同参数结构随仓库一起分发，
+# 对攻击者是直接可用的攻击面地图；生产已由 main.py 在 DEBUG=false 时关闭。
+openapi.json
+
