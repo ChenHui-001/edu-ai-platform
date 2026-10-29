@@ -6,8 +6,7 @@ export const useUserStore = defineStore('user', {
     userInfo: JSON.parse(localStorage.getItem('user') || '{}'),
     permissions: JSON.parse(localStorage.getItem('user') || '{}')?.permissions || {
       roles: [], permissions: [], menus: []
-    },
-    notificationCount: 0
+    }
   }),
 
   getters: {
@@ -50,11 +49,6 @@ export const useUserStore = defineStore('user', {
       this.userInfo = merged
       this.permissions = res.data.permission
       return res.data
-    },
-
-    hasPerm(code) {
-      const p = this.permissions.permissions || []
-      return p.includes('*') || p.includes(code)
     },
 
     /**

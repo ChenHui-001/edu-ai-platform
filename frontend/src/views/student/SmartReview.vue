@@ -146,7 +146,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import EChart from '@/components/EChart.vue'
 import { Refresh, MagicStick } from '@element-plus/icons-vue'
-import { learningApi, eduApi } from '@/api'
+import { learningApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
 const plans = ref([])

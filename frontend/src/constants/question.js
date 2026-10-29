@@ -35,16 +35,4 @@ for (const [alias, canonical] of Object.entries(QUESTION_TYPE_ALIAS)) {
   if (QUESTION_TYPE_LABELS[canonical]) TYPES[alias] = QUESTION_TYPE_LABELS[canonical]
 }
 
-/** 取题型显示名，未知值原样返回（加标记便于排查），空值返回 '-' */
-export function questionTypeLabel(t) {
-  if (!t) return '-'
-  return TYPES[String(t).toLowerCase()] || String(t)
-}
-
-/** 归一化为后端合法枚举值，非法值回落 single */
-export function normalizeQuestionType(t) {
-  const v = QUESTION_TYPE_ALIAS[String(t || '').toLowerCase()] || String(t || '').toLowerCase()
-  return QUESTION_TYPE_LABELS[v] ? v : 'single'
-}
-
 export default TYPES

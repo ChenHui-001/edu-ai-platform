@@ -120,7 +120,7 @@ import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh, EditPen } from '@element-plus/icons-vue'
-import { taskApi, learningApi } from '@/api'
+import { taskApi } from '@/api'
 
 const router = useRouter()
 const tab = ref('pending')

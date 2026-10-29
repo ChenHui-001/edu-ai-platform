@@ -247,10 +247,10 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ArrowDown, Back, Clock, Delete, Download, Edit, Plus, Refresh, RefreshRight,
+  ArrowDown, Back, Clock, Delete, Download, Edit, Plus, RefreshRight,
   Search, Sort, Star, View
 } from '@element-plus/icons-vue'
-import { knowledgeApi, questionApi } from '@/api'
+import { questionApi } from '@/api'
 
 const route = useRoute()
 const router = useRouter()

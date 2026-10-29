@@ -96,7 +96,6 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
 import EChart from '@/components/EChart.vue'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import { taskApi, reportApi } from '@/api'

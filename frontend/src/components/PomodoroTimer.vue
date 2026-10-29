@@ -62,7 +62,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { Timer, ArrowUp, ArrowDown, VideoPlay, VideoPause, RefreshRight } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 

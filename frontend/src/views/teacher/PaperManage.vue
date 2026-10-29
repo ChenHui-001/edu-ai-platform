@@ -498,7 +498,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Refresh, DocumentCopy, MagicStick } from '@element-plus/icons-vue'
+import { Plus, Search, Refresh, MagicStick } from '@element-plus/icons-vue'
 import { questionApi, eduApi, agentApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import TYPE_LABEL from '@/constants/question'

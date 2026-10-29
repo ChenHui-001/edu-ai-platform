@@ -29,10 +29,7 @@ export const systemApi = {
   notifications: (params) => request.get('/system/notifications', { params }),
   readNotification: (id) => request.put(`/system/notifications/${id}/read`),
   readAllNotifications: () => request.put('/system/notifications/read-all'),
-  config: () => request.get('/system/config'),
-  aiConfig: () => request.get('/system/ai-config'),
-  saveAiConfig: (data) => request.put('/system/ai-config', data),
-  testAiConfig: (data) => request.post('/system/ai-config/test', data)
+  config: () => request.get('/system/config')
 }
 
 // ---------------- 教学资源 ----------------
@@ -48,10 +45,6 @@ export const eduApi = {
   cloneSubject: (id, data) => request.post(`/edu/subjects/${id}/clone`, data),
   knowledge: (params) => request.get('/edu/knowledge', { params }),
   knowledgeList: (params) => request.get('/edu/knowledge/list', { params }),
-  createKnowledge: (data) => request.post('/edu/knowledge', data),
-  updateKnowledge: (id, data) => request.put(`/edu/knowledge/${id}`, data),
-  deleteKnowledge: (id) => request.delete(`/edu/knowledge/${id}`),
-  reindex: () => request.post('/edu/knowledge/reindex'),
   classes: (params) => request.get('/edu/classes', { params }),
   classStats: (params) => request.get('/edu/classes/stats', { params }),
   classStudents: (id, params) => request.get(`/edu/classes/${id}/students`, { params }),

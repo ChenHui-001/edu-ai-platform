@@ -81,8 +81,8 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh, MagicStick } from '@element-plus/icons-vue'
-import TYPES, { questionTypeLabel } from '@/constants/question'
-import { learningApi, eduApi, taskApi } from '@/api'
+import TYPES from '@/constants/question'
+import { learningApi, eduApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
 const router = useRouter()
