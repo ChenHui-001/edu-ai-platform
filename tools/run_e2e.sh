@@ -96,6 +96,10 @@ step "2/6  离线单元回归（真实 IP / 异地登录 / 首批性能修复 / 
 # 停用学生仍有班级 assignment 但不发通知）。e2e 的种子数据里没有停用学生，
 # 走不到这些分支，只能在这一层用自建数据精确断言。
 "$PY" tests/test_unit_task_assign.py || die 1 "离线单元回归（下发性校验）未通过"
+# 强制改密拦截 + 拒绝 old==new。这组只能在离线层：e2e 服务端以
+# MUST_CHANGE_PASSWORD_ENFORCED=false 启动（99 处共用硬编码口令的 login
+# 需要），拦截在 e2e 里不生效；且 e2e 不能真改密码。
+"$PY" tests/test_unit_must_change_pwd.py || die 1 "离线单元回归（强制改密/新旧相同）未通过"
 
 # ---------- 3. 独立数据目录 ----------
 step "3/6  准备独立数据目录"
@@ -126,9 +130,16 @@ ok "端口: $PORT"
 SERVER_LOG="/tmp/e2e_server_$$.log"
 # SCHEDULER_ENABLED=false 与 CI 保持一致：回归不应依赖定时触发，
 # 否则「本地开、CI 关」会造成两边行为不一致（另一类"本地绿 CI 红"）。
+#
+# MUST_CHANGE_PASSWORD_ENFORCED=false：e2e 有 99 处 `.login()` 共用硬编码
+# 口令常量，其中 42 处是裸登录（直接 post /auth/login 读响应体）。让它们走
+# 真实改密流程会让"当前密码"在 100+ 个 Client 实例之间漂移。开关默认 true，
+# 生产不注入即保持拦截；`change_password` 里拒绝 new==old 是**无条件**的，
+# 不受此开关影响，所以关掉它也不会让 S5 的可绕过路径复活。
 (
   cd backend && \
   DATABASE_URL="$DB_URL" LLM_ENABLED=false SCHEDULER_ENABLED=false \
+  MUST_CHANGE_PASSWORD_ENFORCED=false \
   SECRET_KEY="e2e_local_only_not_for_prod_$$" \
   "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" \
   > "$SERVER_LOG" 2>&1

@@ -95,6 +95,24 @@ jobs:
           SECRET_KEY: ci_unit_secret_key_0123456789abcdef
         run: python ../tests/test_unit_task_assign.py
 
+      - name: 离线单元回归（强制改密拦截 / 拒绝新旧密码相同）
+        # S5（存量库出厂口令强制改密）的**唯一**失效路径：
+        # `change_password` 曾不比对 old != new，而 `/auth/password` 必须在
+        # 强制改密白名单里（否则改密闭环无解）。两者叠加 = 公开口令登录 →
+        # 把新密码设成同一个 → 标记被清 → 继续用公开口令，2 个请求通关。
+        #
+        # 这组断言只能在这一层：e2e 服务端以 MUST_CHANGE_PASSWORD_ENFORCED=false
+        # 启动（否则 99 处共用硬编码口令的 login 全红），拦截在 e2e 里不生效；
+        # 且 e2e 不能真改密码（会让"当前密码"在 100+ 个实例间漂移）。
+        # 断言在修复前的版本上有 6 项失败（反向验证实测），见文件头。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+          DEBUG: 'false'
+          SECRET_KEY: ci_unit_secret_key_0123456789abcdef
+        run: python ../tests/test_unit_must_change_pwd.py
+
   frontend:
     name: 前端构建
     runs-on: ubuntu-latest
@@ -174,10 +192,14 @@ jobs:
 
       - name: 启动服务
         run: |
+          # MUST_CHANGE_PASSWORD_ENFORCED=false：e2e 的 99 处 `.login()` 共用
+          # 硬编码口令常量，无法携带真实改密流程。开关默认 true，生产不注入
+          # 即保持拦截；`change_password` 拒绝 new==old 是无条件的，不受影响。
           docker run -d --name edu-e2e \
             -p 8080:80 \
             -e LLM_ENABLED=false \
             -e SCHEDULER_ENABLED=false \
+            -e MUST_CHANGE_PASSWORD_ENFORCED=false \
             -e SECRET_KEY=ci_secret_key_for_e2e_only_not_for_prod \
             -v "${{ github.workspace }}/data:/app/data" \
             edu-ai-platform:e2e

@@ -269,14 +269,21 @@ class Client:
             self.permission = d.get("permission")
             # 出厂/被重置的账号带 must_change_password=True，deps.get_current_user
             # 会拦下除白名单外的一切请求（生产安全默认，见 services/init_db.py）。
-            # 这里真实走一遍「强制改密」闭环再继续，而不是在种子阶段绕过它：
-            # 新密码与旧密码相同，避免影响其他阶段硬编码的口令常量。
-            # 专门验证强制改密拦截行为的用例请直接用 client.post("/auth/login")
+            # 这里真实走一遍「强制改密」闭环再继续，而不是在种子阶段绕过它。
+            #
+            # 2026-10 变更：`change_password` 现在**拒绝 new == old**（这是修 S5
+            # 可绕过漏洞的核心，见 auth_service.change_password 的 docstring），
+            # 所以不能再拿同一个口令"改"一次。但也不能改成真新密码：
+            # 各阶段有 99 处 `.login()` 共用硬编码常量，其中 42 处是裸登录
+            # （直接 post /auth/login 读响应体，用不上这里的自愈），真改密码会让
+            # "当前密码"在 100+ 个 Client 实例之间漂移。
+            # 故 e2e 服务端以 MUST_CHANGE_PASSWORD_ENFORCED=false 启动，拦截本身
+            # 不生效，这里**不需要**再跑自愈。
+            #
+            # 强制改密行为的真实断言在 tests/test_unit_must_change_pwd.py：
+            # 那一层用 monkeypatch 把开关设回 true，逐条验证 403/400/200 三个分支。
+            # 专门验证拦截行为的 e2e 用例请直接用 client.post("/auth/login")
             # （test_requirements.py 的三处即如此），不走本方法。
-            if (self.user or {}).get("must_change_password"):
-                self.put("/auth/password",
-                         {"old_password": password, "new_password": password})
-                self.user["must_change_password"] = False
             return True, f"{self.user.get('real_name')}（{','.join(self.permission.get('roles', []))}）"
         return False, payload.get("message", "登录失败")
 
