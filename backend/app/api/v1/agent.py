@@ -679,6 +679,7 @@ def get_job(
     job_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
     from app.models import AgentJob
+    from app.services import agent_job_state
 
     job = db.get(AgentJob, job_id)
     if not job:
@@ -687,7 +688,11 @@ def get_job(
         raise PermissionException("无权查看该任务")
     d = dictify(job)
     d["result"] = json.loads(job.result) if job.result else None
-    return ok(d)
+    # B2：僵尸任务判定（进程重启导致后台线程丢失，status 永久停在 running）。
+    # 此前这个端点**完全没有**超时判定，而 lesson_ai 那边有 —— 同一个表、
+    # 同一种后台线程模式却是两套行为，前端在出题/组卷页会无限轮询。
+    # 判据单点定义在 `services/agent_job_state`，两处都调它。
+    return ok(agent_job_state.apply_timeout(job, d))
 
 
 @router.get("/jobs", summary="我的任务列表")
@@ -696,15 +701,44 @@ def list_jobs(
     db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
     from app.models import AgentJob
+    from app.services import agent_job_state
 
-    stmt = select(AgentJob).where(AgentJob.user_id == user.id)
-    if status:
-        stmt = stmt.where(AgentJob.status == status)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    base = select(AgentJob).where(AgentJob.user_id == user.id)
+    # B2：按状态筛选要在**库里**先过滤，再叠加超时判定 —— 但僵尸任务在库里的
+    # 真实 status 仍是 running，所以 `?status=failed` 查不到它们，
+    # 而 `?status=running` 会把它们列出来（随后被呈现为 failed）。
+    # 这个不一致必须在**筛 failed 时**补一条：库里的 running 且已超时的行
+    # 也应算 failed，否则用户按"失败"筛选看不到真正卡死的那些。
+    if status == "failed":
+        from datetime import timedelta
+
+        from sqlalchemy import or_
+
+        cutoff = now_local() - timedelta(seconds=agent_job_state.JOB_TIMEOUT_SECONDS)
+        base = base.where(or_(
+            AgentJob.status == "failed",
+            (AgentJob.status.in_(agent_job_state.STATUS_RUNNING))
+            & (AgentJob.created_at < cutoff),
+        ))
+    elif status in agent_job_state.STATUS_RUNNING:
+        # 查"运行中"时要把已超时的剔掉：它们呈现为 failed，列在运行中里
+        # 会让用户以为还在跑（就是本 bug 的表现形态）。
+        from datetime import timedelta
+
+        cutoff = now_local() - timedelta(seconds=agent_job_state.JOB_TIMEOUT_SECONDS)
+        base = base.where(
+            AgentJob.status == status,
+            AgentJob.created_at >= cutoff,
+        )
+    elif status:
+        base = base.where(AgentJob.status == status)
+
+    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = db.scalars(
-        stmt.order_by(desc(AgentJob.created_at)).offset(params.offset).limit(params.page_size)
+        base.order_by(desc(AgentJob.created_at))
+        .offset(params.offset).limit(params.page_size)
     ).all()
-    items = [dictify(r) for r in rows]
+    items = [agent_job_state.apply_timeout(r, dictify(r)) for r in rows]
     return ok({"items": items, "total": total, "page": params.page})
 
 

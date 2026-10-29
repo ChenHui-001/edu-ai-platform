@@ -136,6 +136,29 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.opt(exception=True).error(f"种子数据初始化失败: {exc}")
 
+    # 启动收割僵尸任务（B2）。**必须在启动锁之外**：它与另外 5 步无关，
+    # 只是修正上一进程留下的状态；占着锁会让另一个 worker 白白多等。
+    #
+    # 为什么需要它：AgentJob/JobExecutionLog 都是「写 status=running 后跑
+    # daemon 线程」，进程退出时线程无线程收尾 → 状态永久停在 running，
+    # 前端按 status 轮询就无限转圈（出题/组卷页实测如此）。
+    # 读时判定（services/agent_job_state.apply_timeout）负责让前端**立刻**
+    # 看到超时，这里负责把库里的脏状态落定。两者都要，缺一个就有漏洞：
+    # 只有读时判定 → 脏数据永远留在库里，列表筛选/统计无从判断；
+    # 只有启动收割 → 上一次重启之后、下一次重启之前创建的任务无人处理。
+    try:
+        _reap_db = SessionLocal()
+        try:
+            from app.services.agent_job_state import reap_orphan_jobs
+
+            n_reaped = reap_orphan_jobs(_reap_db)
+            if n_reaped:
+                logger.warning(f"启动收割：共清理 {n_reaped} 条遗留的僵尸任务记录")
+        finally:
+            _reap_db.close()
+    except Exception as exc:  # noqa: BLE001 收割失败绝不能阻断启动
+        logger.warning(f"僵尸任务收割未执行: {exc}")
+
     # 启动后置校验：只喊话，不修复、不阻断（见 services/startup_checks.py 文件头）。
     # **必须在 A1 启动锁之外**：它不写任何业务数据（只可能写一条幂等 ErrorLog），
     # 没必要占着锁；而占着锁会让另一个 worker 在本进程做日志落库时多等一次。

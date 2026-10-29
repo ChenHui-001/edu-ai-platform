@@ -166,6 +166,24 @@ jobs:
           SECRET_KEY: ci_unit_secret_key_0123456789abcdef
         run: python ../tests/test_unit_llm_breaker.py
 
+      - name: 离线回归（B2 僵尸任务判定 + 启动收割）
+        # 修复前的不对称：`GET /lesson/ai/jobs/{id}` 有超时判定，
+        # `GET /agent/jobs/{id}` 和 `GET /agent/jobs` **完全没有** ——
+        # 同一个 sys_agent_job 表、同一种 daemon 线程模式，两套行为。
+        # 进程重启后出题/组卷任务永久停在 running，前端无限轮询。
+        #
+        # 只能在离线层：e2e 的任务都是现跑现完，构造不出"进程重启导致的
+        # 遗骸"。本文件直接造超龄的 AgentJob/JobExecutionLog 再调判据与
+        # 路由函数本体（不是 grep 源码 —— 反向验证证明 grep 抓不到
+        # `return ok(d)` 这种回退）。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+          DEBUG: 'false'
+          SECRET_KEY: ci_unit_secret_key_0123456789abcdef
+        run: python ../tests/test_unit_agent_job_state.py
+
       - name: 离线回归（A2 定时任务执行锁 / 多 worker 互斥）
         # `uvicorn --workers N` 下 N 个 worker 各跑一份 APScheduler，cron 是墙钟
         # 触发 -> 同一分钟同时叫醒同一个任务，而 `max_instances=1` 只管单进程。

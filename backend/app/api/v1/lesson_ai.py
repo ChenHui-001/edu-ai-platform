@@ -29,6 +29,7 @@ from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.core.rate_limit import check_agent_rate
 from app.models import AgentJob, Grade, KnowledgePoint, LessonPlan, LessonStage, Subject, User
+from app.services import agent_job_state
 from app.utils.common import now_local, ok
 
 router = APIRouter(prefix="/lesson/ai", tags=["AI 教案"])
@@ -53,7 +54,11 @@ MAX_TEXT_CHARS = 8000
 
 # 任务超时判定：超过该时长仍是 running，视为僵尸任务。
 # daemon 线程在进程重启后不会恢复，没有这个判定会让前端永久转圈。
-JOB_TIMEOUT_SECONDS = 300
+#
+# B2：判据已抽到 `services/agent_job_state`（同一个 `sys_agent_job` 表被
+# 出题/组卷/教案三处共用，各写一份必然漂移 —— 事实上出题那边就一直没写）。
+# 这里保留常量名做兼容，值与那边**同源**，不要再本地定义数字。
+JOB_TIMEOUT_SECONDS = agent_job_state.JOB_TIMEOUT_SECONDS
 
 
 def _hint(pct: int) -> str:
@@ -73,19 +78,14 @@ def _job_progress(job: AgentJob) -> Dict[str, Any]:
         pct = min(pct, 99)
 
     # 僵尸任务：进程重启导致后台线程丢失，status 永远停在 running。
-    timed_out = False
-    if job.status in ("pending", "running") and job.created_at:
-        elapsed = (now_local() - job.created_at).total_seconds()
-        if elapsed > JOB_TIMEOUT_SECONDS:
-            timed_out = True
+    timed_out = agent_job_state.is_timed_out(job.status, job.created_at)
 
     d = {
         "job_id": job.id,
         "status": "failed" if timed_out else job.status,
         "progress": pct,
         "stage": job.stage or _hint(pct),
-        "error": ("生成超时（超过 %d 秒未完成），请重试或减少课时后重试"
-                  % JOB_TIMEOUT_SECONDS) if timed_out else job.error,
+        "error": agent_job_state.timeout_message() if timed_out else job.error,
         "created_at": job.created_at.strftime("%Y-%m-%d %H:%M:%S") if job.created_at else None,
         "finished_at": (job.finished_at.strftime("%Y-%m-%d %H:%M:%S")
                         if job.finished_at else None),
