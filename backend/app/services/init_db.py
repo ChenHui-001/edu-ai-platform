@@ -11,6 +11,7 @@ from app.models import (
     Grade, KnowledgePoint, Permission, Role, RolePermission, ScheduledJob, Subject,
     User, UserRole,
 )
+from app.utils.common import now_local
 
 logger = get_logger("init")
 
@@ -545,19 +546,138 @@ def init_knowledge_points(db: Session) -> None:
         logger.info(f"知识点树初始化完成（{total} 个节点，含单元）")
 
 
-def warn_default_admin_password(db: Session) -> None:
-    """默认管理员口令仍在运行时给出醒目安全告警。
+def _sys_admin_candidates(db: Session) -> List[User]:
+    """找出所有**事实上的**系统管理员（identity 或角色任一命中）。
 
-    若直接放开「首次登录强制改密」，会把存量本地体验环境与自动化测试全部锁死；
-    这里采用最小侵入方案：不改变登录行为，但每次启动把风险打到日志里，
-    配合登录页隐藏演示口令、文档明确「部署后立即改密」。
+    为什么不能只查 `username == "admin"`：出厂账号叫 `admin`，但真实部署
+    里的超级管理员往往改过名（如生产库的 `sysadmin`），`admin` 只是另一个
+    账号。只按 username 判会漏掉真正的超级管理员 —— 而漏掉的那个恰恰是
+    风险最高的一个。判据因此用"权限归属"而不是"账号名"。
     """
-    admin = db.scalar(select(User).where(User.username == "admin"))
-    if admin and verify_password("Admin@123456", admin.password):
+    admin_role_ids = select(Role.id).where(Role.code == "sys_admin")
+    by_role = select(UserRole.user_id).where(UserRole.role_id.in_(admin_role_ids))
+    stmt = select(User).where(
+        (User.identity == "sys_admin") | User.id.in_(by_role)
+    ).order_by(User.id)
+    return list(db.scalars(stmt).all())
+
+
+def _log_admin_default_password(db: Session, users: List[User], auto_fixed: int) -> None:
+    """按 DEBUG 分级记录「超级管理员仍在用出厂口令」这一事件。
+
+    - DEBUG=True（本地体验）：`logger.warning`，只提醒。本地库普遍是
+      `Admin@123456`，写 ErrorLog 只会把后台错误日志页刷成噪音。
+    - DEBUG=False（生产）：`logger.error` **并写一条 ErrorLog**，让管理员
+      能在后台「错误日志」页看到，而不是只沉在容器日志里 —— 容器日志通常
+      没人看，等于没告警。
+
+    幂等由 `_upsert_error_log` 保证：每次启动都会走到这里，若直接 `db.add`
+    则每天重启 N 次就堆 N 条重复记录。
+    """
+    names = "、".join(u.username for u in users)
+    msg = (
+        f"安全告警：{len(users)} 个超级管理员账号仍在使用公开的出厂口令 "
+        f"Admin@123456（账号：{names}）。该口令公开写在 README/QUICKSTART 中，"
+        f"任何知道文档的人都能以 sys_admin 身份登入。"
+    )
+    if auto_fixed:
+        msg += f"本次启动已自动为其中 {auto_fixed} 个账号标记「首次登录强制改密」。"
+    msg += "请立即登录修改密码。"
+
+    if settings.DEBUG:
+        logger.warning(msg)
+        return
+    logger.error(msg)
+    _upsert_error_log(
+        db,
+        module="init_db",
+        path="/startup/enforce_default_admin_password",
+        message=msg,
+    )
+
+
+def _upsert_error_log(db: Session, *, module: str, path: str,
+                      message: str, level: str = "ERROR") -> None:
+    """写入或刷新一条 ErrorLog（同 module+path 只保留一条，覆盖内容）。
+
+    用固定 `path` 作为逻辑主键做幂等：重启 N 次也只留最新的一条，
+    不会把「错误日志」页刷爆。
+    """
+    from app.models import ErrorLog
+
+    row = db.scalar(
+        select(ErrorLog).where(ErrorLog.module == module, ErrorLog.path == path)
+        .order_by(ErrorLog.id.desc())
+    )
+    if row is None:
+        db.add(ErrorLog(level=level, module=module, path=path, message=message))
+    else:
+        row.level = level
+        row.message = message
+        row.created_at = now_local()
+    db.commit()
+
+
+def enforce_default_admin_password(db: Session) -> int:
+    """把「仍在用出厂口令」的超级管理员标记为必须改密，返回处置账号数。
+
+    ## 这个函数修的是一处「新库已修、存量库未修」的不一致
+
+    `init_admin`（本文件 :379）创建**新**管理员时已置
+    `must_change_password=True`，注释写明了理由：出厂口令 `Admin@123456`
+    公开写在 README/QUICKSTART 里，而本系统公网可达、承载未成年人真实数据。
+    但那只覆盖"空库首次初始化"这一条路径。**存量库/老部署**不走 `init_admin`
+    （它开头就 `return`），于是同一个风险在存量库里完好无损：
+    admin 仍是 `Admin@123456` 且 `must_change_password=False`，
+    可以永久用公开口令登入 sys_admin。原 `warn_default_admin_password`
+    只打一行 warning、不改变任何行为，等于只把风险写进没人看的日志。
+
+    ## 为什么现在可以真的处置（原注释的顾虑已不成立）
+
+    原实现不敢置 True，理由是"会把存量本地体验环境与自动化测试全部锁死"。
+    这个理由**已经过期**：
+
+    - `tests/e2e_framework.py:276-279` 的 `Client.login` 已内建自愈 ——
+      登录后若 `must_change_password` 为真，它真实走一遍
+      `PUT /auth/password`（新旧密码相同）再清标记。因此所有走 `login()`
+      的用例不受影响。
+    - `auth_service.change_password:233-242` 不拒绝 old==new，
+      `security._WEAK_PASSWORDS` 不含 `admin@123456`，所以那次自愈调用能过。
+    - `deps._FORCE_PWD_WHITELIST:26-36` 含 `/api/v1/auth/password` 与
+      `/api/v1/auth/profile`，改密闭环本身不被拦。
+    - 前端闭环存在：`Login.vue:130-137` 在 `must_change_password` 为真时
+      跳 `/profile`，`Profile.vue:50` 有改密警示条优先展示。
+    - 绕过 `login()` 直接 `post("/auth/login")` 的用例（如
+      `test_requirements.py:542`）只读登录响应体里的 `permission.menus`，
+      不拿返回的 token 调业务接口，因此也不受拦截影响（已实测）。
+
+    ## 关键约束：绝不误伤已改密的账号
+
+    只有 `verify_password("Admin@123456", user.password)` 命中才处置。
+    已经改过密码的账号口令不匹配，`must_change_password` 保持原值 ——
+    否则就是把正常用户锁在门外。同理，已经是 True 的不重复 commit。
+    """
+    users = _sys_admin_candidates(db)
+    offenders = [u for u in users if verify_password("Admin@123456", u.password)]
+
+    auto_fixed = 0
+    for user in offenders:
+        if not user.must_change_password:
+            user.must_change_password = True
+            auto_fixed += 1
+    if auto_fixed:
+        db.commit()
+        # 注意：项目 logger 是 **Loguru**（app/core/logger.get_logger），
+        # 占位符是 `{}` 而不是 stdlib logging 的 `%s`。用 `%s` 会把字面量
+        # "%s" 打进日志（已实测踩到），看起来像模板没渲染。
         logger.warning(
-            "安全告警：管理员账号仍在使用默认口令 Admin@123456，"
-            "请立即登录修改密码（生产环境必须修改！）"
+            "已将 {} 个仍在使用出厂口令 Admin@123456 的超级管理员标记为强制改密：{}",
+            auto_fixed, "、".join(u.username for u in offenders),
         )
+
+    if offenders:
+        _log_admin_default_password(db, offenders, auto_fixed)
+    return auto_fixed
 
 
 def init_all(db: Session) -> None:
@@ -578,7 +698,7 @@ def init_all(db: Session) -> None:
     init_jobs(db)
     init_exam_standards(db)
     init_demo_data(db)
-    warn_default_admin_password(db)
+    enforce_default_admin_password(db)
 
 
 def init_exam_standards(db: Session) -> None:
