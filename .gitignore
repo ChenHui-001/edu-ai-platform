@@ -59,24 +59,6 @@ temp/
 *.bak
 dump.sql
 
-# UI E2E 运行时产物（脚本、用例结果与报告要入库；以下是跑出来的东西）
-tests/ui_e2e/shots/
-tests/ui_e2e/__pycache__/
-tests/ui_e2e/session_*.json
-tests/ui_e2e/captcha_*.json
-tests/ui_e2e/captcha_*.png
-tests/ui_e2e/result.json
-# 侦察/探针脚本：一次性排查用，结论已沉淀进 REPORT.md
-tests/ui_e2e/probe*.py
-tests/ui_e2e/probe*.json
-# 截图过程中产生的零散图（c0.png / cap_1.png / p3_0.png 等）
-tests/ui_e2e/c*.png
-tests/ui_e2e/cap_*.png
-tests/ui_e2e/p3_*.png
-
-# 单阶段调试跑出的报告（不覆盖交付用的全量 E2E_REPORT.md）
-tests/E2E_REPORT.partial.md
-
 # 页面截图 / Playwright 快照 / 生成的页面快照（2026-10-23 起不再入库）
 ui_shots/
 .playwright-cli/

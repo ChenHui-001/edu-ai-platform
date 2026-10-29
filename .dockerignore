@@ -40,10 +40,9 @@ exports/
 Thumbs.db
 .workbuddy/
 
-# 测试、截图、工具与本地生成的 API 快照：均不参与镜像构建
+# 截图、工具与本地生成的 API 快照：均不参与镜像构建
 # （Dockerfile 只 COPY backend/app、backend/requirements.txt、
 #   backend/.env.example、frontend/、deploy/、VERSION，下列路径都不在其中）
-tests/
 ui_shots/
 docs/
 tools/
