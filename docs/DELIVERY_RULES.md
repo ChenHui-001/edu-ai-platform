@@ -25,11 +25,20 @@
 ## 3. 同步前必须验证
 
 1. 代码已提交且工作区干净（不允许把未提交代码打进镜像）。
-2. 后端全量 E2E：`python tests/run_all.py` 失败数为 0（允许既有环境跳过）。
-3. 前端：`npm run build`、`npm run lint`、`npm run test`、`npm run check:bundle` 全部通过。
-4. 新镜像实机运行：`/api/v1/health` 为 healthy、admin 可登录、非 root 运行；
-   如改动涉及页面，再跑 `tests/ui_e2e/browser_smoke.py`。
-5. 推送后用 `docker buildx imagetools inspect` 核对远端标签与 digest。
+2. 后端静态门禁 5/5 通过：`python tools/check_hardcoded_host.py`、`check_weak_assertion.py`、
+   `check_time_contract.py`、`check_model_fk.py`、`lint_gate.py`（任一道红即不许推送）。
+3. 后端冒烟：导出 `app.main` + `Base.metadata.create_all` 成功，路由数 ≥ 250、表数 ≥ 45
+   （`tools/auto_ship.sh` 已内置，拦住语法错、循环导入、模型断裂）。
+4. 前端：`npm run build`、`npm run lint`、`npm run test`、`npm run check:bundle` 全部通过。
+5. 新镜像实机运行：`/api/v1/health` 为 healthy、admin 可登录、非 root 运行。
+6. 推送后用 `docker buildx imagetools inspect` 核对远端标签与 digest。
+
+> **⚠️ 2026-10-29 变更：后端行为回归已无自动化覆盖。**
+> `tests/`（15 阶段 e2e 864 项 + 离线单测）与 `tools/run_e2e.sh` 已按项目清理要求移除，
+> 上面第 2/3 条只保证「能编译、能导库、静态规范无隐患」，**不保证业务行为正确**。
+> 改动涉及接口语义、权限、计分、组卷等业务逻辑时，**必须人工点一遍相关页面并留记录**
+> （写进当天的 `docs/FIX_RECORD_*.md`）。这是当前唯一的行为了解手段，不要省略。
+
 
 ## 4. 发布记录
 
