@@ -62,7 +62,8 @@ def main():
             print(" ", h)
         print("\n修复：res.data 即业务数据（拦截器已返回信封），"
               "正确写法 res.data / res.data?.items。")
-        print("参考：tools/fix_data_data_all.py")
+        print("根源：axios 响应拦截器 `return res`（信封 {code,message,success,data}），"
+              "组件里 `res.data` 已是业务数据，再点一层 `.data` 恒为 undefined。")
         sys.exit(1)
     print(f"[check_data_data] 通过：views/components 无 res.data.data 陷阱"
           f"（白名单 {len(whitelist)} 个文件）")
