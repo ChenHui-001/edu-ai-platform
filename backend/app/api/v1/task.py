@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, noload
 from app.api.deps import (
     DataScope, get_current_user, get_data_scope, require_perm,
 )
+# 试卷可见性唯一真源（paper_compose 不 import task，无循环依赖）
+from app.api.v1.paper_compose import _assert_readable
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
@@ -348,6 +350,11 @@ def create_task(
     paper = db.get(Paper, data.get("paper_id"))
     if not paper:
         raise BusinessException("请选择试卷")
+    # 试卷可见性：此前只判存在。任意持 task:write 的教师都能用他人的私有
+    # paper_id 建任务，成为 creator_id 后即可通过 GET /tasks/{id}/paper 拿到
+    # reveal_answer=True 而读到整卷 answer/analysis —— 单请求即可完成答案窃取。
+    # 复用 paper_compose 的全仓唯一可见性真源，不在此另写一套判定。
+    _assert_readable(db, paper, user)
 
     # 校验任务类型：仅允许 homework / exam，非法值直接拒绝，
     # 否则 db 会写脏数据进入 task.type（SQLite String 列不强制枚举）
