@@ -49,6 +49,26 @@ class Settings(BaseSettings):
     APP_VERSION: str = ""
     IMAGE_TAG: str = ""
     DEBUG: bool = True
+    # 运行环境标识，供「只在生产才该告警」的启动校验使用
+    # （见 services/startup_checks.py）。取值 production / test / dev。
+    #
+    # ## 为什么需要它：DEBUG 不足以区分「生产」和「CI」
+    #
+    # 判据本可以只是 `not DEBUG`，但 e2e 与 CI 都是 DEBUG=false 且
+    # SEED_DEMO_DATA=true —— 99 处 `.login()` 全用 teacher1/stu731 这类
+    # 演示账号，关掉演示数据就全线红。于是「生产开着演示数据」这条告警会在
+    # 每次 CI 触发，运维很快对它脱敏，那比不告警更坏。
+    #
+    # DEBUG 也不能为了区分而设成 true：会打开 /docs 与 /openapi.json
+    # （DEBUG=false 时刻意关闭，避免把 198 个接口全图暴露给匿名访问者），
+    # 还会触发临时 SECRET_KEY 生成。副作用太大。
+    #
+    # ## 为什么默认 production 而不是 dev
+    #
+    # 保守优先：现有部署（含 docker compose 模板）都没有这一项，必须让它们
+    # **先看到告警**、确认自己确实在生产，而不是默默被豁免。本地开发想要
+    # 安静就显式写 APP_ENV=dev。
+    APP_ENV: str = "production"
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     API_PREFIX: str = "/api/v1"
@@ -135,6 +155,26 @@ class Settings(BaseSettings):
     LOG_DIR: str = "./data/logs"
     LOG_RETENTION_DAYS: int = 30
     LOG_TO_DB: bool = True  # 登录/操作/错误日志入库
+    # 是否**额外**写一份日志文件（loguru FileSink）。默认关闭。
+    #
+    # 关闭的理由（三条，按重要性排序）：
+    # ① 全仓没有任何代码读日志文件 —— 真实通道是 stdout（`docker logs`）
+    #    和 `sys_error_log` 表（`/logs/error` 页面查的是那张表）。写文件是
+    #    纯冗余，唯一的消费者是运维的 `tail`。
+    # ② 多 worker 下会**直接报错**。loguru 的 FileSink 以独占方式打开文件，
+    #    `uvicorn --workers 2` 时第二个进程拿到
+    #    `PermissionError: [Errno 13] Permission denied: '.../app_2026-xx-xx.log'`。
+    #    注意：**这个异常不会让进程退出** —— loguru 把 sink 的写入异常吞掉并
+    #    打到 stderr，于是第二个 worker 全程没有文件日志，而第一个正常。
+    #    「日志看起来没问题、只是少了几个进程的」这种缺失极难发现。
+    # ③ 容器里双重落盘：同一份内容既进 `docker logs` 又进挂载卷，30 天 retention
+    #    的 zip 归档在生产上会占几十 MB 无用空间。
+    #
+    # 什么时候该打开：单进程本地开发想 `tail -f` 看完整历史（容器 `docker logs`
+    # 会丢历史）；或者接了个读文件的日志采集器。打开后文件名会自动带 pid
+    # （见 logger.py），所以多 worker 也不会互相抢文件 —— 但也就意味着日志被
+    # 拆成 N 份，排障时得 `cat app_*_*.log` 一起看。
+    LOG_FILE_SINK: bool = False
 
     SCHEDULER_ENABLED: bool = True
     # 定时任务执行锁的租约时长（秒）。`uvicorn --workers N` 下 N 个进程各自
