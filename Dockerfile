@@ -189,6 +189,12 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost/api/v1/health || exit 1
 
+# ↑ start-period=60s 是单 worker 的实测值。若 supervisord.conf 的 --workers 调到 N>1，
+#   必须同步放大到至少 60*N 秒：每个 worker 各自跑一遍 Chroma embedding 预热
+#   （main.py 的 start_chroma_warmup，79MB 模型），2 核机器上 CPU 会被占满，
+#   /api/v1/health 可能在窗口内回不来 → retries=3 用尽后容器被判 unhealthy
+#   并重启，形成「起来就重启」的循环。调 --workers 时请顺手改这一行。
+
 # 容器以 root 启动（supervisord 需要），启动前先修正 data 目录属主，
 # 再 exec 成 supervisord —— 避免 PID1 退化成 shell 导致信号收不到。
 # supervisord 内部：nginx 以 root 运行，backend 以 app 运行（见 deploy/supervisord.conf）。
