@@ -326,11 +326,22 @@ def test_version_payload_source_fallbacks(db_session, monkeypatch):
 
 
 def test_version_build_time_normalized():
-    """CI 传入的 ISO 时间（带 T/Z、毫秒、时区）必须归一化后再展示。"""
+    """CI 传入的构建时间必须归一化后再展示。
+
+    **CI 实测传的是纪元秒**（`github.event.repository.pushed_at` 渲染成
+    `1793266152`）：2.2.1 上线后页面上「构建时间」直接显示了这串数字，
+    因为旧实现只认 ISO 串、原样透传。三种形态都要覆盖。
+    """
     from app.services.version_info import _fmt_time
 
     assert _fmt_time("2026-10-29T09:12:34Z") == "2026-10-29 09:12:34"
     assert _fmt_time("2026-10-29T09:12:34.123456+00:00") == "2026-10-29 09:12:34"
+    assert _fmt_time("2026-10-29 09:12:34 -05:00") == "2026-10-29 09:12:34"
+    # 纪元秒 / 毫秒（毫秒 = 同秒的 1000 倍，两者结果必须一致）
+    epoch = _fmt_time("1793266152")
+    assert len(epoch) == 19 and epoch[4] == "-", epoch
+    assert _fmt_time("1793266152000") == epoch
+    # 非法/未知值一律空串，由调用方显示占位
     assert _fmt_time("unknown") == ""
     assert _fmt_time(None) == ""
 

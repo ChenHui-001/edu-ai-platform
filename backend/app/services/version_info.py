@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from loguru import logger
@@ -85,12 +86,23 @@ def _clean(value: Any) -> str:
 def _fmt_time(value: Any) -> str:
     """统一成 `YYYY-MM-DD HH:MM:SS`（服务端本地时区字符串，前端不做时区换算）。
 
-    CI 传进来的 `BUILD_TIME` 是 `github.event.repository.pushed_at`，形如
-    `2026-10-29T09:12:34Z`；直接回显会把 T/Z 带给用户，故在这里规整。
+    CI 传进来的 `BUILD_TIME`（`github.event.repository.pushed_at`）实测是
+    **纪元秒**（如 `1793266152`），不是 ISO 串 —— 只按 ISO 规则处理会把
+    这串数字原样回显，页面上「构建时间」变成 `1793266152`。三种形态都要吃：
+    纪元秒 / 纪元毫秒 / ISO 8601（可能带 T、Z、毫秒、时区偏移）。
     """
     text = _clean(value)
     if not text:
         return ""
+
+    # 纪元秒 / 毫秒：毫秒用 13 位区分，10 位按秒（2100 年前都够用）
+    if text.isdigit() and len(text) in (10, 13):
+        try:
+            seconds = int(text) / (1000 if len(text) == 13 else 1)
+            return datetime.fromtimestamp(seconds).strftime(_TIME_FMT)
+        except (OSError, OverflowError, ValueError):
+            return ""
+
     text = text.replace("T", " ").replace("Z", "").strip()
     # 去掉毫秒与时区尾巴："2026-10-29 09:12:34.123456+00:00" → "2026-10-29 09:12:34"
     if "." in text:
