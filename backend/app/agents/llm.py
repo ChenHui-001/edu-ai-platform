@@ -395,7 +395,10 @@ class LLMClient:
             yield {"type": "end", "duration_ms": duration, "usage": usage}
         except Exception as exc:  # noqa: BLE001
             duration = int((time.perf_counter() - start) * 1000)
-            logger.error("LLM 流式调用失败 [%s]: %s", agent_name, exc)
+            # 占位符必须是 `{}`：项目 logger 是 Loguru（app/core/logger），
+            # 用 stdlib 的 `%s` 不会报错，但模板与参数**双双被丢弃** ——
+            # 日志里留下字面量 "%s"，真正的 agent_name 与异常信息全部丢失。
+            logger.error("LLM 流式调用失败 [{}]: {}", agent_name, exc)
             # 与 chat() 一致：鉴权失败永久熔断；限流/配额改为冷却退避
             if self._is_auth_error(exc):
                 self._mark_disabled(exc)
