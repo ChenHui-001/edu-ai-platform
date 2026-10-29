@@ -640,6 +640,125 @@ def main():
        isinstance(fresh.JOB_LOCK_LEASE_SECONDS, int) and fresh.JOB_LOCK_LEASE_SECONDS > 0,
        f"type={type(fresh.JOB_LOCK_LEASE_SECONDS).__name__}")
 
+    # ---------- V9：删除任务时必须清掉锁行 ----------
+    print("\nV9、删除任务清锁 —— 不清会让下一个复用同一 id 的新任务静默瘫痪 1800s")
+    from sqlalchemy import text as _text
+
+    from app.core.database import SessionLocal as _SL
+    from app.models import ScheduledJob as _SJ
+    from app.services.job_lock import clear_job_lock as _clear_job_lock
+
+    reset_state(job_id)
+
+    # V9 ① 前提：SQLite 的 INTEGER PRIMARY KEY 会复用被删掉的最大 id。
+    # 这条不是「测试的假设」而是「危害成立的理由」—— 如果哪天换成 AUTOINCREMENT
+    # （不会复用），V9 ②③ 就退化成无害的锦上添花，但仍应保留以防换成别的库。
+    _db = _SL()
+    try:
+        _db.execute(_text("DELETE FROM sys_job_lock"))
+        _db.execute(_text("INSERT INTO sys_job_lock (job_id, owner, acquired_at, expire_at)"
+                          " VALUES (900001, 'v9a', '2026-01-01 00:00:00', '2099-01-01 00:00:00')"))
+        _db.execute(_text("INSERT INTO sys_job_lock (job_id, owner, acquired_at, expire_at)"
+                          " VALUES (900002, 'v9b', '2026-01-01 00:00:00', '2099-01-01 00:00:00')"))
+        _db.execute(_text("DELETE FROM sys_job_lock WHERE job_id=900002"))
+        _db.execute(_text("INSERT INTO sys_job_lock (job_id, owner, acquired_at, expire_at)"
+                          " VALUES (NULL, 'v9-new', '2026-01-01 00:00:00', '2099-01-01 00:00:00')"))
+        _reused = _db.execute(
+            _text("SELECT job_id FROM sys_job_lock WHERE owner='v9-new'")
+        ).scalar()
+        _db.execute(_text("DELETE FROM sys_job_lock"))
+        _db.commit()
+    finally:
+        _db.close()
+    ok("V9 ① ★ 前提：SQLite 删除最大 id 后，新插入会复用该 id",
+       _reused == 900002, f"新行 job_id={_reused}（期望 900002，即被复用）")
+
+    # V9 ② clear_job_lock 无条件删除（哪怕租约没过期、owner 也不是自己）
+    preseed_lock(job_id, "ghost-crashed-process", expire_delta_seconds=1700)
+    _before = counts(job_id)["lock_rows"]
+    _removed = _clear_job_lock(job_id)
+    _after = counts(job_id)["lock_rows"]
+    ok("V9 ② ★ 未过期的残留锁也会被清掉（不是只清已过期的）",
+       _before == 1 and _removed == 1 and _after == 0,
+       f"清理前 {_before} 行（租约还剩 1700s）-> 删 {_removed} -> 清理后 {_after} 行")
+
+    # V9 ③ 复现真实危害：走**真实端点** `delete_job` 删掉带残留锁的任务，
+    # 然后新建一个恰好复用同一 id 的任务，看它能不能跑。
+    #
+    # ★ 必须调端点，不能 db.delete()。清锁逻辑长在 `api/v1/logs.py:delete_job`
+    # 里，测试自己 db.delete 就绕过了被测代码 —— 第一版 V9 ④ 就是这么失败的
+    # （40/41，唯一红的就是它）。这是"测了错的层"的典型：看起来在验产品行为，
+    # 实际只验了测试自己写的两行 SQL。
+    preseed_lock(job_id, "ghost-crashed-process", expire_delta_seconds=1700)
+    from fastapi import HTTPException
+
+    from app.api.v1.logs import delete_job as _delete_job_endpoint
+    from app.core.database import SessionLocal as _SL2
+
+    _ep_db = _SL2()
+    try:
+        _endpoint_err = None
+        try:
+            _delete_job_endpoint(job_id, db=_ep_db, _=None)
+        except HTTPException as _he:
+            _endpoint_err = _he
+        except Exception as _e:  # noqa: BLE001
+            _endpoint_err = _e
+    finally:
+        _ep_db.close()
+
+    _db = _SL2()
+    try:
+        _gone = _db.get(_SJ, job_id) is None
+        _lock_left = _db.execute(
+            _text("SELECT COUNT(*) FROM sys_job_lock WHERE job_id=:j"), {"j": job_id}
+        ).scalar() or 0
+        _max_id = _db.execute(_text("SELECT MAX(id) FROM sys_scheduled_job")).scalar() or 0
+        _reuse_id = _max_id + 1 if _max_id else job_id
+        # 优先直接复用刚被删掉的 id —— 那才是真实危害的形状
+        _reuse_id = job_id if not _db.get(_SJ, job_id) else _reuse_id
+        _db.add(_SJ(id=_reuse_id, name="a2_reused_job", func_path="a2.fake",
+                    cron_expression="0 4 * * *", is_builtin=False, is_active=True,
+                    retry_times=0))
+        _db.commit()
+    finally:
+        _db.close()
+
+    ok("V9 ③ ★ 删除端点调用成功，且该 job_id 的锁行已被清掉",
+       _endpoint_err is None and _gone and _lock_left == 0,
+       f"err={_endpoint_err}, 任务已删={_gone}, 残留锁行={_lock_left}")
+
+    from app.services.job_lock import acquire_job_lock as _acq9, release_job_lock as _rel9
+    _got_new = _acq9(_reuse_id, lease_seconds=60)
+    if _got_new:
+        _rel9(_reuse_id)
+    ok("V9 ④ ★ 复用同一 id 的新任务能立刻抢到锁（旧锁行已被清）",
+       _got_new,
+       f"新任务 id={_reuse_id}；抢不到说明残留锁行仍在 -> "
+       f"新任务最长瘫痪 JOB_LOCK_LEASE_SECONDS")
+
+    # V9 ⑤ 反向对照：残留锁行**存在**时确实会挡住新任务（证明 ④ 的通过不是空的）
+    reset_state(_reuse_id)
+    preseed_lock(_reuse_id, "ghost-crashed-process", expire_delta_seconds=1700)
+    _got_v9e = _acq9(_reuse_id, lease_seconds=60)
+    _detail_v9e = "抢到了，说明残留锁根本没起作用（V9 ④ 是假绿）"
+    if _got_v9e:
+        _rel9(_reuse_id)
+    else:
+        _detail_v9e = "被挡住，符合预期：这正是清锁要解决的问题"
+    ok("V9 ⑤ 反向对照：残留锁行存在时新任务确实抢不到锁",
+       not _got_v9e, _detail_v9e)
+
+    # 收尾：把 V9 造出来的任务/锁清掉，别污染后续（后面没别的组了，但保持纪律）
+    _db = _SL()
+    try:
+        _db.execute(_text("DELETE FROM sys_job_lock"))
+        _db.execute(_text("DELETE FROM sys_job_execution_log WHERE job_id > :j"), {"j": job_id})
+        _db.execute(_text("DELETE FROM sys_scheduled_job WHERE name='a2_reused_job'"))
+        _db.commit()
+    finally:
+        _db.close()
+
     # ---------- 汇总 ----------
     total = _PASSED + len(_FAILED)
     print(f"  离线回归完成：共 {total} 项 | 通过 {_PASSED} | 失败 {len(_FAILED)}")

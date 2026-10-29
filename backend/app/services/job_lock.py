@@ -59,18 +59,33 @@ N 个进程会在**同一分钟同时**叫醒同一个任务。
 `now_local()`（本地、带微秒、26 字符）混用时，租约**写入瞬间即过期**，
 锁永远抢得到、永不互斥、日志里毫无异常。本文件所有时间一律 `now_local()`。
 
-### ② 抢锁的 session 必须 commit + close **之后**才跑任务体
+### ② 抢锁的 session 必须 `commit()` **之后**才跑任务体（`close()` 只是卫生）
 
 SQLite 是单写者。如果持着「已抢占但未提交」的事务去跑任务体，任务体
 （以及同时段所有别的请求）的写操作全被这把写锁挡住。实测持有 3s 不提交、
 另一进程写 `sys_login_log`：
 
-    commit+close 后再跑        -> 用户写 6ms     成功
+    commit 后再跑              -> 用户写 6ms     成功
     不提交、跑完才 commit      -> 用户写 2221ms  （已逼近 busy_timeout=5000）
 
-所以 `acquire_job_lock` 内部自建 session、`finally` 里 commit+close，
-**返回值是 bool 而不是 session** —— 任务体拿不到那个 session，
-想犯错也没有入口。`release_job_lock` 同样自建 session。
+**判据是 `commit()`，不是 `close()`。** 这两个动作经常被写成一对，很容易
+误以为「关了 session 事务就没了」—— 但 SQLAlchemy 的 `close()` 只归还
+连接到连接池，而 `pool_reset_on_return` 在归还时才回滚，**在此之前另一
+进程拿不到写锁**；且 `close()` 之后如果代码又用了那个 session，会重新开
+一个事务，锁继续hold着。所以「只留 close、删掉 commit」这种改法看起来
+无害，实际上会让上面那 2221ms 原样回来。
+
+实测反向验证（在 `test_a2_job_lock.py` 的 V2/V4/V6 上做）：
+
+    只删 commit、保留 close  -> V2②③ V4②③④ 全红 + V6③ TypeError   锁失去互斥
+    只删 close、保留 commit  -> 35/35 全绿                            行为不变
+
+结论：`commit()` 是**功能防线**，`close()` 是**资源卫生**。两者都要，但
+不要把一个归因成另一个 —— 否则下一个"优化"就会顺手删掉真正的那个。
+
+所以 `acquire_job_lock` 内部自建 session、抢完立刻 `commit()`、`finally`
+里 `close()`，**返回值是 bool 而不是 session** —— 任务体拿不到那个
+session，想犯错也没有入口。`release_job_lock` 同样自建 session。
 
 ### ③ 释放必须按 owner 限定
 
@@ -140,9 +155,13 @@ def acquire_job_lock(job_id: int, lease_seconds: Optional[int] = None) -> bool:
 
     ## 为什么返回值不是 session
 
-    见模块 docstring 的 ②。session 在 `finally` 里已 commit+close，
-    调用方拿不到它就不会误用。SQLite 单写者模型下，持着未提交的写事务
-    去跑任务体会把全场写操作阻塞到 `busy_timeout` 上限。
+    见模块 docstring 的 ②。session 在抢到后立刻 `commit()`，`finally` 里
+    `close()`，调用方拿不到它就不会误用。SQLite 单写者模型下，持着未提交
+    的写事务去跑任务体会把全场写操作阻塞到 `busy_timeout` 上限。
+
+    **注意 `commit()` 是防线、`close()` 只是卫生**：只删 `commit` 会让写锁
+    一直不释放（实测用户侧写操作从 6ms 涨到 2221ms），只删 `close` 则行为
+    不变。改这里时别对着 `close` 下手。
     """
     lease = int(lease_seconds or settings.JOB_LOCK_LEASE_SECONDS)
     now = now_local()
@@ -176,7 +195,7 @@ def acquire_job_lock(job_id: int, lease_seconds: Optional[int] = None) -> bool:
         logger.opt(exception=True).error(f"任务 {job_id} 抢占执行锁异常: {exc}")
         raise
     finally:
-        # 必须在任务体之前关掉：见模块 docstring ②。
+        # 必须在任务体之前 commit：见模块 docstring ②（close 只是卫生）。
         db.close()
 
     if got:
@@ -262,6 +281,50 @@ def clear_expired_locks() -> int:
         return int(result.rowcount or 0)
     except Exception as exc:
         logger.warning(f"清理过期任务锁失败: {exc}")
+        db.rollback()
+        return 0
+    finally:
+        db.close()
+
+
+def clear_job_lock(job_id: int) -> int:
+    """删除某个任务的锁行（**不限定 owner、不限定是否过期**），返回删除行数。
+
+    调用时机只有一处：**删除任务时**（`api/v1/logs.py:delete_job`）。
+
+    ## 为什么必须无条件删，不能只删"已过期"的
+
+    `sys_job_lock.job_id` 是 `INTEGER PRIMARY KEY`，SQLite 在**删掉当前最大
+    id 之后会复用它**（实测：`[(1,'a'),(2,'b')]` 删 2 再插 → 新行 id=2）。
+    于是「删任务 5 → 新建任务拿到 id 5」时，任务 5 会**继承上一任留下的未
+    过期锁**：新任务最长 1800s 完全无法执行，而日志里只有一句
+    「正由其他进程执行」，看着像正常调度、查不出问题。
+
+    残留锁行的来源也不止「删除任务」一种（进程被 SIGKILL、容器被 `docker
+    restart` 打断在任务执行中），所以调用方不要依赖这个函数做常规清理 ——
+    它只负责「这个 job_id 已经不存在了，别让下一个占用同一个 id 的任务
+    替它背锅」。
+
+    ## 无条件删会不会破坏互斥
+
+    不会。删任务的前提是这个 job 已经不会再被调度：`remove_job` 先摘掉
+    scheduler 里的触发器，之后没有新的触发源。若此时**别的进程正持有该锁
+    在执行**，那一份会跑完（它持有的是自己进程内的执行流，与锁行无关），
+    只是它 `release_job_lock` 时会因为找不到自己的行而打一条 warning。
+    这条 warning 是**预期噪音**，不是故障。
+    """
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            text("DELETE FROM sys_job_lock WHERE job_id = :jid"),
+            {"jid": job_id},
+        )
+        db.commit()
+        return int(result.rowcount or 0)
+    except Exception as exc:
+        # 与 release_job_lock 同理：锁清理失败不能阻断「删除任务」这个主操作，
+        # 最坏结果是残留一行、等租约到期或下次 clear_expired_locks 回收。
+        logger.warning(f"清理任务 {job_id} 的锁行失败: {exc}")
         db.rollback()
         return 0
     finally:

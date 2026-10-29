@@ -290,11 +290,17 @@ def delete_job(
     if job.is_builtin:
         raise BusinessException("内置任务不可删除，可选择停用")
 
+    from app.services.job_lock import clear_job_lock
     from app.services.scheduler import remove_job
 
     remove_job(job_id)
     db.delete(job)
     db.commit()
+    # 必须清掉该 job_id 的锁行：`sys_job_lock.job_id` 是 INTEGER PRIMARY KEY，
+    # SQLite 删除最大 id 后会**复用**它。若不清，下一个恰好拿到同一 id 的新任务
+    # 会继承这行未过期租约，最长 1800s 无法执行，日志只说「正由其他进程执行」。
+    # 详见 `services/job_lock.py:clear_job_lock` 的 docstring。
+    clear_job_lock(job_id)
     return ok(message="任务已删除")
 
 
