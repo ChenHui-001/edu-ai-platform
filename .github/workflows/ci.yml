@@ -133,6 +133,46 @@ jobs:
           SECRET_KEY: ci_a2_job_lock_secret_0123456789abcdef
         run: python ../tests/test_a2_job_lock.py
 
+      - name: 离线回归（日志文件 sink 开关 / 多 worker 不抢文件）
+        # loguru 的 FileSink 独占打开文件。`--workers 2` 时第二个进程拿到
+        # `PermissionError: [Errno 13]`，loguru 把它吞掉打到 stderr —— 进程还
+        # 活着、/health 也绿，只是那个 worker 全程没有文件日志。所以默认必须
+        # 关闭，开启时文件名必须带 pid。
+        #
+        # 测试用**子进程**驱动：`logger.add()` 是进程级副作用，在测试进程里
+        # 加了摘不干净，会污染「不产生文件」这类必须干净的断言；多进程抢同一
+        # 路径的场景也只能在真子进程里复现。
+        #
+        # L0 是默认值守卫 —— 反向验证时把 config.py 的默认值改成 True，
+        # 第一版（只有 L1，且 L1 每次显式注入 false）**15/15 全绿**，说明
+        # L1 守的是"开关生效"而不是"默认值保守"。补 L0 后才精确变红。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+          DEBUG: 'false'
+          SECRET_KEY: ci_logger_sink_secret_0123456789abcdef
+        run: python ../tests/test_logger_sink.py
+
+      - name: 离线回归（A3 启动后置校验）
+        # 三项检查全是「发现问题 → 打日志」，没有任何返回值被业务使用 ——
+        # 一个写坏的检查（永远返回 None）在功能上等价于「一切正常」，不会让
+        # 任何接口变红。所以必须在离线层用真 Session 断言「该报的时候报了」。
+        #
+        # 反向验证：把三项检查分别改成永不报告 → 20/27（C2/C3 共 7 条红）；
+        # 单独改 _check_demo_data → 24/27（C1 ①②③ 红）。
+        #
+        # 注意这里不注入 APP_ENV —— C0 断言的就是「不给环境变量时默认
+        # production」。测试内部自己按用例切换 settings，用完还原。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+          DEBUG: 'false'
+          SEED_DEMO_DATA: 'false'
+          SECRET_KEY: ci_startup_checks_secret_0123456789abcdef
+        run: python ../tests/test_unit_startup_checks.py
+
   frontend:
     name: 前端构建
     runs-on: ubuntu-latest
