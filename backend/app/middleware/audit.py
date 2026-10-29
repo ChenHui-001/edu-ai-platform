@@ -55,14 +55,15 @@ _IGNORED_BODY_KEYS = {"content", "stem", "analysis"}
 # - `/students`       班级学生名单（含学号/姓名/账号，等价于一份名单）
 # - `/system/users`   用户列表（含手机号、邮箱）
 # - `/people/brief`   人员简表（姓名+账号，教师端下拉的批量身份映射）
-# - `/logs`           日志查看（登录/操作/错误日志本身含全站 IP、账号与操作轨迹）
 #
-# 关于 `/logs` 的自反馈（「每查一次日志就多一条日志」）评估：三个日志端点
-# 都是分页只读，只有管理员手工点击才触发，不可能是定时轮询；单次访问只增加
-# 1 行 OperationLog，而 OperationLog 由 `task_jobs.clean_old_logs` 保留 90 天
-# 后自动清理。按「一天翻 50 次日志」的极端使用量算，90 天累计 4500 行 —— 与
-# 心跳流（每 30 秒 × 每个在线学生）完全不在一个量级，且读日志这个动作本身
-# 不会再产生新的日志读取，不构成正反馈。故纳入。
+# 关于 `/logs` 为什么**不在**名单里（曾纳入，实测后撤回）：
+# 日志查看本身不产生数据外流（不像导出名单、预览原件那样把内容带走），
+# 而把它纳入会让「查日志」这个动作自写一条日志 —— 于是任何用
+# `/logs/operation` 的 total 做监视的断言/运维脚本都会自我计数：
+# 读一次 +1 条，无法再表达「某操作是否留痕」。实测该副作用已使
+# `tests/test_requirements.py` 的心跳写放大断言（b1 == b0）变红。
+# 语义上也怪：审计的目的是记录「谁改了什么/谁取走了什么」，
+# 而不是记录「谁在看审计」。故排除。
 #
 # 用**子串**匹配（`in`）而不是清单：新增同类接口自动纳入。已逐一核对
 # 后端全部 GET 路由，确认这些子串不会误伤高频轮询接口：
@@ -71,11 +72,10 @@ _IGNORED_BODY_KEYS = {"content", "stem", "analysis"}
 #                （/student 而非 /students），不命中。
 #   `/preview`  只命中 /attachments/{id}/preview 与 /question/papers/{id}/preview，
 #                两者都是点击触发，非轮询。
-#   `/logs`     命中 /logs/{login,operation,error,export} 与 /agent/logs，均为手工查看。
 #   `/system/users`、`/people/brief` 无其它同名路由。
 _AUDITED_READ_MARKERS = (
     "/export", "/download", "/preview", "/students",
-    "/system/users", "/people/brief", "/logs",
+    "/system/users", "/people/brief",
 )
 
 # 高频噪声写路径（按路径**后缀**匹配）：这些接口由前端定时器按几十秒级频率
