@@ -11,7 +11,7 @@ from app.models.lesson import (  # noqa: F401
     LessonPlan, LessonStage,
 )
 from app.models.ops import (  # noqa: F401
-    AgentCallLog, Attachment, ErrorLog, JobExecutionLog, LoginLog,
+    AgentCallLog, Attachment, ErrorLog, JobExecutionLog, JobLock, LoginLog,
     AgentJob, AgentRate, Notification, OperationLog, ScheduledJob,
 )
 from app.models.question import (  # noqa: F401
@@ -55,6 +55,7 @@ __all__ = [
     "StudyGoal", "StudyCheckin",
     # ops
     "LoginLog", "OperationLog", "ErrorLog", "ScheduledJob", "JobExecutionLog",
+    "JobLock",
     "Attachment", "AgentCallLog", "Notification",
     # security_cache（跨进程共享的安全 TTL 缓存，多 worker 前置）
     "Captcha", "RevokedToken", "ResetCode",

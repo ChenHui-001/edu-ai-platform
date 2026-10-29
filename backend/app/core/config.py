@@ -137,6 +137,19 @@ class Settings(BaseSettings):
     LOG_TO_DB: bool = True  # 登录/操作/错误日志入库
 
     SCHEDULER_ENABLED: bool = True
+    # 定时任务执行锁的租约时长（秒）。`uvicorn --workers N` 下 N 个进程各自
+    # 跑一份 APScheduler，同一分钟会同时触发同一个任务；靠 sys_job_lock 表
+    # 保证只有一个真正执行（见 services/job_lock.py）。
+    #
+    # 1800s 的依据是**实测**而非估计：最慢的 handler 是 clean_old_logs
+    # （3×30 万过期行）2592ms，1800s 有 694 倍余量。
+    #
+    # ⚠️ 但真正的理由不是余量，而是**所有 handler 都是「补齐式扫描」**
+    # （publish_at <= now / created_at < cutoff / end_at < deadline）：
+    # 漏掉一个窗口不丢数据、只是延后。这才是能容忍「崩溃后最长停 30 分钟」
+    # 的前提。如果将来加了「只在精确时刻做一次、错过即永久丢失」的 handler，
+    # 必须同步下调这个值，否则那个窗口会被静默跳过。
+    JOB_LOCK_LEASE_SECONDS: int = 1800
     # 内置默认任务（cron: 分 时 日 月 周）
     CRON_CLEAN_EXPIRED_EXAMS: str = "0 3 * * *"
     CRON_DAILY_REPORT: str = "0 7 * * *"

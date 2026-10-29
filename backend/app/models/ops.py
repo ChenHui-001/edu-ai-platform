@@ -100,6 +100,68 @@ class JobExecutionLog(Base):
     trigger_type: Mapped[str] = mapped_column(String(16), default="auto", comment="auto/manual")
 
 
+class JobLock(Base):
+    """定时任务执行锁：保证同一任务同一时刻只有一个进程在跑。
+
+    ## 为什么需要它
+
+    `uvicorn --workers N` 下每个 worker 都会 `sync_all_jobs()` 并各自跑一份
+    APScheduler —— N 个进程的 cron 在同一分钟同时触发同一个任务。所有 handler
+    都是「扫描 + 批量写」（`publish_scheduled_tasks` 会给几百个学生插通知、
+    `clean_old_logs` 会删几十万行），并发执行不是「多跑一遍」而是**写放大 N 倍**：
+    实测 2 进程跑 `publish_scheduled_tasks` 得到 `notification=900`（应为 450）、
+    `job_execution_log=2`。
+
+    ## 表结构上的三个要点（写错不会报错，只会静默失效）
+
+    1. **`expire_at` 必须由 Python 传 `now_local()`，绝不用 `CURRENT_TIMESTAMP`。**
+       SQLite 的 DATETIME 列是字符串、按字典序比较，而
+       `CURRENT_TIMESTAMP` 给的是 UTC 且不带微秒（19 字符），
+       `now_local()` 是本地时间带微秒（26 字符）。实测同一瞬间：
+
+           CURRENT_TIMESTAMP = '2026-10-29 03:15:20'
+           now_local()       = '2026-10-29 11:15:20.993660'
+           SQL 'a' < 'b'     -> True
+
+       即用 `CURRENT_TIMESTAMP` 写的租约**写入瞬间就过期** → 永远抢得到、
+       永不互斥、日志里毫无异常。详见 `models/security_cache.py` 顶部同类说明。
+
+    2. **`job_id` 是主键**，一个任务一把锁。用 UPSERT + `WHERE expire_at < now`
+       做条件抢占，这一条语句在 SQLite 单写者模型下天然原子（实测 8 进程
+       屏障同时抢，5/5 轮均恰好 1 个成功、0 错误，无需 `BEGIN IMMEDIATE`）。
+
+    3. **`owner` 必须按 `hostname:pid:uuid` 记录**，释放时用
+       `WHERE owner = :me` 限定。无条件 DELETE 会让「崩溃遗留的未过期锁」
+       被跳过者删掉，下一分钟两个进程又同时跑 —— 互斥退化成靠运气。
+       带 uuid 是为了彻底绕开 pid 复用：容器里 pid 高度重复，只靠
+       `hostname:pid` 会把「重启后的新进程」误认成「崩溃前的旧进程」，
+       于是它能删掉别人的锁。
+
+    ## 为什么不担心崩溃留下死锁
+
+    租约 1800s（`JOB_LOCK_LEASE_SECONDS`），崩溃后最长 30 分钟自动失效。
+    能容忍这个延迟的理由：**所有 handler 都是「补齐式扫描」**
+    （`publish_at <= now`、`created_at < cutoff`、`end_at < deadline`），
+    漏掉一个窗口不丢数据、只是延后。这条是租约期可以给到 1800s 的前提，
+    如果将来有 handler 改成「只在某个精确时刻做一次、错过就永久丢失」，
+    必须同步下调租约期。实测最慢的 `clean_old_logs`（3×30 万行）耗时 2592ms，
+    1800s 有 694 倍余量。
+
+    ## 行会堆积吗
+
+    不会。`release_job_lock` 直接 DELETE 自己那行；崩溃遗留的行在
+    下一次抢占时被同一句 UPSERT 覆盖（`WHERE expire_at < now` 命中）。
+    所以表的最大行数 = 任务数，与运行时长无关。
+    """
+
+    __tablename__ = "sys_job_lock"
+
+    job_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    owner: Mapped[str] = mapped_column(String(80), comment="hostname:pid:uuid[:8]")
+    acquired_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    expire_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class Attachment(Base):
     """附件元数据。"""
 

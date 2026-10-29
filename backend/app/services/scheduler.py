@@ -1,4 +1,5 @@
 """APScheduler 调度器管理。"""
+import os
 from typing import Any, Dict, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -10,6 +11,10 @@ from app.core.database import SessionLocal
 from app.core.logger import get_logger
 from app.models import JobExecutionLog, ScheduledJob
 from app.services import task_jobs
+from app.services.job_lock import (
+    acquire_job_lock, clear_expired_locks, current_owner, locked_jobs,
+    release_job_lock,
+)
 from app.utils.common import now_local
 
 logger = get_logger("scheduler")
@@ -33,7 +38,40 @@ def get_scheduler() -> BackgroundScheduler:
 
 
 def _execute(job_id: int, func_path: str, trigger_type: str = "auto") -> None:
-    """任务执行包装：记录执行日志、失败重试通知。"""
+    """任务执行包装：抢执行锁 → 记录执行日志 → 跑任务体 → 失败重试通知。
+
+    ## 加锁的位置很关键
+
+    抢锁必须在**建 running 日志之前**：如果先写 log 再抢锁失败，库里会留下
+    一条永远停在 `running` 的执行记录（没人会去把它改成 skipped），
+    运维看「执行记录」会以为任务卡死了。实测的期望行为是
+    「未获锁 → 一条日志都不写」（见 test_a2_job_lock.py 的对照用例 C）。
+
+    也必须在**跑任务体之前就 commit+close 掉抢锁的 session**：SQLite 单写者，
+    持着未提交的写事务跑任务体会把全场写操作阻塞到 busy_timeout 上限。
+    实测持锁不提交 3s 时，另一进程写 sys_login_log 用了 2221ms（正常 6ms）。
+    详见 services/job_lock.py 的模块 docstring ②。
+
+    ## 为什么拆成 `_execute` + `_run_locked` 两个函数
+
+    因为抢锁的 session 必须在跑任务体之前就 commit+close，而任务体自己
+    需要一个新的、覆盖整个执行周期的 session（写 running 日志 → 跑 →
+    改成 success/failed）。两者的生命周期**不能共用一个 session**，
+    拆开是最直白的表达方式：`_execute` 只管锁，`_run_locked` 只管执行。
+    """
+    if not acquire_job_lock(job_id):
+        # 别的进程正在跑。这是正常调度结果，不是错误 —— 不写任何日志。
+        return
+    try:
+        _run_locked(job_id, func_path, trigger_type)
+    finally:
+        # release 内部自建 session（见 job_lock ②），必须在 _run_locked
+        # 的 db.close() 之后调用 —— 这里 _run_locked 已返回，等价满足。
+        release_job_lock(job_id)
+
+
+def _run_locked(job_id: int, func_path: str, trigger_type: str) -> None:
+    """持锁执行任务体。只在 `_execute` 抢到锁之后调用。"""
     db = SessionLocal()
     log = None
     started = now_local()
@@ -150,25 +188,67 @@ def sync_all_jobs() -> int:
             logger.info(f"调度器已启动，注册 {count} 个任务")
     finally:
         db.close()
+
+    # 顺手清掉上一轮崩溃遗留的过期锁。放在这里（而不是定时任务里）的理由：
+    # 启动是唯一一个「必然发生、且不需要抢锁」的时点 —— 用任务去清理锁
+    # 会绕回同一个问题（清理任务本身要不要锁）。清理失败不影响启动。
+    try:
+        cleared = clear_expired_locks()
+        if cleared:
+            logger.info(f"启动时清理了 {cleared} 条过期任务锁")
+    except Exception as exc:
+        logger.warning(f"启动时清理过期任务锁失败: {exc}")
+
     return count
 
 
 def run_job_now(job_id: int) -> Dict[str, Any]:
-    """手动执行任务。"""
+    """手动执行任务。
+
+    ## 与 `_execute` 的加锁差异
+
+    自动触发撞锁时**静默跳过**（下个 cron 窗口再来），手动触发撞锁时
+    **明确报错** —— 管理员点了按钮，什么都没发生还不能告诉他原因，
+    会让人反复点、怀疑按钮坏了。所以这里抛 `BusinessException`，
+    由 `api/v1/logs.py` 转成 400「该任务正在执行中，请稍后再试」。
+
+    ## 为什么不排队等锁
+
+    等锁会让 HTTP 请求挂最多 1800s（租约时长），代理层早就超时了，
+    而且排队期间用户看不到任何反馈。直接报错让用户重试更诚实。
+
+    ## 加锁位置
+
+    也在写 running 日志**之前** —— 撞锁时不留下停在 running 的记录
+    （与 `_execute` 同理，见其 docstring）。
+    """
+    from app.core.exception import BusinessException
+
     db = SessionLocal()
     try:
         job = db.get(ScheduledJob, job_id)
         if not job:
             raise ValueError("任务不存在")
-        started = now_local()
+        func_path, job_name = job.func_path, job.name
+    finally:
+        # 先关掉这个 session 再去抢锁：抢锁内部要 commit，
+        # 这个 session 上还有未完成的事务会互相等（SQLite 单写者）。
+        db.close()
+
+    if not acquire_job_lock(job_id):
+        raise BusinessException("该任务正在执行中，请稍后再试")
+
+    started = now_local()
+    db = SessionLocal()
+    try:
         log = JobExecutionLog(
-            job_id=job_id, job_name=job.name, status="running",
+            job_id=job_id, job_name=job_name, status="running",
             started_at=started, trigger_type="manual",
         )
         db.add(log)
         db.commit()
         try:
-            result = task_jobs.run_job(job.func_path)
+            result = task_jobs.run_job(func_path)
             log.status = "success"
             log.message = str(result)
         except Exception as exc:
@@ -182,10 +262,23 @@ def run_job_now(job_id: int) -> Dict[str, Any]:
         return result
     finally:
         db.close()
+        release_job_lock(job_id)
 
 
 def scheduler_status() -> Dict[str, Any]:
-    """调度器运行状态。"""
+    """调度器运行状态。
+
+    ## 为什么多了 worker 相关的 3 个字段
+
+    `uvicorn --workers N` 之后，「调度器在跑」不再是一个进程级事实：
+    N 个 worker 各有一个 scheduler、各有一份 job 列表。只报
+    `running` / `job_count` 会让运维以为只有一份。新增字段是**纯增量**，
+    既有调用方（`api/v1/logs.py`、`api/v1/report.py`）都是原样透传，
+    零改动。
+
+    `locked_jobs` 直接查表而不是查本进程内存 —— 锁是跨进程的，
+    本进程只知道自己的（也未必有）。
+    """
     sched = get_scheduler()
     jobs = []
     if sched.running:
@@ -195,4 +288,12 @@ def scheduler_status() -> Dict[str, Any]:
                 "next_run": j.next_run_time.strftime("%Y-%m-%d %H:%M:%S")
                 if j.next_run_time else None,
             })
-    return {"running": sched.running, "job_count": len(jobs), "jobs": jobs}
+    return {
+        "running": sched.running,
+        "job_count": len(jobs),
+        "jobs": jobs,
+        # ---- 多 worker 观测（纯增量字段）----
+        "worker_pid": os.getpid(),
+        "worker_id": current_owner(),
+        "locked_jobs": locked_jobs(),
+    }

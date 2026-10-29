@@ -113,6 +113,26 @@ jobs:
           SECRET_KEY: ci_unit_secret_key_0123456789abcdef
         run: python ../tests/test_unit_must_change_pwd.py
 
+      - name: 离线回归（A2 定时任务执行锁 / 多 worker 互斥）
+        # `uvicorn --workers N` 下 N 个 worker 各跑一份 APScheduler，cron 是墙钟
+        # 触发 -> 同一分钟同时叫醒同一个任务，而 `max_instances=1` 只管单进程。
+        # JOB_HANDLERS 全是「扫描 + 批量写」，并发执行是写放大 N 倍：
+        # 实测 2 进程跑 publish_scheduled_tasks 得到 notification=900（应为 450）。
+        #
+        # 只能在离线层：e2e 是全新临时库（无遗留锁行）+ SCHEDULER_ENABLED=false
+        # （sync_all_jobs 直接 return 0，无 cron 触发），两个进程永远撞不上。
+        #
+        # 首组用例是**无锁对照**（monkeypatch 抢锁恒成功 -> 通知翻倍到 900），
+        # 证明「锁失效时用例能看出来」。反向验证：把 _execute 的抢锁判断改成
+        # `if False:` 后重跑，8 项变红（V2/V3/V4 各若干），V1 保持全绿。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+          DEBUG: 'false'
+          SECRET_KEY: ci_a2_job_lock_secret_0123456789abcdef
+        run: python ../tests/test_a2_job_lock.py
+
   frontend:
     name: 前端构建
     runs-on: ubuntu-latest

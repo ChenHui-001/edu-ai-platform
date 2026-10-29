@@ -270,6 +270,12 @@ def run_job_now(
     try:
         result = _run(job_id)
         return ok(result, message="任务执行成功")
+    except BusinessException:
+        # 必须原样抛出，不能被下面的宽 except 二次包裹。
+        # A2 加了执行锁之后，「该任务正在执行中，请稍后再试」会从这里出来；
+        # 若被包成「任务执行失败：该任务正在执行中，请稍后再试」，
+        # 语义变成"任务失败了"，而实际是"没开始跑"。
+        raise
     except Exception as exc:
         raise BusinessException(f"任务执行失败：{exc}")
 
