@@ -9,7 +9,7 @@ model / api_key 等，是否真的作用到了全部 AI 场景，并列出未覆
 
 用法：
     python tools/llm_audit.py[base_url]
-    # 例：python tools/llm_audit.py http://localhost:8080
+    # 例：python tools/llm_audit.py http://localhost:8080  # allow-hardcoded-host: 文档示例
 
 注意：脚本会临时写入 sys_config 的 llm_* 配置，结束时会清空 API Key。
 """
@@ -18,7 +18,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8080"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8080"  # allow-hardcoded-host: argv 兜底默认值
 B = BASE.rstrip("/") + "/api/v1"
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 

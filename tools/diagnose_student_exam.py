@@ -13,7 +13,7 @@ import sys
 
 import httpx
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8099").rstrip("/")
+BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8099").rstrip("/")  # allow-hardcoded-host: 诊断脚本的 argv 兜底默认值
 API = f"{BASE}/api/v1"
 
 CREDS = [

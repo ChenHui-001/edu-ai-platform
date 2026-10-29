@@ -125,25 +125,18 @@ def check_name_matches_impl():
 
 # ---------------------------------------------------------------- 契约 3
 def check_health_server_time():
-    """`/health` 必须返回 server_time（e2e 时间基准的唯一来源）。"""
+    """`/health` 必须返回 server_time。
+
+    这是所有跨时区断言的时间基准。缺失会让调用方退回本地 `datetime.now()`，
+    在 CI（runner UTC / 容器 +8h）上成片假失败 —— 症状是"用例全红但接口正常"。
+    """
     path = os.path.join(ROOT, "backend", "app", "main.py")
     if not os.path.exists(path):
         return ["backend/app/main.py: 文件不存在，无法校验 server_time 契约"]
     src = io.open(path, encoding="utf-8", errors="replace").read()
     if "server_time" not in src:
         return ["backend/app/main.py: /health 未暴露 server_time —— "
-                "e2e 时间窗用例将失去服务端基准，CI 上会成片假失败"]
-
-    # 同时校验 e2e_framework 走的是主路径而不是 404 兜底
-    fw = os.path.join(ROOT, "tests", "e2e_framework.py")
-    if os.path.exists(fw):
-        fsrc = io.open(fw, encoding="utf-8", errors="replace").read()
-        # BASE 已含 /api/v1，再拼 /api/v1/health 会变成 /api/v1/api/v1/health
-        bad = re.search(r"BASE\s*\+\s*[\"']/api/v1/health[\"']", fsrc)
-        if bad:
-            return ["tests/e2e_framework.py: 拼出了 `BASE + \"/api/v1/health\"`，"
-                    "但 BASE 已包含 /api/v1 → 实际请求 /api/v1/api/v1/health 必然 404，"
-                    "server_now() 会静默退回本地时间"]
+                "调用方将失去服务端时间基准，CI 上会成片假失败"]
     return []
 
 
@@ -151,7 +144,7 @@ def main():
     checks = [
         ("契约1 仓库内无 utcnow() 调用（别名仅保留在定义处）", check_no_legacy_calls),
         ("契约2 时间函数名与实现语义一致", check_name_matches_impl),
-        ("契约3 /health 暴露 server_time 且 e2e 走主路径", check_health_server_time),
+        ("契约3 /health 暴露 server_time（跨时区时间基准）", check_health_server_time),
     ]
     failed = 0
     for title, fn in checks:

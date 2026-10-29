@@ -38,7 +38,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TARGETS = ["backend/app", "tools", "tests"]
+# 扫描目录。`tests/` 已随测试体系移除，不要再加回来 —— 目录不存在时
+# ruff 会报 E902 并返回非零，把整个门禁变成"因环境缺失而红"的噪声。
+TARGETS = ["backend/app", "tools"]
 
 INSTALL_HINT = """\
 ruff 未安装。任选一种方式：
@@ -82,6 +84,18 @@ def main():
     if not cmd:
         print("[FAIL] 未找到 ruff —— 静态门禁无法执行", file=sys.stderr)
         print(INSTALL_HINT, file=sys.stderr)
+        return 2
+
+    # 目录存在性预检：ruff 对不存在的路径报 E902 并返回非零，症状是
+    # 「门禁因目录缺失而红」，与代码质量无关，极易被误判成真的有告警。
+    # 这里提前拦下，给出明确原因。
+    missing = [t for t in TARGETS if not (ROOT / t).is_dir()]
+    if missing:
+        print("[FAIL] 扫描目录缺失 —— 门禁无法覆盖全部代码", file=sys.stderr)
+        for m in missing:
+            print(f"       缺少: {m}", file=sys.stderr)
+        print("     若目录确实已移除，请同步更新 tools/lint_gate.py 的 TARGETS。",
+              file=sys.stderr)
         return 2
 
     args = cmd + ["check", "--output-format", "concise"] + TARGETS

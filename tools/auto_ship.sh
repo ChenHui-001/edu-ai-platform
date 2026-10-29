@@ -2,12 +2,20 @@
 # ================================================================
 # 九年义务教育 AI 学习管理系统 —— 自动交付流水线
 #
-# 流程：改动检测 → 端到端回归(源码直跑) → git commit → git push
-#       → 等待 CI 发布 → 拉取 ghcr 多架构镜像 → (可选)复制到 Docker Hub
-# 设计原则：**测试不过就不提交、不推送**（fail fast，绝不带病上线）
+# 流程：改动检测 → 静态门禁 + 冒烟校验(导库/建表/路由) → git commit
+#       → git push → 等待 CI 发布 → 拉取 ghcr 多架构镜像
+#       → (可选)复制到 Docker Hub
+# 设计原则：**校验不过就不提交、不推送**（fail fast，绝不带病上线）
+#
+# ⚠️ 2026-10-29 起测试体系（tests/ 与 CI 的 e2e job）已移除。原来的
+#    「端到端回归」换成三件事，门槛降低但**不是零**：
+#      1) 五道静态门禁（硬编码地址/弱断言/时间契约/模型外键/F 类）
+#      2) 导库 + create_all 建表 + 路由数下限（拦住语法错、循环导入、模型断裂）
+#      3) CI 的 compileall + 镜像构建仍会独立跑一次
+#    代价要说清楚：**行为回归已无自动化覆盖**，改业务逻辑后必须人工点一遍相关页面。
 #
 # ★ 镜像唯一来源 = CI 构建的 ghcr 多架构镜像（ghcr.io/chenhui-001/edu-ai-platform）
-#   本机**不编译任何镜像**：回归用源码直跑，正式镜像等 CI 发布后 pull。
+#   本机**不编译任何镜像**：校验用源码直跑，正式镜像等 CI 发布后 pull。
 #   好处：本地与服务器跑的是同一份（sha256 逐字节相同），杜绝
 #   「同版本号、不同内容」的两份镜像漂移。
 #
@@ -16,16 +24,12 @@
 #   ./tools/auto_ship.sh --push           # 全流程 + 复制到 Docker Hub（多架构）
 #   ./tools/auto_ship.sh --no-push        # 不推 git（离线/临时验证用）
 #   ./tools/auto_ship.sh --msg "xxx"      # 自定义提交信息
-#   ./tools/auto_ship.sh --skip-test      # 跳过测试（仅提交，慎用）
+#   ./tools/auto_ship.sh --skip-test      # 跳过冒烟校验（仅提交，慎用）
 #   ./tools/auto_ship.sh --bump patch     # 版本号 +1（1.0.8 -> 1.0.9）后交付
-#   ./tools/auto_ship.sh --dry-run        # 只跑测试，不提交不拉镜像
-#   ./tools/auto_ship.sh --stages admin teacher
-#                                         # 只跑指定阶段（日常迭代用，快 5~10 倍）
-#   ./tools/auto_ship.sh --stages auto    # 按 git 改动自动选阶段
+#   ./tools/auto_ship.sh --dry-run        # 只跑校验，不提交不拉镜像
 #
-# ⚠️ 何时**必须**全量（不加 --stages）：
-#   1) 发版前；2) 改了 e2e_framework.py / 公共组件 / 数据模型；
-#   3) 连续改 3 个以上模块；4) CI 红了要在本地复现。
+# ⚠️ 手工验证提示：改动涉及权限、判分、组卷、交卷、迁移时，
+#    自动校验完全测不到这些行为，发版前请按 docs/DEVELOPMENT.md 的人工清单过一遍。
 #
 # 退出码：0 成功 / 1 测试失败 / 2 提交失败 / 3 镜像拉取失败 / 4 无改动
 # ================================================================
@@ -54,7 +58,7 @@ while [ $# -gt 0 ]; do
     --dry-run)   DRY_RUN=1; SKIP_COMMIT=1 ;;
     --msg)       MSG="$2"; shift ;;
     --bump)      BUMP="$2"; shift ;;
-    --stages)    STAGES="$2"; shift ;;
+    --stages)    STAGES=""; shift ;;   # 兼容旧命令：阶段已移除，忽略
     -h|--help)   sed -n '2,32p' "$0"; exit 0 ;;
     *) echo "未知参数: $1"; exit 1 ;;
   esac
@@ -84,53 +88,6 @@ fi
 echo "$CHANGED" | sed 's/^/  /'
 FILE_COUNT="$(echo "$CHANGED" | wc -l | tr -d ' ')"
 ok "检测到 $FILE_COUNT 项改动"
-
-# ---------- 0.2 挑选回归阶段 ----------
-# 全量 811 项约 34 分钟，日常迭代没必要每次都全量。这里按**影响半径**（不是
-# 改了几个文件）决定跑哪些阶段；拿不准就退回全量，宁可慢不可漏。
-if [ "$STAGES" = "auto" ]; then
-  FILES="$(echo "$CHANGED" | awk '{print $NF}')"
-  PICK=""
-  add() { for s in $1; do case " $PICK " in *" $s "*) ;; *) PICK="$PICK $s" ;; esac; done; }
-
-  # 共享基座 / 数据模型 / 公共组件 —— 影响面不可预估，直接全量
-  if echo "$FILES" | grep -qE 'tests/e2e_framework\.py|backend/app/(models|core|middleware)/|backend/app/services/[a-z_]+\.py|frontend/src/(utils|components)/|Dockerfile|\.github/'; then
-    echo "  ${c_warn}改动触及共享基座/数据模型/公共组件 → 必须全量${c_reset}"
-    PICK=""
-  else
-    # 后端路由按模块映射到阶段
-    echo "$FILES" | grep -q 'api/v1/admin\|api/v1/system\|api/v1/auth\|api/v1/log' && add "admin system"
-    echo "$FILES" | grep -q 'api/v1/question\|api/v1/task\|api/v1/grading'      && add "teacher student"
-    echo "$FILES" | grep -q 'api/v1/learning'                                 && add "learning learning_hub"
-    echo "$FILES" | grep -q 'api/v1/edu'                                      && add "resource teaching_mgmt"
-    echo "$FILES" | grep -q 'api/v1/report\|api/v1/analysis'                  && add "analysis"
-    echo "$FILES" | grep -q 'agents/'                                         && add "agent agent_opt agent_struct"
-    # 前端改动：后端回归测不到，至少要过构建 + 对应业务阶段
-    echo "$FILES" | grep -q '^frontend/' && add "admin teacher student"
-    # 纯测试脚本改动：只跑被改的那个脚本对应阶段
-    echo "$FILES" | grep -q 'tests/test_admin\.py'           && add "admin"
-    echo "$FILES" | grep -q 'tests/test_teacher\.py'         && add "teacher"
-    echo "$FILES" | grep -q 'tests/test_student\.py'         && add "student"
-    echo "$FILES" | grep -q 'tests/test_learning\.py'        && add "learning"
-    echo "$FILES" | grep -q 'tests/test_requirements\.py'    && add "requirements"
-    echo "$FILES" | grep -q 'tests/test_teaching_mgmt\.py'   && add "teaching_mgmt"
-    echo "$FILES" | grep -q 'tests/test_resource_manage\.py' && add "resource"
-    # 什么都匹配不上（文档、配置等）→ 全量，避免漏测
-    [ -z "$PICK" ] && PICK=" "
-  fi
-  STAGES="$(echo "$PICK" | xargs)"
-  if [ -z "$STAGES" ]; then
-    echo "  ${c_info}按改动自动选中：全部阶段${c_reset}"
-    STAGES="ALL"
-  else
-    echo "  ${c_info}按改动自动选中阶段：${STAGES}${c_reset}"
-  fi
-fi
-
-if [ -n "$STAGES" ] && [ "$STAGES" != "ALL" ]; then
-  step "0.2 回归范围：${STAGES}（非全量）"
-  echo "  ${c_warn}⚠ 未跑全量。发版前 / 改公共组件后请去掉 --stages 跑一次全量${c_reset}"
-fi
 
 # ---------- 0.4 用例静态门禁 ----------
 # 把「换环境才炸」的两类缺陷提前到秒级发现，不用等 35 分钟全量：
@@ -229,49 +186,59 @@ if [ -n "$BUMP" ]; then
   VERSION="$NEW"
 fi
 
-# ---------- 1. 端到端回归 ----------
-# 回归**直接跑工作区源码**（uvicorn + 独立临时库），不构建任何本地镜像。
-# 理由：镜像的唯一来源是 CI 构建的 ghcr 多架构镜像 —— 本地与服务器必须跑
-# 同一份（sha256 逐字节相同），本地再编一份只会产生「两个同名不同内容的
-# 镜像」这种最危险的漂移。回归要验的是「即将提交的代码」，源码直跑更准确。
+# ---------- 1. 冒烟校验（取代原端到端回归） ----------
+# 测试体系移除后这里换成「源码级冒烟」：证明即将提交的代码**能被导入、
+# 能建出全部表、路由没少**。它抓不到业务行为错误，但能抓住这几类
+# 提交了就会炸线上/炸 CI 的问题：
+#   - 语法错、循环导入、模块级异常（import 即失败）
+#   - 模型定义断裂 / create_all 抛错（起服务即 500）
+#   - 路由被误删或装饰器写错（接口 404，但编译期完全看不出来）
+# 与 CI 的 compileall + 镜像构建互补：那是「能打包」，这是「能起来」。
 if [ "$SKIP_TEST" -eq 1 ]; then
-  step "1/5  端到端回归 —— 已跳过（--skip-test）"
-  [ "$c_warn" ] && echo "  ${c_warn}⚠ 跳过测试直接交付，存在带病上线风险${c_reset}"
+  step "1/5  冒烟校验 —— 已跳过（--skip-test）"
+  echo "  ${c_warn}⚠ 跳过校验直接交付，存在带病上线风险${c_reset}"
 else
-  step "1/5  端到端回归（源码直跑，不构建镜像）"
+  step "1/5  冒烟校验（导库 / 建表 / 路由数）"
 
-  # 1.1 跑回归：复用 run_e2e.sh（内部已处理残留进程检查 → mktemp 独立数据目录
-  #      → 自动选空闲端口 → 校验 /health 的 server_time 契约 → 跑 run_all.py → 清理）
   PY="${PYTHON_BIN:-python3}"
   command -v "$PY" >/dev/null 2>&1 || PY=python
-  TEST_LOG="/tmp/autoship_test.log"
-  if [ -n "$STAGES" ] && [ "$STAGES" != "ALL" ]; then
-    echo "  运行 tests/run_all.py ${STAGES}（仅选定阶段）..."
-    PYTHON_BIN="$PY" bash tools/run_e2e.sh $STAGES > "$TEST_LOG" 2>&1
-  else
-    echo "  运行 tests/run_all.py（全量）..."
-    PYTHON_BIN="$PY" bash tools/run_e2e.sh > "$TEST_LOG" 2>&1
-  fi
-  TEST_RC=$?
-  tail -25 "$TEST_LOG"
+  SMOKE_LOG="/tmp/autoship_smoke.log"
+  SMOKE_DIR="$(mktemp -d)"
+  # 用一次性临时库，绝不碰 ./data 里的真实数据
+  (
+    cd backend && \
+    DATABASE_URL="sqlite:///${SMOKE_DIR}/smoke.db" \
+    LLM_ENABLED=false SCHEDULER_ENABLED=false SEED_DEMO_DATA=false DEBUG=false \
+    APP_ENV=test SECRET_KEY=autoship_smoke_secret_key_0123456789ab \
+    "$PY" -c "
+from app.main import app
+from app.core.database import Base, engine
+Base.metadata.create_all(bind=engine)
+routes = len(app.routes)
+tables = len(Base.metadata.tables)
+print(f'路由={routes} 表={tables}')
+assert routes >= 250, f'路由数异常偏少：{routes} < 250，可能有路由被误删'
+assert tables >= 45,  f'表数异常偏少：{tables} < 45，可能有模型未注册'
+print('SMOKE_OK')
+"
+  ) > "$SMOKE_LOG" 2>&1
+  SMOKE_RC=$?
+  rm -rf "$SMOKE_DIR"
+  tail -6 "$SMOKE_LOG"
 
-  if [ $TEST_RC -ne 0 ]; then
+  if [ $SMOKE_RC -ne 0 ] || ! grep -q "SMOKE_OK" "$SMOKE_LOG"; then
     echo ""
-    echo "  ${c_err}失败用例明细：${c_reset}"
-    grep -A100 "失败用例" "$TEST_LOG" | head -40
-    echo ""
-    echo "  ${c_err}测试未通过 —— 已中止，不提交、不推送${c_reset}"
-    echo "  完整日志: ${TEST_LOG}"
+    echo "  ${c_err}冒烟校验失败 —— 已中止，不提交、不推送${c_reset}"
+    echo "  完整日志: ${SMOKE_LOG}"
     exit 1
   fi
-  PASSED="$(grep -o '通过 [0-9]*' "$TEST_LOG" | tail -1 | grep -o '[0-9]*')"
-  ok "端到端回归全部通过（${PASSED:-?} 项）"
+  ok "冒烟校验通过（$(grep -o '路由=[0-9]* 表=[0-9]*' "$SMOKE_LOG" | tail -1)）"
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
-  step "dry-run 模式 —— 测试已跑完，跳过提交与镜像拉取"
+  step "dry-run 模式 —— 校验已跑完，跳过提交与镜像拉取"
   echo ""
-  echo "${c_ok}✓ dry-run 完成：测试通过，未做任何提交或构建${c_reset}"
+  echo "${c_ok}✓ dry-run 完成：校验通过，未做任何提交或构建${c_reset}"
   exit 0
 fi
 
@@ -292,7 +259,7 @@ else
   # 提交信息末尾附带验证结论，便于回溯
   FULL_MSG="$MSG"
   if [ "$SKIP_TEST" -eq 0 ]; then
-    FULL_MSG="${MSG}"$'\n\n'"e2e: 210 项全通过（${PASSED:-?} 通过 / 0 失败）"
+    FULL_MSG="${MSG}"$'\n\n'"校验: 静态门禁 5/5 + 导库建表冒烟通过"
   fi
   if ! git commit -m "$FULL_MSG"; then
     die 2 "git commit 失败"

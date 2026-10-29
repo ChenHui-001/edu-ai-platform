@@ -20,7 +20,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("BASE", "http://127.0.0.1:8081") + "/api/v1"
+BASE = os.environ.get("BASE", "http://127.0.0.1:8081") + "/api/v1"  # allow-hardcoded-host: BASE 环境变量可覆盖，此为本地兜底
 ADMIN_USER = os.environ.get("ADMIN_USER", "sysadmin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "Sys@Admin2026!Qw")
 
