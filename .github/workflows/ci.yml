@@ -81,6 +81,20 @@ jobs:
           SECRET_KEY: ci_unit_secret_key_0123456789abcdef
         run: python ../tests/test_unit_perf_batch1.py
 
+      - name: 离线单元回归（任务下发对象状态校验）
+        # 锁的是 `create_task` 里两条下发路径的**不对称设计**：
+        # - 指定学生不合规 → 报错（教师显式点名的人不能悄悄丢）
+        # - 班级里有人不合规 → 静默跳过（批量对象不该被一个人卡死）
+        # 这组不对称在 e2e 里测不出来：e2e 的种子数据里没有停用学生，
+        # 走不到该分支；且 e2e 断言的是"接口还活着"，证不了"两处都拦住了"。
+        # 断言在 fb634bc 之前的版本上有 23 项失败（反控实测），见文件头。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+          SECRET_KEY: ci_unit_secret_key_0123456789abcdef
+        run: python ../tests/test_unit_task_assign.py
+
   frontend:
     name: 前端构建
     runs-on: ubuntu-latest
