@@ -236,22 +236,39 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（2.0.0）
+## 八、当前状态（2.1.12）
 
 | 项 | 值 |
 |---|---|
-| VERSION | `2.0.0` |
-| commit | `02c4643`（教学管理 V2：任务/批改/教案） |
-| 本地镜像 | `nanpo/edu-ai-platform:2.0.0` / `:latest` / `:sha-02c4643`（digest `sha256:d17d3ad0…`） |
-| ghcr | 未推送（手动发布 Docker Hub；未触发 CI） |
-| Docker Hub | 已推送 `2.0.0`（manifest-list digest `sha256:d17d3ad086e94c0a5411b280019189042d32c5ff2e2049c814ef747ee99a4d5c`） |
-| latest | 已推送，与 `2.0.0` 同一 digest |
-| 发布后校验 | 容器 health=`healthy`、version=`2.0.0`；三页教学统计/列表、47 页浏览器冒烟通过 |
-| CI | 未触发（手动发布）；后续遵循 `docs/DELIVERY_RULES.md` |
+| VERSION | `2.1.12` |
+| commit | `f983deb`（第二批性能修复：N+1 / 超取 / 聚合下推） |
+| ghcr 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.1.12` |
+| manifest index digest | `sha256:ddaf57f556e68ae2747d151cc5dc4bb22e79b6b464f877b8ccedb7099bc5bd79` |
+| amd64 子镜像 | `sha256:213261b88bf44c683a94f6a796273d1fcd1ed14c95b175d835f12f4eb34a9c21` |
+| arm64 子镜像 | `sha256:179d53cec34598f28fb2c467d777839754a5b9b23fba339b17f2ce993222c65e` |
+| CI | `f983deb` 全 job success（前端构建 / 后端检查 / 210 项 e2e / 镜像构建 / 发布三步） |
+| 本地容器 | `2.1.12`，`Up (healthy)`，`/app/BUILD_INFO commit=f983deb` |
+| 服务器容器 | `186.241.77.194:8081` 容器 `Up (healthy)`，`BUILD_INFO commit=f983deb` |
+| 四层一致性 | `verify_consistency.py --host` → **通过 11 / 不一致 0** |
+| 生产接口抽验 | `/health`、`/auth/login`、`/question/questions/stats`、`/edu/knowledge/stats`、`/task/my/tasks`、`/system/users`、`/logs/operation`、`/report/student/overview` 全部 HTTP 200 |
 
-> 最近一次发布（1.0.41）的四闸门结果作为流程有效性参照：
-> 发布后校验 **10 通过 / 0 失败 / 0 警告 / 0 跳过**（EXIT=0），
-> CI 两个 run 全 success（`6bac8a6`、`67e7e3e`，含 postflight）。
+> 最近一次发布（2.1.12）的四闸门结果作为流程有效性参照：
+> 全量 e2e **863 项 / 通过 849 / 失败 0 / 环境跳过 14**，零回归；
+> CI 全部 job success；四层 fingerprint 逐一比对 `11/11`。
+
+### 2.1.12 的「sha256 不一致」排查记录（重要教训）
+
+首轮 `verify_consistency.py --host` 报 `两端关键文件 sha256: 不一致 ['app/api/v1/grading.py', 'VERSION']`。
+四层 commit 却完全一致 —— 这个组合本身就是线索：**commit 一致而文件内容不同，说明参与比对的容器不是镜像本身**。
+
+根因：脚本的 `_ctr_hashes()` 取的是**本机同名容器 `edu-platform`** 的内容，而不是从 registry
+拉取镜像来比对。本机容器当时仍停在 `2.1.7`（已运行 20 小时），而 `.env` 里 `IMAGE_TAG` 还是
+更早的 `2.0.6` —— 三重版本各自飘移。
+
+结论：**该条校验的真实语义是「本地开发容器 == 服务器容器」，不是「镜像 == 服务器」**。
+它的价值仍然存在（能发现本地镜像滞后），但报错文案容易被误读成发版漂移。
+处理方式：把 `.env` 的 `IMAGE_TAG` 对齐 `VERSION`、重建本地容器后重跑，得 `11/11`。
+后续若再遇此报错，先 `docker ps --filter name=edu-platform` 看本机容器的镜像标签。
 
 ### 关于 `commit` 与 `镜像内 commit` 不完全相同（1.0.41 发布时实例）
 
