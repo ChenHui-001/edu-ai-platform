@@ -92,7 +92,6 @@ APScheduler。cron 是墙钟触发，N 个进程会在同一分钟同时叫醒�
 
 退出码：0 = 全部通过，1 = 有失败。
 """
-import json
 import os
 import subprocess
 import sys
@@ -117,6 +116,8 @@ if _BACKEND not in sys.path:
 
 _FAILED = []
 _PASSED = 0
+
+from app.models import ScheduledJob as _JOB_MODEL  # noqa: E402  供 V1⑥ 直接操作
 
 # 子进程可执行的工作体：调产品代码的 _execute，被 monkeypatch 成幂等的
 # 「插 N 条通知」以便数副作用。用环境变量传参，不靠命令行（Windows 引号地狱）。
@@ -365,22 +366,46 @@ def main():
        c["notification"] == 900, f"notification={c['notification']} 期望 900")
     ok("V1 ③ ★ 无锁时执行日志两条",
        c["job_execution_log"] == 2, f"job_execution_log={c['job_execution_log']} 期望 2")
-    # 这条不是「期望 2」—— 实测是 1，而且是**必然**的 1，原因值得单独说清：
-    # `job.run_count += 1` 是 ORM 层的 read-modify-write（SELECT 出 0 → Python
-    # 加 1 → UPDATE SET run_count=0）。两个进程各自读到同一个快照 0，各自写回 1，
-    # 后提交的覆盖先提交的 → 两次执行只记 1 次。
-    #
-    # 实测（同一库、两个独立 session 交错）：
-    #   两个 session 各自读到: 0 0     ← 都基于同一快照
-    #   交错提交后 run_count = 1       ← 期望 2，实际 1
-    #
-    # 所以这条断言锁的是**一个独立于写放大的缺陷**：无锁时「执行次数」统计
-    # 永久偏低。对有锁版本来说这是顺带修好的（V2④ 里 run_count 恰好准确）。
-    ok("V1 ④ ★ 无锁时 run_count 因 lost update 失真（只记 1 次，实际执行 2 次）",
-       c["run_count"] == 1,
-       f"run_count={c['run_count']} 期望 1（read-modify-write 覆盖，说明统计失真）")
+    # V1 ④ 刻意**不断言精确值**。`run_count` 在进程级并发下是 1 或 2，取决于
+    # 两次 read-modify-write 恰好交错（1，lost update）还是串行（2）。
+    # 实测 5 次里有 2 次得到 2。断言精确值会让这条用例随机红 —— 而 CI 里
+    # **随机红的断言比没有断言更坏**：它训练人忽略失败。
+    # lost update 本身是确定性的，用 V1 ⑥ 在单进程内精确复现（见下）。
+    ok("V1 ④ 无锁时 run_count 只能说 ≤2（该值并发下不确定，精确判定见 V1 ⑥）",
+       c["run_count"] <= 2, f"run_count={c['run_count']}（1=lost update / 2=恰好串行）")
     ok("V1 ⑤ 无锁时锁表始终为空（对照组不应写锁）",
        c["lock_rows"] == 0, f"lock_rows={c['lock_rows']}")
+
+    # V1 ⑥：把 lost update 从"进程竞速"里剥出来，做成**确定性**断言。
+    # 两个 session 各自读同一行、各自 +1、交错提交 —— 结果必为 1，不是 2。
+    # 这条与 A2 的锁无关，它锁的是一个独立缺陷：`run_count += 1` 是 ORM 层
+    # read-modify-write，不是 SQL 原子自增。有锁时不会触发（V2④），
+    # 但将来若引入"同一任务允许并发执行不同分片"，它会重新出现。
+    from sqlalchemy import text as _text
+    from app.core.database import SessionLocal as _SL
+    reset_state(job_id)
+    _a, _b = _SL(), _SL()
+    try:
+        _ja = _a.get(_JOB_MODEL, job_id)
+        _jb = _b.get(_JOB_MODEL, job_id)
+        both_saw = (_ja.run_count, _jb.run_count)
+        _ja.run_count += 1
+        _a.commit()
+        _jb.run_count += 1
+        _b.commit()
+    finally:
+        _a.close()
+        _b.close()
+    _dbr = _SL()
+    try:
+        final = _dbr.get(_JOB_MODEL, job_id).run_count
+        _dbr.execute(_text("UPDATE sys_scheduled_job SET run_count=0 WHERE id=:j"), {"j": job_id})
+        _dbr.commit()
+    finally:
+        _dbr.close()
+    ok("V1 ⑥★ lost update 确定性复现：两个 session 各 +1、交错提交 → 只记 1",
+       both_saw == (0, 0) and final == 1,
+       f"两者各自读到 {both_saw}，交错提交后 run_count={final}（期望 1，不是 2）")
 
     # ---------- V2：有锁，租约充足 ----------
     print("\nV2、有锁（租约 600s）—— 严格互斥")
@@ -498,9 +523,61 @@ def main():
        got and still_valid == 1, f"expire_at={expire_at!r} still_valid={still_valid}")
     release_job_lock(job_id)
 
+    # ---------- V7：锁不阻塞业务写 ----------
+    print("\nV7、锁不阻塞业务写 —— 抢锁事务必须 commit **并** close 之后才跑任务体")
+    reset_state(job_id)
+    (rc_a, out_a, err_a), (rc_b, out_b, err_b) = run_two_procs(job_id, admin_id)
+    c = counts(job_id)
+    ok("V7 ① 互斥仍然成立（前置条件，否则本组无意义）",
+       c["notification"] == 450, f"notification={c['notification']}")
+    ok("V7 ② 执行完毕后锁行已释放，业务写不会被残留锁挡住",
+       c["lock_rows"] == 0, f"lock_rows={c['lock_rows']} 期望 0")
+    # 直接量「抢锁返回的那一瞬间，写锁是否已交还」：抢完立刻用另一个连接写库。
+    #
+    # ⚠️ 这条断言的判别力边界（我实测过，别误解）：
+    # 把 job_lock.acquire_job_lock 的 `db.commit()` 删掉再跑，V4 会红
+    # （900 通知 / 2 条日志 / 锁行残留）+ V6③ 因查不到锁行而崩 —— 也就是说
+    # **commit 那步是判据，V4/V6 已经守住了**。
+    # 而只删 `db.close()`（保留 commit）时本组**仍然全绿**，因为 pysqlite 在
+    # commit 之后已把写锁交还，连接还开着不构成阻塞。
+    # 所以 V7 ③④ 是**护栏**而不是判据：它守的是「将来有人把 commit 挪到
+    # 任务体之后」这类改动在运行时立刻可见，但它抓不到「close 被删」。
+    # 审阅时不要因为它反向验证不红就删掉。
+    from app.services.job_lock import acquire_job_lock as _acq, release_job_lock as _rel
+    reset_state(job_id)
+    t0 = time.time()
+    got = _acq(job_id, lease_seconds=60)
+    acq_ms = (time.time() - t0) * 1000
+    import sqlite3 as _sq
+    con2 = _sq.connect(_DB_PATH, timeout=0.2)
+    try:
+        t1 = time.time()
+        con2.execute(
+            "INSERT INTO sys_notification (user_id, title, content, type, biz_type, biz_id, is_read, created_at)"
+            " VALUES (?, 'v7', 'concurrent-write', 'system', 'a2probe', 0, 0, '2026-01-01 00:00:00')",
+            (admin_id,))
+        con2.commit()
+        write_ms = (time.time() - t1) * 1000
+    finally:
+        con2.close()
+    _rel(job_id)
+    ok("V7 ③ 抢锁本身是独立短事务（< 200ms，没有把 session 挂住）",
+       got and acq_ms < 200, f"acquire 耗时 {acq_ms:.1f}ms")
+    ok("V7 ④ 持锁期间另一连接可立即写入（< 50ms）【护栏，判据在 V4/V6】",
+       write_ms < 50, f"并发写耗时 {write_ms:.1f}ms（未 commit 时会到 2000ms+）")
+
+    # ---------- V8：租约配置守卫 ----------
+    print("\nV8、租约配置守卫 —— 租约为 0 等于锁完全失效且不报任何错")
+    from app.core.config import Settings
+    fresh = Settings()
+    ok("V8 ① ★ JOB_LOCK_LEASE_SECONDS 默认值是 1800 而不是 0",
+       fresh.JOB_LOCK_LEASE_SECONDS == 1800, f"got={fresh.JOB_LOCK_LEASE_SECONDS}")
+    ok("V8 ② 是正整数类型",
+       isinstance(fresh.JOB_LOCK_LEASE_SECONDS, int) and fresh.JOB_LOCK_LEASE_SECONDS > 0,
+       f"type={type(fresh.JOB_LOCK_LEASE_SECONDS).__name__}")
+
     # ---------- 汇总 ----------
     total = _PASSED + len(_FAILED)
-    print(f"\n{'=' * 66}")
     print(f"  离线回归完成：共 {total} 项 | 通过 {_PASSED} | 失败 {len(_FAILED)}")
     if _FAILED:
         print("\n失败用例：")

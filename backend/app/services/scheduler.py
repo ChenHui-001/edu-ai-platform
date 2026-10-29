@@ -99,6 +99,21 @@ def _run_locked(job_id: int, func_path: str, trigger_type: str) -> None:
             job.run_count += 1
         db.commit()
         logger.info(f"任务 {name} 执行成功: {result}")
+
+        # 租约超半告警：**不做续租**（要引入后台线程 + 续租失败处理 +
+        # 续租与放锁的竞态，复杂度远超收益），改用它兜底。
+        #
+        # 表达式说明：duration_ms 单位是毫秒，租约是秒，所以「租约的一半」
+        # = lease * 1000 / 2 = lease * 500。写成 `* 500` 即使数值正确也
+        # 完全不可读 —— 下一个人会以为是"500 倍"而不敢动，或误改成 `* 500`
+        # 之外的数。故拆成 `* 1000 // 2` 并在此注明。
+        half_lease_ms = settings.JOB_LOCK_LEASE_SECONDS * 1000 // 2
+        if log.duration_ms and log.duration_ms > half_lease_ms:
+            logger.error(
+                f"任务 {name} 耗时 {log.duration_ms}ms 已超过租约的一半"
+                f"（{half_lease_ms}ms），存在锁被其他进程提前抢占、"
+                f"两个进程同时写的风险，请调大 JOB_LOCK_LEASE_SECONDS"
+            )
     except Exception as exc:
         logger.opt(exception=True).error(f"任务 {func_path} 执行失败: {exc}")
         if log:
