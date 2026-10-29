@@ -526,7 +526,7 @@ def knowledge_effect(
     subject_id: Optional[int] = None, class_id: Optional[int] = None,
     task_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
 ):
     """知识点教学效果评估。
 
@@ -536,7 +536,27 @@ def knowledge_effect(
     - subject_id：按学科过滤题目
     此前前端传 class_id/task_id 但后端只声明 subject_id，参数被 FastAPI
     静默丢弃，导致「选择任务」后展示的仍是全库聚合数据（假过滤）。
+
+    数据范围：本接口此前**完全没有 DataScope** —— 不传参即聚合全校作答，
+    传任意 class_id 就读他班，传任意 task_id 就读他班学情结论（水平越权）。
+    现在按同文件 class_overview / student_comparison / student_detail 的
+    同一套口径收敛。注意 class_id / task_id 是**可空**的（前两处是必填），
+    所以不能照抄 `class_id not in allowed`，必须逐个判「传了才校验」。
     """
+    if not scope.is_super:
+        allowed = scope.class_ids()
+        # ① 显式传了班级：必须是本人任教/管辖的班级
+        if class_id is not None and allowed is not None and class_id not in allowed:
+            raise BusinessException("无权查看该班级数据")
+        # ② 显式传了任务：任务学情结论属他班数据，只有发布者（或超管）可读。
+        # 与 grading.py 的报告/批改类端点保持同一归属口径（Task.creator_id）。
+        if task_id is not None:
+            task = db.get(Task, task_id)
+            if not task:
+                raise NotFoundException("任务不存在")
+            if task.creator_id != user.id:
+                raise PermissionException("只能查看自己发布任务的学情数据")
+
     stmt = (
         select(
             KnowledgePoint.name,
@@ -556,6 +576,15 @@ def knowledge_effect(
         if class_id:
             stmt = stmt.join(User, _Sub.student_id == User.id).where(
                 User.class_id == class_id)
+    elif not scope.is_super:
+        # ③ 两个过滤都没传：非超管不能退化成全校聚合。这里选择「把查询收敛到
+        # 本人可访问班级」而不是直接 403 —— 前端未选班级时页面仍需渲染出
+        # 本人任教范围的效果图，静默拒绝会造成空白页；而放行全校又会泄数据。
+        # 收敛后 allowed 为空列表时 IN () 恒假，等价于「无可统计数据」。
+        from app.models import Submission as _Sub
+        stmt = stmt.join(_Sub, Answer.submission_id == _Sub.id).join(
+            User, _Sub.student_id == User.id).where(
+            User.class_id.in_(allowed or []))
     rows = db.execute(stmt.group_by(KnowledgePoint.name)).all()
 
     items = []
