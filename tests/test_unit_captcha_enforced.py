@@ -490,6 +490,189 @@ def case_order(u):
 
 
 # ============================================================
+# G、登录失败 IP 限流（S7 配套：堵住换账号撞库）
+# ============================================================
+def case_login_ip_rate(u):
+    print("\nG、登录失败 IP 限流")
+    c = make_client(True)
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.api.v1 import auth as auth_mod
+    from app.core.security import hash_password as _hp
+    from app.models import IdentityType, User, UserStatus
+
+    TEST_IP = "198.51.100.42"   # TEST-NET-2，不会被真实流量污染
+    OTHER_IP = "198.51.100.99"
+
+    # ★ 必须**换用户名**才能测到 IP 限流。
+    # 用同一个账号连发 30 次错密码，第 5 次就会触发**按账号**的锁定
+    # （MAX_LOGIN_FAIL=5），后续请求变成「账号已锁定」，走不到 IP 计数
+    # —— 第一版就是这么红的（第 31 次仍返回 401「账号已锁定」）。
+    # 这也正是 IP 限流存在的理由：撞库是**换账号**的，按账号锁定对它无效。
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        for i in range(40):
+            db.add(User(
+                username=f"iprate_{i}", password=_hp("Never@Match1"),
+                real_name=f"限流探针{i}", identity=IdentityType.TEACHER.value,
+                status=UserStatus.ACTIVE.value, must_change_password=False,
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+    _seq = {"n": 0}
+
+    def reset_ip_bucket():
+        auth_mod._LOGIN_FAIL_HITS.pop(TEST_IP, None)
+        auth_mod._LOGIN_FAIL_HITS.pop(OTHER_IP, None)
+
+    def login_from_ip(user=None, password=None, captcha_ok=True,
+                      ip=TEST_IP):
+        """从指定 IP 发一次登录。captcha_ok=False 时不带 key（验证码层就拒）。"""
+        if not captcha_ok:
+            key = None
+        else:
+            _seq["n"] += 1
+            key = f"k_ip_{_seq['n']}"
+            put_captcha(key, text=SEED_CAPTCHA_TEXT)
+        # 默认每次换一个用户名：避免撞上按账号的 5 次锁定
+        if user is None:
+            user = f"iprate_{_seq['n'] % 40}"
+        if password is None:
+            password = "definitely-wrong-pwd"
+        body = {"username": user, "password": password}
+        if key:
+            body["captcha_key"] = key
+            body["captcha"] = SEED_CAPTCHA_TEXT
+        r = c.post("/api/v1/auth/login", json=body, headers={"X-Real-IP": ip})
+        payload = r.json() if r.content else {}
+        return r.status_code, payload.get("message", "")
+
+    # ---- ① 凭据错误会计数 ----
+    reset_ip_bucket()
+    sc, msg = login_from_ip()
+    ok("① 验证码有效 + 密码错误 → 401 且计入该 IP",
+       sc == 401 and len(auth_mod._LOGIN_FAIL_HITS.get(TEST_IP, [])) == 1,
+       f"status={sc} hits={len(auth_mod._LOGIN_FAIL_HITS.get(TEST_IP, []))}")
+
+    # ---- ② ★ 关键：验证码错误**不**计数 ----
+    # 如果这里也计数，攻击者可以对着任意用户名狂发错码，把**受害者所在 IP**
+    # （校园网/公司 NAT 出口）刷进冷却 —— 几次请求就能让一栋楼登不上。
+    reset_ip_bucket()
+    for _ in range(50):
+        sc, _m = login_from_ip(captcha_ok=False)
+        assert sc == 400, f"预期验证码层拒绝，实际 {sc}"
+    ok("② ★ 验证码错误不累加 IP 失败计数（防区域性拒绝服务）",
+       len(auth_mod._LOGIN_FAIL_HITS.get(TEST_IP, [])) == 0,
+       f"50 次错码后 hits={len(auth_mod._LOGIN_FAIL_HITS.get(TEST_IP, []))}")
+
+    # ---- ③ 达到阈值后进入冷却（换账号，单账号锁定不参与）----
+    reset_ip_bucket()
+    limit = auth_mod._LOGIN_FAIL_IP_LIMIT
+    bad = []
+    for i in range(limit):
+        sc, _m = login_from_ip()
+        if sc != 401:
+            bad.append((i + 1, sc))
+    ok(f"③ 前 {limit} 次凭据错误（轮换账号）均返回 401，未被提前拦",
+       not bad, f"提前拦截={bad[:3]}")
+
+    sc, msg = login_from_ip()
+    ok("★ 超过阈值后该 IP 被冷却（400 且提示失败频繁）",
+       sc == 400 and "频繁" in msg, f"status={sc} msg={msg!r}")
+
+    # ---- ④ 冷却期内即使密码正确也拒绝（否则攻击者照样消耗 PBKDF2）----
+    sc, msg = login_from_ip(user=u["username"], password=PWD)
+    ok("★ 冷却期内即使密码正确也被拒（限流在比密码之前）",
+       sc == 400 and "频繁" in msg, f"status={sc} msg={msg!r}")
+
+    # ---- ⑤ 登录成功清零该 IP ----
+    reset_ip_bucket()
+    for _ in range(limit - 1):
+        login_from_ip()
+    before = len(auth_mod._LOGIN_FAIL_HITS.get(TEST_IP, []))
+    sc, msg = login_from_ip(user=u["username"], password=PWD)
+    after = len(auth_mod._LOGIN_FAIL_HITS.get(TEST_IP, []))
+    ok("⑤ ★ 登录成功清空该 IP 的失败记录",
+       sc == 200 and before == limit - 1 and after == 0,
+       f"before={before} status={sc} after={after}")
+
+    # 不清零的话，NAT 后几十人共用同一 IP 时，一个人输错几次就能把整栋楼锁死：
+    # 「刚输对密码的人也进不来」。这一条守的就是这个。
+    ok("⑥ 清零后可继续正常登录（不会累积到永久锁死）",
+       login_from_ip(user=u["username"], password=PWD)[0] == 200, "")
+
+    # ---- ⑦ 其他 IP 不受影响 ----
+    reset_ip_bucket()
+    for _ in range(limit + 1):
+        login_from_ip()
+    sc_other, msg_other = login_from_ip(user=u["username"], password=PWD, ip=OTHER_IP)
+    ok("⑦ 限流按 IP 隔离，另一个 IP 不受影响",
+       sc_other == 200, f"status={sc_other} msg={msg_other!r}")
+
+    # ---- ⑧ 账号状态类失败不计入 IP 限流 ----
+    # 「正在审批中」「账号已锁定」是**已知账号状态**，不是猜测结果。
+    # 把它们算进 IP 限流会让「点了 30 次待审批账号」把整个 NAT 出口拉黑。
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        row = db.get(User, u["uid"])
+        row.status = UserStatus.PENDING.value
+        row.login_fail_count = 0
+        row.locked_until = None
+        db.commit()
+    finally:
+        db.close()
+    reset_ip_bucket()
+    key = f"k_pending_{_seq['n']}"
+    _seq["n"] += 1
+    put_captcha(key, text=SEED_CAPTCHA_TEXT)
+    sc_p, msg_p = None, ""
+    r_p = c.post("/api/v1/auth/login",
+                 json={"username": u["username"], "password": PWD,
+                       "captcha_key": key, "captcha": SEED_CAPTCHA_TEXT},
+                 headers={"X-Real-IP": TEST_IP})
+    sc_p = r_p.status_code
+    msg_p = (r_p.json() if r_p.content else {}).get("message", "")
+    pending_hits = len(auth_mod._LOGIN_FAIL_HITS.get(TEST_IP, []))
+    ok("⑧ 账号状态类失败（审批中）不计入 IP 限流",
+       sc_p == 401 and "审批" in msg_p and pending_hits == 0,
+       f"status={sc_p} msg={msg_p!r} hits={pending_hits}")
+
+    # 复原
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        row = db.get(User, u["uid"])
+        row.status = UserStatus.ACTIVE.value
+        row.login_fail_count = 0
+        row.locked_until = None
+        db.commit()
+    finally:
+        db.close()
+
+    # ---- ⑨ 不存在账号的失败照常计数（防用户名枚举）----
+    reset_ip_bucket()
+    for _ in range(3):
+        key = f"k_nouser_{_seq['n']}"
+        _seq["n"] += 1
+        put_captcha(key, text=SEED_CAPTCHA_TEXT)
+        c.post("/api/v1/auth/login",
+               json={"username": "no_such_user_zzz", "password": "x",
+                     "captcha_key": key, "captcha": SEED_CAPTCHA_TEXT},
+               headers={"X-Real-IP": TEST_IP})
+    nouser_hits = len(auth_mod._LOGIN_FAIL_HITS.get(TEST_IP, []))
+    ok("⑨ 不存在账号的失败照常计数（防用户名枚举）",
+       nouser_hits == 3, f"3 次后 hits={nouser_hits}")
+
+    reset_ip_bucket()
+
+
+
+# ============================================================
 # 主流程
 # ============================================================
 def main():
@@ -506,6 +689,7 @@ def main():
     case_one_time(u)
     case_expired(u)
     case_order(u)
+    case_login_ip_rate(u)
 
     print("\n" + "=" * 70)
     total = _PASSED + len(_FAILED)

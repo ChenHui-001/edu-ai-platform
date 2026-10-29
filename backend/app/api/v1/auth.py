@@ -15,7 +15,7 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exception import BusinessException
+from app.core.exception import AuthException, BusinessException
 from app.core.security import (
     create_access_token, decode_token, generate_captcha, hash_password,
     revoke_token, store_captcha, store_reset_code, validate_password_strength,
@@ -88,6 +88,74 @@ def _check_captcha_rate(ip: str) -> None:
         if len(bucket) >= _CAPTCHA_IP_LIMIT:
             raise BusinessException("请求过于频繁，请稍后再试")
         bucket.append(now)
+
+
+# ---------------------------------------------------------------- 登录失败 IP 限流
+# 为什么需要（S7 配套）：`auth_service.authenticate` 的失败锁定是**按账号**的
+# （5 次 / 15 分钟），对**撞库**几乎无效 —— 攻击者每次换一个用户名，每个账号
+# 只失败 1 次，永远触发不了任何账号的锁定。而用户名列表（teacher1、stu731
+# 这种规则化命名）在这个系统里是**可枚举**的。真正被复用同一份口令去试的，
+# 是 IP。
+#
+# 与取码桶同理留在内存（守滥用频率而非认证正确性），多 worker 下限额变 N 倍：
+# 30×N 次/10min 仍远低于可爆破量级（8 位密码 + 图形验证码），而落库等于给
+# 匿名端点引入无鉴权的写放大面 —— 与"防刷"的初衷相反。
+#
+# 为什么是 30 而不是 10：e2e / CI 的全部请求都从 127.0.0.1 这一个 IP 进来，
+# 而回归里有 8 处**刻意**的失败登录（test_admin.py 的错误密码、test_system.py
+# 的锁定策略跑 5 次、待审批账号登录等）。阈值取 10 会把「同一 IP 内 10 次失败」
+# 变成回归的假红。30 保留了安全意义（原先**完全无限**），又给正常误操作和
+# 测试留出余量。
+#
+# 关键设计：**只对"凭据错误"计数**，不对"验证码错误"计数。
+# 理由有两条，缺一不可：
+#   1. 防放大攻击：验证码错误在验证码校验层就返回了，如果也计数，攻击者
+#      可以对着任意用户名狂发错码，把**别人所在 IP（如校园网出口）**刷进
+#      冷却 —— 一个只花几次请求就能实施的区域性拒绝服务。
+#   2. 不惩罚正常用户：验证码看错是高频误操作，把它算进"爆破"会误伤。
+# 只有"验证码通过 + 密码错误"才说明对方拿到了有效码还在撞口令，那才是爆破。
+_LOGIN_FAIL_HITS: Dict[str, list] = {}
+_LOGIN_FAIL_LOCK = threading.Lock()
+_LOGIN_FAIL_IP_LIMIT = 30       # 同 IP 每 10 分钟最多 30 次凭据错误
+_LOGIN_FAIL_IP_WINDOW = 600     # 窗口秒数
+
+
+def _check_login_fail_rate(ip: str) -> None:
+    """在**校验密码之前**检查该 IP 是否已被冷却。
+
+    必须前置：冷却期间直接拒绝，不查库、不比密码，避免冷却形同虚设
+    （否则攻击者照样每次跑到 PBKDF2 比较那一步，CPU 照样被打）。
+    """
+    now = datetime.now()
+    with _LOGIN_FAIL_LOCK:
+        bucket = _LOGIN_FAIL_HITS.get(ip)
+        if not bucket:
+            return
+        bucket[:] = [t for t in bucket if (now - t).total_seconds() < _LOGIN_FAIL_IP_WINDOW]
+        if len(bucket) >= _LOGIN_FAIL_IP_LIMIT:
+            remain = int(_LOGIN_FAIL_IP_WINDOW - (now - bucket[0]).total_seconds())
+            raise BusinessException(
+                f"该网络登录失败过于频繁，请 {max(remain, 1) // 60 + 1} 分钟后再试")
+
+
+def _record_login_fail(ip: str) -> None:
+    """记录一次**凭据错误**（调用方只在密码不正确时调，见 `_check_login_fail_rate`）。"""
+    now = datetime.now()
+    with _LOGIN_FAIL_LOCK:
+        bucket = _LOGIN_FAIL_HITS.setdefault(ip, [])
+        bucket[:] = [t for t in bucket if (now - t).total_seconds() < _LOGIN_FAIL_IP_WINDOW]
+        bucket.append(now)
+
+
+def _clear_login_fail(ip: str) -> None:
+    """登录成功后清空该 IP 的失败记录。
+
+    不清的话，一个 IP 在 10 分钟窗口内累积到 30 次失败后就再也登不进 ——
+    包括刚刚输对密码的那个人。校园网/公司出口 NAT 后几十人共用一个 IP，
+    不清零会让「有一个人输错几次」变成「整栋楼都登不上」。
+    """
+    with _LOGIN_FAIL_LOCK:
+        _LOGIN_FAIL_HITS.pop(ip, None)
 
 
 @router.get("/captcha", summary="获取图形验证码")
@@ -233,9 +301,25 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
     _verify_captcha_or_raise(db, payload.captcha_key, payload.captcha)
     ip = get_client_ip(request)
     device = get_user_agent(request)
-    user, token, refresh = auth_service.authenticate(
-        db, payload.username, payload.password, ip, device
-    )
+    # IP 级失败冷却：在碰库、比密码之前就拒。冷却期内不应再消耗一次 PBKDF2。
+    _check_login_fail_rate(ip)
+    try:
+        user, token, refresh = auth_service.authenticate(
+            db, payload.username, payload.password, ip, device
+        )
+    except AuthException as exc:
+        # 只有走到这里才说明「验证码有效 + 凭据不对」—— 这才是爆破信号。
+        # 验证码错误在上面就抛了，不计数（防放大攻击，理由见 _check_login_fail_rate）。
+        #
+        # 用 msg 精确区分，不能一刀切计所有 AuthException：
+        #   - 「账号或密码错误」→ 计入（真正的凭据错误）
+        #   - 「账号已锁定」「账号正在审批中」「账号状态异常」→ 不计入
+        # 后几种是**已知账号状态**，不是猜测结果；把它们算进 IP 限流会让
+        # 「点了 30 次待审批账号」把整个 NAT 出口拉黑 10 分钟。
+        if (exc.message or "").startswith("账号或密码错误"):
+            _record_login_fail(ip)
+        raise
+    _clear_login_fail(ip)
     return ok(
         {
             "access_token": token,
