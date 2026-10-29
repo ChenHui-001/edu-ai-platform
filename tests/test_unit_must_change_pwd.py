@@ -193,10 +193,18 @@ def make_client(enforced):
 
     刻意不用 `with TestClient(app)`：进上下文会触发 lifespan → 跑 init_all
     （整套种子 + 迁移 + Agent 预热），既慢又会搅乱测试数据。
+
+    ⚠️ 同时把 `CAPTCHA_ENFORCED` 固定成 **False**（S7 之后必须）。
+    本文件测的是「强制改密拦截」，不是验证码；而强制化后不带 `captcha_key`
+    的登录会**先**被 400「请输入图形验证码」拦掉，根本走不到被测分支 ——
+    第一版就是这样红的（二①②、三①②、四前置，共 5 项）。
+    这里显式关掉，是为了让被测对象唯一：本文件不该顺带验证 S7。
+    验证码强制化本身的断言在 `tests/test_unit_captcha_enforced.py`。
     """
     from fastapi.testclient import TestClient
 
     settings.MUST_CHANGE_PASSWORD_ENFORCED = enforced
+    settings.CAPTCHA_ENFORCED = False
     return TestClient(app, raise_server_exceptions=False)
 
 

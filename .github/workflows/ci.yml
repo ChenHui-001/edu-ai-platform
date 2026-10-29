@@ -124,6 +124,29 @@ jobs:
           SECRET_KEY: ci_unit_secret_key_0123456789abcdef
         run: python ../tests/test_unit_must_change_pwd.py
 
+      - name: 离线回归（S7 图形验证码强制化 / 开关单向收紧）
+        # 修复前 `auth.py` 的登录与注册都是
+        #   `if payload.captcha_key and not verify_captcha(...)`
+        # 同一个短路绕过：**不写这个字段**就整段跳过校验。图形验证码对爆破
+        # 零防御，只剩按账号的 5 次/15 分钟锁定（换账号即重置）。
+        #
+        # 这组断言只能在这一层：e2e 服务端以 CAPTCHA_ENFORCED=false 启动
+        # （130+ 处登录/注册调用不带验证码），`true` 分支在 e2e 里不执行；
+        # 而且验证码答案只存在于 PNG 里（`sys_captcha` 存明文，接口只回图和
+        # key），e2e 构造不出"带正确码"的正例。
+        # 断言在修复前的版本上有 4 项失败（反向验证实测），见文件头。
+        #
+        # ⚠️ 这里**刻意不注入 CAPTCHA_ENFORCED**：本文件靠自己实例化
+        # `Settings()` 读默认值（A 组①），若从外部注入 false 会让默认值防呆
+        # 失效。文件内部用 `_fresh_settings()` 剥离该变量后读取。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+          DEBUG: 'false'
+          SECRET_KEY: ci_unit_secret_key_0123456789abcdef
+        run: python ../tests/test_unit_captcha_enforced.py
+
       - name: 离线回归（A2 定时任务执行锁 / 多 worker 互斥）
         # `uvicorn --workers N` 下 N 个 worker 各跑一份 APScheduler，cron 是墙钟
         # 触发 -> 同一分钟同时叫醒同一个任务，而 `max_instances=1` 只管单进程。
@@ -291,6 +314,18 @@ jobs:
       - name: 定义强制改密开关取值
         run: echo "MUST_CHANGE_PASSWORD_ENFORCED=false" >> "$GITHUB_ENV"
 
+      # ---- 图形验证码强制化开关（S7）：同上，必须同时喂给两个进程 ----
+      # 服务端为什么设 false：e2e 有 100 处 `.login()` + 26 处裸
+      # `post("/auth/login")` + 7 处裸 `post("/auth/register")`，均不带验证码；
+      # 而答案只存在于 PNG 图里（`sys_captcha` 表存明文，接口只回图和 key），
+      # 无法脚本化。关掉开关**不会**让错误验证码通过 —— `_verify_captcha_or_raise`
+      # 的 false 分支只在"没带 key"时放行，带了 key 一律真校验（单向收紧）。
+      # 测试进程为什么也要：test_requirements.py 的「不传验证码登录」那条断言
+      # 按开关取值分支（400 / 200 都是被测行为），少注入一处必红。
+      # 故与上面一样在这一步单点定义，下面两处取同一个值。
+      - name: 定义图形验证码强制化开关取值
+        run: echo "CAPTCHA_ENFORCED=false" >> "$GITHUB_ENV"
+
       # ---- 运行形态 + 演示数据：同理，必须显式注入，不能靠默认值 ----
       # `SEED_DEMO_DATA` 默认 true（99 处 `.login()` 依赖 teacher1/stu731），
       # `APP_ENV` 默认 production。两者组合在 CI 里就是「生产形态 + 演示数据
@@ -311,6 +346,7 @@ jobs:
             -e APP_ENV="$APP_ENV" \
             -e SEED_DEMO_DATA="$SEED_DEMO_DATA" \
             -e MUST_CHANGE_PASSWORD_ENFORCED="$MUST_CHANGE_PASSWORD_ENFORCED" \
+            -e CAPTCHA_ENFORCED="$CAPTCHA_ENFORCED" \
             -e SECRET_KEY=ci_secret_key_for_e2e_only_not_for_prod \
             -v "${{ github.workspace }}/data:/app/data" \
             edu-ai-platform:e2e

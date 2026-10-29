@@ -106,6 +106,12 @@ step "2/6  离线单元回归（真实 IP / 异地登录 / 首批性能修复 / 
 # 双进程同时起跑才看得出来。首组用例是**无锁对照**（通知翻倍），
 # 没有它，「有锁时只跑一份」的绿只说明代码能跑。
 "$PY" tests/test_a2_job_lock.py || die 1 "离线回归（A2 任务执行锁）未通过"
+# S7 图形验证码强制化。必须在这一层：e2e 服务端以 CAPTCHA_ENFORCED=false
+# 启动（130+ 处登录/注册调用都不带验证码），`true` 分支在 e2e 里根本不执行；
+# 且验证码的正确答案只存在于 PNG 里（`sys_captcha` 存明文，接口只回图和 key），
+# e2e 拿不到答案，构造不出"带正确码"的正例。
+# 本文件同时守「开关单向收紧」：关掉开关只能放开"不传"，带错码一律拒绝。
+"$PY" tests/test_unit_captcha_enforced.py || die 1 "离线回归（S7 验证码强制化）未通过"
 
 # ---------- 3. 独立数据目录 ----------
 step "3/6  准备独立数据目录"
@@ -152,6 +158,25 @@ SERVER_LOG="/tmp/e2e_server_$$.log"
 MUST_CHANGE_PASSWORD_ENFORCED="${MUST_CHANGE_PASSWORD_ENFORCED:-false}"
 export MUST_CHANGE_PASSWORD_ENFORCED
 
+# ---- 图形验证码强制化开关（S7）----
+# 与上面的强制改密开关是**完全相同的范式**，也需要同时注入两个进程。
+#
+# 服务端为什么设 false：e2e 有 100 处 `.login()` + 26 处裸
+# `post("/auth/login")` + 7 处裸 `post("/auth/register")`，全都不携带验证码。
+# 而验证码的正确答案**只存在于 PNG 图片里** —— `GET /auth/captcha` 的响应只有
+# base64 图和 key，明文答案存在服务端 `sys_captcha` 表里，这是刻意的。
+# 让这一百三十多处调用都去 OCR 识别是不现实的。
+#
+# 关掉它**不会**让"传一个错的验证码"通过：`_verify_captcha_or_raise` 里
+# false 分支只在 `not captcha_key` 时 return，带了 key 一律走
+# `verify_captcha`。开关是单向收紧的，最坏情况只降级到「无验证码」。
+#
+# 测试进程为什么也必须看到它：test_requirements.py 里「不传验证码登录」那条
+# 断言按开关取值分支（400 / 200 都是被测行为）。少注入一处 → 按默认 true
+# 期望 400、实际 200 → 必红。所以在这里**只定义一次**，下面喂给两个进程。
+CAPTCHA_ENFORCED="${CAPTCHA_ENFORCED:-false}"
+export CAPTCHA_ENFORCED
+
 # ---- 演示数据 + 运行形态：e2e 必须显式声明，不能靠默认值 ----
 # 为什么显式写：`SEED_DEMO_DATA` 默认 true、`APP_ENV` 默认 production。若这里
 # 不注入，服务端就是「生产形态 + 演示数据开着」—— A3 启动校验的第 1 项会
@@ -168,6 +193,7 @@ export APP_ENV="${APP_ENV:-test}"
   cd backend && \
   DATABASE_URL="$DB_URL" LLM_ENABLED=false SCHEDULER_ENABLED=false \
   MUST_CHANGE_PASSWORD_ENFORCED="$MUST_CHANGE_PASSWORD_ENFORCED" \
+  CAPTCHA_ENFORCED="$CAPTCHA_ENFORCED" \
   SEED_DEMO_DATA="$SEED_DEMO_DATA" APP_ENV="$APP_ENV" \
   SECRET_KEY="e2e_local_only_not_for_prod_$$" \
   "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" \

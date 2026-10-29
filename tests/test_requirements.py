@@ -31,7 +31,7 @@ def run():
 
 
 # ============================================================
-# 1. 登录图形验证码（修复 B）
+# 1. 登录图形验证码（修复 B / S7 强制化）
 # ============================================================
     R.set_phase("补充 · 需求覆盖回归 | 1. 登录图形验证码")
     p, _, _ = Client("验证码").get("/auth/captcha")
@@ -46,9 +46,29 @@ def run():
     p, _, sc = wrong.post("/auth/login", wrong.login_payload)
     check("★ 错误验证码登录被拒", sc == 400 and "验证码" in p.get("message", ""), p.get("message", ""))
 
-# 不传验证码仍可登录（兼容 API 调用/测试脚本，失败锁定兜底）
-    p, _, sc = Client("不传验证码登录").post("/auth/login", {"username": "teacher1", "password": "Teacher@123"})
-    check("不传验证码可登录（兼容模式）", sc == 200 and p.get("success"), p.get("message", ""))
+# S7 强制化：不传验证码的登录必须被拒。
+#
+# 这条断言在 S7 之前是**反向**的（断言"不传可登录（兼容模式）"），因为修复前的
+# 代码是 `if payload.captcha_key and not verify_captcha(...)` —— 不传 key 就
+# 整段跳过校验。那个"兼容模式"就是漏洞本身：它把是否校验的决定权交给了调用方。
+#
+# 现在按 CAPTCHA_ENFORCED 双向断言（与 MUST_CHANGE_PASSWORD_ENFORCED 同一套
+# 范式）：两种形态都是被测行为，开关一旦漏注入到测试进程，这条立刻红。
+# 精确的三分支断言（true 缺 key / false 缺 key / 两种形态传错码）在
+# tests/test_unit_captcha_enforced.py —— e2e 服务端固定注入 false，测不到
+# true 分支，只能在这一层做 canary。
+    _captcha_enforced = os.environ.get(
+        "CAPTCHA_ENFORCED", "true").lower() != "false"
+    p, _, sc = Client("不传验证码登录").post(
+        "/auth/login", {"username": "teacher1", "password": "Teacher@123"})
+    if _captcha_enforced:
+        check("★ 不传验证码登录被拒（S7 强制化生效）",
+              sc == 400 and "验证码" in p.get("message", ""),
+              f"status={sc} {p.get('message', '')}")
+    else:
+        check("★ 不传验证码登录（e2e 关闭强制化时放行，开关生效）",
+              sc == 200 and p.get("success"),
+              f"status={sc} {p.get('message', '')}")
 
 
 # ============================================================

@@ -42,8 +42,17 @@
                 v-if="captchaImg" :src="captchaImg"
                 class="captcha-img" title="点击刷新" @click="loadCaptcha"
               />
+              <!-- 取码失败时不能只留一个空白方块：必须给出可点击的补救入口 -->
+              <button v-else type="button" class="captcha-retry" @click="loadCaptcha">
+                {{ captchaError ? '重新获取' : '加载中…' }}
+              </button>
             </div>
           </el-form-item>
+          <!-- 取码失败的可见提示：后端强制化后，静默失败等于登录按钮永久失效 -->
+          <el-alert
+            v-if="captchaError" type="error" :closable="false" show-icon
+            :title="captchaError" class="captcha-alert"
+          />
 
           <el-form-item>
             <el-button type="primary" class="login-btn" :loading="loading" @click="handleLogin">
@@ -96,6 +105,9 @@ const formRef = ref()
 const loading = ref(false)
 const captchaImg = ref('')
 const captchaKey = ref('')
+// 取码失败的原因。非空时页面上必须**看得见**，且禁止提交 —— 这是 S7 强制化
+// 的前端对应物：后端不再接受"没带验证码"的登录，前端就不能悄悄降级。
+const captchaError = ref('')
 const mustChange = ref(false)
 // 演示账号下拉默认关闭，避免公网部署时自动暴露 admin 默认口令。
 const showDemoAccounts = import.meta.env.VITE_SHOW_DEMO_ACCOUNTS === 'true'
@@ -109,23 +121,52 @@ const rules = {
 }
 
 async function loadCaptcha() {
+  // S7：后端已强制校验验证码（不携带 captcha_key 直接 400），所以这里
+  // **绝不能再静默吞异常**。原先的 `catch (e) { /* 忽略 */ }` 会让
+  // captchaKey 保持空字符串，handleLogin 就发出 captcha_key: undefined，
+  // 强制化之后必然 400 —— 而页面上一个字的提示都没有，用户只会看到
+  // "登录失败" 反复重试，永远不可能成功。
+  //
+  // 现在的契约：取码失败 → captchaError 置位 → 提交按钮禁用并提示重试。
+  // 宁可让用户明确知道"验证码没加载出来，点一下刷新"，也不要让他对着
+  // 一个永远失败的登录按钮重输密码。
   try {
     const res = await authApi.captcha()
     captchaImg.value = res.data.image
     captchaKey.value = res.data.key
-  } catch (e) { /* 忽略 */ }
+    captchaError.value = ''
+    return true
+  } catch (e) {
+    captchaImg.value = ''
+    captchaKey.value = ''
+    captchaError.value = '验证码加载失败，请点击「重新获取」后重试'
+    return false
+  }
 }
 
 async function handleLogin() {
   // 同上：校验失败的 rejection 不能被全局错误兜底捕获
   if (!(await formRef.value.validate().catch(() => false))) return
+  // 兜底：本地没有 captcha_key 一定过不了后端（强制化后返回 400「请输入
+  // 图形验证码」）。与其把请求发出去换一个服务端错误，不如在这里先补一次
+  // 取码并提示 —— 常见触发场景是页面开着很久，验证码 3 分钟就过期了。
+  if (!captchaKey.value) {
+    const ok = await loadCaptcha()
+    if (!ok) {
+      ElMessage.warning(captchaError.value)
+      return
+    }
+    ElMessage.warning('验证码已刷新，请重新输入验证码')
+    form.value.captcha = ''
+    return
+  }
   loading.value = true
   try {
     const res = await userStore.login({
       username: form.value.username,
       password: form.value.password,
-      captcha: captchaKey.value ? form.value.captcha : undefined,
-      captcha_key: captchaKey.value || undefined
+      captcha: form.value.captcha,
+      captcha_key: captchaKey.value
     })
     mustChange.value = res.data.user.must_change_password
     ElMessage.success('登录成功')
@@ -250,6 +291,27 @@ onMounted(loadCaptcha)
   gap: 10px;
   width: 100%;
   align-items: center;
+}
+
+/* 取码失败时的替补按钮：与验证码图同尺寸，位置不跳动，
+   让"点不到图"的用户一眼看到下一步该点哪里 */
+.captcha-retry {
+  height: 48px;
+  width: 170px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 4px;
+  background: var(--el-fill-color-lighter);
+  color: var(--el-color-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.captcha-retry:hover {
+  border-color: var(--el-color-primary);
+}
+
+.captcha-alert {
+  margin-bottom: 16px;
 }
 
 .captcha-img {

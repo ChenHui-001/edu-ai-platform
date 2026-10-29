@@ -108,6 +108,32 @@ class Settings(BaseSettings):
     # 靠出厂口令长期使用 —— 因为 S5 每次启动还会把出厂口令账号重新标记。
     MUST_CHANGE_PASSWORD_ENFORCED: bool = True
 
+    # 图形验证码强制化开关（S7）：登录 / 注册是否**必须**携带 `captcha_key`。
+    #
+    # 修复前的行为（已修）：`if payload.captcha_key and not verify_captcha(...)`。
+    # 这是个**短路绕过**，不是"兼容"：攻击者只要提交时**不写这个字段**，
+    # 整段校验就被跳过，图形验证码对爆破完全不设防。而同一行代码在
+    # `register` 里也存在，注册接口同样裸奔。
+    #
+    # 为什么仍需要开关（而不是硬编码为强制）：
+    # e2e 有 100 处 `.login()` + 26 处裸 `post("/auth/login")` + 7 处
+    # 裸 `post("/auth/register")`，它们都不携带验证码；而验证码的正确答案
+    # **只存在于 PNG 图片里**，脚本无法从 `GET /auth/captcha` 的响应中拿到
+    # （响应只有 base64 图和 key，明文答案在服务端，这是刻意的）。
+    # 让这一百多处调用全部走 OCR 识别是不现实的，所以测试环境需要一个开关。
+    #
+    # **默认 true，生产必须 true。** 这个开关是**单向收紧**的，两个保证：
+    # 1. `true`  → 必须携带且必须正确，缺 key 直接 400；
+    # 2. `false` → **只允许"不传"**；一旦传了 `captcha_key`，仍然必须校验通过。
+    #    也就是说关掉开关可以让无验证码的 API 调用通过，但**永远无法**让
+    #    "传一个错的验证码"通过 —— 不存在"关开关就把校验变成空操作"的路径。
+    # 这个不对称是刻意的：它保证开关最坏情况下只降级到「无验证码」，而不是
+    # 「有验证码但形同虚设」。
+    #
+    # 精确的三分支断言在 `tests/test_unit_captcha_enforced.py`（离线层，
+    # 因为 e2e 服务端固定注入 false，测不到 true 分支）。
+    CAPTCHA_ENFORCED: bool = True
+
     # ---------------- 文件 / 附件 ----------------
     UPLOAD_DIR: str = "./data/uploads"
     EXPORT_DIR: str = "./data/exports"

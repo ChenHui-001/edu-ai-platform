@@ -99,6 +99,46 @@ def get_captcha(request: Request, db: Session = Depends(get_db)):
     return ok({"image": f"data:image/png;base64,{img_b64}", "key": key})
 
 
+def _verify_captcha_or_raise(
+    db: Session, captcha_key: Optional[str], captcha: Optional[str]
+) -> None:
+    """按 `settings.CAPTCHA_ENFORCED` 校验图形验证码（登录 / 注册共用，S7）。
+
+    修复前这里是两处**短路绕过**：
+
+        if payload.captcha_key and not verify_captcha(...):
+            raise ...
+
+    `and` 的左边一旦为假（请求**不带** `captcha_key`），整个条件恒为
+    False，校验被完整跳过。这不是"兼容 API 调用"，这是把开关交给了
+    调用方：谁想绕过图形验证码，只要不写这个字段就行。
+
+    现在的行为矩阵：
+
+    | CAPTCHA_ENFORCED | 未带 key | 带 key 且正确 | 带 key 且错误/过期 |
+    | ---------------- | -------- | ------------- | ------------------ |
+    | `true`（默认）   | **400**  | 通过          | **400**            |
+    | `false`（e2e）   | 通过     | 通过          | **400**            |
+
+    第三列两行**完全相同**，这是刻意的：关掉开关只降级到「无验证码」，
+    绝不允许降级成「带了错码也放行」。开关单向收紧，不存在"关掉即空操作"。
+
+    为什么错误提示要区分"请输入"和"错误或已过期"：前者是客户端根本没取码
+    （典型是 `GET /auth/captcha` 失败后前端静默提交），后者是用户输错。
+    两者对用户是**不同的补救动作**（刷新页面重试 vs 看清图片重输），
+    合并成一句话会让人反复输入却永远失败。
+
+    校验失败**不消耗**任何东西以外的资源：`verify_captcha` 无论对错都会删掉
+    该 key（一次性语义），所以同一个码不能被重放试探。
+    """
+    if not captcha_key:
+        if settings.CAPTCHA_ENFORCED:
+            raise BusinessException("请输入图形验证码")
+        return
+    if not verify_captcha(db, captcha_key, captcha or ""):
+        raise BusinessException("验证码错误或已过期")
+
+
 # ---------------------------------------------------------------- 注册与审批
 @router.post("/register", summary="用户注册（待审批）")
 def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db)):
@@ -108,8 +148,7 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
     from app.core.security import validate_password_strength
 
     validate_password_strength(payload.password, min_length=_st.PASSWORD_MIN_LENGTH)
-    if payload.captcha_key and not verify_captcha(db, payload.captcha_key, payload.captcha or ""):
-        raise BusinessException("验证码错误或已过期")
+    _verify_captcha_or_raise(db, payload.captcha_key, payload.captcha)
     if payload.identity == "student" and not payload.class_id:
         raise BusinessException("学生注册需选择所属班级")
 
@@ -186,11 +225,12 @@ def audit_registration(
 # ---------------------------------------------------------------- 登录
 @router.post("/login", summary="账号密码登录")
 def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
-    # 图形验证码校验：前端 Login.vue 始终携带 captcha_key，
-    # 此处与 register 一致：传了 captcha_key 就必须校验通过。
-    # 未携带则放行（兼容 API 调用与自动化测试），由失败锁定兜底防爆破。
-    if payload.captcha_key and not verify_captcha(db, payload.captcha_key, payload.captcha or ""):
-        raise BusinessException("验证码错误或已过期")
+    # 图形验证码校验（S7 已强制化）：默认必须携带且正确。
+    # 校验放在 `authenticate` **之前**是必须的 —— 否则密码错误的请求会先把
+    # 该账号的 `login_fail_count` 加一并可能触发 15 分钟锁定，攻击者可以用
+    # 无验证码的请求把任意已知用户名**锁死**（拒绝服务）。验证码前置后，
+    # 拿不到有效码的流量碰不到账号状态。
+    _verify_captcha_or_raise(db, payload.captcha_key, payload.captcha)
     ip = get_client_ip(request)
     device = get_user_agent(request)
     user, token, refresh = auth_service.authenticate(
