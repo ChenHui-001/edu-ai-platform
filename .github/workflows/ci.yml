@@ -222,12 +222,25 @@ jobs:
       - name: 定义强制改密开关取值
         run: echo "MUST_CHANGE_PASSWORD_ENFORCED=false" >> "$GITHUB_ENV"
 
+      # ---- 运行形态 + 演示数据：同理，必须显式注入，不能靠默认值 ----
+      # `SEED_DEMO_DATA` 默认 true（99 处 `.login()` 依赖 teacher1/stu731），
+      # `APP_ENV` 默认 production。两者组合在 CI 里就是「生产形态 + 演示数据
+      # 开着」→ A3 启动校验第 1 项每次 CI 都报 error 并往测试库写 ErrorLog。
+      # 噪音会污染「真的业务断言红了」与「被这条带偏了」的分辨。
+      # `APP_ENV=test` 把这个组合声明为测试形态。**两个必须一起给。**
+      - name: 定义运行形态与演示数据开关
+        run: |
+          echo "APP_ENV=test" >> "$GITHUB_ENV"
+          echo "SEED_DEMO_DATA=true" >> "$GITHUB_ENV"
+
       - name: 启动服务
         run: |
           docker run -d --name edu-e2e \
             -p 8080:80 \
             -e LLM_ENABLED=false \
             -e SCHEDULER_ENABLED=false \
+            -e APP_ENV="$APP_ENV" \
+            -e SEED_DEMO_DATA="$SEED_DEMO_DATA" \
             -e MUST_CHANGE_PASSWORD_ENFORCED="$MUST_CHANGE_PASSWORD_ENFORCED" \
             -e SECRET_KEY=ci_secret_key_for_e2e_only_not_for_prod \
             -v "${{ github.workspace }}/data:/app/data" \

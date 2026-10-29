@@ -136,6 +136,22 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.opt(exception=True).error(f"种子数据初始化失败: {exc}")
 
+    # 启动后置校验：只喊话，不修复、不阻断（见 services/startup_checks.py 文件头）。
+    # **必须在 A1 启动锁之外**：它不写任何业务数据（只可能写一条幂等 ErrorLog），
+    # 没必要占着锁；而占着锁会让另一个 worker 在本进程做日志落库时多等一次。
+    # 这里重新开一个 SessionLocal —— 上面 init_all 用的那个 db 已在 finally 里
+    # close 了，不要复用那个变量。
+    try:
+        _chk_db = SessionLocal()
+        try:
+            from app.services.startup_checks import run_startup_checks
+
+            run_startup_checks(_chk_db)
+        finally:
+            _chk_db.close()
+    except Exception as exc:  # noqa: BLE001 校验失败绝不能阻断启动
+        logger.warning(f"启动校验未执行: {exc}")
+
     # 预热 AI Agent
     try:
         from app.agents.base import get_orchestrator

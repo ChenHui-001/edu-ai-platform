@@ -151,10 +151,24 @@ SERVER_LOG="/tmp/e2e_server_$$.log"
 # 故**只此一处定义**，下面用同一个变量喂给两个进程，避免两处字面量漂移。
 MUST_CHANGE_PASSWORD_ENFORCED="${MUST_CHANGE_PASSWORD_ENFORCED:-false}"
 export MUST_CHANGE_PASSWORD_ENFORCED
+
+# ---- 演示数据 + 运行形态：e2e 必须显式声明，不能靠默认值 ----
+# 为什么显式写：`SEED_DEMO_DATA` 默认 true、`APP_ENV` 默认 production。若这里
+# 不注入，服务端就是「生产形态 + 演示数据开着」—— A3 启动校验的第 1 项会
+# 每次 e2e 都报一条 error 并往测试库写一条 ErrorLog。测试断言的失败原因会
+# 变得极难分辨（真的业务断言红了，还是被这条噪音带偏的？）。
+#
+# APP_ENV=test 的作用就是把这个组合声明为「测试形态」，让那条告警不触发；
+# SEED_DEMO_DATA=true 是因为 99 处 `.login()` 都用 teacher1/stu731 这类演示
+# 账号，关掉就全线红。**两个必须同时给** —— 只给 SEED_DEMO_DATA 而不给
+# APP_ENV，告警照报。
+export SEED_DEMO_DATA="${SEED_DEMO_DATA:-true}"
+export APP_ENV="${APP_ENV:-test}"
 (
   cd backend && \
   DATABASE_URL="$DB_URL" LLM_ENABLED=false SCHEDULER_ENABLED=false \
   MUST_CHANGE_PASSWORD_ENFORCED="$MUST_CHANGE_PASSWORD_ENFORCED" \
+  SEED_DEMO_DATA="$SEED_DEMO_DATA" APP_ENV="$APP_ENV" \
   SECRET_KEY="e2e_local_only_not_for_prod_$$" \
   "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" \
   > "$SERVER_LOG" 2>&1
