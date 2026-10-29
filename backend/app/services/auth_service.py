@@ -231,9 +231,39 @@ def authenticate(
 
 
 def change_password(db: Session, user: User, old_password: str, new_password: str) -> None:
-    """修改密码。"""
+    """修改密码。
+
+    ## 为什么必须拒绝 `new == old`
+
+    这是 S5（存量库出厂口令强制改密）的**唯一**失效路径，已实测：
+
+        ① 用公开口令 `Admin@123456` 登录 → 200，拿 token，标记 must_change=True
+        ② 访问业务接口 → 403「请先修改密码」                  拦截生效
+        ③ PUT /auth/password {old: Admin@123456, new: Admin@123456} → **200**
+        ④ 再访问业务接口 → 200                                 拦截被解除
+        回读库：verify_password("Admin@123456") 仍为 True     口令一个字没变
+
+    ③ 能过是因为两个「各自正确」的东西叠在一起：
+    - `deps._FORCE_PWD_WHITELIST` 必须放行 `/auth/password`，否则改密闭环无解；
+    - 本函数只校验「原密码对」+「强度」，不比对新旧是否相同。
+    而 `Admin@123456` 恰好不在 `security._WEAK_PASSWORDS` 里。
+
+    后果不只是「能设弱密码」：标记被清成 False 后，**后续每次启动的 S5 都会
+    跳过这个账号**（`_sys_admin_candidates` 只在 `not must_change_password`
+    时才处置），于是强制改密被一次零成本 API 调用永久撤销，而口令仍是 README
+    里公开的那个。
+
+    ## 校验顺序
+
+    先验原密码，再判新旧相同 —— 顺序不能反。反过来的话，未持凭据者能通过
+    「新旧相同」这条报错反推出「我猜的这个口令就是当前口令」，把两个信息
+    混在一起泄露出去。
+    """
     if not verify_password(old_password, user.password):
         raise BusinessException("原密码错误")
+    # 放在原密码校验之后：见上面「校验顺序」。
+    if new_password == old_password:
+        raise BusinessException("新密码不能与原密码相同")
     from app.core.security import validate_password_strength
 
     validate_password_strength(new_password, min_length=settings.PASSWORD_MIN_LENGTH)

@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import AuthException, PermissionException
 from app.core.security import decode_token
@@ -69,12 +70,26 @@ def get_current_user(
         raise AuthException("用户不存在")
     if not user.is_active:
         raise AuthException(f"账号状态异常：{user.status}")
-    # 首次登录强制改密：非白名单路径一律拦截
+    # 首次登录强制改密：非白名单路径一律拦截。
+    #
+    # 受 `MUST_CHANGE_PASSWORD_ENFORCED` 控制（默认 true）。之所以需要开关，
+    # 是因为 e2e 有 99 处 `.login()` 共用硬编码口令常量，其中 42 处是裸登录
+    # （直接 post /auth/login 读响应体、不拿 token 调业务接口）。让它们走真实
+    # 改密流程会让"当前密码"在 100+ 个 Client 实例之间漂移，裸登录那批也拿不到
+    # 新密码 —— 改动量远大于收益。测试环境用开关隔离。
+    #
+    # 开关**不是**安全后门，两点保证：
+    # 1. 默认 true，生产不注入该变量即保持拦截；
+    # 2. `change_password` 里拒绝 `new == old` 是**无条件**的，不受此开关影响，
+    #    所以即使开关被关，"用 old==new 清标记再继续用出厂口令"这条路依然堵死
+    #    （而且 S5 每次启动会把出厂口令账号重新标记）。
     path = (request.url.path or "").rstrip("/")
-    if user.must_change_password and not any(
-        path == w.rstrip("/") or path.startswith(w.rstrip("/") + "/")
-        for w in _FORCE_PWD_WHITELIST
-    ):
+    if (settings.MUST_CHANGE_PASSWORD_ENFORCED
+            and user.must_change_password
+            and not any(
+                path == w.rstrip("/") or path.startswith(w.rstrip("/") + "/")
+                for w in _FORCE_PWD_WHITELIST
+            )):
         raise PermissionException("首次登录或密码已被重置，请先修改密码")
     # 供审计中间件记录操作人：此前中间件读取 request.state.user 但全仓无赋值，
     # 导致 sys_operation_log 的 user_id/username 恒为 NULL，操作无法追溯。

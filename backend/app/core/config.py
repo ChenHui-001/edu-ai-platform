@@ -74,6 +74,20 @@ class Settings(BaseSettings):
     # 创建用户时的默认初始密码（满足强度要求：字母+数字+长度）
     DEFAULT_USER_PASSWORD: str = "Edu@2026Init"
 
+    # 强制改密拦截开关：`must_change_password=True` 的用户，除白名单外一律 403。
+    #
+    # 为什么需要这个开关（而不是硬编码为行为）：
+    # e2e 有 99 处 `.login()` 共用硬编码口令常量，且**裸登录**（不走 `login()`
+    # 自愈）的有 42 处直接读登录响应体。真让它们走一遍「改成新密码」的流程，
+    # "当前密码"就会在 100+ 个 Client 实例之间漂移，裸登录那批也拿不到新密码。
+    # 所以测试环境需要一个隔离开关。
+    #
+    # **默认 true，生产必须 true。** 这不是安全后门：开关只影响「是否拦截」，
+    # 不影响「是否拒绝 new==old」（后者是 `change_password` 里无条件的硬校验）。
+    # 也就是说，即使有人把开关设成 false，也依然无法用 old==new 清除标记再
+    # 靠出厂口令长期使用 —— 因为 S5 每次启动还会把出厂口令账号重新标记。
+    MUST_CHANGE_PASSWORD_ENFORCED: bool = True
+
     # ---------------- 文件 / 附件 ----------------
     UPLOAD_DIR: str = "./data/uploads"
     EXPORT_DIR: str = "./data/exports"
