@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
     Answer, Class, Notification, Paper, Submission, Task, TaskAssignment, TaskStatus,
-    TaskType, User,
+    TaskType, User, UserStatus,
 )
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, now_local, ok
@@ -24,6 +24,13 @@ from app.utils.common import PageParams, dictify, now_local, ok
 router = APIRouter(prefix="/task", tags=["作业与考试"])
 
 TYPE_LABEL = {"homework": "作业", "exam": "考试", "practice": "随机练习"}
+
+# 用户状态 -> 面向教师的提示词。只用于报错文案，不参与判定逻辑。
+_STATUS_LABEL = {
+    UserStatus.PENDING.value: "待审批",
+    UserStatus.REJECTED.value: "已驳回",
+    UserStatus.DISABLED.value: "已停用",
+}
 
 # 教学管理 V2：任务读/写/批改权限点（与 docs/TEACHING_V2.md 一致）
 TASK_PERM_LIST = "task:list"
@@ -417,7 +424,7 @@ def create_task(
     if not class_ids and not student_ids:
         raise BusinessException("请选择下发班级或学生")
 
-    # 下发对象存在性 + 教师任教范围校验（管理员不限）
+    # 下发对象存在性 + 状态 + 教师任教范围校验（管理员不限）
     role_codes = user.role_codes
     is_admin = "sys_admin" in role_codes
     for cid in class_ids:
@@ -428,9 +435,35 @@ def create_task(
             allowed = scope.class_ids()
             if allowed is not None and cid not in allowed:
                 raise BusinessException(f"只能给自己任教的班级下发（班级 {cid} 不在任教范围）")
+
+    # 指定学生必须显式校验 active，且**报错而非静默剔除**。
+    #
+    # 此前这里只判存在性，于是「指定学生」路径完全不过滤 status，而同一函数
+    # 里的班级路径（下方 notify_ids 的查询）过滤了 `User.status == "active"` ——
+    # 两行代码、同一个函数、两套标准。后果是教师勾中一个已停用的学生时，
+    # 该学生仍会收到站内通知、TaskAssignment 照常写入：停用只拦了登录，
+    # 没拦住任务下发。
+    #
+    # 为什么不静默剔除：教师明确指定了这个人，悄悄丢参数比报错更糟 ——
+    # 他会以为发下去了，实际没发；或者反过来以为没发而反复重试。报错并
+    # 带上账号名，教师一眼知道要做什么（把人从列表里去掉，或先恢复账号）。
+    #
+    # 顺带说明：定时发布路径（下面 scheduled 分支）在**循环之前**就 return 了，
+    # 所以这里的校验同时也覆盖了「建草稿待定时发布」的场景 —— 否则会出现
+    # 「建任务时静默放行、到期发布时才发现学生已停用」的延迟失败。
+    inactive: List[str] = []
     for sid in student_ids:
-        if not db.get(User, sid):
+        stu = db.get(User, sid)
+        if not stu:
             raise BusinessException(f"学生 {sid} 不存在")
+        if stu.status != UserStatus.ACTIVE.value:
+            label = _STATUS_LABEL.get(stu.status, stu.status)
+            inactive.append(f"{stu.username}（ID={stu.id}，{label}）")
+    if inactive:
+        raise BusinessException(
+            f"以下学生已停用或不可用，无法下发：{'、'.join(inactive)}。"
+            f"请从下发对象中移除后重试"
+        )
 
     for cid in class_ids:
         db.add(TaskAssignment(task_id=task.id, class_id=cid))
@@ -447,7 +480,17 @@ def create_task(
                     f"{publish_at.strftime('%Y-%m-%d %H:%M')} 自动发布",
         )
 
-    # 通知学生
+    # 通知学生。
+    #
+    # `notify_ids` 必须与上面写入的 TaskAssignment **同源**：两边的最大集合
+    # 都是 `student_ids ∪ (各班 active 学生)`，任何一边多一个或少一个都会
+    # 出现「通知发了但作业列表里没有」或反之。
+    #
+    # - `student_ids`：已在上面显式校验过 active，所以这里可以直接展开；
+    #   不要在这里再过滤一次，否则会与 TaskAssignment（不过滤）产生偏差。
+    # - 班级路径：**保持过滤 active** —— 这是原有正确行为，且与
+    #   TaskAssignment 的偏差是刻意的：班级里的停用学生照样拥有 assignment
+    #   （恢复账号后能看到历史作业），只是不发通知。有意的设计，勿"修"。
     notify_ids = set(student_ids)
     for cid in class_ids:
         notify_ids.update(
