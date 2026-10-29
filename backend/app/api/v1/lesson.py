@@ -180,9 +180,7 @@ def _plan_attachments(db: Session, plan_id: int) -> List[Dict[str, Any]]:
     return items
 
 
-# ============================================================
 # 列表 / 详情
-# ============================================================
 @router.get("/plans", summary="教案列表（教师）")
 def list_plans(
     params: PageParams = Depends(), subject_id: Optional[int] = None,
@@ -275,9 +273,7 @@ def get_plan(plan_id: int, db: Session = Depends(get_db),
     return ok(_hydrate(db, plan))
 
 
-# ============================================================
 # 创建
-# ============================================================
 @router.post("/plans", summary="新建教案")
 def create_plan(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
@@ -337,9 +333,7 @@ def create_plan(
     return ok(_hydrate(db, plan), message="教案已创建")
 
 
-# ============================================================
 # 编辑
-# ============================================================
 @router.put("/plans/{plan_id}", summary="编辑教案")
 def update_plan(
     plan_id: int, data: Dict[str, Any] = Body(...),
@@ -383,9 +377,7 @@ def update_plan(
     return ok(_hydrate(db, plan), message="教案已更新")
 
 
-# ============================================================
 # 删除
-# ============================================================
 @router.delete("/plans/{plan_id}", summary="删除教案")
 def delete_plan(plan_id: int, db: Session = Depends(get_db),
                 user: User = Depends(require_perm(LESSON_WRITE))):
@@ -401,9 +393,7 @@ def delete_plan(plan_id: int, db: Session = Depends(get_db),
     return ok(message="教案已删除")
 
 
-# ============================================================
 # 复制 / 共享
-# ============================================================
 @router.post("/plans/{plan_id}/copy", summary="复制教案")
 def copy_plan(plan_id: int, data: Dict[str, Any] = Body(default={}),
               db: Session = Depends(get_db),
@@ -529,9 +519,7 @@ def batch_plans(
               message=f"批量{action_label}完成 {len(done)} 份")
 
 
-# ============================================================
 # 附件（图片 / PPT / 文档等教学资料）
-# ============================================================
 def _plan_editable(plan: LessonPlan, user: User) -> None:
     """教案附件写入权限：创建者，或 sys_admin。共享只赋予读/复制权，不赋予写权。"""
     if plan.creator_id != user.id and "sys_admin" not in user.role_codes:

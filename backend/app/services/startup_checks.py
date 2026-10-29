@@ -71,9 +71,10 @@ _DEMO_ERR_PATH = "/startup/demo_data_enabled"
 # 那两处是模块私有常量（`_KNOWLEDGE_V2_MARKER` / `_QUESTION_V2_MARKER`），
 # 这里重新声明而不是导入：导入私有常量会让 db_migrations 的重命名/重构
 # 直接打断启动校验（而校验本应 fail-soft），且私有名本就不该跨模块引用。
-# 若 db_migrations 改了键名，本处必须同步 —— 由
-# tests/test_unit_startup_checks.py 的守卫断言盯住（它断言这两个键在
-# 当前 db_migrations.py 里确实作为标记常量存在）。
+# 若 db_migrations 改了键名，本处必须同步 —— 这是**纯人工约定**，
+# 没有自动化守卫（此处原先交由一个离线单测盯住，该测试已随测试体系移除）。
+# 症状表现为启动校验静默失效（标记永远读不到 → 误报"未迁移"），
+# 属于 fail-soft 掩盖下的静默漂移，改 db_migrations 时请手动核对本行。
 V2_MARKERS = ("knowledge_v2_migrated", "question_bank_v2_migrated")
 
 

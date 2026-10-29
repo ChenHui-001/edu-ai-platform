@@ -10,7 +10,7 @@ from app.agents.grading_agent import OBJECTIVE_TYPES, GradingAgent
 from app.core.config import settings
 from app.core.exception import BusinessException
 from app.models import (
-    Answer, KnowledgeMastery, KnowledgePoint, Paper, PaperItem, Question, ReviewPlan,
+    Answer, KnowledgeMastery, KnowledgePoint, Paper, PaperItem, Question,
     StudyRecord, Submission, Task, TaskAssignment, TaskStatus, WrongQuestion,
 )
 from app.utils.common import now_local
@@ -21,26 +21,13 @@ def _content_to_db(content: Any) -> Optional[str]:
 
     Answer.content 是 Text 列，而多选题的作答是 list（如 ["A","C"]），
     直接绑定会触发 sqlite3.ProgrammingError: type 'list' is not supported，
-    导致整场考试交卷失败。此处统一 JSON 序列化，读出侧用 _content_from_db 还原。
+    导致整场考试交卷失败。此处统一 JSON 序列化，读出侧由调用方按需解析（前端自行 JSON.parse）。
     """
     if content is None:
         return None
     if isinstance(content, str):
         return content
     return json.dumps(content, ensure_ascii=False)
-
-
-def _content_from_db(raw: Optional[str]) -> Any:
-    """还原落库的学生答案：JSON 数组还原为 list，其余原样返回。"""
-    if raw is None:
-        return None
-    txt = raw.strip()
-    if txt.startswith("[") and txt.endswith("]"):
-        try:
-            return json.loads(txt)
-        except json.JSONDecodeError:
-            return raw
-    return raw
 
 
 def get_student_submission(db: Session, task_id: int, student_id: int, attempt: int = 1) -> Submission:
@@ -410,34 +397,6 @@ def _calc_rank(db: Session, submission: Submission) -> Optional[int]:
     if same:
         return int(better) + 1
     return int(total) + 1
-
-
-def generate_review_plan_for_wrong(db: Session, wrong: WrongQuestion) -> List[ReviewPlan]:
-    """按艾宾浩斯遗忘曲线为错题生成复习计划。"""
-    created: List[ReviewPlan] = []
-    today = now_local()
-    for stage, interval in enumerate(settings.REVIEW_INTERVALS, start=1):
-        date = (today + timedelta(days=interval)).strftime("%Y-%m-%d")
-        exists = db.scalar(
-            select(ReviewPlan).where(
-                ReviewPlan.student_id == wrong.student_id,
-                ReviewPlan.wrong_question_id == wrong.id,
-                ReviewPlan.stage == stage,
-            )
-        )
-        if exists:
-            continue
-        plan = ReviewPlan(
-            student_id=wrong.student_id,
-            wrong_question_id=wrong.id,
-            knowledge_point_id=wrong.knowledge_point_id or 0,
-            subject_id=wrong.subject_id,
-            stage=stage,
-            scheduled_date=date,
-        )
-        db.add(plan)
-        created.append(plan)
-    return created
 
 
 def create_practice_paper(

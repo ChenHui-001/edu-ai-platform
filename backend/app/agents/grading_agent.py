@@ -1,6 +1,5 @@
 """5.3 智能批改 Agent：客观题精准判分，主观题语义理解评分。"""
 import difflib
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
@@ -155,26 +154,6 @@ class GradingAgent(BaseAgent):
         }
 
     # ---------------- 客观题 ----------------
-    @staticmethod
-    def _norm_answer_set(value: Any) -> set:
-        """把学生/标准答案统一成无标点的选项集合。
-
-        多选题的作答在前端是数组（["A","C"]），但历史数据、导入题库或
-        手动调用时也可能是 "A,C" 这类字符串，必须双向归一化后再比较，
-        否则 list 没有 .strip() 会直接抛 AttributeError 导致整场交卷判分为空。
-        """
-        def norm(v: Any) -> str:
-            s = str(v if v is not None else "").strip().upper()
-            return re.sub(r"[、,，\s]", "", s)
-
-        if value is None:
-            return set()
-        if isinstance(value, (list, tuple, set)):
-            raw = list(value)
-        else:
-            raw = re.split(r"[、,，\s]+", str(value))
-        return {norm(x) for x in raw if norm(x)}
-
     @classmethod
     def _grade_objective(
         cls, q: Question, student_answer: Any, full_score: Optional[float] = None
@@ -186,8 +165,7 @@ class GradingAgent(BaseAgent):
 
         full_score：试卷项分值。得分口径应是**试卷项 full_score**，而不是
         题库里 Question.score（两者可能不同，如组卷时统一给了更高的分值）。
-        不传时保持旧行为，取 q.score（tests/verify_answer_normalization.py
-        仍以两参调用）。
+        不传时保持旧行为，取 q.score。
         """
         import json
 

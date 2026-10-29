@@ -654,19 +654,20 @@ def enforce_default_admin_password(db: Session) -> int:
     原实现不敢置 True，理由是"会把存量本地体验环境与自动化测试全部锁死"。
     这个理由**已经过期**：
 
-    - `tests/e2e_framework.py:276-279` 的 `Client.login` 已内建自愈 ——
-      登录后若 `must_change_password` 为真，它真实走一遍
-      `PUT /auth/password`（新旧密码相同）再清标记。因此所有走 `login()`
-      的用例不受影响。
-    - `auth_service.change_password:233-242` 不拒绝 old==new，
-      `security._WEAK_PASSWORDS` 不含 `admin@123456`，所以那次自愈调用能过。
-    - `deps._FORCE_PWD_WHITELIST:26-36` 含 `/api/v1/auth/password` 与
-      `/api/v1/auth/profile`，改密闭环本身不被拦。
-    - 前端闭环存在：`Login.vue:130-137` 在 `must_change_password` 为真时
-      跳 `/profile`，`Profile.vue:50` 有改密警示条优先展示。
-    - 绕过 `login()` 直接 `post("/auth/login")` 的用例（如
-      `test_requirements.py:542`）只读登录响应体里的 `permission.menus`，
-      不拿返回的 token 调业务接口，因此也不受拦截影响（已实测）。
+    - 干预点是精确的：`MUST_CHANGE_PASSWORD_ENFORCED` 默认 true，
+      被标记的账号下次登录会被 `deps` 拦到 `/auth/password`，
+      `deps._FORCE_PWD_WHITELIST` 含 `/api/v1/auth/password` 与
+      `/api/v1/auth/profile`，改密闭环本身不被拦，不会锁死。
+    - `auth_service.change_password` 现在**明确拒绝 new == old**
+      （见该函数「新密码不能与原密码相同」）。这意味着被标记的账号
+      必须真正换成一个新口令才能继续，出厂口令不会被"改回自己"绕过 ——
+      这正是本函数敢直接置 True 的前提。
+    - 前端闭环存在：`Login.vue` 在 `must_change_password` 为真时跳
+      `/profile`，`Profile.vue` 有改密警示条优先展示。
+
+    ⚠️ 维护提示：上述两条是**代码级约束**，改动
+    `_FORCE_PWD_WHITELIST` 或撤销「拒绝 old==new」都会让本函数的
+    处置变成把用户锁在门外。改那两处前先回来读这段。
 
     ## 关键约束：绝不误伤已改密的账号
 
@@ -706,7 +707,7 @@ def enforce_default_admin_password(db: Session) -> int:
 
     # 告警/落库那步单独护住。`_log_admin_default_password` 里的 ErrorLog 写入
     # 依赖 `sys_error_log` 表；如果库结构异常或表被删，这里抛出去会被
-    # `main.py:53-62` 的 try/except 吞掉 —— 但那是**整个 init_all** 的兜底，
+    # `main.py` 启动流程的 try/except 吞掉 —— 但那是**整个 init_all** 的兜底，
     # 而本函数位于 init_all 的最末一步，吞掉只影响"少一条告警"。
     # 真正的理由是：告警是观测手段，绝不能成为启动失败的原因。
     if offenders:

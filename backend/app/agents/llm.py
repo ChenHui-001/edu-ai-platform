@@ -6,7 +6,7 @@ import json
 import re
 import threading
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -33,7 +33,7 @@ PROVIDERS = {
         "env_key": "OPENAI_API_KEY",
     },
     "ollama": {
-        "base_url": "http://localhost:11434/v1",
+        "base_url": "http://localhost:11434/v1",  # allow-hardcoded-host: ollama 官方默认端点
         "default_model": "qwen2:7b",
         "env_key": "",
     },
@@ -608,14 +608,6 @@ def extract_json(content: str) -> Optional[Any]:
             if parsed is not None:
                 return parsed
     return None
-
-
-def build_messages(system: str, user: str, context: Optional[List[str]] = None) -> tuple:
-    """拼装上下文消息。"""
-    if context:
-        ctx = "\n".join(f"- {c}" for c in context[:10])
-        user = f"【参考资料】\n{ctx}\n\n【任务】\n{user}"
-    return system, user
 
 
 llm_client = LLMClient()

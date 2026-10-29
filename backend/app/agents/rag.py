@@ -76,11 +76,6 @@ def start_chroma_warmup() -> None:
     threading.Thread(target=_warm, name="chroma-warmup", daemon=True).start()
 
 
-def chroma_ready() -> bool:
-    """预热完成后才允许 AI 请求线程使用向量检索。"""
-    return _chroma_ready and not _chroma_failed
-
-
 # ---------------------------------------------------------------- 写入
 KNOWLEDGE_ID_PREFIX = "kp_"
 QUESTION_ID_PREFIX = "q_"

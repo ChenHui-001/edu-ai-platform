@@ -304,17 +304,6 @@ def _rate_bands(rates: List[float]) -> Dict[str, int]:
     return bands
 
 
-def _score_bands(scores: List[float]) -> Dict[str, int]:
-    bands = {"90-100": 0, "80-89": 0, "70-79": 0, "60-69": 0, "<60": 0}
-    for s in scores:
-        if s >= 90: bands["90-100"] += 1
-        elif s >= 80: bands["80-89"] += 1
-        elif s >= 70: bands["70-79"] += 1
-        elif s >= 60: bands["60-69"] += 1
-        else: bands["<60"] += 1
-    return bands
-
-
 @router.get("/teacher/student-comparison", summary="学生横向对比")
 def student_comparison(
     class_id: int, task_id: Optional[int] = None, db: Session = Depends(get_db),
@@ -854,10 +843,6 @@ def json_dumps(v: Any) -> str:
     import json
 
     return json.dumps(v, ensure_ascii=False)
-
-
-def _as_admin(user: User) -> User:
-    return user
 
 
 def _scope_for(user: User, db: Session) -> DataScope:

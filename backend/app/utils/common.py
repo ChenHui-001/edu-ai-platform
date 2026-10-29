@@ -1,13 +1,10 @@
 """分页、CRUD 基类、响应封装等通用工具。"""
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Type, TypeVar
+from typing import Any, Dict, List, Optional, TypeVar
 
 from fastapi import Query
 from pydantic import BaseModel, field_validator, ConfigDict
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
-
 from app.core.config import settings
 
 T = TypeVar("T")
@@ -120,16 +117,6 @@ class PageResult(BaseModel):
             page_size=page_size,
             pages=(total + page_size - 1) // page_size if page_size else 0,
         )
-
-
-def paginate(db: Session, model: Type[T], params: PageParams, order_by=None) -> PageResult:
-    """通用分页查询。"""
-    stmt = select(model)
-    if order_by is not None:
-        stmt = stmt.order_by(order_by)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = stmt.offset(params.offset).limit(params.page_size)
-    return PageResult.build(list(db.scalars(stmt).all()), total, params.page, params.page_size)
 
 
 def ok(data: Any = None, message: str = "操作成功", **extra) -> Dict[str, Any]:

@@ -20,7 +20,6 @@ ROLE_SYS_ADMIN = "sys_admin"
 ROLE_GRADE_ADMIN = "grade_admin"
 ROLE_TEACHER = "teacher"
 ROLE_STUDENT = "student"
-ROLE_GUEST = "guest"
 
 # 首次登录强制改密白名单：这些路径在 must_change_password=True 时仍可访问，
 # 使改密闭环本身可用（需求 4.1.1「首次登录强制修改密码」）。

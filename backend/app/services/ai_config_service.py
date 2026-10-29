@@ -79,7 +79,7 @@ PROVIDER_PRESETS = {
         "label": "OpenAI（GPT 系列）",
     },
     "ollama": {
-        "base_url": "http://localhost:11434/v1",
+        "base_url": "http://localhost:11434/v1",  # allow-hardcoded-host: ollama 官方默认端点
         "model": "qwen2:7b",
         "label": "Ollama（本地部署）",
     },

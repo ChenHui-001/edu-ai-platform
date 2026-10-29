@@ -130,8 +130,8 @@ class Settings(BaseSettings):
     # 这个不对称是刻意的：它保证开关最坏情况下只降级到「无验证码」，而不是
     # 「有验证码但形同虚设」。
     #
-    # 精确的三分支断言在 `tests/test_unit_captcha_enforced.py`（离线层，
-    # 因为 e2e 服务端固定注入 false，测不到 true 分支）。
+    # 注意这个 true 分支平时不执行：本地调试与自动化回归都注入 false，
+    # 所以「开关生效」这件事只能靠人工验证或临时脚本确认。
     CAPTCHA_ENFORCED: bool = True
 
     # ---------------- 文件 / 附件 ----------------

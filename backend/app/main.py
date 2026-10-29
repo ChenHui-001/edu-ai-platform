@@ -42,11 +42,11 @@ def ensure_dirs() -> None:
 #
 # 方案：文件锁（`fcntl.flock`）包住这 5 步。
 # - 为什么不用 supervisord 前置 bootstrap 进程：那要新增 `bootstrap.py` +
-#   `RUN_STARTUP_HOOKS` 开关 + 改 run_e2e.sh/ci.yml 四处；flock 约 20 行、
+#   `RUN_STARTUP_HOOKS` 开关 + 改部署拓扑；flock 约 20 行、
 #   不动部署拓扑，且 worker 数无关。
 # - 为什么不用 DB 锁表：建表之前还没有表可锁 —— 锁必须比被保护的操作更早存在。
-# - Windows 无 `fcntl`：`run_e2e.sh` 在 Windows 上直连 uvicorn 跑单进程 + 临时库，
-#   不存在并发，降级为不加锁直接执行（ImportError 分支）。
+# - Windows 无 `fcntl`：本地直连 uvicorn 跑单进程 + 临时库时不存在并发，
+#   降级为不加锁直接执行（ImportError 分支）。
 # - 锁文件放在 DB 同目录：同一个 DB 天然对应同一把锁；换库（测试用临时库）
 #   自动换锁，不会跨库互斥。
 def _startup_lock_path() -> str:

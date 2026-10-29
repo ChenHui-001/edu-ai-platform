@@ -89,23 +89,3 @@ def snapshot(db: Session, paper: Paper, user_id: Optional[int],
     return row
 
 
-def prune(db: Session, paper_id: int, keep: int = 30) -> int:
-    """保留最近 N 个版本，清理更早的（防止快照无限增长）。
-
-    默认保留 30 个：一天改 5 次也能回溯近一周，足够教学场景。
-    """
-    total = db.scalar(select(func.count()).select_from(PaperVersion).where(
-        PaperVersion.paper_id == paper_id)) or 0
-    if total <= keep:
-        return 0
-    keep_ids = [r for r in db.scalars(
-        select(PaperVersion.id).where(PaperVersion.paper_id == paper_id)
-        .order_by(PaperVersion.version.desc()).limit(keep)).all()]
-    deleted = db.execute(
-        PaperVersion.__table__.delete().where(
-            PaperVersion.paper_id == paper_id,
-            PaperVersion.id.notin_(keep_ids))
-    ).rowcount or 0
-    db.flush()
-    logger.info("试卷 %s 版本快照清理 %s 条（保留最近 %s 条）", paper_id, deleted, keep)
-    return deleted
