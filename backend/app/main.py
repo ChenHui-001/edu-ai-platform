@@ -1,5 +1,6 @@
 """FastAPI 应用入口。"""
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -24,42 +25,116 @@ def ensure_dirs() -> None:
         os.makedirs(d, exist_ok=True)
 
 
+# ---------------------------------------------------------------- 启动互斥
+# 启动期前 5 步（建表 / 补列迁移 / 两个 V2 数据迁移 / 种子）**必须单点执行**。
+#
+# 为什么不能靠"反正幂等"糊过去：
+# - `run_knowledge_v2_migration`（db_migrations.py:145）与
+#   `run_question_v2_migration`（:105-107）里是**破坏性 DELETE**，守卫只是
+#   `sys_config` 里的一个标记位。两个 worker 同时读到"未执行"就会**都执行删除**。
+#   全新库上无害（表本就空），但「从 <V2 升级到 V2」的那一次重启恰好是部署时
+#   起多个 worker 的同一时刻 —— 知识树被清空且无法从日志里看出原因。
+# - `init_all` 的「空表才播」守卫同理：`edu_class.name` 无唯一约束，
+#   两个进程会各插一份（实测 4 条变 8 条）；随后 `User.username` 的唯一约束
+#   触发 IntegrityError，`init_all` 中途抛异常 → 后续 `init_exam_standards` /
+#   `init_demo_data` / `enforce_default_admin_password` **全部跳过**。
+#   最后一项就是 S5，于是"强制改密"在多 worker 下变成概率行为。
+#
+# 方案：文件锁（`fcntl.flock`）包住这 5 步。
+# - 为什么不用 supervisord 前置 bootstrap 进程：那要新增 `bootstrap.py` +
+#   `RUN_STARTUP_HOOKS` 开关 + 改 run_e2e.sh/ci.yml 四处；flock 约 20 行、
+#   不动部署拓扑，且 worker 数无关。
+# - 为什么不用 DB 锁表：建表之前还没有表可锁 —— 锁必须比被保护的操作更早存在。
+# - Windows 无 `fcntl`：`run_e2e.sh` 在 Windows 上直连 uvicorn 跑单进程 + 临时库，
+#   不存在并发，降级为不加锁直接执行（ImportError 分支）。
+# - 锁文件放在 DB 同目录：同一个 DB 天然对应同一把锁；换库（测试用临时库）
+#   自动换锁，不会跨库互斥。
+def _startup_lock_path() -> str:
+    db_path = settings.DATABASE_URL.replace("sqlite:///", "")
+    db_dir = os.path.dirname(os.path.abspath(db_path)) or "."
+    return os.path.join(db_dir, ".startup.lock")
+
+
+@asynccontextmanager
+async def _startup_lock():
+    """启动钩子互斥锁。拿不到锁就等待（而非跳过）。
+
+    为什么是"等待"不是"跳过"：跳过会让后到的 worker 在种子/迁移**未完成**时
+    就开始服务请求，学生可能查到半套数据。等待的代价只是第二个 worker 晚
+    几秒就绪（`HEALTHCHECK --start-period` 已为此留出余量）。
+    """
+    try:
+        import fcntl
+    except ImportError:
+        # Windows / 非 POSIX：e2e 单进程场景，无并发，直接放行。
+        logger.debug("当前平台无 fcntl，跳过启动互斥（仅限单进程场景）")
+        yield 0.0
+        return
+
+    path = _startup_lock_path()
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    started = time.monotonic()
+    fh = open(path, "a+")  # noqa: SIM115 需要跨 yield 持有句柄
+    try:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            logger.info("另一个进程正在执行启动钩子，本进程等待其完成…")
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)  # 阻塞等待
+        waited = time.monotonic() - started
+        if waited > 1:
+            logger.info(f"启动钩子等待 {waited:.1f}s 后获得锁")
+        yield waited
+    finally:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            fh.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：初始化数据库、种子数据、调度器。"""
     ensure_dirs()
 
-    # 建表（轻量化场景用 create_all，生产可切换 Alembic）
-    Base.metadata.create_all(bind=engine)
+    # 这 5 步必须单点执行，理由见文件头「启动互斥」注释。
+    # create_all 也放进锁内：它是 `IF NOT EXISTS` 语义、并发安全，但放在锁内
+    # 可以让「后到的进程」在建表完成后再开始迁移，语义更线性（无额外代价）。
+    async with _startup_lock() as waited:
+        if waited > 0.5:
+            logger.info(f"启动钩子已等待 {waited:.1f}s，继续执行")
 
-    # 老库补列（create_all 不会给已存在的表加新列，模型加字段后必须跑这步）
-    from app.core.db_migrations import (
-        run_column_migrations, run_knowledge_v2_migration, run_question_v2_migration,
-    )
+        # 建表（轻量化场景用 create_all，生产可切换 Alembic）
+        Base.metadata.create_all(bind=engine)
 
-    _mig_db = SessionLocal()
-    try:
-        applied = run_column_migrations(_mig_db)
-        if applied:
-            logger.warning(f"已执行结构补列迁移: {applied}")
-        run_knowledge_v2_migration(_mig_db)
-        # 题库 V2：首次启动清空历史题库（用户已确认可删；放在知识库迁移之后）
-        run_question_v2_migration(_mig_db)
-    finally:
-        _mig_db.close()
-    logger.info("数据库表结构已就绪")
+        # 老库补列（create_all 不会给已存在的表加新列，模型加字段后必须跑这步）
+        from app.core.db_migrations import (
+            run_column_migrations, run_knowledge_v2_migration, run_question_v2_migration,
+        )
 
-    # 种子数据
-    try:
-        db = SessionLocal()
+        _mig_db = SessionLocal()
         try:
-            from app.services.init_db import init_all
-
-            init_all(db)
+            applied = run_column_migrations(_mig_db)
+            if applied:
+                logger.warning(f"已执行结构补列迁移: {applied}")
+            run_knowledge_v2_migration(_mig_db)
+            # 题库 V2：首次启动清空历史题库（用户已确认可删；放在知识库迁移之后）
+            run_question_v2_migration(_mig_db)
         finally:
-            db.close()
-    except Exception as exc:
-        logger.opt(exception=True).error(f"种子数据初始化失败: {exc}")
+            _mig_db.close()
+        logger.info("数据库表结构已就绪")
+
+        # 种子数据
+        try:
+            db = SessionLocal()
+            try:
+                from app.services.init_db import init_all
+
+                init_all(db)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.opt(exception=True).error(f"种子数据初始化失败: {exc}")
 
     # 预热 AI Agent
     try:
