@@ -190,16 +190,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # ---- 强制改密开关：必须同时喂给「服务进程」和「测试进程」----
+      # 服务端为什么设 false：e2e 的 99 处 `.login()` 共用硬编码口令常量，
+      # 无法携带真实改密流程。开关默认 true，生产不注入即保持拦截；
+      # `change_password` 拒绝 new==old 是**无条件**的，不受此开关影响。
+      # 测试进程为什么也要：`test_requirements.py` 里「未改密访问业务接口」
+      # 那条断言按开关取值分支（403 / 200 都是被测行为）。测试进程与服务进程
+      # 是两个独立进程（这里还隔着 docker），宿主机读不到容器的 `-e`；少注入
+      # 一处就会按默认 true 期望 403、实际 200 → 必红。
+      # 故在**这一步单点定义**（写入 $GITHUB_ENV），下面两处都取同一个值。
+      - name: 定义强制改密开关取值
+        run: echo "MUST_CHANGE_PASSWORD_ENFORCED=false" >> "$GITHUB_ENV"
+
       - name: 启动服务
         run: |
-          # MUST_CHANGE_PASSWORD_ENFORCED=false：e2e 的 99 处 `.login()` 共用
-          # 硬编码口令常量，无法携带真实改密流程。开关默认 true，生产不注入
-          # 即保持拦截；`change_password` 拒绝 new==old 是无条件的，不受影响。
           docker run -d --name edu-e2e \
             -p 8080:80 \
             -e LLM_ENABLED=false \
             -e SCHEDULER_ENABLED=false \
-            -e MUST_CHANGE_PASSWORD_ENFORCED=false \
+            -e MUST_CHANGE_PASSWORD_ENFORCED="$MUST_CHANGE_PASSWORD_ENFORCED" \
             -e SECRET_KEY=ci_secret_key_for_e2e_only_not_for_prod \
             -v "${{ github.workspace }}/data:/app/data" \
             edu-ai-platform:e2e

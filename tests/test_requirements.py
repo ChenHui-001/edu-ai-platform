@@ -79,7 +79,22 @@ def run():
             cl = Client("未改密访问业务接口")
             cl.token = tok
             p3, _, sc3 = cl.get("/task/my/scores")
-            check("★ 未改密访问业务接口被 403 拦截", sc3 == 403, p3.get("message", ""))
+        # 强制改密拦截受 MUST_CHANGE_PASSWORD_ENFORCED 控制（默认 true）。
+        # e2e 注入 false —— 101 处 .login() 共用硬编码口令，走不了真实改密流程。
+        # 这里做**双向**断言而不是「开关关着就跳过」：两种形态都是被测行为，
+        # 且开关一旦漏注入，这条会立刻红，是全量回归的早期 canary。
+        # 拦截本身的精确断言在 tests/test_unit_must_change_pwd.py（设 true 逐条验 403/400/200）。
+        #
+        # ⚠️ 开关的取值必须由启动方显式传给**本进程**：服务端是独立进程
+        # （CI 里还是 docker 容器），宿主机上的测试进程读不到它的环境变量。
+        # 见 run_e2e.sh「运行回归」与 ci.yml「配置测试端口」——两处都注入了。
+            _enforced = os.environ.get(
+                "MUST_CHANGE_PASSWORD_ENFORCED", "true").lower() != "false"
+            if _enforced:
+                check("★ 未改密访问业务接口被 403 拦截", sc3 == 403, p3.get("message", ""))
+            else:
+                check("★ 未改密访问业务接口（e2e 关闭拦截时放行，开关生效）",
+                      sc3 == 200, f"status={sc3} {p3.get('message', '')}")
         # 改密白名单：/auth/profile 可访问
             p4, _, sc4 = cl.get("/auth/profile")
             check("改密白名单 /auth/profile 可访问", sc4 == 200, p4.get("message", ""))
@@ -216,8 +231,24 @@ def run():
         tok = p3.get("data", {}).get("access_token")
         if tok:
             cl = Client("新账号通知"); cl.token = tok
-        # 先改密解除强制改密拦截
-            cl.put("/auth/password", {"old_password": "Reg@12345", "new_password": "Reg@12345"})
+        # 先改密解除强制改密拦截。
+        #
+        # ⚠️ 这里原先是 `new_password = "Reg@12345"`（与 old 相同），那是拿
+        # "改密接口不比对新旧"这个**缺陷**当自愈手段。核心修复（3686b68）后
+        # 该 PUT 返回 400「新密码不能与原密码相同」，标记不会清；只因 e2e 的
+        # MUST_CHANGE_PASSWORD_ENFORCED=false 让拦截整体不生效才侥幸通过 ——
+        # 开关一旦设回 true 就必红。
+        # 改用一个**真正不同的**强口令：开关 true/false 两种形态下都能走通，
+        # 断言不再依赖"拦截被关掉"这个偶然条件。
+        # uname 是本次运行内新建的注册账号，不共享常量、不会漂移。
+        # Reg@N3w2026：长度 11、含字母与数字、不在 _WEAK_PASSWORDS 中。
+            p_chg, _, sc_chg = cl.put(
+                "/auth/password",
+                {"old_password": "Reg@12345", "new_password": "Reg@N3w2026"})
+        # 显式断言改密成功：否则它若 400，会被下游「收不到通知」掩盖成
+        # 一个误导性的失败（开关为 true 时表现为 403）。
+            check("新账号改密成功（用真新口令，不靠新旧相同）",
+                  sc_chg == 200 and p_chg.get("success"), p_chg.get("message", ""))
             p4, _, _ = cl.get("/system/notifications")
             notifs = rows_of(p4)
             check("★ 审批通过后申请人收到通知", len(notifs) >= 1, f"notifs={len(notifs)}")

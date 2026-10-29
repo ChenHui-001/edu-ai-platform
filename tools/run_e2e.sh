@@ -131,15 +131,24 @@ SERVER_LOG="/tmp/e2e_server_$$.log"
 # SCHEDULER_ENABLED=false 与 CI 保持一致：回归不应依赖定时触发，
 # 否则「本地开、CI 关」会造成两边行为不一致（另一类"本地绿 CI 红"）。
 #
-# MUST_CHANGE_PASSWORD_ENFORCED=false：e2e 有 99 处 `.login()` 共用硬编码
-# 口令常量，其中 42 处是裸登录（直接 post /auth/login 读响应体）。让它们走
-# 真实改密流程会让"当前密码"在 100+ 个 Client 实例之间漂移。开关默认 true，
-# 生产不注入即保持拦截；`change_password` 里拒绝 new==old 是**无条件**的，
-# 不受此开关影响，所以关掉它也不会让 S5 的可绕过路径复活。
+# ---- 强制改密开关：必须同时注入「服务进程」和「测试进程」----
+# 服务端为什么设 false：e2e 有 99 处 `.login()` 共用硬编码口令常量，其中
+# 42 处是裸登录（直接 post /auth/login 读响应体）。让它们走真实改密流程会让
+# "当前密码"在 100+ 个 Client 实例之间漂移。开关默认 true，生产不注入即保持
+# 拦截；`change_password` 里拒绝 new==old 是**无条件**的，不受此开关影响，
+# 所以关掉它也不会让 S5 的可绕过路径复活。
+#
+# 测试进程为什么也必须看到它：test_requirements.py 里「未改密访问业务接口」
+# 那条断言要按开关取值分支（403 / 200 两种都是被测行为）。测试进程与服务
+# 进程是两个独立的进程（CI 里甚至隔着 docker），宿主机 `os.environ` 读不到
+# 容器的 `-e`。少注入一处 → 断言按默认 true 期望 403、实际 200 → 必红。
+# 故**只此一处定义**，下面用同一个变量喂给两个进程，避免两处字面量漂移。
+MUST_CHANGE_PASSWORD_ENFORCED="${MUST_CHANGE_PASSWORD_ENFORCED:-false}"
+export MUST_CHANGE_PASSWORD_ENFORCED
 (
   cd backend && \
   DATABASE_URL="$DB_URL" LLM_ENABLED=false SCHEDULER_ENABLED=false \
-  MUST_CHANGE_PASSWORD_ENFORCED=false \
+  MUST_CHANGE_PASSWORD_ENFORCED="$MUST_CHANGE_PASSWORD_ENFORCED" \
   SECRET_KEY="e2e_local_only_not_for_prod_$$" \
   "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" \
   > "$SERVER_LOG" 2>&1
