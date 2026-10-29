@@ -5,12 +5,14 @@
 import json
 import re
 import threading
-import time
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.models import AgentCallLog
+from app.services import llm_breaker
+from app.utils.common import now_local
 
 logger = get_logger("llm")
 
@@ -45,13 +47,16 @@ def is_available() -> bool:
     「已配置密钥」这一事实仍然成立。否则一次限流就会让状态接口/健康检查
     长期报 llm_enabled=false，看起来像配置丢失。鉴权失败（401/403）属于
     配置错误，必须持久反映为不可用，直到管理员改配置触发重载。
+
+    B1 之后熔断状态是**进程无关**的（`services/llm_breaker`）：
+    不再需要遍历 `(_llm_singleton, llm_client)` 两个实例各查一遍 ——
+    两份实例状态曾经会不同步（一处熔断、另一处还在用无效密钥撞 401），
+    现在全进程只有一份本地镜像 + 一份 DB 行，天然一致。
     """
-    # 鉴权熔断：对外统一声称不可用，避免健康检查/状态接口继续报 llm_enabled=true。
-    # 进程里存在两个实例（模块级 llm_client 与 get_llm() 单例），任一鉴权熔断
-    # 都视为不可用——base.py 的 Agent 走 llm_client，其它调用可能走单例。
-    for inst in (_llm_singleton, llm_client):
-        if inst is not None and inst._disabled_reason:
-            return False
+    from app.services import llm_breaker
+
+    if llm_breaker.auth_disabled():
+        return False
     enabled = _get_db_value("llm_enabled", "bool", settings.LLM_ENABLED)
     api_key = _get_db_value("llm_api_key", "string", settings.LLM_API_KEY)
     return bool(enabled and api_key)
@@ -121,13 +126,17 @@ class LLMClient:
     会连续发起 6 次 LLM 往返，每次都要等 5~6 秒才拿到 401
     → 单次交卷从 0.5s 涨到 33s，直接超过前端 30s 超时（实测 P1）。
     现在首个 401 即记下原因并短路，后续调用直接走规则引擎降级，
-    直到管理员改配置（`_reload` 清空熔断状态）。
+    直到管理员改配置（`llm_breaker.reset_all()` 清空熔断状态）。
 
     限流冷却（P1）：429 / RATE_LIMITED / quota 是**暂态**故障 —— 配额按分钟
     或按日恢复，长时间永久熔断会让 AI 一整天不可用，只能等管理员手动保存配置。
     因此改「永久熔断」为**指数退避冷却**：30s → 60s → 120s → 240s → 300s（上限）。
     冷却期内 `get_client()` 返回 None 并写入 `_fallback_reason`（含剩余秒数），
     到期后自动恢复真实调用；只要有一次调用成功，退避计数与冷却立即清零。
+
+    熔断状态的**存储位置**（B1）：`services/llm_breaker` —— 模块级本地镜像
+    （同进程立刻生效）+ `sys_llm_breaker` 单行表（跨进程/跨 worker 生效）。
+    不再放实例属性：进程里有两个 `LLMClient()` 实例，各熔各的会漏。
     """
 
     # 鉴权失败特征：401/403、密钥无效。命中 → 永久熔断（直到管理员改配置）。
@@ -145,12 +154,19 @@ class LLMClient:
     def __init__(self):
         self._client = None
         self._fallback_reason = ""
-        # 鉴权熔断状态：非空表示已判定**配置**不可用，跳过真实网络调用
-        self._disabled_reason = ""
-        # 限流冷却状态：_cooldown_until 为 time.monotonic() 时间戳；
-        # streak 为连续限流次数，用于计算指数退避
-        self._cooldown_until = 0.0
-        self._rate_limit_streak = 0
+        # 熔断/冷却状态**不在实例上**了（B1）。它曾经是：
+        #     self._disabled_reason = ""     # 鉴权熔断（401/403，永久）
+        #     self._cooldown_until = 0.0     # 限流冷却（429，指数退避，monotonic）
+        #     self._rate_limit_streak = 0
+        # 三个问题：
+        # 1. 进程里有**两个实例**（模块级 llm_client 与 get_llm() 单例），
+        #    各熔各的 → 一处熔断、另一处继续撞 401，另半边功能静默拖慢；
+        # 2. 多 worker 时各进程各熔各的 → N 倍无谓 401 往返；
+        # 3. `_cooldown_until` 存 `time.monotonic()`，跨进程比较无意义。
+        # 现在统一走 `services/llm_breaker`（单行表 + 模块级本地镜像）。
+        # 实例上只保留 `_client` 与 `_fallback_reason` —— 这两个才是真正的
+        # 进程内缓存（连接池与最近一次降级原因），不需要跨进程。
+        from app.services import llm_breaker  # noqa: F401  确保模块可导入
 
     @property
     def provider_cfg(self) -> Dict[str, Any]:
@@ -166,44 +182,65 @@ class LLMClient:
         return any(m in msg for m in self._RATE_LIMIT_MARKS)
 
     def _cooldown_remaining(self) -> int:
-        """剩余冷却秒数（向上取整）；0 表示未处于冷却期。"""
-        if self._cooldown_until <= 0:
+        """剩余冷却秒数（向上取整）；0 表示未处于冷却期。
+
+        B1：状态来自 `services/llm_breaker`（本地镜像 + DB 合并），
+        不再读实例上的 monotonic 时间戳 —— 跨进程比较时那是错的。
+        """
+        state = llm_breaker.load()
+        if not state or state["kind"] != llm_breaker.KIND_RATE_LIMIT:
             return 0
-        left = self._cooldown_until - time.monotonic()
+        expire = state["expire_at"]
+        if not expire:
+            return 0
+        left = (expire - now_local()).total_seconds()
         if left <= 0:
-            # 冷却自然到期：清掉时间戳，退避计数保留到下一次成功再清零
-            self._cooldown_until = 0.0
+            # 冷却自然到期：清掉状态，退避计数保留到下一次成功再清零
+            llm_breaker.clear_rate_limit_async()
             return 0
         return int(left + 0.999)
 
     def _mark_disabled(self, exc: Exception) -> None:
-        """鉴权失败：永久熔断，直到管理员改配置（_reload 复位）。"""
-        self._disabled_reason = (
+        """鉴权失败：永久熔断，直到管理员改配置（`reset_all` 复位）。"""
+        reason = (
             f"LLM 密钥无效或已过期（{str(exc)[:80]}），已暂停真实调用，"
             "请到「系统管理 → AI 配置」更新密钥后重试")
-        # 鉴权错误优先于限流：清掉冷却，避免下次误报「冷却中」
-        self._cooldown_until = 0.0
-        self._rate_limit_streak = 0
-        logger.warning(self._disabled_reason)
+        # 鉴权错误优先于限流：`save_auth` 内部会清掉 cooling 语义
+        # （auth 行 expire_at 恒为 NULL，见 models/ops.py:LlmBreakerState）。
+        llm_breaker.save_auth(reason)
+        logger.warning(reason)
 
     def _start_rate_limit_cooldown(self, exc: Exception) -> None:
-        """限流/配额不足：进入指数退避冷却，到期自动恢复。"""
-        self._rate_limit_streak += 1
+        """限流/配额不足：进入指数退避冷却，到期自动恢复。
+
+        streak 从**当前共享状态**读回再 +1（而不是实例自增）：
+        各进程各自自增会互相覆盖成 1、2、1、2，退避永远停在 30s。
+        DB 侧由 `llm_breaker` 用一条 `streak = streak + 1` 原子递增，
+        本地镜像用这里算出的同源值，两者不会漂移。
+        """
+        state = llm_breaker.load()
+        streak = 1
+        if state and state["kind"] == llm_breaker.KIND_RATE_LIMIT:
+            streak = max(1, int(state["streak"] or 0) + 1)
         backoff = min(
             self._COOLDOWN_MAX_SECONDS,
-            self._COOLDOWN_BASE_SECONDS * (2 ** (self._rate_limit_streak - 1)),
+            self._COOLDOWN_BASE_SECONDS * (2 ** (streak - 1)),
         )
-        self._cooldown_until = time.monotonic() + backoff
+        llm_breaker.save_rate_limit(
+            f"LLM 限流/配额不足（{str(exc)[:80]}），冷却 {backoff}s",
+            self._COOLDOWN_BASE_SECONDS, self._COOLDOWN_MAX_SECONDS,
+            streak=streak, expire_at=now_local() + timedelta(seconds=backoff),
+        )
         logger.warning(
             f"LLM 限流/配额不足（{str(exc)[:80]}），进入冷却退避 {backoff}s"
-            f"（连续第 {self._rate_limit_streak} 次），冷却期内走规则引擎降级")
+            f"（连续第 {streak} 次），冷却期内走规则引擎降级")
 
     def _reset_rate_limit(self) -> None:
-        """调用成功后清空限流冷却与退避计数。"""
-        if self._rate_limit_streak or self._cooldown_until:
+        """调用成功后清空限流冷却与退避计数（**不动 auth 熔断**）。"""
+        state = llm_breaker.load()
+        if state and state["kind"] == llm_breaker.KIND_RATE_LIMIT:
             logger.info("LLM 调用成功，限流冷却与退避计数已清零")
-        self._rate_limit_streak = 0
-        self._cooldown_until = 0.0
+            llm_breaker.clear_rate_limit_async()
 
     def get_client(self):
         """获取 LangChain ChatOpenAI 实例（失败返回 None）。
@@ -212,18 +249,22 @@ class LLMClient:
         反过来的话，进程里已有 `_client` 时永远查不到熔断标记，
         熔断形同虚设（实测：写入无效密钥后交卷仍耗时 105s）。
         """
-        # 鉴权熔断优先级最高：已确认配置无效，连缓存客户端也不能用
-        if self._disabled_reason:
-            self._fallback_reason = self._disabled_reason
+        # 鉴权熔断优先级最高：已确认配置无效，连缓存客户端也不能用。
+        # B1：状态来自共享层（本地镜像立刻生效 + DB 跨进程生效），
+        # 不再读实例属性 —— 那两个实例各自的 `_disabled_reason` 曾经会不同步。
+        state = llm_breaker.load()
+        if state and state["kind"] == llm_breaker.KIND_AUTH:
+            self._fallback_reason = state["reason"]
             return None
         # 限流冷却：暂态故障，冷却期内短路；到期后自动恢复真实调用
-        remaining = self._cooldown_remaining()
-        if remaining > 0:
-            self._fallback_reason = (
-                f"LLM 限流冷却中，约 {remaining}s 后自动恢复"
-                f"（连续第 {self._rate_limit_streak} 次退避，期间使用规则引擎）")
-            logger.warning(self._fallback_reason)
-            return None
+        if state and state["kind"] == llm_breaker.KIND_RATE_LIMIT:
+            remaining = self._cooldown_remaining()
+            if remaining > 0:
+                self._fallback_reason = (
+                    f"LLM 限流冷却中，约 {remaining}s 后自动恢复"
+                    f"（连续第 {state['streak']} 次退避，期间使用规则引擎）")
+                logger.warning(self._fallback_reason)
+                return None
         if self._client is not None:
             return self._client
         if not is_available():

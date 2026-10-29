@@ -160,6 +160,17 @@ def agent_status(_: User = Depends(get_current_user)):
         tip = "未配置 LLM_API_KEY，所有 Agent 将使用规则引擎降级运行"
     else:
         tip = "LLM 当前不可用（已停用或熔断），所有 Agent 将使用规则引擎降级运行"
+
+    from app.services import llm_breaker
+
+    _breaker_snap = llm_breaker.snapshot()
+    # tip 在熔断时可以直接说清是哪种熔断 —— 这是运维最想知道的区别：
+    # 「密钥无效」要去改配置，而「限流冷却」只要等，两者处置完全相反。
+    if not available and _breaker_snap["breaker"] == "auth":
+        tip = "LLM 密钥无效或已过期（鉴权熔断），请到「AI 配置」更新密钥"
+    elif _breaker_snap["breaker"] == "rate_limit":
+        tip = (f"LLM 限流冷却中，约 {_breaker_snap['cooldown_remaining']}s 后自动恢复，"
+               "期间使用规则引擎降级")
     return ok({
         "llm_enabled": available,
         # provider/model 以 DB 配置为准；即使未启用也返回实际配置，
@@ -181,6 +192,15 @@ def agent_status(_: User = Depends(get_current_user)):
         # 调度器状态此前只有 /jobs/status（仅 admin 可看），管理员打开
         # 「AI 引擎状态」时调度器恒显示「已停止」，与事实不符
         "scheduler_running": bool(sched.get("running")),
+        # 熔断/冷却细节（B1）。此前这些状态藏在 LLMClient 实例属性里，
+        # 运维看到 llm_enabled=false 完全无法区分「没配 key」「key 无效」
+        # 「正在限流冷却」—— 只能翻日志猜。现在直接给出判定依据：
+        #   breaker=none        正常
+        #   breaker=auth        鉴权熔断（永久，需管理员改密钥）
+        #   breaker=rate_limit  限流冷却（倒计时自动恢复）
+        "breaker": _breaker_snap["breaker"],
+        "breaker_reason": _breaker_snap["reason"],
+        "cooldown_remaining": _breaker_snap["cooldown_remaining"],
         "tip": tip,
     })
 

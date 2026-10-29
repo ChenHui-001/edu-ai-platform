@@ -162,6 +162,65 @@ class JobLock(Base):
     expire_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
+class LlmBreakerState(Base):
+    """LLM 熔断/冷却状态（跨进程共享，B1）。
+
+    ## 为什么必须落库
+
+    修复前这两份状态是 `LLMClient` 的实例属性：
+
+        self._disabled_reason = ""      # 鉴权熔断（401/403，永久）
+        self._cooldown_until = 0.0      # 限流冷却（429，指数退避）
+        self._rate_limit_streak = 0
+
+    `--workers 1` 时进程内状态就够了。一旦扩到 N 个 worker，问题变成：
+
+    - **熔断各熔各的**：worker A 撞到 401 熔断了，B/C 完全不知道，各自还要
+      再用无效密钥撞一次 —— 每次都是一轮 5~6 秒的等 401。N 个 worker 就是
+      N 倍无谓延迟，而"密钥无效"这个事实本该全局共享。
+    - **冷却各退各的**：A 撞 429 进入 300s 冷却，B 仍在真实调用。配额已经被
+      打满的情况下，B 的调用只会把 429 再刷一遍，退避窗口形同虚设。
+
+    ## 为什么不用 sys_config 存
+
+    熔断状态是**运行期高频写**（每次失败都写），而 `sys_config` 是配置表：
+    混进去会污染 `updated_at`（配置页按它排序/缓存），且配置表的语义是
+    "管理员设定的值"，运行态数据不该占用它的 key 空间。
+
+    ## 单行表（id 恒为 1）
+
+    只有一份全局熔断状态，不需要 key-value 结构。固定主键避免"多行谁生效"
+    的歧义 —— 条件 UPSERT 永远命中同一行。
+
+    ## `kind` 为什么不做成枚举
+
+    当前只有 `auth`（永久）与 `rate_limit`（限时）两种，用字符串列足够。
+    真正的区别体现在 `expire_at` 是否为空：`auth` 永不为空但**语义上不看它**
+    （必须等管理员改配置），`rate_limit` 靠它到期自动恢复。把这条区别写在
+    列注释里而不是靠枚举约束，是因为将来可能出现"半永久"类型（如账户欠费），
+    那时只需读 `expire_at`，不用改表结构。
+    """
+
+    __tablename__ = "sys_llm_breaker"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False,
+                                    comment="恒为 1，单行表")
+    kind: Mapped[str] = mapped_column(String(16), default="",
+                                      comment="空=auth 永久熔断 / rate_limit 限时冷却")
+    reason: Mapped[str] = mapped_column(Text, default="",
+                                        comment="面向用户的降级原因（含剩余秒数）")
+    streak: Mapped[int] = mapped_column(Integer, default=0,
+                                        comment="连续限流次数，用于指数退避")
+    # ★ 必须是绝对时间（now_local()），不能用 time.monotonic()。
+    # monotonic 是**进程内**单调时钟，各进程起点不同，跨进程比较无意义
+    # （实测同机两个 Python 进程的 monotonic 差异可达数十万秒）。
+    # 旧实现存 monotonic 是因为只在单进程内比较 —— 外置时这是必须先改掉的前提。
+    expire_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True,
+                                                          comment="冷却到期时刻；空表示永久熔断")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local,
+                                                 onupdate=now_local)
+
+
 class Attachment(Base):
     """附件元数据。"""
 

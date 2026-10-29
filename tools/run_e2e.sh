@@ -112,6 +112,11 @@ step "2/6  离线单元回归（真实 IP / 异地登录 / 首批性能修复 / 
 # e2e 拿不到答案，构造不出"带正确码"的正例。
 # 本文件同时守「开关单向收紧」：关掉开关只能放开"不传"，带错码一律拒绝。
 "$PY" tests/test_unit_captcha_enforced.py || die 1 "离线回归（S7 验证码强制化）未通过"
+# B1 LLM 熔断/冷却状态跨进程外置。必须在这一层：e2e 固定 LLM_ENABLED=false
+# （绝不触真实大模型），而本文件测的正是**真实调用失败时**的状态机
+# （_mark_disabled / _start_rate_limit_cooldown），e2e 里走不到那些分支。
+# 同时守「B1 不能改坏 P1」：本地镜像缺失时 6 次连续调用会变成 6 次真实往返。
+"$PY" tests/test_unit_llm_breaker.py || die 1 "离线回归（B1 LLM 熔断外置）未通过"
 
 # ---------- 3. 独立数据目录 ----------
 step "3/6  准备独立数据目录"

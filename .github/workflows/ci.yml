@@ -147,6 +147,25 @@ jobs:
           SECRET_KEY: ci_unit_secret_key_0123456789abcdef
         run: python ../tests/test_unit_captcha_enforced.py
 
+      - name: 离线回归（B1 LLM 熔断/冷却状态跨进程外置）
+        # e2e 固定 LLM_ENABLED=false（绝不触真实大模型），而本文件测的正是
+        # **真实调用失败时**的状态机（_mark_disabled / _start_rate_limit_cooldown），
+        # e2e 里根本走不到那些分支 —— 熔断/冷却的内部状态在既有 e2e 中零覆盖。
+        #
+        # 这里刻意**注入真 LLM_ENABLED=true + 假 key**：熔断只在"配了 key
+        # 但 key 无效"时才有意义（没配 key 时 get_client() 早就返回 None 了）。
+        # 全程不发起网络请求 —— _client 被替换成抛异常的假对象。
+        #
+        # 同时守「B1 不能改坏 P1」：去掉进程内镜像后，同一循环里 6 道题会
+        # 真的发出 6 次 401 往返（每次 5~6s，单次交卷从 0.5s 涨到 33s）。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'true'
+          SCHEDULER_ENABLED: 'false'
+          DEBUG: 'false'
+          SECRET_KEY: ci_unit_secret_key_0123456789abcdef
+        run: python ../tests/test_unit_llm_breaker.py
+
       - name: 离线回归（A2 定时任务执行锁 / 多 worker 互斥）
         # `uvicorn --workers N` 下 N 个 worker 各跑一份 APScheduler，cron 是墙钟
         # 触发 -> 同一分钟同时叫醒同一个任务，而 `max_instances=1` 只管单进程。

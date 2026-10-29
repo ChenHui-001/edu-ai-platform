@@ -247,12 +247,24 @@ def _reload_llm_client() -> None:
     必须同时清除**熔断状态**：熔断是对「这份密钥无效」的判定，
     管理员改了密钥后该判定立即失效，否则改对了也一直走规则引擎降级，
     表现为「配置保存成功但 AI 永远不工作」。
+
+    B1 之后熔断状态**不在实例上**了（`services/llm_breaker` 单行表 +
+    模块级镜像），所以这里分两件事做：
+
+    1. `llm_breaker.reset_all()` —— 清 DB 行 + 本地镜像（**跨进程立即解除**）；
+    2. 清各实例的 `_client` / `_fallback_reason` —— 这两个仍是进程内缓存
+       （连接池与最近降级原因），必须重建才能用上新密钥。
+
+    仍然遍历两个实例：虽然熔断已共享，但 `_client`（连接池）是各实例自己的，
+    只清一个会出现「部分功能用新密钥、部分用旧连接 + 旧 base_url」的鬼现象。
     """
     try:
         from app.agents import llm as _llm_mod
-        # 模块里存在两个实例：模块级 llm_client 与 get_llm() 单例。
-        # base.py 的 Agent 走的是 llm_client，而部分调用走 get_llm()，
-        # 只清一个会出现「部分功能生效、部分仍用旧配置」的鬼现象。
+        from app.services import llm_breaker
+
+        # 先清熔断：让下次 get_client() 的判定立刻放行（同步执行，见其 docstring）。
+        llm_breaker.reset_all()
+
         targets = [_llm_mod.llm_client]
         while_single = getattr(_llm_mod, "_llm_singleton", None)
         if while_single is not None and while_single is not _llm_mod.llm_client:
@@ -260,12 +272,7 @@ def _reload_llm_client() -> None:
         for c in targets:
             c._client = None
             c._fallback_reason = ""
-            c._disabled_reason = ""
-            # 管理员改配置意味着「限流冷却」也应立即失效：
-            # 新密钥/新配额下没有理由继续退避等待。
-            c._cooldown_until = 0.0
-            c._rate_limit_streak = 0
-        logger.info(f"LLM 客户端已重载（{len(targets)} 个实例，含熔断/冷却复位）")
+        logger.info(f"LLM 客户端已重载（{len(targets)} 个实例，熔断/冷却已跨进程复位）")
     except Exception as exc:
         logger.warning(f"重载 LLM 客户端失败: {exc}")
 
