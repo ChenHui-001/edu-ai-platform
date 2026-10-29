@@ -178,29 +178,41 @@ def case_is_timed_out():
     print("A 组：超时判据的边界（哪个状态判、用哪个时间列、无基准怎么办）")
     print("-" * 70)
     T = S.JOB_TIMEOUT_SECONDS
+    # ⚠️ 边界断言必须用**注入的固定 now**，不能靠 now_local() 现取两次。
+    # 第一版写的是 `S.is_timed_out("running", now_local() - timedelta(seconds=T))`：
+    # 构造 created_at 与函数内部取 now 是两次独立调用，中间流逝的微秒让
+    # 耗时变成 T + 0.000x → 严格大于 T → 判超时。本地（调用快）侥幸绿，
+    # CI（机器慢）稳定红 —— 实测 CI 47/48，唯一红项就是 A②。
+    # 这不是判据的 bug（`>` 的语义正确），是测试自己的时序竞态。
+    BASE = now_local()
 
-    ok("A① 刚创建的 running 不算超时", S.is_timed_out("running", now_local()) is False)
+    ok("A① 刚创建的 running 不算超时",
+       S.is_timed_out("running", BASE, now=BASE) is False)
     ok("A② 恰好等于阈值不算超时（用 > 不是 >=）",
-       S.is_timed_out("running", now_local() - timedelta(seconds=T)) is False,
+       S.is_timed_out("running", BASE - timedelta(seconds=T), now=BASE) is False,
        f"T={T}")
     ok("A③ 超阈值 1 秒算超时",
-       S.is_timed_out("running", now_local() - timedelta(seconds=T + 1)) is True)
+       S.is_timed_out("running", BASE - timedelta(seconds=T + 1), now=BASE) is True)
     ok("A④ pending 也判超时（线程没起来就崩的形态）",
-       S.is_timed_out("pending", now_local() - timedelta(seconds=T + 1)) is True)
+       S.is_timed_out("pending", BASE - timedelta(seconds=T + 1), now=BASE) is True)
     ok("A⑤ success 永不判超时（哪怕 30 天前）",
-       S.is_timed_out("success", now_local() - timedelta(days=30)) is False)
+       S.is_timed_out("success", BASE - timedelta(days=30), now=BASE) is False)
     ok("A⑥ failed 永不判超时",
-       S.is_timed_out("failed", now_local() - timedelta(days=30)) is False)
+       S.is_timed_out("failed", BASE - timedelta(days=30), now=BASE) is False)
     ok("A⑦ created_at 为空 ≠ 超时（无基准不臆断）",
-       S.is_timed_out("running", None) is False)
+       S.is_timed_out("running", None, now=BASE) is False)
     ok("A⑧ status 为空按非运行态处理",
-       S.is_timed_out(None, now_local() - timedelta(days=1)) is False)
+       S.is_timed_out(None, BASE - timedelta(days=1), now=BASE) is False)
+    ok("A⑨ 亚秒级超出阈值也判超时（T+0.5s）",
+       S.is_timed_out("running", BASE - timedelta(seconds=T + 0.5), now=BASE) is True)
+    ok("A⑩ 亚秒级未达阈值不判超时（T-0.5s）",
+       S.is_timed_out("running", BASE - timedelta(seconds=T - 0.5), now=BASE) is False)
 
-    ok("A⑨ effective_status 把超时呈现为 failed",
-       S.effective_status("running", now_local() - timedelta(seconds=T + 1)) == "failed")
-    ok("A⑩ effective_status 对正常任务原样返回",
-       S.effective_status("running", now_local()) == "running")
-    ok("A⑪ 阈值与 lesson_ai 同源（不再各定义一份）",
+    ok("A⑪ effective_status 把超时呈现为 failed",
+       S.effective_status("running", BASE - timedelta(seconds=T + 1)) == "failed")
+    ok("A⑫ effective_status 对正常任务原样返回",
+       S.effective_status("running", BASE) == "running")
+    ok("A⑬ 阈值与 lesson_ai 同源（不再各定义一份）",
        lesson_ai.JOB_TIMEOUT_SECONDS == S.JOB_TIMEOUT_SECONDS,
        f"{lesson_ai.JOB_TIMEOUT_SECONDS} vs {S.JOB_TIMEOUT_SECONDS}")
 
@@ -213,15 +225,19 @@ def case_apply_timeout():
     print("B 组：apply_timeout 只覆盖超时的，正常任务的 error 必须原样保留")
     print("-" * 70)
     T = S.JOB_TIMEOUT_SECONDS
+    # 与 A 组同理：不依赖"两次 now_local() 之间的时间流逝"。
+    # apply_timeout 内部调用 is_timed_out 时不注入 now，所以这里的比较
+    # 必须**留出足够余量**（用 T+100 而不是恰好 T），避免边界抖动。
+    BASE = now_local()
 
-    d1 = S.apply_timeout(_JobObj("running", now_local() - timedelta(seconds=T + 100)),
+    d1 = S.apply_timeout(_JobObj("running", BASE - timedelta(seconds=T + 100)),
                          {"error": None})
     ok("B① 超时 → status=failed", d1["status"] == "failed", d1["status"])
     ok("B② 超时 → timed_out=True", d1["timed_out"] is True)
     ok("B③ 超时 → error 是可读中文", "超时" in (d1["error"] or ""),
        (d1["error"] or "")[:30])
 
-    d2 = S.apply_timeout(_JobObj("failed", now_local(), error="知识点不存在"),
+    d2 = S.apply_timeout(_JobObj("failed", BASE, error="知识点不存在"),
                          {"error": "知识点不存在"})
     ok("B④ 正常失败任务保留自己的 error（不被'超时'盖掉）",
        d2["error"] == "知识点不存在", d2["error"])
@@ -229,7 +245,7 @@ def case_apply_timeout():
 
     # 极端但真实：线程写了 error 却没来得及改 status（崩在两句之间）
     d3 = S.apply_timeout(
-        _JobObj("running", now_local() - timedelta(seconds=T + 100),
+        _JobObj("running", BASE - timedelta(seconds=T + 100),
                 error="模型返回格式错误"),
         {"error": "模型返回格式错误"})
     ok("B⑥ 超时时原 error 备份到 error_before_timeout",
@@ -347,8 +363,9 @@ def case_same_criteria():
     print("E 组：agent 与 lesson_ai 对同一任务给出相同结论")
     print("-" * 70)
     T = S.JOB_TIMEOUT_SECONDS
+    BASE = now_local()
 
-    zombie = _JobObj("running", now_local() - timedelta(seconds=T + 100))
+    zombie = _JobObj("running", BASE - timedelta(seconds=T + 100))
     agent_view = S.apply_timeout(zombie, {"status": "running", "error": None})
     lesson_view = lesson_ai._job_progress(zombie)
     ok("E① 僵尸任务两边都是 failed",
@@ -357,7 +374,7 @@ def case_same_criteria():
     ok("E② 两边都给出非空原因",
        bool(agent_view["error"]) and bool(lesson_view["error"]))
 
-    normal = _JobObj("running", now_local())
+    normal = _JobObj("running", BASE)
     agent_view2 = S.apply_timeout(normal, {"status": "running", "error": None})
     lesson_view2 = lesson_ai._job_progress(normal)
     ok("E③ 正常任务两边都是 running",

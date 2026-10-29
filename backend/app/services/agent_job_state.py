@@ -70,6 +70,7 @@ STATUS_RUNNING = ("pending", "running")
 def is_timed_out(
     status: Optional[str], created_at: Optional[datetime],
     *, timeout_seconds: int = JOB_TIMEOUT_SECONDS,
+    now: Optional[datetime] = None,
 ) -> bool:
     """任务是否已超时（只对 pending/running 有意义）。
 
@@ -80,12 +81,25 @@ def is_timed_out(
     `created_at` 为空的脏数据**不判超时**：没有时间基准就无法断言它超时了，
     宁可继续显示 running（用户可以手动重试），也不能凭空把可能正常的任务
     判死。这类行由启动收割按 `REAP_GRACE_SECONDS` 兜底处理。
+
+    Args:
+        now: 基准时刻，默认取 `now_local()`。**仅供测试注入**。
+
+            为什么必须可注入：判据的边界语义是「耗时 **严格大于** 阈值才算
+            超时」（`>` 而非 `>=`）。若测试写成
+            `is_timed_out("running", now_local() - timedelta(seconds=T))`，
+            那么"构造 created_at"与"函数内部取 now"是两次独立调用，
+            中间流逝的微秒会让耗时变成 `T + 0.000x` → 严格大于 T → 判超时。
+            这个断言在本地（调用快）侥幸通过、在 CI（机器慢）稳定失败，
+            属于典型的"测试自己有时序竞态"。实测确认过：CI 上 47/48，
+            唯一红项就是它。注入固定 now 后边界变成确定的。
     """
     if status not in STATUS_RUNNING:
         return False
     if created_at is None:
         return False
-    return (now_local() - created_at).total_seconds() > timeout_seconds
+    base = now if now is not None else now_local()
+    return (base - created_at).total_seconds() > timeout_seconds
 
 
 def effective_status(
