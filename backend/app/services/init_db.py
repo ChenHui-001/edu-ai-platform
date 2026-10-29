@@ -665,18 +665,42 @@ def enforce_default_admin_password(db: Session) -> int:
         if not user.must_change_password:
             user.must_change_password = True
             auto_fixed += 1
+    # commit 自身也必须护住：这是收尾步骤，一个 commit 失败（锁超时、
+    # 磁盘满）不该让整个启动链炸掉。失败就回滚 —— 下一轮启动会重试，
+    # 语义上退化成原 warn 版（只告警不处置），不是更糟。
     if auto_fixed:
-        db.commit()
-        # 注意：项目 logger 是 **Loguru**（app/core/logger.get_logger），
-        # 占位符是 `{}` 而不是 stdlib logging 的 `%s`。用 `%s` 会把字面量
-        # "%s" 打进日志（已实测踩到），看起来像模板没渲染。
-        logger.warning(
-            "已将 {} 个仍在使用出厂口令 Admin@123456 的超级管理员标记为强制改密：{}",
-            auto_fixed, "、".join(u.username for u in offenders),
-        )
+        try:
+            db.commit()
+        except Exception as exc:  # noqa: BLE001  收尾步骤失败不阻断启动
+            logger.error("标记强制改密失败（已回滚，下次启动重试）：{}", exc)
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            auto_fixed = 0
+        else:
+            # 注意：项目 logger 是 **Loguru**（app/core/logger.get_logger），
+            # 占位符是 `{}` 而不是 stdlib logging 的 `%s`。用 `%s` 会把字面量
+            # "%s" 打进日志（已实测踩到），看起来像模板没渲染。
+            logger.warning(
+                "已将 {} 个仍在使用出厂口令 Admin@123456 的超级管理员标记为强制改密：{}",
+                auto_fixed, "、".join(u.username for u in offenders),
+            )
 
+    # 告警/落库那步单独护住。`_log_admin_default_password` 里的 ErrorLog 写入
+    # 依赖 `sys_error_log` 表；如果库结构异常或表被删，这里抛出去会被
+    # `main.py:53-62` 的 try/except 吞掉 —— 但那是**整个 init_all** 的兜底，
+    # 而本函数位于 init_all 的最末一步，吞掉只影响"少一条告警"。
+    # 真正的理由是：告警是观测手段，绝不能成为启动失败的原因。
     if offenders:
-        _log_admin_default_password(db, offenders, auto_fixed)
+        try:
+            _log_admin_default_password(db, offenders, auto_fixed)
+        except Exception as exc:  # noqa: BLE001  告警失败降级为日志
+            logger.error("记录默认口令安全告警失败（已降级）：{}", exc)
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
     return auto_fixed
 
 
@@ -712,4 +736,6 @@ def init_exam_standards(db: Session) -> None:
 
     result = seed_exam_standards(db)
     if result.get("errors"):
-        logger.warning("命题标准播种存在校验失败项：%s", result["errors"])
+        # 占位符用 `{}`：本模块 logger 是 Loguru，`%s` 会被原样打进日志、
+        # 参数静默丢弃（与 llm.py 同一处坑）。
+        logger.warning("命题标准播种存在校验失败项：{}", result["errors"])
