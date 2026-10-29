@@ -573,6 +573,12 @@ def _log_admin_default_password(db: Session, users: List[User], auto_fixed: int)
 
     幂等由 `_upsert_error_log` 保证：每次启动都会走到这里，若直接 `db.add`
     则每天重启 N 次就堆 N 条重复记录。
+
+    **本函数自身保证不抛异常。** 它的本职就是"安全告警"：如果它因为写库
+    失败而抛出去，调用方看到的是 `种子数据初始化失败: <db error>` ——
+    一条指向错误方向的诊断，而真正的安全告警彻底丢失。告警机制不能因为
+    告警通道坏了就静默消失，所以 DB 通道失败时降级到日志通道
+    （日志与 DB 互为备份，DB 坏了至少日志还在）。
     """
     names = "、".join(u.username for u in users)
     msg = (
@@ -587,13 +593,24 @@ def _log_admin_default_password(db: Session, users: List[User], auto_fixed: int)
     if settings.DEBUG:
         logger.warning(msg)
         return
+    # 先走日志通道：它一定成功，且即使下面落库失败，告警内容也已经留痕。
     logger.error(msg)
-    _upsert_error_log(
-        db,
-        module="init_db",
-        path="/startup/enforce_default_admin_password",
-        message=msg,
-    )
+    try:
+        _upsert_error_log(
+            db,
+            module="init_db",
+            path="/startup/enforce_default_admin_password",
+            message=msg,
+        )
+    except Exception as exc:  # noqa: BLE001 告警落库失败不能打断启动，降级到日志
+        logger.error("安全告警落库失败（已降级为日志输出）：{}", exc)
+        # 必须 rollback：`_upsert_error_log` 内部自己 commit，失败后 session
+        # 可能停在不可用状态。不收拾干净的话，调用方复用这个 session 会继续
+        # 报 `PendingRollbackError` —— 把局部故障放大成整个 session 报废。
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _upsert_error_log(db: Session, *, module: str, path: str,
