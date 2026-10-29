@@ -41,11 +41,22 @@ jobs:
           python tools/lint_gate.py
 
       - name: 应用导入与建表检查
+        # ⚠️ 这一步曾经**靠一个无关的副作用**才能通过：`core/logger.py` 默认
+        # 启用 loguru FileSink，路径 `./data/logs/...`，loguru 会 makedirs 整个
+        # 路径 → `./data/` 被顺手建出来 → `create_all` 才能建库。
+        # 把 FileSink 改成默认关闭后 `./data` 没人建了，这里立刻报
+        # `unable to open database file` —— SQLite **不会**自动创建父目录。
+        #
+        # 现在两处都改对了：`core/database.py` 在建引擎时自己保证父目录
+        # （根治，任何入口都成立）；这里也显式 mkdir，让本步骤不依赖任何
+        # 隐藏副作用。以后若有人再「优化」掉其中一处，另一处仍能兜住，
+        # 且这次失败会明确指向目录问题而不是伪装成数据库故障。
         working-directory: backend
         env:
           DATABASE_URL: sqlite:///./data/ci_test.db
           LLM_ENABLED: 'false'
         run: |
+          mkdir -p data
           python -c "
           from app.main import app
           from app.core.database import Base, engine
@@ -172,6 +183,24 @@ jobs:
           SEED_DEMO_DATA: 'false'
           SECRET_KEY: ci_startup_checks_secret_0123456789abcdef
         run: python ../tests/test_unit_startup_checks.py
+
+      - name: 离线回归（SQLite 数据目录自动创建）
+        # SQLite 不会自动创建父目录，目录不存在时抛
+        # `unable to open database file` —— 看起来像数据库故障，实际是目录问题。
+        #
+        # 这个缺陷长期被 `core/logger.py` 的 loguru FileSink 掩盖：那个 sink
+        # 路径是 `./data/logs/...`，loguru 会 makedirs 整个路径，`./data/` 被
+        # 顺手建出来，`create_all` 才成功。FileSink 改成默认关闭后立刻暴露。
+        #
+        # D2 是关键用例外 —— 它**不导入 app.main**（那里有 ensure_dirs），
+        # 只碰引擎，证明兜底在 database.py 而不是被别处掩盖。
+        working-directory: backend
+        env:
+          LLM_ENABLED: 'false'
+          SCHEDULER_ENABLED: 'false'
+          DEBUG: 'false'
+          SECRET_KEY: ci_sqlite_dir_secret_0123456789abcdef
+        run: python ../tests/test_sqlite_dir.py
 
   frontend:
     name: 前端构建
