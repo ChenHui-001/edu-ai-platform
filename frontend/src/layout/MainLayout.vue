@@ -41,7 +41,7 @@
     <el-container>
       <el-header class="header">
         <div class="header-left">
-          <el-icon class="collapse-btn" @click="collapsed = !collapsed">
+          <el-icon class="collapse-btn" @click="toggleCollapse">
             <Fold v-if="!collapsed" /><Expand v-else />
           </el-icon>
           <el-breadcrumb separator="/">
@@ -51,7 +51,7 @@
 
         <div class="header-right">
           <el-tooltip content="AI 引擎状态" placement="bottom">
-            <el-tag :type="aiStatus.llm_enabled ? 'success' : 'warning'" size="small"
+            <el-tag class="ai-tag" :type="aiStatus.llm_enabled ? 'success' : 'warning'" size="small"
                     effect="dark" round style="margin-right: 12px">
               <el-icon style="vertical-align: -2px"><Cpu /></el-icon>
               AI {{ aiStatus.llm_enabled ? '已启用' : '降级模式' }}
@@ -88,7 +88,7 @@
                 {{ userStore.realName.charAt(0) }}
               </el-avatar>
               <span class="user-name">{{ userStore.realName }}</span>
-              <el-tag size="small" type="info">{{ userStore.roleLabel }}</el-tag>
+              <el-tag class="user-role" size="small" type="info">{{ userStore.roleLabel }}</el-tag>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
@@ -112,12 +112,17 @@
           </transition>
         </router-view>
       </el-main>
+
+      <!-- 页脚版本信息：紧凑模式，窄屏自动只留版本号；完整信息在「系统设置」页 -->
+      <el-footer class="app-footer">
+        <VersionInfo compact />
+      </el-footer>
     </el-container>
   </el-container>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 // 全局图标注册已移除：路由 meta / 菜单分组里存的是图标名字符串，
@@ -131,6 +136,7 @@ import {
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
 import { agentApi, systemApi } from '@/api'
+import VersionInfo from '@/components/VersionInfo.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -150,6 +156,22 @@ const collapsed = ref(false)
 const notifications = ref([])
 const unread = ref(0)
 const aiStatus = ref({ llm_enabled: false })
+
+// 窄屏自动收起侧边栏：`el-aside` 固定 220px，在 390px 手机上会把内容区
+// 挤成 170px（滚动条 + 表格全废）。收起后剩 64px，内容区可用。
+// 一旦用户手动点过折叠按钮就不再跟随视口 —— 否则手机上刚展开、
+// 转个屏就被自动收回，交互像坏了。
+const collapseTouched = ref(false)
+
+function toggleCollapse() {
+  collapseTouched.value = true
+  collapsed.value = !collapsed.value
+}
+
+function syncCollapseByViewport() {
+  if (collapseTouched.value) return
+  collapsed.value = window.innerWidth <= 900
+}
 
 const activeMenu = computed(() => route.path)
 
@@ -274,10 +296,16 @@ onMounted(async () => {
   // 失败静默：登录时的本地快照仍在，且 request.js 已统一提示错误。
   userStore.fetchProfile().catch(() => {})
   loadNotifications()
+  syncCollapseByViewport()
+  window.addEventListener('resize', syncCollapseByViewport)
   try {
     const res = await agentApi.status()
     aiStatus.value = res.data
   } catch (e) { /* 忽略 */ }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncCollapseByViewport)
 })
 </script>
 
@@ -320,6 +348,27 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* 页头左区必须在窄屏可压缩，否则面包屑会把右侧图标挤出屏幕 */
+.header-left {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.header-left :deep(.el-breadcrumb) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 手机端：隐藏 AI 状态标签、用户名与角色标签（头像仍在，下拉菜单可进个人中心），
+   给面包屑留出空间。之前三者同宽竞争，实测 390px 下「系统配置」被压成竖排、
+   用户名与角色标签叠在一起。 */
+@media (max-width: 768px) {
+  .header { padding: 0 10px; }
+  .ai-tag, .user-name, .user-role { display: none; }
 }
 
 .collapse-btn {
@@ -365,6 +414,19 @@ onMounted(async () => {
   padding: 0;
   background: var(--page-bg);
   overflow-y: auto;
+}
+
+/* 页脚：固定 26px，不参与滚动，主内容区自适应剩余高度 */
+.app-footer {
+  height: 26px;
+  line-height: 26px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border-top: 1px solid #ebeef5;
+  flex-shrink: 0;
 }
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.18s; }

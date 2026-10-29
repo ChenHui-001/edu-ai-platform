@@ -800,6 +800,13 @@ def _write_items(db: Session, paper: Paper, items: List[Dict[str, Any]],
 
     # 4) 删除旧题项（此时已无作答指向，级联删除安全）
     if old_ids:
+        # usage_count 必须与步骤 2 的「每道新题 +1」对称递减，否则每次改卷都只增
+        # 不减，长期虚高会污染 compose() 的「使用次数少优先」排序（BUG-001）。
+        # 停留在卷内的题：新 +1 与旧 -1 抵消；被移除的题：净 -1。
+        for _old_item_id, qid in old_rows:
+            q_obj = db.get(Question, int(qid))
+            if q_obj is not None:
+                q_obj.usage_count = max(0, int(q_obj.usage_count or 0) - 1)
         db.execute(PaperItem.__table__.delete().where(PaperItem.id.in_(old_ids)))
         db.flush()
 

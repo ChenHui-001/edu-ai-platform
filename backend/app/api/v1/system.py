@@ -463,6 +463,17 @@ def read_all(db: Session = Depends(get_db), user: User = Depends(get_current_use
 
 
 # ---------------------------------------------------------------- 配置
+def _mask_dsn(url: str) -> str:
+    """数据库连接串脱敏：保留协议/账号/主机/库名，只抹掉密码。
+
+    只回 `url.split("://")[0]`（"sqlite"/"postgresql"）等于什么都没说 ——
+    管理员看不出库到底落在哪，排查「连到了哪个库」时无从下手。
+    """
+    import re
+
+    return re.sub(r"://([^:/@]+):([^@]+)@", r"://\1:****@", url or "")
+
+
 @router.get("/config", summary="系统配置（可编辑项 + 运行态只读项）")
 def get_config(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
     from app.core.config import settings
@@ -487,7 +498,16 @@ def get_config(db: Session = Depends(get_db), _: User = Depends(get_current_admi
         return v
 
     editable = []
+    # 版本快照由系统维护（版本变化时自动写），不能出现在「可编辑配置项」里 ——
+    # 管理员改坏它会让「最后更新时间」变成假的，且没有任何业务意义。
+    from app.services.version_info import SNAPSHOT_KEY as _ver_snapshot_key
+
     for c in db.scalars(select(SysConfig).order_by(SysConfig.category, SysConfig.id)).all():
+        # category=system 全是系统内部标记（迁移标志位、版本快照），不是业务配置：
+        # 一条 `question_bank_v2_migrated=0` 改下去，下次启动就会按"首次迁移"
+        # 清空题库（设计如此，当初就是这么确认的）。既不该展示，也不该可改。
+        if c.category == "system" or c.key == _ver_snapshot_key:
+            continue
         editable.append({
             "key": c.key, "value": _mask(c.key, c.value), "value_type": c.value_type,
             "category": c.category, "label": c.label or c.key,
@@ -505,16 +525,41 @@ def get_config(db: Session = Depends(get_db), _: User = Depends(get_current_admi
         "version": settings.APP_VERSION,
         "debug": settings.DEBUG,
         "database": settings.DATABASE_URL.split("://")[0],
+        "database_url": _mask_dsn(settings.DATABASE_URL),
+        "default_page_size": settings.DEFAULT_PAGE_SIZE,
+        "pass_score": settings.PASS_SCORE,
+        "access_token_expire_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES,
+        "max_upload_size": settings.MAX_UPLOAD_SIZE,
         "llm_provider": _cfg_val("llm_provider", "string", settings.LLM_PROVIDER),
         "llm_model": _cfg_val("llm_model", "string", settings.LLM_MODEL),
+        # 地址与密钥同样走 sys_config 优先，且**必须脱敏**后再回前端：
+        # 这一页是只读展示，没有理由把可用凭据交给浏览器。
+        "llm_base_url": _mask("llm_base_url", _cfg_val("llm_base_url", "string", settings.LLM_BASE_URL)),
+        "llm_api_key": _mask("llm_api_key", _cfg_val("llm_api_key", "string", settings.LLM_API_KEY)),
         "llm_enabled": _llm_available(),
-        "max_upload_size": settings.MAX_UPLOAD_SIZE,
+        "rag_top_k": settings.RAG_TOP_K,
+        "chroma_persist_dir": settings.CHROMA_PERSIST_DIR,
         "scheduler_enabled": settings.SCHEDULER_ENABLED,
         "log_retention_days": settings.LOG_RETENTION_DAYS,
         "review_intervals": settings.REVIEW_INTERVALS,
         # 可编辑配置项
         "editable": editable,
     })
+
+
+@router.get("/version", summary="版本信息（版本号 / 构建号 / 最后更新时间）")
+def get_version_info(db: Session = Depends(get_db)):
+    """版本信息，**不需要登录**。
+
+    刻意不挂 `get_current_user`：
+    1. 版本号/构建号本就出现在未鉴权的 `/health` 里，这里只是把「构建号」和
+       「版本更新时间」一并给出，没有增加可被利用的信息面；
+    2. 登录页、403/404 兜底页也要显示版本 —— 那些页面拿不到 token，
+       要鉴权就只能硬编码版本号（必然与镜像脱节）。
+    """
+    from app.services.version_info import version_payload
+
+    return ok(version_payload(db))
 
 
 class ConfigUpdateIn(BaseModel):
@@ -539,6 +584,11 @@ def update_config(
     """
     row = db.scalar(select(SysConfig).where(SysConfig.key == payload.key))
     if row:
+        # 系统内部标记（迁移标志位/版本快照）不允许改：把 question_bank_v2_migrated
+        # 改成 0，下次启动会当作「首次迁移」清空题库。这类键没有业务含义，
+        # 只可能被误改，直接拒绝比事后补救便宜。
+        if row.category == "system":
+            raise BusinessException("系统保留配置项不允许修改", detail={"key": payload.key})
         row.value = payload.value
         row.value_type = payload.value_type
         if payload.label:

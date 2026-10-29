@@ -29,7 +29,9 @@ export const systemApi = {
   notifications: (params) => request.get('/system/notifications', { params }),
   readNotification: (id) => request.put(`/system/notifications/${id}/read`),
   readAllNotifications: () => request.put('/system/notifications/read-all'),
-  config: () => request.get('/system/config')
+  config: () => request.get('/system/config'),
+  // 版本号/构建号/最后更新时间（公开接口，登录页也可用）
+  versionInfo: () => request.get('/system/version')
 }
 
 // ---------------- 教学资源 ----------------

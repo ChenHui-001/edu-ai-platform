@@ -148,6 +148,7 @@ difficulty 取值：easy / medium / hard"""
         if not grade_id:
             raise BusinessException("该学科未绑定年级，无法生成题目")
         questions: List[Dict[str, Any]] = []
+        saved_objs: List[Question] = []
         saved = 0
         for it in items[:count]:
             if not isinstance(it, dict) or not it.get("stem"):
@@ -181,6 +182,7 @@ difficulty 取值：easy / medium / hard"""
                               "options": it.get("options")})
             if save:
                 db.add(q)
+                saved_objs.append(q)
                 saved += 1
 
         if not questions:
@@ -206,18 +208,18 @@ difficulty 取值：easy / medium / hard"""
             # 关键：把落库后的主键回填到返回值。
             # 下游（智能组卷）依赖 question_id 建立 PaperItem，
             # 不回填的话生成的题目无法被任何试卷引用。
-            ids = [
-                r[0] for r in db.execute(
-                    select(Question.id).order_by(Question.id.desc()).limit(saved)
-                ).all()
-            ][::-1]
-            for q, qid in zip(questions, ids):
-                q["id"] = qid
-            for qid in ids:
-                qobj = db.get(Question, qid)
-                if qobj:
-                    from app.agents.rag import index_question
-                    index_question(qobj)
+            #
+            # 必须用**本批落库对象自身的主键**回填，不能再用
+            # `select(Question.id).order_by(desc).limit(saved)` 反查：
+            # 并发出题时另一个请求可能已插入更高的 id，反查会把别人的题目
+            # 误当成本批结果（BUG-009）。SessionLocal 已设 expire_on_commit=False，
+            # 提交后 obj.id 可直接读取，无需再回查。
+            for q, obj in zip(questions, saved_objs):
+                q["id"] = obj.id
+            from app.agents.rag import index_question
+            for obj in saved_objs:
+                if obj.id:
+                    index_question(obj)
 
         return {
             "questions": questions,

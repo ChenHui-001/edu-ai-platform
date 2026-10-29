@@ -105,9 +105,15 @@ def is_timed_out(
 def effective_status(
     status: Optional[str], created_at: Optional[datetime],
     *, timeout_seconds: int = JOB_TIMEOUT_SECONDS,
+    now: Optional[datetime] = None,
 ) -> str:
-    """对外呈现的状态：僵尸任务呈现为 `failed`。"""
-    if is_timed_out(status, created_at, timeout_seconds=timeout_seconds):
+    """对外呈现的状态：僵尸任务呈现为 `failed`。
+
+    `now` 与 `is_timed_out` 一致地可注入（BUG-018）：此前包装层不透传，超时
+    边界只能依赖真实时钟，会在 CI 慢机上复现「构造 now 与内部取 now 微秒漂移」
+    导致的偶发红。注入固定基准后边界可确定性断言。
+    """
+    if is_timed_out(status, created_at, timeout_seconds=timeout_seconds, now=now):
         return "failed"
     return status or "pending"
 
@@ -119,7 +125,8 @@ def timeout_message(timeout_seconds: int = JOB_TIMEOUT_SECONDS) -> str:
 
 
 def apply_timeout(job: Any, data: Dict[str, Any],
-                  *, timeout_seconds: int = JOB_TIMEOUT_SECONDS) -> Dict[str, Any]:
+                  *, timeout_seconds: int = JOB_TIMEOUT_SECONDS,
+                  now: Optional[datetime] = None) -> Dict[str, Any]:
     """把超时判定写进已 dict 化的任务响应（原地修改并返回）。
 
     只在真的超时时才覆盖 `status`/`error` —— 正常任务的自有 error
@@ -127,7 +134,7 @@ def apply_timeout(job: Any, data: Dict[str, Any],
     """
     if is_timed_out(getattr(job, "status", None),
                     getattr(job, "created_at", None),
-                    timeout_seconds=timeout_seconds):
+                    timeout_seconds=timeout_seconds, now=now):
         data["status"] = "failed"
         data["timed_out"] = True
         # 保留原始 error 到独立字段：超时是**呈现层结论**，库里其实没写 error，

@@ -1,0 +1,37 @@
+﻿用例编号,测试类型,功能模块,测试标题,用例级别,预置条件,测试步骤,预期结果,风险等级
+TC_LLM_JSON_001,功能测试,LLM/JSON解析,提取被max_tokens截断的残缺JSON数组返回None而非伪装成功,P0,llm.py extract_json 可调用,构造 content='[{"type":"single","stem":"题干未闭合' 调用 extract_json(content),返回 None（上层按解析失败降级），不返回残缺对象导致静默空题,高
+TC_LLM_JSON_002,异常测试,LLM/JSON解析,容忍模型输出尾随逗号,P3,extract_json 可调用,content='{"a":1,}' 调用 extract_json(content),返回 {'a':1},低
+TC_LLM_JSON_003,功能测试,LLM/JSON解析,剥离代码块包裹与前后说明文字,P2,extract_json 可调用,content='说明文字\n```json\n[{"x":1}]\n```' 调用 extract_json,返回 [{'x':1}],中
+TC_LLM_BRK_004,安全测试,LLM/熔断,401触发永久熔断且同循环后续调用立即短路,P0,sys_llm_breaker 表为空,首次 chat 抛 401 异常;紧接着再调用 get_client(),首次标记 auth 熔断;第二次 get_client 返回 None(短路不再撞 401);is_available() 返回 False,高
+TC_LLM_BRK_005,功能测试,LLM/熔断,429进入指数退避冷却且到期自动恢复,P1,breaker 初始无状态,连续触发多次 429;跨越冷却窗口后再次调用 chat,streak 递增 30到60到120到240到300秒封顶;冷却期内 get_client 返回 None;到期自动恢复且成功调用清零退避,中
+TC_LLM_BRK_006,异常测试,LLM/熔断,限流冷却不得覆盖已存在的鉴权熔断,P1,已处于 auth 熔断状态,在 auth 熔断期间收到 429 尝试写 rate_limit,auth 状态保持;rate_limit 写入被 WHERE kind != 'auth' 阻挡;auth 不被降级,中
+TC_LLM_BRK_007,功能测试,LLM/熔断,多次429时streak原子自增不回落为1/2/1/2,P2,breaker 无状态,模拟 5 次 429 触发冷却写入,DB streak 单调递增至 5;expire_at 按 30*2^(n-1) 递增,中
+TC_LLM_BRK_008,可观测性测试,LLM/熔断,限流冷却期/health仍报enabled但调用降级,P2,处于 rate_limit 冷却中,GET /api/v1/health 观察 llm_enabled;再发起一次 chat,health.llm_enabled=true(已知盲区);chat.is_fallback=true 走规则引擎,中
+TC_QGEN_FK_009,安全测试,出题/知识点校验,模型编造不存在的kp_id不触发整批外键失败,P0,目标学科存在且库内最大 knowledge_point_id=97,call_llm 返回 knowledge_point_id=101(不存在),_resolve_kp_id 返回 None 或回退指定 id;题目全部落库成功 status=draft;不出现 500 与整批失败,高
+TC_QGEN_FK_010,功能测试,出题/知识点校验,指定kp_id跨学科时被显式拦截,P1,subject A 已建;kp 属于 subject B,传 knowledge_point_id(属 B) 调 execute,抛出 BusinessException 知识点不匹配请重选年级与学科,中
+TC_QGEN_FK_011,功能测试,出题/知识点校验,kp_name命中同学科知识点时按名回退,P2,学科内有名为一元一次方程的知识点,模型返回 id=0 但 knowledge_point_name=一元一次方程,解析为对应 kp.id(取最长名匹配);题目挂上正确知识点,中
+TC_QGEN_GRADE_012,功能测试,出题/grade_id,未传grade_id时回落学科所属年级非空外键,P1,subject 已绑定 grade,execute(grade_id=None),grade_id 取 subject.grade_id;不写 0;不触发外键约束失败,中
+TC_QGEN_BULK_014,并发测试,出题/落库id回填,并发AI出题id回填不错配真实题目,P1,两个并发出题请求(save=True),并发 execute(save=True) 后核对返回 questions[].id 与落库题目一致,每批 id 精确对应本批题目(应用 db.refresh 而非 order_by(id desc).limit(saved)),高
+TC_QGEN_FALL_013,异常测试,出题/降级,LLM返回缺题干题目时整体走fallback并暴露真实原因,P2,LLM 返回 [{'type':'x'}] 无 stem,execute,返回 fallback 含 reused 题;tip 含真实原因;不误导报请配置 LLM_API_KEY,中
+TC_COMP_NORM_015,功能测试,组卷/难度归一化,小数占比合计约100时三档之和精确为100,P1,paper_compose_service.normalize_difficulty 可调用,normalize_difficulty({'easy':33.34,'medium':33.33,'hard':33.33}),三档之和 == 100(当前实现返回 99 见 BUG-014),中
+TC_COMP_NORM_016,边界测试,组卷/难度归一化,非百分制比例自动折算并补余数到最大档,P2,normalize_difficulty 可调用,normalize_difficulty({'easy':3,'medium':5,'hard':2}),折算为 30/50/20 合计 100,低
+TC_COMP_SPLIT_017,功能测试,组卷/题量拆分,余数补给占比最大档总题量精确,P1,split_by_difficulty 可调用,split_by_difficulty(23,{'easy':70,'medium':20,'hard':10}),easy+medium+hard == 23 不多不少,中
+TC_COMP_KP_018,功能测试,组卷/知识点过滤,题库不足放宽难度时仍保留知识点过滤,P0,指定 kp_ids;题库仅少量命中,compose(source_strategy='bank_first', kp_ids=[...]) 观察各抽题分支,放宽难度分支仍 WHERE knowledge_point_id IN(...);不会抽到范围外题目,高
+TC_COMP_WRITE_019,功能测试,改卷/作答迁移,替换题项时学生作答零丢失不级联清空,P0,试卷已有学生作答(非移除题),PUT /api/v1/papers/{id} 改卷(移除1题保留其余),保留题作答 migrated 大于 0;移除题作答 dropped 如实计数;无整批归零,高
+TC_COMP_USAGE_020,功能测试,改卷/usage_count,多次改卷后usage_count与真实引用一致,P2,同一试卷编辑两次,编辑试卷后查 question.usage_count,增量与减量之和与引用题项数一致(当前只增不减见 BUG-001),中
+TC_COMP_SCORE_021,边界测试,组卷/总分重算,total_score_override缩放后合计精确,P3,compose 后调用 _rescale_scores,compose(total_score_override=120) 后各题 score 之和四舍五入 == 120,低
+TC_COMP_SECT_022,功能测试,组卷/大题序号,多题型section_name按sort生成中文序号不重复,P3,compose 多 section,compose 含 single/blank/short 多段,各 section 名 一二三 不重复为一,低
+TC_JOB_TIMEOUT_023,边界测试,长任务/超时判据,耗时严格大于阈值才算超时支持now注入,P0,构造 created_at = fixed_now - T - 1微秒,传入 now=fixed_now 调 is_timed_out('running', created_at),T 整秒未超时;T+δ 超时(严格大于非大于等于),高
+TC_JOB_EFF_025,功能测试,长任务/呈现状态,僵尸任务effective_status呈现failed且保留原error,P1,status='running' created_at 超 300 秒,调 effective_status,返回 'failed';error_before_timeout 保留原始 error 不丢失,中
+TC_JOB_REAP_026,功能测试,长任务/启动收割,启动收割仅清超窗遗留任务不误杀正常任务,P2,遗留 running 任务 created_at 在 900 秒前与后各一,调 reap_orphan_jobs(db),超窗任务标 failed;未超窗(多worker正常)不被误杀,中
+TC_JOB_TIMEOUT_024,异常测试,长任务/超时判据,created_at为None的脏数据不判超时,P3,created_at=None,调 is_timed_out('running', None),返回 False;继续显示 running 由收割兜底,低
+TC_AUTH_JWT_027,安全测试,认证/JWT吊销,decode_token未传db跳过吊销检查属契约风险,P0,已登出 jti 在 sys_revoked_token,分别调 decode_token(token) 与 decode_token(token, db),db=None 返回 payload(登出失效需警惕);传 db 返回 None;断言认证链路必须传 db,高
+TC_AUTH_JWT_028,功能测试,认证/JWT吊销,传db时登出令牌被正确拒绝,P1,已 revoke jti,调 decode_token(token, db),返回 None,中
+TC_AUTH_CAP_029,安全测试,认证/验证码,同一验证码校验一次后失效重放返回False,P2,已 store_captcha 拿到 key,连续两次 verify_captcha(db,key,text),首次 True;第二次 False(先查后删),中
+TC_AUTH_PWD_030,功能测试,认证/密码重置契约,重置密码读取new_password字段不报422,P1,验证码有效,POST /api/v1/auth/reset-password body={'code':'x','new_password':'Yz12345!'},返回 200 且密码更新;不报 422 字段名契约错误,高
+TC_AUTH_PWD_031,异常测试,认证/密码强度,弱口令或纯数字被拒绝,P2,change_password 入口,change_password(db,user,'12345678','12345678'),抛出 BusinessException 密码过于简单,低
+TC_AUTH_CAP_032,安全测试,认证/验证码强制,强制模式下缺captcha_key直接400不短路,P1,配置 CAPTCHA_ENFORCED=true,POST /api/v1/auth/login 不带 captcha_key,返回 400;不绕过校验,中
+TC_KP_GAP_033,功能测试,知识点/数据缺口,无知识点学科AI出题kp_id恒0且有提示,P1,选 42 个无知识点学科之一,execute,返回 kp_id=None;tip 明确该学科暂无知识点;不编造 id,中
+TC_CFG_9P_034,异常测试,配置/sys_config读取,9p挂载连接失败时配置回落有提示不静默错配,P2,Windows Docker 9p 环境(连接失败),调 _get_db_value 读 llm_enabled,回落 settings 并记 warning;不得误以为已配置真实 Key 与 DB 矛盾,中
+TC_SUB_LIST_035,边界测试,学科/列表契约,不传grade_id返回重名纯下拉须distinct,P3,GET /api/v1/edu/subjects 可用,GET /edu/subjects 与 ?distinct=true,前者含 60+ 同名;前端须传 distinct 对齐契约,低
+TC_MIG_RATE_036,功能测试,LLM/熔断写入,限流冷却写库失败不影响本进程正确性,P2,模拟 DB 写失败,触发 429 冷却,本地镜像仍生效(短路);仅跨进程共享失效并记 warning,中

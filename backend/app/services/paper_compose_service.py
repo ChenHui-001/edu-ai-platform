@@ -87,7 +87,20 @@ def normalize_difficulty(ratio: Any) -> Dict[str, int]:
 
     # 已经是百分制就原样用；否则按比例折算
     if abs(total - 100) < 0.01:
-        return {k: int(round(v)) for k, v in raw.items()}
+        result = {k: int(round(v)) for k, v in raw.items()}
+        # 各档独立 round 可能使合计偏离 100（如 33.34/33.33/33.33 → 33/33/33=99）。
+        # 把差额补给**小数部分最大**的档（drift<0 时从最小者扣），保证三档之和
+        # 精确为 100（BUG-014）。不修的话前端会看到难度占比合计 99%/101%。
+        drift = 100 - sum(result.values())
+        if drift:
+            order = sorted(
+                ("easy", "medium", "hard"),
+                key=lambda k: raw[k] - int(raw[k]),
+                reverse=drift > 0,
+            )
+            for i in range(abs(drift)):
+                result[order[i % len(order)]] += 1 if drift > 0 else -1
+        return {k: max(0, v) for k, v in result.items()}
 
     scaled = {k: v / total * 100 for k, v in raw.items()}
     result = {k: int(math.floor(v)) for k, v in scaled.items()}

@@ -96,20 +96,40 @@ def create_refresh_token(subject: str | int) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
-def decode_token(token: str, db: Optional[Session] = None) -> Optional[Dict[str, Any]]:
+def decode_token(
+    token: str,
+    db: Optional[Session] = None,
+    *,
+    check_revocation: bool = True,
+) -> Optional[Dict[str, Any]]:
     """解析令牌，失败返回 None。已登出（吊销）的令牌同样返回 None。
 
-    `db` 为 None 时**跳过吊销检查**（仅解析签名与过期）。保留这个分支是为了
-    兼容既有调用方：吊销名单已迁到 DB，而少数路径（如纯解析场景）拿不到
-    会话。**认证链路上的调用点必须传 db**，否则登出不生效 —— 见
-    `api/deps.get_current_user`、`api/v1/auth.refresh_token/logout`。
+    吊销检查是**默认开启且 fail-closed** 的：
+
+    - `db` 已传且 `check_revocation=True` → 查 `sys_revoked_token`，被吊销即返回 None。
+    - `db` 为 None 且 `check_revocation=True` → **直接返回 None**（fail-closed）。
+      这是 BUG-006 的修复：此前 db=None 会**静默跳过**吊销检查，任何认证依赖
+      一旦忘记传 db，登出/改密后旧 token 依然可用。静默放行比直接拒绝危险得多，
+      所以拿不到 db 时宁可拒绝。
+    - `check_revocation=False` → 仅校验签名/过期，**不查吊销**。仅供**登出**
+      这类"本来就要把 token 拉黑"的场景显式使用（它需要对已吊销的 token 也能
+      解出 jti），其余任何认证链路都不应使用。
+
+    认证链路（`api/deps.get_current_user`、`auth.refresh_token`）必须走默认参数并传 db。
     """
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
         return None
-    if db is not None and _is_revoked_db(db, payload.get("jti")):
-        return None
+    if check_revocation:
+        if db is None:
+            logger.warning(
+                "decode_token 需要吊销校验但未传 db，按无效令牌拒绝（fail-closed）；"
+                "仅登出等场景可显式传 check_revocation=False"
+            )
+            return None
+        if _is_revoked_db(db, payload.get("jti")):
+            return None
     return payload
 
 

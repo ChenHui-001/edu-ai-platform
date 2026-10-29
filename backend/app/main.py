@@ -136,6 +136,28 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.opt(exception=True).error(f"种子数据初始化失败: {exc}")
 
+        # 版本更新时间快照：版本号或构建号变化时才写新的时间戳（幂等）。
+        # **必须放在启动锁内**：多个 worker 同时启动时，若都在锁外比对并写入，
+        # 「先读后写」会有窗口期 —— A 读到旧快照判定「变了」、B 也读到旧快照，
+        # 两次写虽然值相同（都是 now），但会把 updated_at 往后推几秒，
+        # 表现为每次重启更新时间都在漂。锁内单点写入没有这个问题。
+        try:
+            _ver_db = SessionLocal()
+            try:
+                from app.services.version_info import record_version_update
+
+                _ver = record_version_update(_ver_db)
+                if _ver.get("changed"):
+                    _prior = _ver.get("prior_version") or "-"
+                    logger.warning(
+                        f"检测到版本更新：{_prior} → {_ver.get('version')}，"
+                        f"记录更新时间 {_ver.get('updated_at')}"
+                    )
+            finally:
+                _ver_db.close()
+        except Exception as exc:  # noqa: BLE001 版本记录失败绝不能阻断启动
+            logger.warning(f"版本更新时间记录未执行: {exc}")
+
     # 启动收割僵尸任务（B2）。**必须在启动锁之外**：它与另外 5 步无关，
     # 只是修正上一进程留下的状态；占着锁会让另一个 worker 白白多等。
     #

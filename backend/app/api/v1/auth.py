@@ -423,11 +423,13 @@ def logout(
         if credentials
         else request.headers.get("Authorization", "").replace("Bearer ", "").strip()
     )
-    revoked = revoke_token(decode_token(token) if token else None, db)
+    # 登出场景：本来就要把 token 拉黑，无需（也不应）先查是否已吊销 ——
+    # 若默认 fail-closed 校验，已吊销的 token 会解出 None 导致重复登出失败。
+    revoked = revoke_token(decode_token(token, check_revocation=False) if token else None, db)
 
     refresh_raw = (body or {}).get("refresh_token") or ""
     if refresh_raw:
-        refresh_payload = decode_token(refresh_raw)
+        refresh_payload = decode_token(refresh_raw, check_revocation=False)
         if refresh_payload and refresh_payload.get("type") == "refresh":
             revoked = revoke_token(refresh_payload, db) or revoked
     return ok({"revoked": revoked}, message="已退出登录")
