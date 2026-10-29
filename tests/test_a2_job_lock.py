@@ -366,13 +366,20 @@ def main():
        c["notification"] == 900, f"notification={c['notification']} 期望 900")
     ok("V1 ③ ★ 无锁时执行日志两条",
        c["job_execution_log"] == 2, f"job_execution_log={c['job_execution_log']} 期望 2")
-    # V1 ④ 刻意**不断言精确值**。`run_count` 在进程级并发下是 1 或 2，取决于
-    # 两次 read-modify-write 恰好交错（1，lost update）还是串行（2）。
-    # 实测 5 次里有 2 次得到 2。断言精确值会让这条用例随机红 —— 而 CI 里
-    # **随机红的断言比没有断言更坏**：它训练人忽略失败。
-    # lost update 本身是确定性的，用 V1 ⑥ 在单进程内精确复现（见下）。
-    ok("V1 ④ 无锁时 run_count 只能说 ≤2（该值并发下不确定，精确判定见 V1 ⑥）",
-       c["run_count"] <= 2, f"run_count={c['run_count']}（1=lost update / 2=恰好串行）")
+    # V1 ④ 在这里是**精确值**断言（曾经不是）。原先 `run_count` 在进程级并发下
+    # 是 1 或 2，取决于两次 read-modify-write 恰好交错（1，lost update）还是
+    # 串行（2）；实测 5 次里有 2 次得到 2，断言精确值会让这条用例随机红 ——
+    # 而 CI 里**随机红的断言比没有断言更坏**：它训练人忽略失败。
+    #
+    # 现在 `run_count` 走 SQL 原子自增（`scheduler._bump_run_count`），
+    # 两个进程各自 `SET run_count = run_count + 1` 被 SQLite 写锁串行化，
+    # 不再有读-改-写窗口，所以这里可以断言精确的 2。
+    #
+    # 但「改回 `+= 1` 之后它会不会红」是不确定的（又变成 1 或 2）——
+    # 所以判别力交给 V1 ⑥（ORM 写法丢更新）与 V1 ⑦（真实调用路径不丢）这两条
+    # 单进程内的确定性断言，它们不受调度影响。
+    ok("V1 ④ 无锁时 run_count 恰好 2（原子自增后不再丢更新）",
+       c["run_count"] == 2, f"run_count={c['run_count']} 期望 2")
     ok("V1 ⑤ 无锁时锁表始终为空（对照组不应写锁）",
        c["lock_rows"] == 0, f"lock_rows={c['lock_rows']}")
 
@@ -403,9 +410,66 @@ def main():
         _dbr.commit()
     finally:
         _dbr.close()
-    ok("V1 ⑥★ lost update 确定性复现：两个 session 各 +1、交错提交 → 只记 1",
+    ok("V1 ⑥ ORM 的 `+= 1`（read-modify-write）确定性丢更新：两个 session 各 +1 → 只记 1",
        both_saw == (0, 0) and final == 1,
-       f"两者各自读到 {both_saw}，交错提交后 run_count={final}（期望 1，不是 2）")
+       f"两者各自读到 {both_saw}，交错提交后 run_count={final}（期望 1 —— 这正是缺陷本身）")
+
+    # V1 ⑦：**用「实际发出的 SQL 形状」判断**，不用行为观测。
+    #
+    # ## 为什么不能用「两个 session 各调一次 _bump_run_count，断言得到 2」
+    #
+    # 这个设计试过，**判别力为 0，已废弃并在此留痕**。原因：
+    # `_bump_run_count` 内部必须 `db.get()`（要用 ORM 定位实体），而第二个
+    # session 的那次 `get()` 发生在第一个 session **commit 之后**，于是它读到
+    # 的是新值 1 → 再 +1 = 2。哪怕产品代码退回 `run_count += 1`，结果依然是 2。
+    # 也就是说那条断言对「是否用原子自增」完全不敏感，只是看起来在守。
+    #
+    # 根因是「ORM 的 `+= 1` 只在**持有旧快照**时才会丢」。一旦函数内部重新读库，
+    # 快照就被刷新，缺陷不再复现 —— 这正是 V1 ⑥ 必须手工持有对象的原因。
+    #
+    # ## 正解：断言 SQL 是自引用形式
+    #
+    #   ORM `+= 1`   → `UPDATE ... SET run_count = ?`          （绑字面值，有读-改-写窗口）
+    #   原子自增      → `UPDATE ... SET run_count = run_count + 1`（读写在同一条语句）
+    #
+    # 两者在执行期可区分，且**确定性**（不受调度、不受谁先 commit 影响）。
+    # 这是本组唯一能真正抓「有人改回 `+= 1`」的断言。
+    from sqlalchemy import event as _event
+
+    from app.services.scheduler import _bump_run_count
+
+    _captured: list = []
+
+    def _catch(conn, cursor, statement, parameters, context, executemany):
+        if "run_count" in statement and statement.lstrip().upper().startswith("UPDATE"):
+            _captured.append((statement, parameters))
+
+    reset_state(job_id)
+    _dbw = _SL()
+    try:
+        _engine = _dbw.get_bind()
+        _event.listen(_engine, "before_cursor_execute", _catch)
+        try:
+            _bump_run_count(_dbw, job_id)
+            _dbw.commit()
+        finally:
+            _event.remove(_engine, "before_cursor_execute", _catch)
+    finally:
+        _dbw.close()
+
+    _sql = " ".join(s for s, _ in _captured)
+    _is_self_ref = any("run_count = run_count + 1" in s.replace("\n", " ") for s, _ in _captured)
+    ok("V1 ⑦ ★ run_count 更新走 SQL 原子自增（自引用），不是 ORM 读-改-写",
+       bool(_captured) and _is_self_ref,
+       f"捕获 {len(_captured)} 条 UPDATE；自引用={_is_self_ref}；SQL={_sql[:160]}")
+
+    # 顺带把 run_count 归零，避免影响后续场景
+    _dbr = _SL()
+    try:
+        _dbr.execute(_text("UPDATE sys_scheduled_job SET run_count=0 WHERE id=:j"), {"j": job_id})
+        _dbr.commit()
+    finally:
+        _dbr.close()
 
     # ---------- V2：有锁，租约充足 ----------
     print("\nV2、有锁（租约 600s）—— 严格互斥")

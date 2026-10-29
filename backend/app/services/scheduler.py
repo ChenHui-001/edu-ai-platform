@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.core.config import settings
 from app.core.database import SessionLocal
@@ -96,7 +96,8 @@ def _run_locked(job_id: int, func_path: str, trigger_type: str) -> None:
             job.last_run_at = finished
             job.last_status = "success"
             job.last_error = None
-            job.run_count += 1
+            # 不能用 job.run_count += 1：ORM 的读-改-写会丢更新，见 _bump_run_count。
+            _bump_run_count(db, job_id)
         db.commit()
         logger.info(f"任务 {name} 执行成功: {result}")
 
@@ -127,7 +128,8 @@ def _run_locked(job_id: int, func_path: str, trigger_type: str) -> None:
             job.last_run_at = now_local()
             job.last_status = "failed"
             job.last_error = str(exc)[:2000]
-            job.run_count += 1
+            # 同成功分支：走 SQL 原子自增，不用 job.run_count += 1。
+            _bump_run_count(db, job_id)
 
             # 连续失败通知管理员
             if job.retry_times > 0:
@@ -149,6 +151,44 @@ def _run_locked(job_id: int, func_path: str, trigger_type: str) -> None:
         db.commit()
     finally:
         db.close()
+
+
+def _bump_run_count(db, job_id: int) -> None:
+    """`run_count` 加 1。**必须走 SQL 原子自增，不能用 ORM 的 `+= 1`。**
+
+    ## 为什么 `job.run_count += 1` 是错的
+
+    ORM 的 `+= 1` 编译出来是三步：`SELECT run_count` → Python 层 `+1` →
+    `UPDATE ... SET run_count = <字面值>`。两个执行者若基于同一快照读到同一个
+    旧值，就都写回同一个新值，后提交的覆盖先提交的 —— **lost update**。
+    实测（两个 session 各读到 0、各自 +1、交错提交）：
+
+        两者各自读到 (0, 0)
+        交错提交后 run_count = 1      ← 期望 2，实际 1
+
+    而 `SET run_count = run_count + 1` 的读与写是同一条语句，被 SQLite 的
+    写锁整体串行化，**不存在读-改-写窗口**。
+
+    注意：有 A2 执行锁之后这个失真在「同一任务并发触发」的场景里已经看不到
+    （V2④ 恒为 1），但根因一直在 `+= 1` 这个写法上 —— 一旦将来引入「同一任务
+    允许并发执行不同分片」，它会立刻重新出现。所以按写法修，不按场景修。
+
+    ## 为什么抽成函数，而不是在调用处各写一遍
+
+    这条 SQL 的要点是「读与写在同一条语句里」，写两遍迟早有人只改一处、
+    或者加个 WHERE / 先读后写把它悄悄退回成两步。抽出来之后
+    `test_a2_job_lock.py` 的 V1⑦ 也能直接拿它做确定性反证：**同一形状下
+    ORM 写法丢一次（V1⑥）、这里不丢（V1⑦）**。
+
+    Args:
+        db: 调用方的事务 session。本函数**不提交** —— 由调用方 commit，
+            以保证 `run_count` 与 `last_run_at`/`last_status` 落在同一事务里。
+        job_id: `sys_scheduled_job.id`。
+    """
+    db.execute(
+        text("UPDATE sys_scheduled_job SET run_count = run_count + 1 WHERE id = :jid"),
+        {"jid": job_id},
+    )
 
 
 def add_job(job: ScheduledJob) -> bool:
