@@ -21,6 +21,9 @@ from app.models.question import (  # noqa: F401
 from app.models.paper_ext import (  # noqa: F401
     ExamStandard, PaperFavorite, PaperVersion,
 )
+from app.models.security_cache import (  # noqa: F401
+    Captcha, ResetCode, RevokedToken,
+)
 from app.models.system import (  # noqa: F401
     IdentityType, Permission, PermissionType, Registration, Role,
     RolePermission, SysConfig, User, UserRole, UserStatus,
@@ -53,4 +56,6 @@ __all__ = [
     # ops
     "LoginLog", "OperationLog", "ErrorLog", "ScheduledJob", "JobExecutionLog",
     "Attachment", "AgentCallLog", "Notification",
+    # security_cache（跨进程共享的安全 TTL 缓存，多 worker 前置）
+    "Captcha", "RevokedToken", "ResetCode",
 ]

@@ -1,7 +1,7 @@
 """认证相关接口：注册、审批、登录、验证码、密码。"""
 import random
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Request
@@ -18,7 +18,8 @@ from app.core.database import get_db
 from app.core.exception import BusinessException
 from app.core.security import (
     create_access_token, decode_token, generate_captcha, hash_password,
-    revoke_token, store_captcha, validate_password_strength, verify_captcha,
+    revoke_token, store_captcha, store_reset_code, validate_password_strength,
+    verify_captcha, verify_reset_code,
 )
 from app.core.logger import get_logger
 from app.models import Registration, User
@@ -65,11 +66,36 @@ class ChangePwdIn(BaseModel):
 
 
 # ---------------------------------------------------------------- 验证码
+# 取码限流桶：{ip: [时间戳]}，进程内即可。
+#
+# 为什么这里可以留在内存（而验证码本身必须落库）：本桶守的是**滥用频率**，
+# 不是认证正确性。验证码落库后每次 `GET /auth/captcha` 变成 1 次 SQLite 写
+# （单写者），匿名端点可被无成本刷成写入瓶颈 —— 这个限额就是为此加的。
+# 多 worker 下限额变 N 倍（30×N 次/分钟）仍远小于把 SQLite 打爆的量级，
+# 而落库会让"防刷的东西自己产生无鉴权写"形成自激，权衡后保留内存。
+_CAPTCHA_HITS: Dict[str, list] = {}
+_CAPTCHA_HITS_LOCK = threading.Lock()
+_CAPTCHA_IP_LIMIT = 30          # 同 IP 每分钟最多取 30 次
+_CAPTCHA_IP_WINDOW = 60         # 窗口秒数
+
+
+def _check_captcha_rate(ip: str) -> None:
+    """按 IP 限制取码频率：同一 IP 每分钟 ≤ 30 次。"""
+    now = datetime.now()
+    with _CAPTCHA_HITS_LOCK:
+        bucket = _CAPTCHA_HITS.setdefault(ip, [])
+        bucket[:] = [t for t in bucket if (now - t).total_seconds() < _CAPTCHA_IP_WINDOW]
+        if len(bucket) >= _CAPTCHA_IP_LIMIT:
+            raise BusinessException("请求过于频繁，请稍后再试")
+        bucket.append(now)
+
+
 @router.get("/captcha", summary="获取图形验证码")
-def get_captcha():
+def get_captcha(request: Request, db: Session = Depends(get_db)):
     """返回 base64 图片与验证码 key（登录/注册使用）。"""
+    _check_captcha_rate(get_client_ip(request))
     img_b64, text = generate_captcha()
-    key = store_captcha(text)
+    key = store_captcha(text, db)
     return ok({"image": f"data:image/png;base64,{img_b64}", "key": key})
 
 
@@ -82,7 +108,7 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
     from app.core.security import validate_password_strength
 
     validate_password_strength(payload.password, min_length=_st.PASSWORD_MIN_LENGTH)
-    if payload.captcha_key and not verify_captcha(payload.captcha_key, payload.captcha or ""):
+    if payload.captcha_key and not verify_captcha(db, payload.captcha_key, payload.captcha or ""):
         raise BusinessException("验证码错误或已过期")
     if payload.identity == "student" and not payload.class_id:
         raise BusinessException("学生注册需选择所属班级")
@@ -163,7 +189,7 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
     # 图形验证码校验：前端 Login.vue 始终携带 captcha_key，
     # 此处与 register 一致：传了 captcha_key 就必须校验通过。
     # 未携带则放行（兼容 API 调用与自动化测试），由失败锁定兜底防爆破。
-    if payload.captcha_key and not verify_captcha(payload.captcha_key, payload.captcha or ""):
+    if payload.captcha_key and not verify_captcha(db, payload.captcha_key, payload.captcha or ""):
         raise BusinessException("验证码错误或已过期")
     ip = get_client_ip(request)
     device = get_user_agent(request)
@@ -194,7 +220,9 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
 @router.post("/refresh", summary="刷新访问令牌")
 def refresh_token(body: Dict[str, str] = Body(...), db: Session = Depends(get_db)):
     token = body.get("refresh_token", "")
-    payload = decode_token(token)
+    # 必须传 db：登出时 refresh token 也被吊销，不查库就能拿它反复换新
+    # access token（7 天内无法止损）。
+    payload = decode_token(token, db)
     if not payload or payload.get("type") != "refresh":
         raise BusinessException("刷新令牌无效或已过期")
     user = db.get(User, int(payload["sub"]))
@@ -255,30 +283,37 @@ def logout(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     body: Optional[Dict[str, Any]] = Body(default=None),
+    db: Session = Depends(get_db),
 ):
     """退出登录并吊销当前访问令牌（以及可选的刷新令牌）。
 
     只改前端状态的话，原 access_token 在过期前仍可访问任意接口，
     refresh_token 还能换出新令牌；因此这里必须服务端登记吊销。
     前端应把 localStorage 中的 refresh_token 一并提交。
+
+    吊销记录落 `sys_revoked_token`：进程内 dict 在多 worker 下只有当前
+    进程认账，其余进程仍认这个 token —— 登出等于没登出。
     """
     token = (
         credentials.credentials
         if credentials
         else request.headers.get("Authorization", "").replace("Bearer ", "").strip()
     )
-    revoked = revoke_token(decode_token(token) if token else None)
+    revoked = revoke_token(decode_token(token) if token else None, db)
 
     refresh_raw = (body or {}).get("refresh_token") or ""
     if refresh_raw:
         refresh_payload = decode_token(refresh_raw)
         if refresh_payload and refresh_payload.get("type") == "refresh":
-            revoked = revoke_token(refresh_payload) or revoked
+            revoked = revoke_token(refresh_payload, db) or revoked
     return ok({"revoked": revoked}, message="已退出登录")
 
 
 # ---------------------------------------------------------------- 找回密码
-_RESET_CODE_STORE: Dict[str, tuple] = {}  # {email/phone: (code, expire_at)}
+# 限流桶保留在内存：守的是**滥用频率**而非认证正确性。多 worker 下限额变
+# N 倍（5×N 次/10min），仍远低于 6 位码 10^6 的可用爆破量级；若落库，
+# 等于给一个匿名端点引入无鉴权的写放大面（每次请求都写一行），
+# 与"防刷"的初衷相反。验证码本身（正确性相关）已落 `sys_reset_code`。
 _RESET_RATE_LOCK = threading.Lock()
 _RESET_RATE_STORE: Dict[str, list] = {}  # {target: [request_time, ...]}
 
@@ -365,10 +400,9 @@ def forgot_password(payload: Dict[str, Any] = Body(...), db: Session = Depends(g
                     "当前未检测到可用的邮件配置，请联系管理员重置密码",
         )
 
-    _RESET_CODE_STORE[target] = (code, datetime.now() + timedelta(minutes=5))
-    now = datetime.now()
-    for k in [k for k, (_, exp) in _RESET_CODE_STORE.items() if exp < now]:
-        _RESET_CODE_STORE.pop(k, None)
+    # 落 sys_reset_code（同 target 覆盖写，旧码立刻失效）。
+    # 进程内 dict 在多 worker 下会让"发送在 A、校验在 B"，找回密码随机失败。
+    store_reset_code(db, target, code)
     return ok({"sent": True}, message="验证码已发送，5 分钟内有效")
 
 
@@ -384,8 +418,8 @@ def reset_password(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
     if not target or not code or not new_pwd:
         raise BusinessException("请提供邮箱/手机号、验证码和新密码")
     validate_password_strength(new_pwd, min_length=settings.PASSWORD_MIN_LENGTH)
-    item = _RESET_CODE_STORE.pop(target, None)
-    if not item or item[0] != code or item[1] < datetime.now():
+    # 一次性消费：无论校验成败都删掉该 target 的记录（防同一码被反复试）。
+    if not verify_reset_code(db, target, code):
         raise BusinessException("验证码错误或已过期")
     user = db.scalar(
         select(User).where((User.email == target) | (User.phone == target))

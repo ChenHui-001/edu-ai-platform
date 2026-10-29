@@ -196,10 +196,11 @@ def clean_old_logs() -> Dict[str, Any]:
     - 错误日志/AI 调用日志：保留 90 天
     - 任务执行日志：保留 30 天
     - 已读站内通知：保留 30 天（未读通知不清理）
+    - 安全缓存（验证码/吊销名单/找回码）：按各自 `expire_at`，过期即清
     """
     from app.models import (
-        AgentCallLog, ErrorLog, JobExecutionLog, LoginLog, Notification,
-        OperationLog,
+        AgentCallLog, Captcha, ErrorLog, JobExecutionLog, LoginLog, Notification,
+        OperationLog, ResetCode, RevokedToken,
     )
 
     db = SessionLocal()
@@ -214,6 +215,12 @@ def clean_old_logs() -> Dict[str, Any]:
             ("error_log", ErrorLog, ErrorLog.created_at, cut90),
             ("agent_call_log", AgentCallLog, AgentCallLog.created_at, cut90),
             ("job_execution_log", JobExecutionLog, JobExecutionLog.started_at, cut30),
+            # 安全缓存兜底清理：正确性不依赖这里（读取时按 expire_at 判定，
+            # 且 security._maybe_purge 会按 5% 概率顺带清），此处只是把长期
+            # 残留（如清理概率一直没命中）一次性收干净。
+            ("captcha", Captcha, Captcha.expire_at, now),
+            ("revoked_token", RevokedToken, RevokedToken.expire_at, now),
+            ("reset_code", ResetCode, ResetCode.expire_at, now),
         ):
             count = db.query(model).filter(column < cutoff).delete(
                 synchronize_session=False

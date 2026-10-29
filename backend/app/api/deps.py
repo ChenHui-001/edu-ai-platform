@@ -50,7 +50,10 @@ def get_current_user(
     if not token:
         raise AuthException("未提供认证令牌")
 
-    payload = decode_token(token)
+    # 必须传 db：吊销名单已从进程内 dict 迁到 sys_revoked_token，
+    # 不传 db 就跳过吊销检查 → 登出后 token 仍可访问（多 worker 下必然发生，
+    # 单 worker 下也会因为这条漏传而失效）。
+    payload = decode_token(token, db)
     if not payload or payload.get("type") != "access":
         raise AuthException("令牌无效或已过期")
 
