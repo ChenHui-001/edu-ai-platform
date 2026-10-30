@@ -1,0 +1,3888 @@
+[
+  {
+    "id": "FUNC-ADM-001",
+    "role": "admin",
+    "module": "教学资源/学科",
+    "menu": "学科管理",
+    "element": "新增学科",
+    "action": "对话框",
+    "priority": "P0",
+    "precondition": "有写权限",
+    "steps": [
+      "1. 点新增",
+      "2. 选年级/填名称(≤32)/代码/版本",
+      "3. 保存"
+    ],
+    "expected": "学科入库；唯一键(grade_id,name)；七年级无物理(dead data 已剔除)",
+    "api": "POST /edu/subjects",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/subjects",
+      "body": {
+        "grade_id": 1,
+        "name": "数学"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-002",
+    "role": "admin",
+    "module": "教学资源/学科",
+    "menu": "学科管理",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "有 resource:subject:list 权限",
+    "steps": [
+      "1. 点『学科管理』"
+    ],
+    "expected": "默认按年级视图或平铺，展示学科列表",
+    "api": "GET /edu/subjects",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=学科管理"
+    }
+  },
+  {
+    "id": "FUNC-ADM-003",
+    "role": "admin",
+    "module": "教学资源/年级",
+    "menu": "年级管理",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "有 resource:grade:list 权限",
+    "steps": [
+      "1. 点『年级管理』"
+    ],
+    "expected": "年级表格加载，含学段/序号/状态",
+    "api": "GET /edu/grades",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=年级管理"
+    }
+  },
+  {
+    "id": "FUNC-ADM-004",
+    "role": "admin",
+    "module": "教学资源/班级",
+    "menu": "班级管理",
+    "element": "新增班级",
+    "action": "对话框",
+    "priority": "P0",
+    "precondition": "有写权限",
+    "steps": [
+      "1. 点新增",
+      "2. 选年级/填名称(正则校验)/序号/班主任",
+      "3. 保存"
+    ],
+    "expected": "班级入库；名称正则 [\\u4e00-\\u9fa5A-Za-z0-9()（）·\\-_ ]{2,32}",
+    "api": "POST /edu/classes",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/classes",
+      "body": {
+        "grade_id": 1,
+        "name": "一班"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-005",
+    "role": "admin",
+    "module": "教学资源/班级",
+    "menu": "班级管理",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "有 resource:class:list 或 manager",
+    "steps": [
+      "1. 点『班级管理』"
+    ],
+    "expected": "班级表格加载",
+    "api": "GET /edu/classes",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=班级管理"
+    }
+  },
+  {
+    "id": "FUNC-ADM-006",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "新增根节点",
+    "action": "对话框",
+    "priority": "P0",
+    "precondition": "sys_admin",
+    "steps": [
+      "1. 点『新增根节点』",
+      "2. 填年级/学科/名称(≤128)/难度",
+      "3. 保存"
+    ],
+    "expected": "根节点入库",
+    "api": "POST /edu/knowledge",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/knowledge",
+      "body": {
+        "grade_id": 1,
+        "subject_id": 1,
+        "name": "数与代数"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-007",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "sys_admin 登录",
+    "steps": [
+      "1. 点『知识点管理』"
+    ],
+    "expected": "展示树/列表 + RAG 状态标签 + 顶部按钮",
+    "api": "GET /edu/knowledge/tree",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=知识点管理"
+    }
+  },
+  {
+    "id": "FUNC-ADM-008",
+    "role": "admin",
+    "module": "系统基础",
+    "menu": "工作台",
+    "element": "工作台页面",
+    "action": "访问渲染",
+    "priority": "P0",
+    "precondition": "已登录 sys_admin 账号",
+    "steps": [
+      "1. 访问 /dashboard",
+      "2. 等待页面加载"
+    ],
+    "expected": "展示统计卡片与快捷入口，无 JS 报错，左侧菜单含全部管理员菜单",
+    "api": "GET /dashboard",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": ".dashboard"
+    }
+  },
+  {
+    "id": "FUNC-ADM-009",
+    "role": "admin",
+    "module": "系统基础/日志",
+    "menu": "日志审计",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "sys_admin/grade_admin",
+    "steps": [
+      "1. 点『日志审计』"
+    ],
+    "expected": "默认展示操作日志 Tab",
+    "api": "GET /logs/operation",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=日志审计"
+    }
+  },
+  {
+    "id": "FUNC-ADM-010",
+    "role": "admin",
+    "module": "系统基础/注册审批",
+    "menu": "注册审批",
+    "element": "拒绝",
+    "action": "prompt 理由",
+    "priority": "P0",
+    "precondition": "存在待审批申请",
+    "steps": [
+      "1. 行内『拒绝』",
+      "2. 填理由(≥2字)确认"
+    ],
+    "expected": "状态变已拒绝；理由入库；理由为空时报错",
+    "api": "POST /auth/registrations/audit",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/auth/registrations/audit",
+      "body": {
+        "registration_id": 1,
+        "approved": false,
+        "reason": "资料不实"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-011",
+    "role": "admin",
+    "module": "系统基础/注册审批",
+    "menu": "注册审批",
+    "element": "通过",
+    "action": "行内操作",
+    "priority": "P0",
+    "precondition": "存在待审批申请",
+    "steps": [
+      "1. 行内『通过』"
+    ],
+    "expected": "该申请状态变已通过，对应账号激活可登录",
+    "api": "POST /auth/registrations/audit",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/auth/registrations/audit",
+      "body": {
+        "registration_id": 1,
+        "approved": true
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-012",
+    "role": "admin",
+    "module": "系统基础/注册审批",
+    "menu": "注册审批",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "sys_admin 登录",
+    "steps": [
+      "1. 点『注册审批』"
+    ],
+    "expected": "默认展示『待审批』列表",
+    "api": "GET /auth/registrations?status=pending",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=注册审批"
+    }
+  },
+  {
+    "id": "FUNC-ADM-013",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "新增用户",
+    "action": "打开对话框并保存",
+    "priority": "P0",
+    "precondition": "sys_admin 登录",
+    "steps": [
+      "1. 点『新增用户』",
+      "2. 填用户名/姓名/初始密码(≥8含字母数字)/身份",
+      "3. 点『保存』"
+    ],
+    "expected": "提示成功，列表新增该用户；密码经 PBKDF2 哈希落库",
+    "api": "POST /system/users",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/system/users",
+      "body": {
+        "username": "t1",
+        "real_name": "测试",
+        "password": "Test@1234",
+        "identity": "teacher",
+        "role_codes": [
+          "teacher"
+        ]
+      },
+      "assert": "status==200 且返回 id",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-014",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "页面访问",
+    "action": "访问渲染",
+    "priority": "P0",
+    "precondition": "sys_admin 登录",
+    "steps": [
+      "1. 点击菜单『用户管理』"
+    ],
+    "expected": "表格加载用户列表，列含用户名/姓名/身份/状态",
+    "api": "GET /system/users",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=用户管理"
+    }
+  },
+  {
+    "id": "FUNC-ADM-015",
+    "role": "admin",
+    "module": "系统基础/系统配置",
+    "menu": "系统配置",
+    "element": "页面访问+契约",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "sys_admin 登录",
+    "steps": [
+      "1. 点『系统配置』"
+    ],
+    "expected": "全部字段有值（小写键绑定），可编辑项表格正确展示",
+    "api": "GET /system/config",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=系统配置"
+    }
+  },
+  {
+    "id": "FUNC-ADM-016",
+    "role": "admin",
+    "module": "系统基础/角色权限",
+    "menu": "角色权限",
+    "element": "权限树勾选+保存",
+    "action": "勾选并保存",
+    "priority": "P0",
+    "precondition": "已选中某角色",
+    "steps": [
+      "1. 勾选/取消权限节点",
+      "2. 点『保存权限』"
+    ],
+    "expected": "该角色的 permissions 更新；RBAC 菜单/操作级生效",
+    "api": "PUT /system/roles/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/system/roles/{id}",
+      "body": {
+        "permissions": [
+          "question:bank:list"
+        ]
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-017",
+    "role": "admin",
+    "module": "系统基础/角色权限",
+    "menu": "角色权限",
+    "element": "页面访问",
+    "action": "访问渲染",
+    "priority": "P0",
+    "precondition": "sys_admin 登录",
+    "steps": [
+      "1. 点『角色权限』"
+    ],
+    "expected": "展示角色列表与权限树",
+    "api": "GET /system/roles",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=角色权限"
+    }
+  },
+  {
+    "id": "FUNC-ADM-018",
+    "role": "admin",
+    "module": "教学资源/学科",
+    "menu": "学科管理",
+    "element": "编辑/删除",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "存在学科",
+    "steps": [
+      "1. 编辑保存",
+      "2. 删除确认"
+    ],
+    "expected": "编辑生效；删除需无关联题目/班级",
+    "api": "PUT /edu/subjects/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/edu/subjects/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-019",
+    "role": "admin",
+    "module": "教学资源/学科",
+    "menu": "学科管理",
+    "element": "跨年级复制",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "存在学科",
+    "steps": [
+      "1. 点『跨年级复制』",
+      "2. 选目标年级",
+      "3. 确认"
+    ],
+    "expected": "目标年级生成同名学科",
+    "api": "POST /edu/subjects/clone",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/subjects/clone",
+      "body": {
+        "id": 1,
+        "target_grade_ids": [
+          2
+        ]
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-020",
+    "role": "admin",
+    "module": "教学资源/班级",
+    "menu": "班级管理",
+    "element": "启用/停用/删除",
+    "action": "行内",
+    "priority": "P1",
+    "precondition": "存在班级",
+    "steps": [
+      "1. 切状态",
+      "2. 删除(有学生不可删)"
+    ],
+    "expected": "状态变更；有学生删除被拒",
+    "api": "PUT /edu/classes/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/edu/classes/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-021",
+    "role": "admin",
+    "module": "教学资源/班级",
+    "menu": "班级管理",
+    "element": "学生管理抽屉",
+    "action": "抽屉",
+    "priority": "P1",
+    "precondition": "存在班级",
+    "steps": [
+      "1. 点『学生数』开抽屉",
+      "2. 批量导入/导出/移出"
+    ],
+    "expected": "学生名单增删正确；导入按 学号,姓名,密码",
+    "api": "POST /edu/classes/{id}/students/import",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/classes/{id}/students/import",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-022",
+    "role": "admin",
+    "module": "教学资源/班级",
+    "menu": "班级管理",
+    "element": "申请建班/审核",
+    "action": "抽屉",
+    "priority": "P1",
+    "precondition": "无写权限教师",
+    "steps": [
+      "1. 点『申请建班』提交",
+      "2. manager 『建班审核』通过"
+    ],
+    "expected": "申请经审核后自动建班",
+    "api": "POST /edu/class-requests",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/class-requests",
+      "body": {
+        "grade_id": 1,
+        "name": "x"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-023",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "导入(预检→确认)",
+    "action": "导入对话框",
+    "priority": "P1",
+    "precondition": "准备 xlsx 模板",
+    "steps": [
+      "1. 下载模板",
+      "2. 上传",
+      "3. 预检",
+      "4. 确认导入"
+    ],
+    "expected": "预检展示跳过/错误；确认后入库；编码用父 id，禁止批量套模板",
+    "api": "POST /edu/knowledge/import",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/knowledge/import",
+      "body": {
+        "dry_run": false
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-024",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "批量发布/归档/删除",
+    "action": "批量栏",
+    "priority": "P1",
+    "precondition": "勾选多条",
+    "steps": [
+      "1. 勾选→批量发布",
+      "2. 批量删除(确认)"
+    ],
+    "expected": "状态批量变更；删除需确认",
+    "api": "PUT /edu/knowledge/batch",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/edu/knowledge/batch",
+      "body": {
+        "action": "publish"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-025",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "新增子级",
+    "action": "节点操作",
+    "priority": "P1",
+    "precondition": "存在父节点",
+    "steps": [
+      "1. 节点悬停『子级』",
+      "2. 填名称保存"
+    ],
+    "expected": "子节点挂在父节点下，path/level 正确",
+    "api": "POST /edu/knowledge",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/knowledge",
+      "body": {
+        "parent_id": 1,
+        "name": "x"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-026",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "移动到其他年级/学科",
+    "action": "移动对话框",
+    "priority": "P1",
+    "precondition": "sys_admin",
+    "steps": [
+      "1. 详情『移动』",
+      "2. 选目标年级/学科/父节点",
+      "3. 确认"
+    ],
+    "expected": "节点归属变更；code 唯一约束(grade_id,subject_id,code)仍满足",
+    "api": "PUT /edu/knowledge/batch",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/edu/knowledge/batch",
+      "body": {
+        "action": "move"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-027",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "筛选(年级/学科/学期/状态/关键词)",
+    "action": "筛选",
+    "priority": "P1",
+    "precondition": "有数据",
+    "steps": [
+      "1. 选年级→学科联动",
+      "2. 输关键词查询"
+    ],
+    "expected": "列表/树按条件过滤；学科随年级联动",
+    "api": "GET /edu/knowledge",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/edu/knowledge",
+      "body": null,
+      "assert": "list 已过滤",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-028",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "编辑详情并保存",
+    "action": "详情表单",
+    "priority": "P1",
+    "precondition": "存在节点",
+    "steps": [
+      "1. 点节点→详情",
+      "2. 改难度/说明",
+      "3. 保存"
+    ],
+    "expected": "节点属性更新",
+    "api": "PUT /edu/knowledge/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/edu/knowledge/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-029",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "附件上传+可见性",
+    "action": "附件区",
+    "priority": "P1",
+    "precondition": "存在节点",
+    "steps": [
+      "1. 上传附件",
+      "2. 切『学生可见』开关",
+      "3. 预览/下载"
+    ],
+    "expected": "附件入库可预览下载；可见性开关控制学生端是否可见",
+    "api": "POST /attachments/batch-upload",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/attachments/batch-upload",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-030",
+    "role": "admin",
+    "module": "系统基础/AI日志",
+    "menu": "AI 调用日志",
+    "element": "页面访问+筛选",
+    "action": "渲染+筛选",
+    "priority": "P1",
+    "precondition": "sys_admin/grade_admin",
+    "steps": [
+      "1. 点『AI 调用日志』",
+      "2. 选 Agent/状态筛选"
+    ],
+    "expected": "日志表加载并按条件过滤",
+    "api": "GET /agent/logs",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=AI 调用日志"
+    }
+  },
+  {
+    "id": "FUNC-ADM-031",
+    "role": "admin",
+    "module": "系统基础/AI配置",
+    "menu": "AI 大模型配置",
+    "element": "保存配置",
+    "action": "点击",
+    "priority": "P1",
+    "precondition": "已改参数",
+    "steps": [
+      "1. 点『保存配置』"
+    ],
+    "expected": "配置落库；勾选清除 Key 时清空，未勾选空值不误清",
+    "api": "PUT /system/ai-config",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/system/ai-config",
+      "body": {
+        "llm_enabled": true
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-032",
+    "role": "admin",
+    "module": "系统基础/AI配置",
+    "menu": "AI 大模型配置",
+    "element": "测试连接",
+    "action": "点击",
+    "priority": "P1",
+    "precondition": "已填 API Key/地址",
+    "steps": [
+      "1. 点『测试连接』"
+    ],
+    "expected": "返回连通结果；失败提示原因不崩溃",
+    "api": "POST /system/ai-config/test",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/system/ai-config/test",
+      "body": null,
+      "assert": "返回 success/fail",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-033",
+    "role": "admin",
+    "module": "系统基础/AI配置",
+    "menu": "AI 大模型配置",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "sys_admin 登录",
+    "steps": [
+      "1. 点『AI 大模型配置』"
+    ],
+    "expected": "展示启用开关/提供商/Key(脱敏)/温度滑块",
+    "api": "GET /system/ai-config",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=AI 大模型配置"
+    }
+  },
+  {
+    "id": "FUNC-ADM-034",
+    "role": "admin",
+    "module": "系统基础/个人中心",
+    "menu": "个人中心",
+    "element": "改密/资料",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "已登录",
+    "steps": [
+      "1. 点个人中心",
+      "2. 改密码(用 new_password 契约)"
+    ],
+    "expected": "资料/密码更新；契约用 new_password 字段",
+    "api": "PUT /auth/password",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/auth/password",
+      "body": {
+        "old_password": "x",
+        "new_password": "New@1234"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-035",
+    "role": "admin",
+    "module": "系统基础/定时任务",
+    "menu": "定时任务",
+    "element": "开关/立即执行",
+    "action": "行内",
+    "priority": "P1",
+    "precondition": "存在任务",
+    "steps": [
+      "1. 切状态开关",
+      "2. 点『立即执行』确认"
+    ],
+    "expected": "状态变更；立即触发一次执行并记录",
+    "api": "POST /jobs/{id}/run",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/jobs/{id}/run",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-036",
+    "role": "admin",
+    "module": "系统基础/定时任务",
+    "menu": "定时任务",
+    "element": "新增任务",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "sys_admin",
+    "steps": [
+      "1. 点新增",
+      "2. 填名称/执行逻辑(白名单)/Cron",
+      "3. 保存"
+    ],
+    "expected": "任务入库；func_path 必须在 jobHandlers 白名单",
+    "api": "POST /jobs",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/jobs",
+      "body": {
+        "name": "x",
+        "func_path": "push_review_reminders",
+        "cron": "0 8 * * *"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-037",
+    "role": "admin",
+    "module": "系统基础/定时任务",
+    "menu": "定时任务",
+    "element": "编辑/删除",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "存在任务",
+    "steps": [
+      "1. 编辑保存",
+      "2. 删除确认"
+    ],
+    "expected": "编辑生效；删除后不再调度",
+    "api": "PUT /jobs/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/jobs/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-038",
+    "role": "admin",
+    "module": "系统基础/定时任务",
+    "menu": "定时任务",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "sys_admin 登录",
+    "steps": [
+      "1. 点『定时任务』"
+    ],
+    "expected": "统计卡+任务表(含状态开关/执行记录)",
+    "api": "GET /jobs",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=定时任务"
+    }
+  },
+  {
+    "id": "FUNC-ADM-039",
+    "role": "admin",
+    "module": "系统基础/年级管理",
+    "menu": "年级管理",
+    "element": "新增年级",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "有写权限",
+    "steps": [
+      "1. 点『新增年级』",
+      "2. 选学段/序号",
+      "3. 保存"
+    ],
+    "expected": "新年级入库（名称自动生成，唯一键 grade 序号）",
+    "api": "POST /edu/grades",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/grades",
+      "body": {
+        "stage": "primary",
+        "grade_no": 3
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-040",
+    "role": "admin",
+    "module": "系统基础/年级管理",
+    "menu": "年级管理",
+    "element": "编辑/删除",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "存在年级",
+    "steps": [
+      "1. 编辑改状态保存",
+      "2. 删除确认"
+    ],
+    "expected": "编辑生效；删除级联处理班级前需无引用",
+    "api": "PUT /edu/grades/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/edu/grades/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-041",
+    "role": "admin",
+    "module": "系统基础/日志",
+    "menu": "日志审计",
+    "element": "Tab 切换",
+    "action": "切换",
+    "priority": "P1",
+    "precondition": "已登录",
+    "steps": [
+      "1. 切登录/操作/错误日志"
+    ],
+    "expected": "对应日志接口数据加载",
+    "api": "GET /logs/login",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/logs/login",
+      "body": null,
+      "assert": "list 非空或空",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-042",
+    "role": "admin",
+    "module": "系统基础/日志",
+    "menu": "日志审计",
+    "element": "筛选/导出",
+    "action": "筛选+导出",
+    "priority": "P1",
+    "precondition": "有数据",
+    "steps": [
+      "1. 选日期/模块/结果",
+      "2. 导出 Excel"
+    ],
+    "expected": "列表过滤；导出带鉴权的 xlsx",
+    "api": "GET /logs/export",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/logs/export",
+      "body": null,
+      "assert": "blob 200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-043",
+    "role": "admin",
+    "module": "系统基础/注册审批",
+    "menu": "注册审批",
+    "element": "筛选/搜索",
+    "action": "筛选",
+    "priority": "P1",
+    "precondition": "存在多状态申请",
+    "steps": [
+      "1. 选状态/输关键词",
+      "2. 查询"
+    ],
+    "expected": "列表按条件过滤",
+    "api": "GET /auth/registrations",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/auth/registrations",
+      "body": null,
+      "assert": "list 已过滤",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-044",
+    "role": "admin",
+    "module": "系统基础/版本信息",
+    "menu": "更新时间戳自动记录",
+    "element": "接口验证",
+    "action": "升级触发",
+    "priority": "P1",
+    "precondition": "部署新版本号/构建号",
+    "steps": [
+      "1. 重启服务",
+      "2. 查 GET /system/version"
+    ],
+    "expected": "updated_at 更新且 prior_version 记录上一版；同版本重启不刷新",
+    "api": "GET /system/version",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/system/version",
+      "body": null,
+      "assert": "updated_at 仅版本/构建变化时变",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-045",
+    "role": "admin",
+    "module": "系统基础/版本信息",
+    "menu": "系统配置-版本卡片",
+    "element": "渲染",
+    "action": "访问渲染",
+    "priority": "P1",
+    "precondition": "任意登录用户",
+    "steps": [
+      "1. 翻到『系统配置』页底部『版本信息』卡片"
+    ],
+    "expected": "展示版本号/构建号/构建时间/最后更新时间四块，文字清晰",
+    "api": "GET /system/version",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=版本信息"
+    }
+  },
+  {
+    "id": "FUNC-ADM-046",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "删除用户",
+    "action": "二次确认",
+    "priority": "P1",
+    "precondition": "存在可删用户",
+    "steps": [
+      "1. 行内『删除』",
+      "2. 确认框点确认"
+    ],
+    "expected": "提示成功，用户从列表移除；内置 admin 不可删",
+    "api": "DELETE /system/users/{id}",
+    "automation": {
+      "type": "api",
+      "method": "DELETE",
+      "path": "/system/users/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-047",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "启用/禁用",
+    "action": "行内开关",
+    "priority": "P1",
+    "precondition": "存在目标用户",
+    "steps": [
+      "1. 切换状态开关"
+    ],
+    "expected": "状态变更即时生效，禁用后该账号无法登录",
+    "api": "PUT /system/users/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/system/users/{id}",
+      "body": {
+        "status": "disabled"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-048",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "新增用户-校验",
+    "action": "负向校验",
+    "priority": "P1",
+    "precondition": "sys_admin 登录，打开新增对话框",
+    "steps": [
+      "1. 用户名留空或密码<8位纯数字",
+      "2. 点保存"
+    ],
+    "expected": "前端拦截并提示必填/格式错误，不发请求",
+    "api": "POST /system/users",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/system/users",
+      "body": {
+        "username": "",
+        "password": "123"
+      },
+      "assert": "前端校验失败，HTTP 未发出或 422",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-049",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "筛选(关键词/身份/状态/年级)+查询",
+    "action": "筛选",
+    "priority": "P1",
+    "precondition": "用户列表已有数据",
+    "steps": [
+      "1. 填关键词/选身份/状态/年级",
+      "2. 点『查询』"
+    ],
+    "expected": "列表仅返回符合条件记录，分页总数更新",
+    "api": "GET /system/users?keyword=&identity=&status=&grade_id=",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/system/users",
+      "body": null,
+      "assert": "resp.data.list 长度随筛选变化",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-050",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "编辑用户",
+    "action": "打开对话框并保存",
+    "priority": "P1",
+    "precondition": "存在目标用户",
+    "steps": [
+      "1. 行内『编辑』",
+      "2. 改姓名/状态/角色",
+      "3. 保存"
+    ],
+    "expected": "提示成功，列表对应行更新",
+    "api": "PUT /system/users/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/system/users/{id}",
+      "body": {
+        "real_name": "x"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-051",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "重置密码",
+    "action": "对话框操作",
+    "priority": "P1",
+    "precondition": "存在目标用户",
+    "steps": [
+      "1. 行内『重置密码』",
+      "2. 填新密码或留空(自动生成)",
+      "3. 确认重置"
+    ],
+    "expected": "该用户下次登录须用新密码；留空时系统生成强密码并提示",
+    "api": "POST /system/users/reset-password",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/system/users/reset-password",
+      "body": {
+        "user_id": 1,
+        "new_password": "New@1234"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-052",
+    "role": "admin",
+    "module": "系统基础/系统报表",
+    "menu": "系统报表",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "sys_admin/grade_admin",
+    "steps": [
+      "1. 点『系统报表』"
+    ],
+    "expected": "统计卡+图表渲染，无报错",
+    "api": "GET /report/admin/overview",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=系统报表"
+    }
+  },
+  {
+    "id": "FUNC-ADM-053",
+    "role": "admin",
+    "module": "系统基础/角色权限",
+    "menu": "角色权限",
+    "element": "新增角色",
+    "action": "对话框保存",
+    "priority": "P1",
+    "precondition": "sys_admin 登录",
+    "steps": [
+      "1. 点『新增角色』",
+      "2. 填名称/标识/描述",
+      "3. 保存"
+    ],
+    "expected": "新角色出现在列表",
+    "api": "POST /system/roles",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/system/roles",
+      "body": {
+        "name": "班主任",
+        "code": "head_teacher",
+        "description": "x"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-054",
+    "role": "admin",
+    "module": "系统基础/角色权限",
+    "menu": "角色权限",
+    "element": "编辑/删除",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "存在自定义角色",
+    "steps": [
+      "1. 编辑改名保存",
+      "2. 删除并确认"
+    ],
+    "expected": "编辑生效；删除后列表移除；内置角色不可操作",
+    "api": "PUT /system/roles/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/system/roles/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-055",
+    "role": "admin",
+    "module": "系统基础/附件",
+    "menu": "附件管理",
+    "element": "上传/预览/下载/删除",
+    "action": "对话框+行操作",
+    "priority": "P1",
+    "precondition": "已登录",
+    "steps": [
+      "1. 点上传拖入文件",
+      "2. 行内预览/下载",
+      "3. 删除确认"
+    ],
+    "expected": "附件入库；预览/下载带鉴权；删除后列表移除",
+    "api": "POST /attachments/batch-upload",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/attachments/batch-upload",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-056",
+    "role": "admin",
+    "module": "系统基础/附件",
+    "menu": "附件管理",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "sys_admin/grade_admin",
+    "steps": [
+      "1. 点『附件管理』"
+    ],
+    "expected": "附件表格加载",
+    "api": "GET /attachments",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=附件管理"
+    }
+  },
+  {
+    "id": "FUNC-ADM-057",
+    "role": "admin",
+    "module": "教学资源/学科",
+    "menu": "学科管理",
+    "element": "视图切换",
+    "action": "单选",
+    "priority": "P2",
+    "precondition": "学科页",
+    "steps": [
+      "1. 切『按年级查看/平铺列表』"
+    ],
+    "expected": "两种视图正确渲染",
+    "api": "—",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": ".el-radio"
+    }
+  },
+  {
+    "id": "FUNC-ADM-058",
+    "role": "admin",
+    "module": "教学资源/班级",
+    "menu": "班级管理",
+    "element": "批量启用/停用/删除",
+    "action": "批量栏",
+    "priority": "P2",
+    "precondition": "勾选多条",
+    "steps": [
+      "1. 批量操作并确认"
+    ],
+    "expected": "批量状态变更",
+    "api": "PUT /edu/classes/batch",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/edu/classes/batch",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-059",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "AI 生成",
+    "action": "对话框",
+    "priority": "P2",
+    "precondition": "LLM 可用",
+    "steps": [
+      "1. 点『AI 生成』填年级/学科/数量(3-12)",
+      "2. 生成预览",
+      "3. 创建选中"
+    ],
+    "expected": "生成知识点预览，确认后入库",
+    "api": "POST /edu/knowledge/ai/generate",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/knowledge/ai/generate",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-060",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "AI 补全",
+    "action": "对话框",
+    "priority": "P2",
+    "precondition": "LLM 可用",
+    "steps": [
+      "1. 详情『AI 补全』",
+      "2. 应用选中建议"
+    ],
+    "expected": "节点内容被补全更新（仅预览不落库，确认才写）",
+    "api": "POST /edu/knowledge/ai/enrich",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/knowledge/ai/enrich",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-061",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "导出",
+    "action": "点击",
+    "priority": "P2",
+    "precondition": "有数据",
+    "steps": [
+      "1. 点『导出』"
+    ],
+    "expected": "下载知识点 xlsx，带 Authorization",
+    "api": "GET /edu/knowledge/export",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/edu/knowledge/export",
+      "body": null,
+      "assert": "blob 200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-062",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "语义搜索",
+    "action": "自然语言搜索",
+    "priority": "P2",
+    "precondition": "RAG 启用",
+    "steps": [
+      "1. 输自然语言查询",
+      "2. 点搜索",
+      "3. 结果『定位』"
+    ],
+    "expected": "返回相关片段并可定位到树节点",
+    "api": "POST /edu/knowledge/search",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/knowledge/search",
+      "body": {
+        "query": "分数加减"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-063",
+    "role": "admin",
+    "module": "教学资源/知识点",
+    "menu": "知识点管理",
+    "element": "重建索引",
+    "action": "确认框",
+    "priority": "P2",
+    "precondition": "RAG 启用",
+    "steps": [
+      "1. 点『重建索引』确认"
+    ],
+    "expected": "Chroma 索引重建，状态标签更新",
+    "api": "POST /edu/knowledge/reindex",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/edu/knowledge/reindex",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-064",
+    "role": "admin",
+    "module": "系统基础/AI日志",
+    "menu": "AI 调用日志",
+    "element": "详情/引擎状态",
+    "action": "对话框+抽屉",
+    "priority": "P2",
+    "precondition": "存在日志",
+    "steps": [
+      "1. 点详情",
+      "2. 点引擎状态"
+    ],
+    "expected": "展示调用明细与已注册 Agent",
+    "api": "GET /agent/logs/{id}",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/agent/logs/{id}",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-065",
+    "role": "admin",
+    "module": "系统基础/AI配置",
+    "menu": "AI 大模型配置",
+    "element": "参数边界",
+    "action": "负向",
+    "priority": "P2",
+    "precondition": "打开页面",
+    "steps": [
+      "1. 温度设超 0-2 / 最大输出超 256-32768"
+    ],
+    "expected": "控件限制边界，保存不越界",
+    "api": "PUT /system/ai-config",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/system/ai-config",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-066",
+    "role": "admin",
+    "module": "系统基础/定时任务",
+    "menu": "定时任务",
+    "element": "执行记录抽屉",
+    "action": "抽屉",
+    "priority": "P2",
+    "precondition": "任务曾执行",
+    "steps": [
+      "1. 点『执行记录』"
+    ],
+    "expected": "展示历史执行结果",
+    "api": "GET /jobs/{id}/executions",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/jobs/{id}/executions",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-067",
+    "role": "admin",
+    "module": "系统基础/年级管理",
+    "menu": "年级管理",
+    "element": "筛选/分页",
+    "action": "筛选",
+    "priority": "P2",
+    "precondition": "年级多",
+    "steps": [
+      "1. 选学段/关键词查询"
+    ],
+    "expected": "列表过滤正确",
+    "api": "GET /edu/grades",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/edu/grades",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-068",
+    "role": "admin",
+    "module": "系统基础/注册审批",
+    "menu": "注册审批",
+    "element": "详情",
+    "action": "对话框",
+    "priority": "P2",
+    "precondition": "存在申请",
+    "steps": [
+      "1. 点『详情』"
+    ],
+    "expected": "弹窗展示申请只读信息",
+    "api": "GET /auth/registrations/{id}",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=详情"
+    }
+  },
+  {
+    "id": "FUNC-ADM-069",
+    "role": "admin",
+    "module": "系统基础/版本信息",
+    "menu": "全站页脚",
+    "element": "渲染",
+    "action": "访问渲染",
+    "priority": "P2",
+    "precondition": "任意登录用户",
+    "steps": [
+      "1. 查看任意页面底部页脚"
+    ],
+    "expected": "紧凑显示 应用名 v版本 · 构建 短哈希 · 更新于 时间",
+    "api": "GET /system/version",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": ".ver-footer"
+    }
+  },
+  {
+    "id": "FUNC-ADM-070",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "分页",
+    "action": "翻页",
+    "priority": "P2",
+    "precondition": "用户数>10",
+    "steps": [
+      "1. 改每页条数/翻页"
+    ],
+    "expected": "列表与分页总数正确联动",
+    "api": "GET /system/users?page=&page_size=",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": ".el-pagination"
+    }
+  },
+  {
+    "id": "FUNC-ADM-071",
+    "role": "admin",
+    "module": "系统基础/用户管理",
+    "menu": "用户管理",
+    "element": "重置筛选",
+    "action": "点击",
+    "priority": "P2",
+    "precondition": "已设置筛选条件",
+    "steps": [
+      "1. 点『重置』"
+    ],
+    "expected": "所有筛选条件清空，恢复全量列表",
+    "api": "GET /system/users",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=重置"
+    }
+  },
+  {
+    "id": "FUNC-ADM-072",
+    "role": "admin",
+    "module": "系统基础/系统报表",
+    "menu": "系统报表",
+    "element": "导出 Excel",
+    "action": "点击",
+    "priority": "P2",
+    "precondition": "有数据",
+    "steps": [
+      "1. 点导出"
+    ],
+    "expected": "下载 admin_overview xlsx",
+    "api": "GET /report/export/excel?report_type=admin_overview",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/report/export/excel",
+      "body": null,
+      "assert": "blob 200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-073",
+    "role": "admin",
+    "module": "系统基础/角色权限",
+    "menu": "角色权限",
+    "element": "复制角色",
+    "action": "prompt 新名",
+    "priority": "P2",
+    "precondition": "存在角色",
+    "steps": [
+      "1. 点『复制角色』",
+      "2. 输入新名称确认"
+    ],
+    "expected": "生成同名权限副本的新角色",
+    "api": "POST /system/roles/copy",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/system/roles/copy",
+      "body": {
+        "id": 1,
+        "name": "副本"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-ADM-074",
+    "role": "admin",
+    "module": "系统基础/角色权限",
+    "menu": "角色权限",
+    "element": "清空/展开/折叠",
+    "action": "树操作",
+    "priority": "P2",
+    "precondition": "权限树已加载",
+    "steps": [
+      "1. 点『清空』",
+      "2. 点『展开全部/折叠全部』"
+    ],
+    "expected": "清空后无勾选；展开/折叠改变树展示",
+    "api": "—",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": ".el-tree"
+    }
+  },
+  {
+    "id": "FUNC-ADM-075",
+    "role": "admin",
+    "module": "系统基础/通知",
+    "menu": "顶栏通知",
+    "element": "全部已读/单条",
+    "action": "点击",
+    "priority": "P2",
+    "precondition": "有未读通知",
+    "steps": [
+      "1. 点全部已读",
+      "2. 单条标记已读"
+    ],
+    "expected": "通知状态更新",
+    "api": "POST /system/notifications/read-all",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/system/notifications/read-all",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-001",
+    "role": "teacher",
+    "module": "教学/作业考试",
+    "menu": "作业与考试",
+    "element": "发布作业/考试",
+    "action": "对话框",
+    "priority": "P0",
+    "precondition": "有写权限",
+    "steps": [
+      "1. 点发布",
+      "2. 填标题/类型/试卷/起止时间/时长/及格分/下发班级",
+      "3. 确定"
+    ],
+    "expected": "任务发布；选试卷自动收敛及格分；下发关系建立",
+    "api": "POST /task/tasks",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/task/tasks",
+      "body": {
+        "title": "单元测试",
+        "type": "exam",
+        "paper_id": 1,
+        "class_ids": [
+          1
+        ]
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-002",
+    "role": "teacher",
+    "module": "教学/作业考试",
+    "menu": "作业与考试",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "teacher 登录",
+    "steps": [
+      "1. 点『作业与考试』"
+    ],
+    "expected": "任务表格加载",
+    "api": "GET /task/tasks",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=作业与考试"
+    }
+  },
+  {
+    "id": "FUNC-TCH-003",
+    "role": "teacher",
+    "module": "教学/批改",
+    "menu": "批改中心",
+    "element": "保存/发布",
+    "action": "底部操作",
+    "priority": "P0",
+    "precondition": "已评分",
+    "steps": [
+      "1. 保存批改结果",
+      "2. 发布成绩"
+    ],
+    "expected": "客观题自动判分；主观题 LLM 批改；发布后学生可见成绩",
+    "api": "POST /grading/submissions/{id}/grade",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/grading/submissions/{id}/grade",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-004",
+    "role": "teacher",
+    "module": "教学/批改",
+    "menu": "批改中心",
+    "element": "逐题评分",
+    "action": "工作区",
+    "priority": "P0",
+    "precondition": "选中一份",
+    "steps": [
+      "1. 每题设满分/零分或填分值",
+      "2. 填评语"
+    ],
+    "expected": "分值与评语写入工作区",
+    "api": "PUT /grading/submissions/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/grading/submissions/{id}",
+      "body": {
+        "scores": {}
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-005",
+    "role": "teacher",
+    "module": "教学/批改",
+    "menu": "批改中心",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "grading:list",
+    "steps": [
+      "1. 点『批改中心』"
+    ],
+    "expected": "待批改队列加载",
+    "api": "GET /grading/pending",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=批改中心"
+    }
+  },
+  {
+    "id": "FUNC-TCH-006",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "新建试卷(向导)",
+    "element": "Step1 选模式",
+    "action": "向导",
+    "priority": "P0",
+    "precondition": "向导页",
+    "steps": [
+      "1. 选自定义组卷 / AI 一键组卷",
+      "2. 下一步"
+    ],
+    "expected": "进入 Step2 对应表单",
+    "api": "—",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": ".el-step"
+    }
+  },
+  {
+    "id": "FUNC-TCH-007",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "新建试卷(向导)",
+    "element": "Step2 参数(自定义)",
+    "action": "表单",
+    "priority": "P0",
+    "precondition": "自定义模式",
+    "steps": [
+      "1. 选年级/学科/命题标准",
+      "2. 编辑题型结构(名称/题型/题量/分值)",
+      "3. 设总分/时长/难度分布/知识点树",
+      "4. 生成预览"
+    ],
+    "expected": "难度合计=100% 且卷面分=总分才可生成；否则按钮置灰",
+    "api": "POST /question/papers/compose/preview",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/question/papers/compose/preview",
+      "body": null,
+      "assert": "200 或 422(校验)",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-008",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "新建试卷(向导)",
+    "element": "Step4 保存",
+    "action": "向导",
+    "priority": "P0",
+    "precondition": "预览完成",
+    "steps": [
+      "1. 填名称/说明/时长",
+      "2. 保存试卷"
+    ],
+    "expected": "试卷落库并跳编辑页/列表；usage_count 对称递增",
+    "api": "POST /question/papers/compose/save",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/question/papers/compose/save",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-009",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "试卷管理",
+    "element": "新建试卷(向导)",
+    "action": "跳转",
+    "priority": "P0",
+    "precondition": "有写权限",
+    "steps": [
+      "1. 点『新建试卷』"
+    ],
+    "expected": "跳转到标准组卷向导 Step1",
+    "api": "GET /teacher/papers/new",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=新建试卷"
+    }
+  },
+  {
+    "id": "FUNC-TCH-010",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "试卷管理",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "teacher 登录",
+    "steps": [
+      "1. 点『试卷管理』"
+    ],
+    "expected": "试卷表格加载",
+    "api": "GET /question/papers",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=试卷管理"
+    }
+  },
+  {
+    "id": "FUNC-TCH-011",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "新增题目",
+    "action": "对话框保存",
+    "priority": "P0",
+    "precondition": "有写权限",
+    "steps": [
+      "1. 点新增",
+      "2. 填题干/题型/学科/年级/选项/答案/分值",
+      "3. 保存"
+    ],
+    "expected": "题目入库；8 种题型校验；模型给的 id 不可信，知识点经三重校验",
+    "api": "POST /question/questions",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/question/questions",
+      "body": {
+        "stem": "1+1=?",
+        "type": "single",
+        "subject_id": 1,
+        "grade_id": 1,
+        "options": [
+          {
+            "key": "A",
+            "text": "2"
+          }
+        ]
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-012",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "teacher 登录",
+    "steps": [
+      "1. 点『题库管理』"
+    ],
+    "expected": "题目表格加载，含题型/难度/状态/题库",
+    "api": "GET /question/questions",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=题库管理"
+    }
+  },
+  {
+    "id": "FUNC-TCH-013",
+    "role": "teacher",
+    "module": "AI/Agent",
+    "menu": "AI 出题组卷",
+    "element": "出题生成+保存",
+    "action": "生成",
+    "priority": "P1",
+    "precondition": "LLM 可用",
+    "steps": [
+      "1. 选出题",
+      "2. 填学科/年级/题型/数量(1-30)",
+      "3. 开始生成",
+      "4. 保存到私有题库"
+    ],
+    "expected": "生成题目预览；保存入库（二次确认）",
+    "api": "POST /agent/question-generator",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/agent/question-generator",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-014",
+    "role": "teacher",
+    "module": "AI/Agent",
+    "menu": "AI 出题组卷",
+    "element": "页面访问+能力选择",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "teacher 登录",
+    "steps": [
+      "1. 点『AI 出题组卷』",
+      "2. 左侧选能力"
+    ],
+    "expected": "展示对应表单；未启用 AI 仅降级",
+    "api": "GET /agent/status",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=AI 出题组卷"
+    }
+  },
+  {
+    "id": "FUNC-TCH-015",
+    "role": "teacher",
+    "module": "AI/Agent",
+    "menu": "AI 智能助手",
+    "element": "对话/重生成/停止",
+    "action": "对话",
+    "priority": "P1",
+    "precondition": "agent:chat",
+    "steps": [
+      "1. 输消息发送",
+      "2. 重新生成",
+      "3. 停止生成"
+    ],
+    "expected": "流式回复；重生成/停止生效；降级走规则引擎",
+    "api": "POST /agent/chat",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/agent/chat",
+      "body": {
+        "message": "什么是分数"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-016",
+    "role": "teacher",
+    "module": "教学/作业考试",
+    "menu": "作业与考试",
+    "element": "提交情况/学情报告",
+    "action": "抽屉",
+    "priority": "P1",
+    "precondition": "任务有提交",
+    "steps": [
+      "1. 点提交情况",
+      "2. 生成学情报告/AI 建议"
+    ],
+    "expected": "统计卡+学生表；报告与建议生成",
+    "api": "GET /task/tasks/{id}/submissions",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/task/tasks/{id}/submissions",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-017",
+    "role": "teacher",
+    "module": "教学/作业考试",
+    "menu": "作业与考试",
+    "element": "编辑/删除/批量",
+    "action": "行内+批量",
+    "priority": "P1",
+    "precondition": "存在任务",
+    "steps": [
+      "1. 编辑保存",
+      "2. 批量结束/删除"
+    ],
+    "expected": "编辑生效；批量操作对仅本人记录生效",
+    "api": "PUT /task/tasks/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/task/tasks/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-018",
+    "role": "teacher",
+    "module": "教学/学情",
+    "menu": "学生分析",
+    "element": "页面访问+筛选",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "analysis:student",
+    "steps": [
+      "1. 点学生分析",
+      "2. 选班级→学生"
+    ],
+    "expected": "概览/趋势/雷达/薄弱点展示",
+    "api": "GET /report/student/overview",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/report/student/overview",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-019",
+    "role": "teacher",
+    "module": "教学/学情",
+    "menu": "班级学情",
+    "element": "页面访问+筛选",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "analysis:class",
+    "steps": [
+      "1. 点班级学情",
+      "2. 选班级"
+    ],
+    "expected": "统计卡+图表加载；可跳个体分析",
+    "api": "GET /report/teacher/class-overview",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=班级学情"
+    }
+  },
+  {
+    "id": "FUNC-TCH-020",
+    "role": "teacher",
+    "module": "教学/批改",
+    "menu": "批改中心",
+    "element": "打回重做",
+    "action": "prompt",
+    "priority": "P1",
+    "precondition": "选中一份",
+    "steps": [
+      "1. 点打回重做填原因"
+    ],
+    "expected": "学生收到重做任务",
+    "api": "POST /grading/submissions/{id}/reject",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/grading/submissions/{id}/reject",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-021",
+    "role": "teacher",
+    "module": "教学/批改",
+    "menu": "批改中心",
+    "element": "批量采纳/发布",
+    "action": "批量栏",
+    "priority": "P1",
+    "precondition": "勾选多份",
+    "steps": [
+      "1. 批量采纳",
+      "2. 批量发布"
+    ],
+    "expected": "批量生效",
+    "api": "POST /grading/batch/grade",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/grading/batch/grade",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-022",
+    "role": "teacher",
+    "module": "教学/教案",
+    "menu": "教案管理",
+    "element": "复制/共享/删除",
+    "action": "行内",
+    "priority": "P1",
+    "precondition": "存在教案",
+    "steps": [
+      "1. 复制",
+      "2. 共享开关",
+      "3. 删除"
+    ],
+    "expected": "复制生成副本；共享切换；删除需确认",
+    "api": "POST /lesson/plans/{id}/copy",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/lesson/plans/{id}/copy",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-023",
+    "role": "teacher",
+    "module": "教学/教案",
+    "menu": "教案管理",
+    "element": "新建/编辑教案",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "有写权限",
+    "steps": [
+      "1. 新建",
+      "2. 填标题/学科/年级/课时/教学目标/过程 stage 动态表",
+      "3. 保存"
+    ],
+    "expected": "教案入库；stage 可增删；附件可上传",
+    "api": "POST /lesson/plans",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/lesson/plans",
+      "body": {
+        "title": "x",
+        "subject_id": 1
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-024",
+    "role": "teacher",
+    "module": "教学/教案",
+    "menu": "教案管理",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "lesson:plan:list",
+    "steps": [
+      "1. 点『教案管理』"
+    ],
+    "expected": "教案表格加载",
+    "api": "GET /lesson/plans",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=教案管理"
+    }
+  },
+  {
+    "id": "FUNC-TCH-025",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "新建试卷(向导)",
+    "element": "Step2 参数(AI)",
+    "action": "表单",
+    "priority": "P1",
+    "precondition": "AI 模式",
+    "steps": [
+      "1. 填需求描述/年级/学科",
+      "2. AI 一键组卷"
+    ],
+    "expected": "调用 paperComposer；难度滑块禁用不下发",
+    "api": "POST /agent/paper-composer",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/agent/paper-composer",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-026",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "新建试卷(向导)",
+    "element": "Step3 预览调整",
+    "action": "向导",
+    "priority": "P1",
+    "precondition": "已生成预览",
+    "steps": [
+      "1. 每题编辑/移除",
+      "2. 重新生成/重构大题",
+      "3. 下一步"
+    ],
+    "expected": "本地预览可调整；缺失缺口有提示",
+    "api": "—",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=预览"
+    }
+  },
+  {
+    "id": "FUNC-TCH-027",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "编辑试卷",
+    "element": "元信息/逐题改分/换题/移除",
+    "action": "编辑",
+    "priority": "P1",
+    "precondition": "编辑页",
+    "steps": [
+      "1. 改试卷名/时长",
+      "2. 每题改分值",
+      "3. 换一题/移除",
+      "4. 保存并重算成绩"
+    ],
+    "expected": "题目项分值更新；移除题作答迁移/计数；CASCADE 不丢学生作答",
+    "api": "PUT /question/papers/{id}/items",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/question/papers/{id}/items",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-028",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "试卷管理",
+    "element": "AI 智能组卷",
+    "action": "跳转",
+    "priority": "P1",
+    "precondition": "有 AI 权限",
+    "steps": [
+      "1. 点『AI 智能组卷』"
+    ],
+    "expected": "向导以 AI 模式打开",
+    "api": "GET /teacher/papers/new?mode=ai",
+    "automation": {
+      "type": "manual",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-029",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "试卷管理",
+    "element": "详情/编辑/复制/共享/导出/删除",
+    "action": "行内",
+    "priority": "P1",
+    "precondition": "存在试卷",
+    "steps": [
+      "1. 详情",
+      "2. 编辑跳编辑页",
+      "3. 复制",
+      "4. 共享",
+      "5. 导出(Excel/Word/PDF/HTML)",
+      "6. 删除"
+    ],
+    "expected": "各操作生效；导出带鉴权 blob；共享走教师多选",
+    "api": "GET /question/papers/{id}",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/question/papers/{id}",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-030",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "批量(发布/下架/移动/分配知识点/改难度/删除)",
+    "action": "批量栏",
+    "priority": "P1",
+    "precondition": "勾选多条",
+    "steps": [
+      "1. 选批量操作并确认"
+    ],
+    "expected": "批量状态/归属变更；仅本人创建可被批量改",
+    "api": "POST /question/questions/batch",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/question/questions/batch",
+      "body": {
+        "action": "publish"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-031",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "批量导入",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "下载模板填好",
+    "steps": [
+      "1. 下载模板",
+      "2. 上传 xlsx",
+      "3. 开始导入"
+    ],
+    "expected": "解析入库；结果展示成功/跳过",
+    "api": "POST /question/questions/import",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/question/questions/import",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-032",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "状态开关",
+    "action": "行内",
+    "priority": "P1",
+    "precondition": "存在题目",
+    "steps": [
+      "1. 切状态开关"
+    ],
+    "expected": "题目上/下架即时生效",
+    "api": "POST /question/questions/{id}/status",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/question/questions/{id}/status",
+      "body": {
+        "status": "published"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-033",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "筛选(年级/学科/知识点/题型/难度/状态/来源/关键词)",
+    "action": "筛选",
+    "priority": "P1",
+    "precondition": "有数据",
+    "steps": [
+      "1. 逐级选年级→学科→知识点",
+      "2. 选题型/难度",
+      "3. 查询"
+    ],
+    "expected": "列表按条件过滤；学科随年级联动；知识点随年级+学科联动",
+    "api": "GET /question/questions",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/question/questions",
+      "body": null,
+      "assert": "list 已过滤",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-034",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "编辑/详情/删除",
+    "action": "行内",
+    "priority": "P1",
+    "precondition": "存在题目",
+    "steps": [
+      "1. 详情",
+      "2. 编辑保存",
+      "3. 删除确认"
+    ],
+    "expected": "编辑生效；删除需确认",
+    "api": "PUT /question/questions/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/question/questions/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-035",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "题目校验(必填)",
+    "action": "负向",
+    "priority": "P1",
+    "precondition": "打开新增",
+    "steps": [
+      "1. 题干/题型/学科留空保存"
+    ],
+    "expected": "前端拦截提示必填",
+    "api": "POST /question/questions",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/question/questions",
+      "body": {
+        "stem": ""
+      },
+      "assert": "校验失败/422",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-036",
+    "role": "teacher",
+    "module": "AI/Agent",
+    "menu": "AI 出题组卷",
+    "element": "组卷/答疑/规划",
+    "action": "生成",
+    "priority": "P2",
+    "precondition": "LLM 可用",
+    "steps": [
+      "1. 选 paper_composer/tutor/study_planner",
+      "2. 填参生成"
+    ],
+    "expected": "对应 Agent 返回结果",
+    "api": "POST /agent/paper-composer",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/agent/paper-composer",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-037",
+    "role": "teacher",
+    "module": "教学/作业考试",
+    "menu": "作业与考试",
+    "element": "查看答卷",
+    "action": "对话框",
+    "priority": "P2",
+    "precondition": "有提交",
+    "steps": [
+      "1. 点查看答卷"
+    ],
+    "expected": "展示各题学生答案/正确答案/解析",
+    "api": "GET /grading/submissions/{id}",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/grading/submissions/{id}",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-038",
+    "role": "teacher",
+    "module": "教学/批改",
+    "menu": "批改中心",
+    "element": "键盘快捷键",
+    "action": "键盘",
+    "priority": "P2",
+    "precondition": "批改工作区",
+    "steps": [
+      "1. Ctrl+Enter 保存下一份",
+      "2. Alt+F/Z 满分零分"
+    ],
+    "expected": "快捷键触发对应动作",
+    "api": "—",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": ".grading-workspace"
+    }
+  },
+  {
+    "id": "FUNC-TCH-039",
+    "role": "teacher",
+    "module": "教学/报表",
+    "menu": "教学报表",
+    "element": "页面访问+导出",
+    "action": "渲染+导出",
+    "priority": "P2",
+    "precondition": "report:teacher",
+    "steps": [
+      "1. 点教学报表",
+      "2. 选班级",
+      "3. 导出"
+    ],
+    "expected": "报表渲染；导出 xlsx 带鉴权",
+    "api": "GET /report/export/excel?report_type=teacher_overview",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/report/export/excel",
+      "body": null,
+      "assert": "blob 200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-040",
+    "role": "teacher",
+    "module": "教学/教案",
+    "menu": "教案管理",
+    "element": "AI 生成教案",
+    "action": "向导",
+    "priority": "P2",
+    "precondition": "LLM 可用",
+    "steps": [
+      "1. 点 AI 生成",
+      "2. 填条件→开始生成",
+      "3. 预览编辑→存入教案库"
+    ],
+    "expected": "两段式生成；结构兜底；确认后入库",
+    "api": "POST /lesson/ai/generate",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/lesson/ai/generate",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-041",
+    "role": "teacher",
+    "module": "教学/教案",
+    "menu": "教案管理",
+    "element": "生成记录",
+    "action": "抽屉",
+    "priority": "P2",
+    "precondition": "有生成任务",
+    "steps": [
+      "1. 点生成记录",
+      "2. 查看/原因"
+    ],
+    "expected": "展示任务状态与错误",
+    "api": "GET /lesson/ai/jobs",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/lesson/ai/jobs",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-042",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "编辑试卷",
+    "element": "导出/版本/收藏",
+    "action": "顶部操作",
+    "priority": "P2",
+    "precondition": "编辑页",
+    "steps": [
+      "1. 导出(多格式)",
+      "2. 版本记录回溯",
+      "3. 收藏"
+    ],
+    "expected": "导出带鉴权；版本可回溯(禁当前)；收藏切换",
+    "api": "GET /question/papers/{id}/export",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/question/papers/{id}/export",
+      "body": null,
+      "assert": "blob 200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-043",
+    "role": "teacher",
+    "module": "教学资源/试卷",
+    "menu": "试卷管理",
+    "element": "批量(复制/共享/删除)",
+    "action": "批量栏",
+    "priority": "P2",
+    "precondition": "勾选多条",
+    "steps": [
+      "1. 批量操作确认"
+    ],
+    "expected": "批量生效",
+    "api": "POST /question/papers/batch",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/question/papers/batch",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-044",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "导出/AI出题/AI质检",
+    "action": "对话框",
+    "priority": "P2",
+    "precondition": "有数据/LLM可用",
+    "steps": [
+      "1. 导出",
+      "2. AI 智能出题生成入库",
+      "3. AI 质检定位"
+    ],
+    "expected": "导出 xlsx；AI 出题存私有草稿；质检返回结果",
+    "api": "GET /question/questions/export",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/question/questions/export",
+      "body": null,
+      "assert": "blob 200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-TCH-045",
+    "role": "teacher",
+    "module": "教学资源/题库",
+    "menu": "题库管理",
+    "element": "查重/AI变式",
+    "action": "行内",
+    "priority": "P2",
+    "precondition": "存在题目",
+    "steps": [
+      "1. 点查重",
+      "2. 点 AI 变式→创建选中"
+    ],
+    "expected": "查重返回相似题；变式预览后入库",
+    "api": "GET /question/questions/{id}/duplicates",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/question/questions/{id}/duplicates",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-001",
+    "role": "student",
+    "module": "学习/成绩",
+    "menu": "成绩中心",
+    "element": "页面访问+查看解析",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点成绩中心",
+      "2. 查看解析"
+    ],
+    "expected": "成绩列表；解析弹窗含得分/排名/逐题",
+    "api": "GET /task/my/scores",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=成绩中心"
+    }
+  },
+  {
+    "id": "FUNC-STU-002",
+    "role": "student",
+    "module": "学习/练习",
+    "menu": "随机练习",
+    "element": "生成练习",
+    "action": "点击",
+    "priority": "P0",
+    "precondition": "已选条件",
+    "steps": [
+      "1. 设学科/数量/题型",
+      "2. 点生成练习"
+    ],
+    "expected": "生成练习卷进入答题区",
+    "api": "POST /task/practice",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/task/practice",
+      "body": {
+        "subject_id": 1,
+        "count": 5
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-003",
+    "role": "student",
+    "module": "学习/练习",
+    "menu": "随机练习",
+    "element": "答题+收藏+提交",
+    "action": "交互",
+    "priority": "P0",
+    "precondition": "练习进行中",
+    "steps": [
+      "1. 逐题作答",
+      "2. 星标收藏",
+      "3. 提交并查看结果"
+    ],
+    "expected": "答案保存；收藏入库；提交后显示对错/解析",
+    "api": "POST /task/submit",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/task/submit",
+      "body": {
+        "answers": {}
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-004",
+    "role": "student",
+    "module": "学习/考试",
+    "menu": "模拟考试",
+    "element": "开始答题",
+    "action": "卡片",
+    "priority": "P0",
+    "precondition": "有待完成",
+    "steps": [
+      "1. 点开始答题(canStart)"
+    ],
+    "expected": "跳答题页；不可开始时禁用并提示原因",
+    "api": "GET /task/tasks/{id}/paper",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/task/tasks/{id}/paper",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-005",
+    "role": "student",
+    "module": "学习/考试",
+    "menu": "模拟考试",
+    "element": "页面访问+Tab",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点『模拟考试』",
+      "2. 切待完成/已完成"
+    ],
+    "expected": "卡片列表按状态分组",
+    "api": "GET /task/my-tasks",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=模拟考试"
+    }
+  },
+  {
+    "id": "FUNC-STU-006",
+    "role": "student",
+    "module": "学习/考试",
+    "menu": "答题",
+    "element": "交卷(手动/超时)",
+    "action": "交卷",
+    "priority": "P0",
+    "precondition": "答题中",
+    "steps": [
+      "1. 点交卷确认",
+      "2. (或倒计时归零)"
+    ],
+    "expected": "交卷判分；超时自动交卷；次数用尽显示 exhausted",
+    "api": "POST /task/submit",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/task/submit",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-007",
+    "role": "student",
+    "module": "学习/考试",
+    "menu": "答题",
+    "element": "作答+题号导航",
+    "action": "交互",
+    "priority": "P0",
+    "precondition": "答题页",
+    "steps": [
+      "1. 逐题作答",
+      "2. 点题号跳转"
+    ],
+    "expected": "答案写入；题号状态(todo/done)更新",
+    "api": "POST /task/submit",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/task/submit",
+      "body": {
+        "answers": {}
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-008",
+    "role": "student",
+    "module": "学习/错题",
+    "menu": "错题本",
+    "element": "页面访问+筛选",
+    "action": "渲染",
+    "priority": "P0",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点错题本",
+      "2. 选学科/错因/掌握状态/关键词"
+    ],
+    "expected": "错题卡片按条件过滤",
+    "api": "GET /learning/wrong-questions",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=错题本"
+    }
+  },
+  {
+    "id": "FUNC-STU-009",
+    "role": "student",
+    "module": "AI/Agent",
+    "menu": "AI 智能助手",
+    "element": "对话+上下文",
+    "action": "对话",
+    "priority": "P1",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点 AI 智能助手",
+      "2. 选年级/学科上下文",
+      "3. 发送消息"
+    ],
+    "expected": "流式回复含上下文；降级走规则引擎",
+    "api": "POST /agent/chat",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/agent/chat",
+      "body": {
+        "message": "讲讲解方程"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-010",
+    "role": "student",
+    "module": "学习/复习",
+    "menu": "智能复习",
+    "element": "完成复习",
+    "action": "行内",
+    "priority": "P1",
+    "precondition": "存在计划",
+    "steps": [
+      "1. 点完成复习"
+    ],
+    "expected": "标记完成(quality=good)",
+    "api": "POST /learning/review-plans/{id}/complete",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/learning/review-plans/{id}/complete",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-011",
+    "role": "student",
+    "module": "学习/复习",
+    "menu": "智能复习",
+    "element": "页面访问+AI生成",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点智能复习",
+      "2. 点 AI 生成复习计划填天数/时长"
+    ],
+    "expected": "计划列表；AI 生成艾宾浩斯计划",
+    "api": "POST /learning/review-plans/generate",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/learning/review-plans/generate",
+      "body": {
+        "days": 7,
+        "daily_minutes": 30
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-012",
+    "role": "student",
+    "module": "学习/报表",
+    "menu": "学习报表",
+    "element": "页面访问+导出+AI建议",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点学习报表",
+      "2. 选学科趋势",
+      "3. 重新生成 AI 建议",
+      "4. 导出"
+    ],
+    "expected": "图表渲染；建议生成；导出带鉴权",
+    "api": "GET /report/student/overview",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=学习报表"
+    }
+  },
+  {
+    "id": "FUNC-STU-013",
+    "role": "student",
+    "module": "学习/掌握",
+    "menu": "掌握图谱",
+    "element": "页面访问+薄弱练习",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点掌握图谱选学科",
+      "2. 薄弱专项练习"
+    ],
+    "expected": "雷达/条形图；跳练习",
+    "api": "GET /learning/mastery-map",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=掌握图谱"
+    }
+  },
+  {
+    "id": "FUNC-STU-014",
+    "role": "student",
+    "module": "学习/笔记",
+    "menu": "学习笔记",
+    "element": "AI 整理/收藏/删除",
+    "action": "卡片",
+    "priority": "P1",
+    "precondition": "存在笔记",
+    "steps": [
+      "1. AI 整理",
+      "2. 收藏切换",
+      "3. 删除确认"
+    ],
+    "expected": "AI 整理写回 ai_*；收藏切换；删除移除",
+    "api": "POST /learning/notes/{id}/organize",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/learning/notes/{id}/organize",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-015",
+    "role": "student",
+    "module": "学习/笔记",
+    "menu": "学习笔记",
+    "element": "新建/编辑笔记",
+    "action": "对话框",
+    "priority": "P1",
+    "precondition": "已登录",
+    "steps": [
+      "1. 新建",
+      "2. 填标题/学科/标签/正文",
+      "3. 保存"
+    ],
+    "expected": "笔记入库；正文 sanitizeHtml 防 XSS",
+    "api": "POST /learning/notes",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/learning/notes",
+      "body": {
+        "title": "x",
+        "content": "<p>1</p>"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-016",
+    "role": "student",
+    "module": "学习/笔记",
+    "menu": "学习笔记",
+    "element": "页面访问+筛选",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点学习笔记",
+      "2. 筛选"
+    ],
+    "expected": "笔记卡片列表",
+    "api": "GET /learning/notes",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=学习笔记"
+    }
+  },
+  {
+    "id": "FUNC-STU-017",
+    "role": "student",
+    "module": "学习/练习",
+    "menu": "随机练习",
+    "element": "页面访问",
+    "action": "渲染",
+    "priority": "P1",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点『随机练习』"
+    ],
+    "expected": "配置区(学科/年级/数量/题型/难度/知识点)加载",
+    "api": "GET /task/practice",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=随机练习"
+    }
+  },
+  {
+    "id": "FUNC-STU-018",
+    "role": "student",
+    "module": "学习/考试",
+    "menu": "模拟考试",
+    "element": "查看解析/重考",
+    "action": "卡片",
+    "priority": "P1",
+    "precondition": "有已完成",
+    "steps": [
+      "1. 查看解析",
+      "2. 重考(left>0)"
+    ],
+    "expected": "展示逐题解析；剩余次数内可重考",
+    "api": "GET /task/submissions/{id}",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/task/submissions/{id}",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-019",
+    "role": "student",
+    "module": "学习/考试",
+    "menu": "答题",
+    "element": "防切屏心跳",
+    "action": "隐式",
+    "priority": "P1",
+    "precondition": "考试且 anti_cheat",
+    "steps": [
+      "1. 切后台再回",
+      "2. 等待 30s"
+    ],
+    "expected": "切屏次数+1；心跳上报；草稿 30 分钟可恢复",
+    "api": "POST /task/heartbeat",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/task/heartbeat",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-020",
+    "role": "student",
+    "module": "学习/自主组卷",
+    "menu": "自主组卷",
+    "element": "生成自测卷+答题",
+    "action": "表单",
+    "priority": "P1",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 填名称/学科/数量/题型/难度/知识点",
+      "2. 生成自测卷",
+      "3. 立即开始答题"
+    ],
+    "expected": "生成自测卷跳答题页",
+    "api": "POST /learning/custom-paper",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/learning/custom-paper",
+      "body": {
+        "subject_id": 1,
+        "count": 10
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-021",
+    "role": "student",
+    "module": "学习/错题",
+    "menu": "错题本",
+    "element": "AI 分析错因/重做/变式",
+    "action": "行内",
+    "priority": "P1",
+    "precondition": "存在错题",
+    "steps": [
+      "1. AI 分析错因",
+      "2. 重做同类",
+      "3. 变式练习"
+    ],
+    "expected": "错因分析弹窗；重做/变式跳答题页",
+    "api": "POST /learning/wrong-questions/analyze",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/learning/wrong-questions/analyze",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-022",
+    "role": "student",
+    "module": "学习/错题",
+    "menu": "错题本",
+    "element": "标注错因/标记掌握",
+    "action": "行内",
+    "priority": "P1",
+    "precondition": "存在错题",
+    "steps": [
+      "1. 标注错因",
+      "2. 标记已掌握"
+    ],
+    "expected": "错因/掌握状态更新",
+    "api": "PUT /learning/wrong-questions/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/learning/wrong-questions/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-023",
+    "role": "student",
+    "module": "学习/打卡",
+    "menu": "学习打卡",
+    "element": "新建目标+打卡",
+    "action": "对话框",
+    "priority": "P2",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 新建目标(名称/周期/值/单位)",
+      "2. 今日打卡"
+    ],
+    "expected": "目标入库；打卡记录",
+    "api": "POST /learning/goals",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/learning/goals",
+      "body": {
+        "title": "每日10题",
+        "target_type": "daily",
+        "target_value": 10,
+        "unit": "题数"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-024",
+    "role": "student",
+    "module": "学习/收藏",
+    "menu": "题目收藏",
+    "element": "收藏专项练习",
+    "action": "点击",
+    "priority": "P2",
+    "precondition": "有收藏",
+    "steps": [
+      "1. 点收藏专项练习"
+    ],
+    "expected": "生成专项练习跳答题页",
+    "api": "POST /learning/favorites/practice",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/learning/favorites/practice",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-025",
+    "role": "student",
+    "module": "学习/收藏",
+    "menu": "题目收藏",
+    "element": "页面访问+改标签/取消",
+    "action": "渲染",
+    "priority": "P2",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点题目收藏",
+      "2. 改标签保存",
+      "3. 取消收藏"
+    ],
+    "expected": "标签更新；取消后移除",
+    "api": "PUT /learning/favorites/{id}",
+    "automation": {
+      "type": "api",
+      "method": "PUT",
+      "path": "/learning/favorites/{id}",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-026",
+    "role": "student",
+    "module": "学习/知识资料",
+    "menu": "知识资料",
+    "element": "树+附件预览/下载",
+    "action": "渲染",
+    "priority": "P2",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点知识资料",
+      "2. 搜知识点选节点",
+      "3. 预览/下载附件"
+    ],
+    "expected": "树加载；附件预览/下载带鉴权",
+    "api": "GET /edu/knowledge/{kp_id}/attachments",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/edu/knowledge/{kp_id}/attachments",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-027",
+    "role": "student",
+    "module": "学习/练习",
+    "menu": "随机练习",
+    "element": "番茄钟",
+    "action": "子组件",
+    "priority": "P2",
+    "precondition": "练习中",
+    "steps": [
+      "1. 开始/暂停/重置专注",
+      "2. 改时长"
+    ],
+    "expected": "倒计时运行；时长限制 10-50/3-15",
+    "api": "—",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": ".pomodoro"
+    }
+  },
+  {
+    "id": "FUNC-STU-028",
+    "role": "student",
+    "module": "学习/练习",
+    "menu": "随机练习",
+    "element": "练习历史/再来一组",
+    "action": "抽屉",
+    "priority": "P2",
+    "precondition": "有历史",
+    "steps": [
+      "1. 点练习历史",
+      "2. 再来一组"
+    ],
+    "expected": "历史列表；重置到配置区",
+    "api": "GET /learning/practice/history",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/learning/practice/history",
+      "body": null,
+      "assert": null,
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-029",
+    "role": "student",
+    "module": "学习/路径",
+    "menu": "学习路径",
+    "element": "页面访问+去练习",
+    "action": "渲染",
+    "priority": "P2",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点学习路径选学科",
+      "2. 去练习(基础/中/难)"
+    ],
+    "expected": "路径时间线；跳练习",
+    "api": "GET /learning/learning-path",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=学习路径"
+    }
+  },
+  {
+    "id": "FUNC-STU-030",
+    "role": "student",
+    "module": "学习/错题",
+    "menu": "错题本",
+    "element": "导出",
+    "action": "点击",
+    "priority": "P2",
+    "precondition": "有错题",
+    "steps": [
+      "1. 点导出"
+    ],
+    "expected": "下载 .md 带鉴权",
+    "api": "GET /learning/wrong-questions/export",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/learning/wrong-questions/export",
+      "body": null,
+      "assert": "blob 200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-STU-031",
+    "role": "student",
+    "module": "学习/闪卡",
+    "menu": "闪卡速记",
+    "element": "翻面+认识/不认识",
+    "action": "交互",
+    "priority": "P2",
+    "precondition": "student 登录",
+    "steps": [
+      "1. 点卡片翻面",
+      "2. 认识/不认识",
+      "3. 再来一轮"
+    ],
+    "expected": "翻面显示答案；进度推进；可只练不认识",
+    "api": "GET /learning/flashcards",
+    "automation": {
+      "type": "ui",
+      "method": null,
+      "path": null,
+      "body": null,
+      "assert": null,
+      "locator": "text=闪卡速记"
+    }
+  },
+  {
+    "id": "FUNC-PUB-001",
+    "role": "public",
+    "module": "系统基础/权限",
+    "menu": "越权访问",
+    "element": "403 校验",
+    "action": "负向",
+    "priority": "P0",
+    "precondition": "student 令牌",
+    "steps": [
+      "1. 用 student 令牌访问 /system/users"
+    ],
+    "expected": "返回 403，不泄露数据",
+    "api": "GET /system/users",
+    "automation": {
+      "type": "api",
+      "method": "GET",
+      "path": "/system/users",
+      "body": null,
+      "assert": "403",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-PUB-002",
+    "role": "public",
+    "module": "系统基础/认证",
+    "menu": "注册",
+    "element": "提交注册申请",
+    "action": "提交",
+    "priority": "P0",
+    "precondition": "注册页",
+    "steps": [
+      "1. 选身份/填账号(3-32)/密码(≥8含字母数字)/确认/姓名/班级/验证码",
+      "2. 提交"
+    ],
+    "expected": "进入审批流；密码一致性校验",
+    "api": "POST /auth/register",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/auth/register",
+      "body": {
+        "identity": "student",
+        "username": "s1",
+        "password": "Test@1234"
+      },
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-PUB-003",
+    "role": "public",
+    "module": "系统基础/认证",
+    "menu": "登出",
+    "element": "退出",
+    "action": "点击",
+    "priority": "P0",
+    "precondition": "已登录",
+    "steps": [
+      "1. 点退出登录确认"
+    ],
+    "expected": "令牌写入吊销名单；跳登录页",
+    "api": "POST /auth/logout",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/auth/logout",
+      "body": null,
+      "assert": "200",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-PUB-004",
+    "role": "public",
+    "module": "系统基础/认证",
+    "menu": "登录",
+    "element": "登录成功",
+    "action": "提交",
+    "priority": "P0",
+    "precondition": "已注册账号",
+    "steps": [
+      "1. 输账号/密码/验证码",
+      "2. 点登录"
+    ],
+    "expected": "签发双令牌；跳 dashboard；localStorage 存 user",
+    "api": "POST /auth/login",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/auth/login",
+      "body": {
+        "username": "admin",
+        "password": "x",
+        "captcha_key": "k",
+        "captcha": "v"
+      },
+      "assert": "200 且 data.access_token",
+      "locator": null
+    }
+  },
+  {
+    "id": "FUNC-PUB-005",
+    "role": "public",
+    "module": "系统基础/认证",
+    "menu": "登录",
+    "element": "验证码必填/错误",
+    "action": "负向",
+    "priority": "P0",
+    "precondition": "登录页",
+    "steps": [
+      "1. 验证码留空或错误提交"
+    ],
+    "expected": "提示验证码错误，不签发令牌",
+    "api": "POST /auth/login",
+    "automation": {
+      "type": "api",
+      "method": "POST",
+      "path": "/auth/login",
+      "body": {
+        "captcha": "bad"
+      },
+      "assert": "4xx",
+      "locator": null
+    }
+  }
+]

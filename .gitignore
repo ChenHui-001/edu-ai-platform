@@ -12,6 +12,8 @@ data/
 data.bak*/
 logs/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 chroma/

@@ -1,0 +1,215 @@
+{
+  "summary": {
+    "total": 20,
+    "passed": 20,
+    "failed": 0
+  },
+  "results": [
+    {
+      "id": "FUNC-PUB-004",
+      "kind": "auth",
+      "role": "public",
+      "status": "PASS",
+      "detail": "登录机制验证通过(三角色均签发令牌)"
+    },
+    {
+      "id": "FUNC-PUB-005",
+      "kind": "auth",
+      "role": "public",
+      "status": "PASS",
+      "detail": "登录机制验证通过(三角色均签发令牌)"
+    },
+    {
+      "id": "FUNC-ADM-027",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/edu/knowledge",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "teacher",
+      "cross_status": 200,
+      "detail": "本角色 200; 越权 teacher=200"
+    },
+    {
+      "id": "FUNC-ADM-041",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/logs/login",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "teacher",
+      "cross_status": 403,
+      "detail": "本角色 200; 越权 teacher=403"
+    },
+    {
+      "id": "FUNC-ADM-042",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/logs/export",
+      "own_status": -1,
+      "status": "PASS",
+      "cross_role": "teacher",
+      "cross_status": 403,
+      "detail": "本角色 -1; 越权 teacher=403"
+    },
+    {
+      "id": "FUNC-ADM-043",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/auth/registrations",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "teacher",
+      "cross_status": 403,
+      "detail": "本角色 200; 越权 teacher=403"
+    },
+    {
+      "id": "FUNC-ADM-044",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/system/version",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "teacher",
+      "cross_status": 200,
+      "detail": "本角色 200; 越权 teacher=200"
+    },
+    {
+      "id": "FUNC-ADM-049",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/system/users",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "teacher",
+      "cross_status": 403,
+      "detail": "本角色 200; 越权 teacher=403"
+    },
+    {
+      "id": "FUNC-ADM-061",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/edu/knowledge/export",
+      "own_status": -1,
+      "status": "PASS",
+      "cross_role": "teacher",
+      "cross_status": -1,
+      "detail": "本角色 -1; 越权 teacher=-1"
+    },
+    {
+      "id": "FUNC-ADM-067",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/edu/grades",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "teacher",
+      "cross_status": 200,
+      "detail": "本角色 200; 越权 teacher=200"
+    },
+    {
+      "id": "FUNC-ADM-072",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/report/export/excel",
+      "own_status": 422,
+      "status": "PASS",
+      "cross_role": "teacher",
+      "cross_status": 422,
+      "detail": "本角色 422; 越权 teacher=422"
+    },
+    {
+      "id": "FUNC-TCH-018",
+      "kind": "reach",
+      "role": "teacher",
+      "path": "/report/student/overview",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "admin",
+      "cross_status": 200,
+      "detail": "本角色 200; 越权 admin=200"
+    },
+    {
+      "id": "FUNC-TCH-033",
+      "kind": "reach",
+      "role": "teacher",
+      "path": "/question/questions",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "admin",
+      "cross_status": 200,
+      "detail": "本角色 200; 越权 admin=200"
+    },
+    {
+      "id": "FUNC-TCH-039",
+      "kind": "reach",
+      "role": "teacher",
+      "path": "/report/export/excel",
+      "own_status": 422,
+      "status": "PASS",
+      "cross_role": "admin",
+      "cross_status": 422,
+      "detail": "本角色 422; 越权 admin=422"
+    },
+    {
+      "id": "FUNC-TCH-041",
+      "kind": "reach",
+      "role": "teacher",
+      "path": "/lesson/ai/jobs",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "admin",
+      "cross_status": 200,
+      "detail": "本角色 200; 越权 admin=200"
+    },
+    {
+      "id": "FUNC-TCH-044",
+      "kind": "reach",
+      "role": "teacher",
+      "path": "/question/questions/export",
+      "own_status": -1,
+      "status": "PASS",
+      "cross_role": "admin",
+      "cross_status": -1,
+      "detail": "本角色 -1; 越权 admin=-1"
+    },
+    {
+      "id": "FUNC-STU-028",
+      "kind": "reach",
+      "role": "student",
+      "path": "/learning/practice/history",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "admin",
+      "cross_status": 200,
+      "detail": "本角色 200; 越权 admin=200"
+    },
+    {
+      "id": "FUNC-STU-030",
+      "kind": "reach",
+      "role": "student",
+      "path": "/learning/wrong-questions/export",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "admin",
+      "cross_status": 200,
+      "detail": "本角色 200; 越权 admin=200"
+    },
+    {
+      "id": "FUNC-VER",
+      "kind": "public",
+      "path": "/system/version",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "{\"app_name\": \"新芽学堂\", \"version\": \"2.2.2\", \"build_number\": \"\", \"commit\": \"\", \"built_at\": \"\", \"updated_at\": \"2026-10-30 09:"
+    },
+    {
+      "id": "FUNC-CFG",
+      "kind": "contract",
+      "path": "/system/config",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "小写键绑定=是; 样本=['app_name', 'version', 'debug', 'database', 'database_url', 'default_page_size']"
+    }
+  ]
+}

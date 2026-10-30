@@ -1,0 +1,178 @@
+name: 功能回归测试
+
+# ============================================================================
+# 三角色功能回归（管理员 / 教师 / 学生）
+#
+# 把 audit-reports/qa/ 下的规范化用例集接入 CI：
+#   1) validate-cases：纯静态校验 + 生成「规范化用例集」产物(JSON/CSV)，
+#      不依赖后端，任何 push/PR 都能跑，保证用例集本身永远可生成、可审计。
+#   2) run-suite：后台拉起真实后端(uvicorn) → 执行接口级冒烟(跨角色可达性
+#      + 越权 403 + 公开端点 + 系统配置小写键契约)，输出 FUNCTIONAL_TEST_RESULTS.json。
+#
+# 与 docker-publish.yml 的关系：
+#   - 本工作流只「跑测试」，不构建/推送镜像（镜像由 docker-publish 负责）。
+#   - 二者都由 master 推送触发、互不依赖；功能回归挂了不会阻断发版，但会在
+#     Actions 页面亮红灯，提醒「改了接口却没同步用例/没改权限」这类回归。
+#
+# 失败即阻断本次合入的信号：run-suite 中只要出现 1 条 FAIL，job 即非零退出。
+# ============================================================================
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'audit-reports/qa/**'
+      - 'backend/**'
+      - 'frontend/src/**'
+      - '.github/workflows/functional-test.yml'
+  pull_request:
+    paths:
+      - 'audit-reports/qa/**'
+      - 'backend/**'
+      - 'frontend/src/**'
+      - '.github/workflows/functional-test.yml'
+  workflow_dispatch:
+  schedule:
+    # 每天 07:17 (UTC+8) 跑一轮，作为「无改动也要定期回看」的回归护栏
+    - cron: '17 23 * * *'
+
+concurrency:
+  group: functional-test-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 用例集静态校验 + 生成规范化产物（无后端依赖）
+  # --------------------------------------------------------------------------
+  validate-cases:
+    name: 用例集静态校验 + 生成规范化用例集
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 语法编译校验
+        run: |
+          python -m py_compile audit-reports/qa/functional_cases.py audit-reports/qa/functional_runner.py
+          python -m compileall -q audit-reports/qa
+
+      - name: 生成规范化用例集(JSON/CSV)
+        run: python audit-reports/qa/functional_cases.py --emit
+
+      - name: 覆盖率矩阵(菜单×用例数)
+        run: python audit-reports/qa/functional_cases.py --coverage
+
+      - name: 上传用例集产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-cases
+          path: |
+            audit-reports/qa/FUNCTIONAL_TEST_CASES.json
+            audit-reports/qa/FUNCTIONAL_TEST_CASES.csv
+          if-no-files-found: error
+          retention-days: 30
+
+  # --------------------------------------------------------------------------
+  # 接口级回归执行（真实后端）
+  # --------------------------------------------------------------------------
+  run-suite:
+    name: 接口级回归执行（真实后端）
+    runs-on: ubuntu-latest
+    needs: validate-cases
+    env:
+      # 执行器连本地拉起的后端；端口与 BASE_URL 默认值保持一致
+      BASE_URL: http://127.0.0.1:8899/api/v1
+      DATABASE_URL: sqlite:///${{ runner.temp }}/func_regression.db
+      CAPTCHA_ENFORCED: "false"   # 关验证码，允许 CI 无图形码登录
+      LLM_ENABLED: "false"        # 关闭大模型，避免真实调用 / 走规则引擎
+      SEED_DEMO_DATA: "true"      # 必须开：teacher1 / stu101 等种子账号由演示数据创建
+      SCHEDULER_ENABLED: "false"  # CI 不跑定时任务
+      APP_ENV: test
+      # 长度 >= 32 的确定性密钥（CI 一次性库，重启即失效无影响）
+      SECRET_KEY: "ci-functional-regression-secret-key-0123456789abcdefghij"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配置 Python(带 pip 缓存)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: 安装后端依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: 后台启动后端(uvicorn)
+        working-directory: backend
+        run: |
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8899 > /tmp/uvicorn.log 2>&1 &
+          echo "uvicorn 已后台启动, pid=$!"
+
+      - name: 等待后端就绪
+        run: |
+          ready=0
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8899/api/v1/system/version || true)
+            if [ "$code" = "200" ]; then
+              echo "后端就绪（耗时约 ${i} 轮 × 2s）"
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::后端在 180s 内未就绪，最后探测码=$code"
+            echo "----- uvicorn 日志尾部 -----"
+            tail -40 /tmp/uvicorn.log
+            exit 1
+          fi
+          curl -s http://127.0.0.1:8899/api/v1/system/version || true
+
+      - name: 生成用例集 + 执行接口级回归
+        run: |
+          python audit-reports/qa/functional_cases.py --emit
+          python audit-reports/qa/functional_cases.py --run
+
+      - name: 汇总结果并判定
+        run: |
+          python - <<'PY'
+          import json, sys
+          p = "audit-reports/qa/FUNCTIONAL_TEST_RESULTS.json"
+          try:
+              d = json.load(open(p, encoding="utf-8"))
+          except Exception as e:
+              print(f"::error::未生成结果文件: {e}")
+              sys.exit(1)
+          s = d["summary"]
+          print(f"总用例={s['total']} 通过={s['passed']} 失败={s['failed']}")
+          fails = [r for r in d["results"] if r["status"] == "FAIL"]
+          for r in fails:
+              print(f"::error::FAIL {r['id']} | {r.get('detail')}")
+          if s["failed"] > 0:
+              sys.exit(1)
+          print("::notice::功能回归全部通过")
+          PY
+
+      - name: 上传执行结果(始终留存)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-results
+          path: |
+            audit-reports/qa/FUNCTIONAL_TEST_RESULTS.json
+            audit-reports/qa/FUNCTIONAL_TEST_CASES.json
+            audit-reports/qa/FUNCTIONAL_TEST_CASES.csv
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 后端日志(失败排查)
+        if: failure()
+        run: tail -60 /tmp/uvicorn.log
