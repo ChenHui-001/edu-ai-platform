@@ -200,6 +200,35 @@ def main() -> int:
               any(g["code"] == "multiple" for g in plan4.gaps),
               str([g["code"] for g in plan4.gaps]))
 
+        # ---- 5. 熔断 / 冷却期直接跳过（不打上游）----
+        from app.services import llm_breaker
+
+        orig_snapshot = llm_breaker.snapshot
+        try:
+            llm_breaker.snapshot = lambda: {
+                "breaker": "rate_limit", "reason": "429", "streak": 1,
+                "cooldown_remaining": 42,
+            }
+            plan5 = build_plan(db, grade, subject, teacher)
+            note5 = _ai_fill_gaps(db, teacher, plan=plan5, grade=grade,
+                                  subject=subject,
+                                  difficulty_norm={"easy": 30, "medium": 50, "hard": 20})
+            check("限流冷却期不发起补题（避免并发加速熔断升级）",
+                  plan5.items == [] and "冷却" in note5, note5[:120])
+
+            llm_breaker.snapshot = lambda: {
+                "breaker": "auth", "reason": "401 鉴权失败", "streak": 3,
+                "cooldown_remaining": 0,
+            }
+            plan6 = build_plan(db, grade, subject, teacher)
+            note6 = _ai_fill_gaps(db, teacher, plan=plan6, grade=grade,
+                                  subject=subject,
+                                  difficulty_norm={"easy": 30, "medium": 50, "hard": 20})
+            check("鉴权熔断期不发起补题并说明原因",
+                  plan6.items == [] and "熔断" in note6, note6[:120])
+        finally:
+            llm_breaker.snapshot = orig_snapshot
+
         install_fake_agent()
         set_concurrency(old_conc)
 

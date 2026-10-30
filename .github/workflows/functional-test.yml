@@ -153,10 +153,21 @@ jobs:
         # H 组覆盖引用计数对称性、待审题入卷、单题详情、整数分值、知识点缺口。
         run: python tools/verify_paper_module.py
 
-      - name: AI 补题并行化校验（注入固定延迟，10 项断言）
+      - name: AI 补题并行化校验（注入固定延迟，13 项断言）
         # 纯进程内：临时库 + 假 Agent。断言"并行耗时接近单次调用"、
-        # "合并顺序不随线程完成顺序变化"、"单大题失败不拖垮其余大题"。
+        # "合并顺序不随线程完成顺序变化"、"单大题失败不拖垮其余大题"、
+        # "熔断/限流冷却期不发起补题"。
         run: python tools/verify_ai_fill_parallel.py
+
+      - name: 知识点导入层级校验（TestClient，13 项断言）
+        # 覆盖：三级结构、缺单元被拒（旧版会把知识点写成单元）、同名跨层被拒、
+        # 跳级 warning、dry_run 不落库、重复导入幂等。
+        run: python tools/verify_kp_import.py
+
+      - name: 知识点数据质量门禁（结构问题必须为 0）
+        # 干净库上跑 --strict：同名跨层 / 父级缺失 / path 断裂 任一存在即失败。
+        # 这三类会让掌握度统计重复计数、按 path 查子树漏数据。
+        run: python tools/audit_kp_quality.py --strict --limit 5
 
       - name: 汇总结果并判定
         run: |

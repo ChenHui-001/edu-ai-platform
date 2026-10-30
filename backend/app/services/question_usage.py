@@ -34,7 +34,7 @@
 """
 from typing import Iterable, Optional, Set
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.models import PaperItem, Question
@@ -44,6 +44,22 @@ def recount_usage(db: Session, question_ids: Optional[Iterable[int]] = None) -> 
     """把 `usage_count` 重算为「当前引用该题的题项数」。
 
     返回实际被检查的题目数（非变更数）。传 `None` 时全量重算。
+
+    ## 为什么用一条 SQL 而不是"查出来再逐条赋值"
+
+    逐条赋值是「读 → 算 → 写」三步，两次并发重算可能都基于同一份旧快照，
+    后写者覆盖前写者（在 PostgreSQL 这类读已提交隔离级别下真实存在）。
+    改成 `UPDATE ... SET usage_count = (SELECT COUNT(*) ...)` 之后，
+    读与写发生在同一条语句里，由数据库自己保证原子性：SQLite 下被库级写锁
+    序列化，PostgreSQL 下是行级原子更新。极端并发下也不再需要"下次写入修正"。
+
+    ## 为什么必须 expire
+
+    `synchronize_session=False` 不刷新 ORM 身份映射里已加载的 `Question`。
+    若同一 Session 之前 `db.get(Question, qid)` 过，对象上仍是旧 `usage_count`，
+    后续 `commit()` 的脏检查会把**旧值写回去**，等于把刚算对的值覆盖掉。
+    这里精确过期这些对象（而不是 `expire_all()`，那会连带把 `paper.items`
+    等关系全部失效）。
     """
     ids: Set[int] = set()
     if question_ids is not None:
@@ -57,23 +73,25 @@ def recount_usage(db: Session, question_ids: Optional[Iterable[int]] = None) -> 
         if not ids:
             return 0
 
-    stmt = (
-        select(PaperItem.question_id, func.count(PaperItem.id))
-        .group_by(PaperItem.question_id)
+    # 关联子查询：计数只针对外层正在更新的那一道题
+    counter = (
+        select(func.count(PaperItem.id))
+        .where(PaperItem.question_id == Question.id)
+        .correlate(Question)
+        .scalar_subquery()
     )
+    stmt = update(Question).values(usage_count=counter)
     if ids:
-        stmt = stmt.where(PaperItem.question_id.in_(ids))
-    counts = {int(qid): int(cnt or 0) for qid, cnt in db.execute(stmt).all()}
+        stmt = stmt.where(Question.id.in_(ids))
+    db.execute(stmt.execution_options(synchronize_session=False))
 
-    targets = set(ids) if ids else set(db.scalars(select(Question.id)).all())
-    for qid in targets:
-        q = db.get(Question, qid)
-        if q is None:      # 题目已被删除（题项 CASCADE 前可能残留引用）
+    touched = ids if ids else None
+    for obj in list(db.identity_map.values()):
+        if not isinstance(obj, Question):
             continue
-        new_value = counts.get(qid, 0)
-        if int(q.usage_count or 0) != new_value:
-            q.usage_count = new_value
-    return len(targets)
+        if touched is None or obj.id in touched:
+            db.expire(obj)
+    return len(ids) if ids else -1
 
 
 def question_ids_of_paper(db: Session, paper_id: int) -> Set[int]:

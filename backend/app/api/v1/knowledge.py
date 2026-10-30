@@ -1363,11 +1363,38 @@ def _parse_import_file(content: bytes, filename: str) -> List[Tuple[int, Dict[st
     return data_rows
 
 
-def _import_row_hierarchy(row: Dict[str, str]) -> List[str]:
-    """按「单元/章节/知识点」归并层级：空列自动折叠，保持相对层级。"""
-    return [x for x in (
-        row.get("单元", ""), row.get("章节", ""), row.get("知识点", ""),
-    ) if x]
+def _import_row_hierarchy(row: Dict[str, str]) -> Tuple[List[str], str]:
+    """把「单元/章节/知识点」三列归并成层级链，返回 `(chain, error)`。
+
+    **旧实现是 `[x for x in (单元, 章节, 知识点) if x]`（空列自动折叠）**，
+    于是「只填知识点、单元章节留空」会被折叠成 `["知识点"]` —— 深度 1，
+    这个"知识点"被当作**单元**写进库里。教师以为自己建了一个考点，
+    实际得到一棵只有单元、没有考点的树；掌握度统计、AI 挂载全部落在错层。
+    而且这个过程完全静默，`created` 还会正常加 1。
+
+    现在的规则：
+    - **单元必填**：层级必须从单元开始，否则无法确定这一行的深度语义；
+    - 「单元 + 章节」「单元 + 知识点」都是合法的两级结构（保持既有能力）；
+    - 「单元 + 章节 + 知识点」是三级结构；
+    - 空行由调用方过滤，这里不再兜"至少填一级"（除全空外都可能出现）。
+    """
+    unit = row.get("单元", "")
+    chapter = row.get("章节", "")
+    point = row.get("知识点", "")
+    if not unit:
+        if chapter or point:
+            return [], ("缺少「单元」：层级必须从单元开始，"
+                        "否则「知识点」会被当成单元写入，考点实际没有落库")
+        return [], "单元/章节/知识点至少填写一级"
+    if not chapter and not point:
+        return [unit], ""
+    if chapter and not point:
+        return [unit, chapter], ""
+    if not chapter and point:
+        # 两级结构：知识点落在 level=2，与"章节"同层。这是既有能力，
+        # 但需要调用方在 dry_run 结果里提示，避免"以为它是三级考点"。
+        return [unit, point], ""
+    return [unit, chapter, point], ""
 
 
 @router.post("/knowledge/import", summary="导入知识点")
@@ -1406,7 +1433,12 @@ def import_knowledge(
     created = updated = 0
     skipped: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
     seen: Set[Tuple[int, int, Tuple[str, ...]]] = set()
+    # 同名跨层检查：同一学科下同名节点若在本文件里出现于不同层级，
+    # 会建出两个同名节点（一个当章节、一个当知识点）。树里看起来像重复，
+    # 掌握度统计与题目挂载都会产生歧义，必须在导入前拦掉而不是"建了再说"。
+    name_depths: Dict[Tuple[int, int, str], int] = {}
 
     for row_no, row in data_rows:
         if not any((row.get(h) or "").strip() for h in IMPORT_HEADERS):
@@ -1435,9 +1467,9 @@ def import_knowledge(
             })
             continue
 
-        chain = _import_row_hierarchy(row)
-        if not chain:
-            errors.append({"row": row_no, "message": "单元/章节/知识点至少填写一级"})
+        chain, chain_error = _import_row_hierarchy(row)
+        if chain_error:
+            errors.append({"row": row_no, "message": chain_error})
             continue
         diff = (row.get("难度") or "medium").strip().lower() or "medium"
         if diff not in VALID_DIFFICULTY:
@@ -1459,6 +1491,40 @@ def import_knowledge(
             skipped.append({"row": row_no, "reason": "同级重名（文件内重复）"})
             continue
         seen.add(target_key)
+
+        # 同名跨层直接拒绝（见 name_depths 注释）。判定在"同级重名"之后：
+        # 完全重复的行走 skipped 更贴切，不应报成层级冲突。
+        # 本行通过后才把层级写进 name_depths，否则被拒的行会污染后续判断。
+        conflict = ""
+        row_depth_keys: List[Tuple[Tuple[int, int, str], int]] = []
+        for depth, node_name in enumerate(chain, start=1):
+            key = (grade.id, subject.id, node_name)
+            prev = name_depths.get(key)
+            if prev is not None and prev != depth:
+                conflict = (f"层级冲突：「{node_name}」在本文件中已作为第 {prev} 级使用，"
+                            f"本行却是第 {depth} 级")
+                break
+            row_depth_keys.append((key, depth))
+        if conflict:
+            errors.append({"row": row_no, "message": conflict})
+            continue
+        for key, depth in row_depth_keys:
+            name_depths[key] = depth
+        if len(chain) == 1:
+            warnings.append({
+                "row": row_no,
+                "message": "只填写到「单元」，该单元下没有章节与考点",
+            })
+        elif len(chain) == 2 and row.get("章节") and not row.get("知识点"):
+            warnings.append({
+                "row": row_no,
+                "message": "只填写到「章节」，将作为二级节点（没有三级考点）",
+            })
+        elif len(chain) == 2 and row.get("知识点") and not row.get("章节"):
+            warnings.append({
+                "row": row_no,
+                "message": "跳过了「章节」，该知识点将作为二级节点（与章节同层）",
+            })
 
         # 逐级解析：已存在的复用，缺失的登记待创建
         parent: Optional[KnowledgePoint] = None
@@ -1567,6 +1633,10 @@ def import_knowledge(
         "updated": updated,
         "skipped": skipped,
         "errors": errors,
+        # warnings 不阻断导入：它们在 dry_run 里用来暴露"层级与预期不符"
+        # （跳章节 → 二级节点、只到章节 → 没有三级考点），真实导入同样回传，
+        # 便于前端在成功提示里附一句。
+        "warnings": warnings,
     }, message=("导入校验完成（未写库）" if dry_run else "导入完成"))
 
 

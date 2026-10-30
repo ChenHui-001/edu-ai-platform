@@ -45,6 +45,7 @@ from app.models import (
     ShareScope, Subject, Submission, Task, User,
 )
 from app.services import paper_compose_service as compose_svc
+from app.services import llm_breaker
 from app.services.question_access import question_usable_error
 from app.services.paper_export_service import (
     build_answer_sheet, build_docx, build_pdf,
@@ -478,6 +479,20 @@ def _ai_fill_gaps(
                if max(0, int(g["need"]) - int(g.get("got", 0))) > 0]
     if not pending:
         return ""
+
+    # 熔断/冷却期直接跳过，不发请求。
+    # 并行的意义是把 N 次串行调用压成 1 次等待，但**在限流冷却里并发只会
+    # 加速熔断升级**：3 个线程同时撞 429，streak 一次涨 3，退避从 30s 跳到
+    # 更长，整站 AI 冷却时间被自己拉长。这里先看一眼状态，冷却中就不再打上游，
+    # 直接把原因写进 message 让教师改用题库（比"转圈 5 分钟后报错"好）。
+    state = llm_breaker.snapshot()
+    if state.get("breaker") == "auth":
+        return ("AI 补题已跳过：模型鉴权失败处于熔断状态"
+                f"（{state.get('reason') or '密钥无效'}），请先修复密钥或改用「仅使用题库」")
+    remaining = int(state.get("cooldown_remaining") or 0)
+    if remaining > 0:
+        return (f"AI 补题已跳过：模型限流冷却中（剩余 {remaining}s），"
+                "请改用「仅使用题库」或稍后重试")
 
     workers = max(1, min(int(settings.AI_FILL_CONCURRENCY or 1), len(pending), 4))
     tasks = [

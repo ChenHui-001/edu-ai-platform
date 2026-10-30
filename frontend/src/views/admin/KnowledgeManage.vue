@@ -574,6 +574,12 @@
           <el-table-column prop="row" label="行号" width="80" />
           <el-table-column prop="reason" label="跳过原因" show-overflow-tooltip />
         </el-table>
+        <el-table v-if="importResult.warnings && importResult.warnings.length"
+                  :data="importResult.warnings" size="small"
+                  border max-height="180" class="mt8">
+          <el-table-column prop="row" label="行号" width="80" />
+          <el-table-column prop="message" label="层级提示（不影响导入）" show-overflow-tooltip />
+        </el-table>
       </template>
 
       <template #footer>
@@ -1574,7 +1580,10 @@ async function runImport(dryRun) {
       created: d.created || 0,
       updated: d.updated || 0,
       skipped: d.skipped || [],
-      errors: d.errors || []
+      errors: d.errors || [],
+      // 不阻断导入，只提示"层级与预期不符"：跳章节 → 变成二级节点、
+      // 只到章节 → 没有三级考点。不展示的话用户会以为按三级建好了。
+      warnings: d.warnings || []
     }
     if (dryRun) {
       if (importResult.value.errors.length) {

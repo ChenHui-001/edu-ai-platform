@@ -399,6 +399,9 @@ docker exec edu-platform python /app/tools/audit_knowledge_coverage.py --seed-pl
 
 ## 五、仍未解决 / 需运营介入
 
+> **第三轮更新**：下表 6 项已全部处理（4 项修复、1 项工具化、1 项评估后关闭），
+> 详见第八节。本表保留第二轮登记时的原貌，便于对照"当时为什么这么判断"。
+
 | # | 事项 | 性质 | 说明 |
 |---|---|---|---|
 | 1 | 42 个学科在**新环境**仍需补真实考点 | 数据运营 | 生产库当前 59/59 已覆盖（1821 条，其中 1498 条 `source=ai`），但代码种子只覆盖 17 个；任何干净库部署都会缺。本轮交付的是巡检工具（`audit_knowledge_coverage.py`）+ 占位骨架 + 接口显式标记，**不是教研内容本身**。占位节点 `source='placeholder'`，补齐真实知识点后应 `--purge-placeholder` 再补，避免同一学科并存两套。 |
@@ -459,3 +462,197 @@ docker exec edu-platform python /app/tools/audit_knowledge_coverage.py --seed-pl
 - `tools/verify_ai_fill_parallel.py`（新）· 并行化验证
 - `tools/verify_paper_module.py` · 新增 H 组 26 项
 - `.github/workflows/functional-test.yml` · 纳入新脚本、断言数更新
+
+---
+
+## 八、第三轮：把遗留清单清零
+
+第二轮结束时登记的 6 项，本轮逐项给出结论。**4 项修复、1 项工具化、1 项评估后关闭**。
+
+### 8.1 知识点批量导入的层级错配（原第 3 项）· 已修
+
+**表现**：Excel 行里「单元」列留空、只填「知识点」，导入后得到一个**单元**（而不是知识点），
+`created` 正常 +1，全程无提示。教师以为自己建了考点，实际树里只有单元，掌握度分析
+按考点统计时该学科仍然是空的。
+
+**触发条件**：`POST /edu/knowledge/import` 的任意一行「单元」列为空而「章节/知识点」列非空。
+
+**预期行为**：层级必须从单元开始；越级/断档要报错；同一名称在同一学科被赋予不同层级要拒绝。
+
+**根因**：`_import_row_hierarchy` 是 `[x for x in (单元, 章节, 知识点) if x]` ——
+"空列自动折叠"把深度信息一起折掉了，知识点被顶到 level 1 当单元用。
+
+**修复**（`backend/app/api/v1/knowledge.py`）
+
+1. `_import_row_hierarchy` 返回 `(chain, error)`，**单元必填**；缺单元且填了章节/知识点时直接报错，
+   文案明确指出后果（"否则「知识点」会被当成单元写入，考点实际没有落库"）。
+2. **同名跨层拒绝**：同一 学科内某个名称在本文件里已作为第 N 级出现，本行却是第 M 级 → 报
+   `层级冲突：「X」在本文件中已作为第 2 级使用，本行却是第 3 级`。这类数据会让树里出现
+   两个同名节点（一个当章节、一个当知识点），掌握度统计各算一份。
+3. **新增 `warnings`**（不阻断导入，dry_run 与真实导入都回传）：
+   - 只填到单元 → "该单元下没有章节与考点"；
+   - 只填到章节 → "将作为二级节点（没有三级考点）"；
+   - 跳过章节、直接写知识点 → "该知识点将作为二级节点（与章节同层）"。
+4. 前端 `KnowledgeManage.vue` 增加 warning 表格，并把 `warnings` 纳入 `importResult`。
+
+**验证**（`tools/verify_kp_import.py`，13 项，TestClient 进程内）
+
+```
+A1 三级结构预检通过                        created=3 errors=[]
+A2 三级结构没有层级 warning
+B1 只填章节（无单元）被拒                  缺少「单元」…
+C1 只填知识点被拒（旧版会把它写成单元）    缺少「单元」…
+D1 同名跨层被拒                            层级冲突：「校验同名」已作为第 2 级使用，本行却是第 3 级
+E1 跳过章节给 warning                      该知识点将作为二级节点（与章节同层）
+F1 只到章节给 warning                      将作为二级节点（没有三级考点）
+G1 dry_run 未写库
+H1 真实导入后落库                          三个节点齐全
+H2 三级节点数正确                          3
+I1 重复导入不重复建节点                    created=0 n=3
+```
+
+### 8.2 `usage_count` 的并发重算（原第 4 项）· 已修
+
+**表现**（第二轮遗留）：重算是幂等的，但实现是「查出计数 → 逐条赋给 ORM 对象」——
+两次并发重算可能基于同一份旧快照，后写者覆盖前写者（PostgreSQL 读已提交下真实存在）。
+
+**修复**：改成**一条 SQL 原子完成读写**
+
+```sql
+UPDATE edu_question
+SET usage_count = (SELECT COUNT(*) FROM edu_paper_item
+                   WHERE edu_paper_item.question_id = edu_question.id)
+WHERE id IN (...)
+```
+
+读与写在同一语句内，由数据库保证原子性（SQLite 库级写锁序列化、PostgreSQL 行级原子）。
+配套必须处理 ORM 身份映射：`synchronize_session=False` 后，之前 `db.get(Question, id)`
+加载过的对象仍是旧值，**后续 commit 的脏检查会把旧值写回去**（等于把刚算对的值覆盖）。
+因此精确 `db.expire()` 这些 `Question`（不用 `expire_all()`，那会连带失效 `paper.items` 等关系）。
+
+**验证**：H1 组 9 项（建卷/复制/删卷/批量删/移除单题/编辑换题）全部仍然通过；
+`fix_usage_count.py --apply` 在生产 17 条漂移上仍一次订正到位、复查 0 条。
+
+### 8.3 新环境的知识点缺口（原第 1 项）· 工具化闭环
+
+**问题**：生产 59/59 覆盖，但代码种子只有 17/59，任何干净库部署都会缺 42 个学科。
+
+**交付**（不编造教研内容，只做数据搬运的闭环）
+
+1. `tools/export_knowledge_seed.py`：把当前库的知识点树导成 JSON（保留 `source`、层级、`code`、
+   `path` 由导入方重建）。生产实测 **59 学科 / 1821 节点 / 640 KB**。
+2. `tools/audit_knowledge_coverage.py --import-json <file> [--dry-run]`：按 `(父级, 名称)`
+   幂等导入，**不覆盖**已有节点（避免把目标库的人工教研刷掉），学科找不到时列出来而不是静默跳过。
+
+**实测闭环**（本地空库：只有 9 个年级 + 59 个学科、0 个知识点）
+
+```
+导入前          缺失 59 个学科
+dry-run        新增 323 / 复用 0（先导了种子那份）
+导入生产 JSON   新增 1498 / 复用 323
+复查            59/59 覆盖，缺失 0，覆盖率 100.0%
+再导一次        新增 0 / 复用 1821（幂等）
+```
+
+也就是说新环境现在有一条明确、可复现的补齐路径，而不是"记得让运营补"。
+
+### 8.4 AI 知识点的复核入口（原第 2 项）· 工具化
+
+**交付** `tools/audit_kp_quality.py`：把"结构错乱"和"待复核内容"变成清单。
+
+| 检查项 | 严重度 | 后果 |
+|---|---|---|
+| 同名跨层 | 严重 | 树里重复，掌握度各算一份，挂题歧义 |
+| 父级缺失 / 层级不连续 | 严重 | 节点漂在根上，层级失去意义 |
+| `path` 与实际父链不一致 | 严重 | 按 path 查子树会漏/多算 |
+| 空壳单元（无子节点） | 提示 | AI 只能挂到单元，粒度粗到无法分析 |
+| 有知识点但题目全未挂载 | 提示 | 覆盖率没转化成数据 |
+| `source=ai` | 待复核 | 模型生成、未经教研确认 |
+
+**在生产数据上的实测结果**（这正是"需要复核"的量化依据）
+
+```
+节点总数 1821   来源分布 ai=1498  seed=323
+[!] duplicate_name_level  严重   6 条   例：八年级/物理「机械运动」同时是 level1 与 level2
+[✓] orphan_parent         严重   0 条
+[✓] path_broken           严重   0 条
+[!] hollow_unit           提示   5 条   例：九年级/信息科技 5 个单元下没有任何子节点
+[✓] unmounted_subject     提示   0 条
+[!] ai_source             待复核 1498 条
+```
+
+干净种子库上同样跑 `--strict`：**0 条严重问题**，因此已纳入 CI 作为门禁
+（新写的导入/迁移逻辑一旦造出同名跨层或 path 断裂，CI 立刻红）。
+
+> 那 6 条同名跨层与 5 个空壳单元是**真实数据问题**，已在报告登记。未自动修：
+> 同名跨层需要人工判断"哪一层才是对的"（可能是同一个知识点被同时写成章节和考点），
+> 自动删任一侧都可能删掉正在被题目引用的节点。建议按 CSV 清单逐条确认。
+
+### 8.5 并行补题与上游限流（原第 5 项）· 已修
+
+**表现**：并发 3 在限流冷却期里反而更糟——3 个线程同时撞 429，`streak` 一次涨 3，
+退避从 30s 跳到更长，整站 AI 冷却时间被自己拉长。
+
+**修复**：`_ai_fill_gaps` 在发起任何请求**之前**读 `llm_breaker.snapshot()`：
+
+- `breaker == "auth"` → 直接返回"模型鉴权失败处于熔断状态…请先修复密钥"，不打上游；
+- `cooldown_remaining > 0` → 返回"模型限流冷却中（剩余 Ns），请改用「仅使用题库」或稍后重试"。
+
+提示通过 `message` 透传到前端，教师看到的是可操作的原因，而不是转圈 5 分钟后报错。
+
+**验证**（`verify_ai_fill_parallel.py` 新增 2 项）
+
+```
+限流冷却期不发起补题（避免并发加速熔断升级）  → 冷却中（剩余 42s），请改用「仅使用题库」
+鉴权熔断期不发起补题并说明原因                → 鉴权失败处于熔断状态（401 鉴权失败）
+```
+
+### 8.6 并行补题的写放大（原第 6 项）· 评估后关闭，不修
+
+**问题**：每个大题一个独立 `Session`，即每个大题一个写事务；串行实现是 N 次 commit 合并为 N 次
+（其实一样），并行的"写放大"指的是**并发事务**而不是事务总数。
+
+**为什么不做"并行生成 + 串行落库"**：需要把 `QuestionGeneratorAgent.execute` 的落库逻辑
+（`_resolve_kp_id` 三重校验、`_fingerprint`、options/answer 的 JSON 序列化、`bank_type/status/source`）
+完整复制到调用方，等于把一份已经有坑的逻辑变成两份 —— 本项目已经吃过两次"两套判定漂移"的亏
+（试卷可见性、题目可用性）。收益却很有限：
+
+| 项 | 量级 |
+|---|---|
+| 单次 SQLite commit | 毫秒级（< 5 ms） |
+| 单次模型调用 | 秒级（实测 1~35 s） |
+
+写事务在总耗时里不到千分之一，把它优化掉换一份重复的落库逻辑不划算。
+
+**保留的约束**：峰值连接数 = 并发度（≤ 4），是 Session 不是新连接（连接池复用），
+不会因为补题把连接池打满。
+
+### 8.7 本轮回归结果
+
+| 套件 | 项数 | 结果 |
+|---|---|---|
+| `verify_paper_module.py` | 106 | 全通过 |
+| `verify_ai_fill_parallel.py` | 13（+2） | 全通过，加速 3.9× |
+| `verify_kp_import.py`（新） | 13 | 全通过 |
+| `verify_paper_v3` / `manage` / `compose_engine` | 63 / 57 / 全项 | 全通过 |
+| `audit_kp_quality --strict`（干净库） | — | 0 条严重问题（已入 CI） |
+| 前端 vitest / eslint / build | 36 | 全通过 |
+| 五道静态门禁 | 5 | 全绿 |
+
+### 8.8 本轮新增/变更文件
+
+**后端**
+- `backend/app/api/v1/knowledge.py` · `_import_row_hierarchy` 返回 `(chain, error)`、单元必填、同名跨层拒绝、`warnings`
+- `backend/app/services/question_usage.py` · 原子 `UPDATE … SET usage_count = (SELECT COUNT …)` + 精确 expire
+- `backend/app/api/v1/paper_compose.py` · `_ai_fill_gaps` 熔断/冷却前置判断
+
+**前端**
+- `frontend/src/views/admin/KnowledgeManage.vue` · 导入结果新增 warning 表格 + `importResult.warnings`
+
+**工具 / CI**
+- `tools/verify_kp_import.py`（新）· 导入层级校验 13 项
+- `tools/export_knowledge_seed.py`（新）· 知识点树导出
+- `tools/audit_kp_quality.py`（新）· 数据质量巡检 / 待复核清单 CSV
+- `tools/audit_knowledge_coverage.py` · 新增 `--import-json` / `--dry-run`
+- `tools/verify_ai_fill_parallel.py` · +2 项熔断断言
+- `.github/workflows/functional-test.yml` · 纳入 3 个新步骤（导入校验、并行校验、质量门禁）
