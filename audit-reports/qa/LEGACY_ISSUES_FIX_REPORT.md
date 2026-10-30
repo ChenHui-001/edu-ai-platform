@@ -656,3 +656,61 @@ dry-run        新增 323 / 复用 0（先导了种子那份）
 - `tools/audit_knowledge_coverage.py` · 新增 `--import-json` / `--dry-run`
 - `tools/verify_ai_fill_parallel.py` · +2 项熔断断言
 - `.github/workflows/functional-test.yml` · 纳入 3 个新步骤（导入校验、并行校验、质量门禁）
+
+### 8.9 发布踩坑：断言全过却被判失败（exit 134）
+
+2.2.6 的功能回归 CI **红了**，但日志里每一行都是 PASS：
+
+```
+  PASS  I1 重复导入不重复建节点  -> created=0 updated=0 n=3
+  ...
+全部通过
+terminate called without an active exception
+line 1: 2532 Aborted (core dumped) python tools/verify_kp_import.py
+##[error]Process completed with exit code 134
+```
+
+**根因**：`main.py` 的 lifespan 会启动 Chroma 向量模型的后台预热，它是
+`threading.Thread(daemon=True)`，里面跑 onnxruntime 的 native 代码。脚本用
+`TestClient` 走完 lifespan 后正常退出解释器，Python 会**强杀 daemon 线程**，
+Linux 上 onnxruntime 在 native 层 abort（SIGABRT = 134）。Windows 上退出较温和，
+所以本地一直是绿的 —— 这类"只在 CI 挂"的失败最容易被当成偶发。
+
+**修复**（两处，都留着）
+
+1. `settings.RAG_WARMUP_ENABLED`（默认 true）+ `main.py` 判断：测试脚本设为 false，
+   不启动预热线程（顺带省掉 CI 上下载 79MB 向量模型）。
+2. `verify_kp_import.py` 末尾用 `os._exit(code)` 而不是 `sys.exit()`：即使将来有别的
+   native 线程没干完，也不会在解释器析构阶段 abort。断言结果已经在 `code` 里，
+   退出前手动 flush stdout/stderr，不丢输出。
+
+**为什么不给 CI 步骤加 `continue-on-error`**：那等于把"测试挂"变成"看不见"。
+本项目已经因为"红灯被当噪音"连续 3 个版本没人发现 CI 没真正启动过，不能再开这个口子。
+
+**验证**：2.2.7（`dd1406f`）三个工作流全部 success，功能回归 job 的 5 个步骤
+（接口冒烟 / 试卷 106 项 / 并行 13 项 / 导入 13 项 / 质量门禁）全绿。
+
+### 8.10 生产复核（2.2.7 / dd1406f）
+
+| 项 | 结果 |
+|---|---|
+| 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.2.7`，`version=2.2.7` / `commit=dd1406f`，四层一致 |
+| 部署前热备 | `backup_20261030_0725_pre227.db`（5.48 MB，sqlite backup API） |
+| 健康 | `{"app":"新芽学堂","version":"2.2.7","status":"healthy","llm_enabled":true}` |
+| 引用计数复查 | 被试卷引用的题目 **47** 道，计数与实际不一致 **0** 条（原子重算后保持稳定，不需要再订正） |
+| 知识点质量 | 严重 6 条（同名跨层）/ 提示 5 条（空壳单元）+ 2 条（题目全未挂载）/ 待复核 1498 条 |
+
+**新发现的 2 条"覆盖率没转化成数据"**（本轮巡检才有的维度）：
+
+```
+六年级/数学  10 道题全部未挂知识点
+七年级/生物  14 道题全部未挂知识点
+```
+
+这两门课知识点是齐的，但现存题目一条都没挂 `knowledge_point_id` ——
+出题时没指定考点（或早期导入时没带）。后果和"没有知识点"一样：掌握度图谱里
+这两门课是空的，但排查时很容易误以为"知识点已经补齐了所以没问题"。
+建议用 AI 出题的「按知识点生成」重做一批，或在题库里补挂（当前只能逐题编辑）。
+
+> 2.2.6 因上述退出码问题**未投产**（镜像已构建但不具备"CI 全绿"的发布资格）；
+> 生产从 2.2.5 直接升到 2.2.7。
