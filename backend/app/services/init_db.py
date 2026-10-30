@@ -743,7 +743,13 @@ def init_all(db: Session) -> None:
     # 前者「空表才播」，后者「逐条比对、只补缺」，存量库升级也能被补齐。
     try:
         from app.services.knowledge_level3_seed import seed_knowledge_level3
-        seed_knowledge_level3(db)
+        if settings.SEED_BASE_DATA:
+            seed_knowledge_level3(db)
+        else:
+            # 空基线时上一行没播 level1/2，这里再跑只会报「父级缺失 75」——
+            # 那不是错误，是"父级本来就不存在"，但日志里看着像坏了，
+            # 运维会来问。同属基础数据播种，跟随同一个开关。
+            logger.info("SEED_BASE_DATA=false，跳过知识点 level3 播种（保留空基线）")
     except Exception as exc:  # noqa: BLE001  播种失败不能阻断启动
         logger.warning(f"知识点 level3 播种失败（不影响启动）：{exc}")
     init_admin(db)
