@@ -138,10 +138,28 @@ GitHub Actions「CI」             后端检查 / 前端构建 全绿
 | 4 | AI 补题后按目标总分缩放，可能产生 `6.67` 这类非整数分 | 前端按两位小数展示，阅卷合计无误差 | 属可接受的产品口径，改成整数分配会与命题标准的 `score_per` 冲突 |
 | 5 | 42 个学科仍无知识点数据 | AI 出题挂不上知识点，这些学科的掌握度图谱/复习计划失效 | **数据运营问题**，非代码缺陷；需按学科补齐知识点 |
 | 6 | 前端组卷向导在 AI 模式下仍显示"出题来源"下拉 | 用户可能选 `ai_only` 后因题库无同题型题而拿不满题量 | 后端已能正确处理三种来源并在 `message` 里说明缺口；前端交互调整属另一条产品线，本次只修后端语义 |
+| 7 | 「仅 AI 生成」按大题逐个调用模型，耗时随大题数线性增长 | 生产开启了真实大模型（MiniMax），4~5 个大题的最坏耗时可能接近 nginx `proxy_read_timeout 300s` | 每大题单独调用是为了题型正确性（混着补会把单选题塞进填空题）。要压耗时得改成并行调用或改用异步任务队列，属架构调整；当前先依赖 300s 超时与前端 loading，实测规则降级路径 <1s |
 
 ---
 
-## 六、复现方式
+## 六、发布与生产验证
+
+| 环节 | 结果 |
+|---|---|
+| 提交 | `fb431ee`（修复主体）→ `eb148b7`（CI 修复）→ `0db24bb`（组卷排序/题型过滤） |
+| GitHub Actions「CI」 | success（后端检查 + 前端构建） |
+| GitHub Actions「功能回归测试」 | success（用例集校验 + 20 项接口冒烟 + 80 项试卷模块校验，ubuntu-latest） |
+| GitHub Actions「Docker 镜像发布」 | success（ghcr 多架构 amd64+arm64，`:2.2.4`） |
+| 镜像指纹 | `BUILD_INFO commit=0db24bb`，OCI label `org.opencontainers.image.revision=0db24bb` |
+| 本地镜像校验 | `/app/VERSION=2.2.4`、`commit=0db24bb…` 与本地 HEAD 一致 |
+| 生产部署 | `deploy_run.py` → 容器 `edu-platform` 以 `ghcr.io/chenhui-001/edu-ai-platform:2.2.4` 启动，健康检查第 5 次探测通过 |
+| 生产指纹 | `/system/version` → `version=2.2.4 / build_number=0db24bb / prior_version=2.2.2 / from_image=true` |
+| 生产数据 | 部署前后 `papers=4 / questions=55` 不变（部署前已用 SQLite 热备 API 备份到 `data/backup_20261030_pre224.db`，5.2MB） |
+| 生产接口 | `/health` 200、新增的 `library/list?scope=shared|favorite`、`papers/{id}/preview` 均为 401（路由已注册、鉴权生效） |
+
+> 说明：部署会重新生成 `SECRET_KEY`，在线用户的 JWT 全部失效需重新登录（项目既有行为，非本次引入）。因此部署前先确认近 30 分钟无提交、无操作日志（实测 0/0）再执行。
+
+## 七、复现方式
 
 ```bash
 # 试卷模块完整功能校验（自起服务、自建库，无需外部依赖）
