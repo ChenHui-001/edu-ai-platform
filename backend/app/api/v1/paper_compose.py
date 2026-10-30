@@ -343,6 +343,109 @@ def _resolve_ai_subject(
     return None
 
 
+def _ai_fill_gaps(
+    db: Session, user: User, *, plan, grade: Grade, subject: Subject,
+    difficulty_norm: Dict[str, int],
+) -> str:
+    """题库缺口 / 全 AI：调出题 Agent 生成缺失题目并追加进 plan。
+
+    组卷引擎对 `ai_only` 只返回"缺口清单"（该策略不抽题），`bank_first` 在题库
+    不足时也会留 gaps —— 二者都注明"由上层调 AI 生成"，但此前**没有任何上层
+    真正实现**，"仅使用 AI 生成"最终拿到 0 题空卷。这里补上这一步：复用现成的
+    QuestionGeneratorAgent（无 LLM 时自动走规则引擎 fallback），生成的题以 draft
+    入库并回填 id，再按缺口的大题/分值组装进 plan。
+
+    **按大题逐个补**而不是一次性按总题量补：Agent 一次调用只产出一种题型
+    （`question_type`），混着补会把单选题塞进"填空题"大题，卷面直接错乱。
+    返回提示串（空=无异常）。
+    """
+    from app.agents.question_agent import QuestionGeneratorAgent
+    # 函数内导入：question.py 与本模块互相引用，放在模块顶层会形成循环导入
+    from app.api.v1.question import normalize_question_type
+
+    default_diff = max(difficulty_norm, key=difficulty_norm.get) if difficulty_norm else "medium"
+    notes: List[str] = []
+    kept_gaps: List[Dict[str, Any]] = []
+    filled_total = 0
+
+    for g in plan.gaps:
+        take = max(0, int(g["need"]) - int(g.get("got", 0)))
+        if take <= 0:
+            continue
+        gtype = str(g.get("code") or "single")
+        gdiff = str(g.get("difficulty") or default_diff)
+        try:
+            res = QuestionGeneratorAgent().run(
+                db, user_id=user.id, grade_id=grade.id, subject_id=subject.id,
+                question_type=gtype, count=take, difficulty=gdiff, save=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "AI 补题失败（grade=%s subject=%s type=%s need=%s）: %s",
+                grade.id, subject.id, gtype, take, exc)
+            notes.append(f"{g['name']}补题失败：{exc}")
+            kept_gaps.append(g)
+            continue
+
+        if not (res or {}).get("success", True):
+            notes.append(res.get("message") or f"{g['name']}补题执行失败")
+            kept_gaps.append(g)
+            continue
+        data = (res or {}).get("data") or {}
+        qs = data.get("questions") or []
+        if not qs:
+            notes.append(data.get("tip") or f"{g['name']}未生成题目（模型未启用或返回为空）")
+            kept_gaps.append(g)
+            continue
+
+        filled = 0
+        for q in qs:
+            if filled >= take:
+                break
+            qid = q.get("id") or q.get("question_id")
+            if not qid:
+                continue
+            qrow = db.get(Question, int(qid))
+            if not qrow:
+                continue
+            # 1) 只接受当前用户可用的题（公共库或本人）：规则引擎 fallback 会复用
+            #    「任意已发布题」，其中可能含他人私有题——若放进来，预览看得到、
+            #    保存时却被 `_normalize_items` 拒（"无权使用题目"），必须提前过滤。
+            # 2) 题型必须与本大题一致：fallback 不按题型筛选，混进来会让
+            #    "填空题"大题里出现单选题。
+            if not (qrow.bank_type == "public" or qrow.owner_id == user.id):
+                continue
+            if normalize_question_type(qrow.type, strict=False) != gtype:
+                continue
+            filled += 1
+            plan.items.append({
+                "question_id": int(qid),
+                "type": qrow.type,
+                "type_label": TYPE_LABEL.get(qrow.type, qrow.type),
+                "stem": qrow.stem,
+                "difficulty": qrow.difficulty or gdiff,
+                "score": round(float(g.get("score_per") or 0), 2),
+                "section_code": g["code"],
+                "section_name": g["name"],
+                "section_sort": g.get("sort", 0),
+                "knowledge_point_id": qrow.knowledge_point_id,
+                "knowledge_point_name": "AI 生成",
+            })
+        filled_total += filled
+        g["got"] = int(g.get("got", 0)) + filled
+        if g["got"] < int(g["need"]):
+            kept_gaps.append(g)
+            notes.append(
+                f"{g['name']}仍缺 {int(g['need']) - int(g['got'])} 题（题库/模型可提供的同题型题目不足）")
+
+    if plan.items:
+        plan.gaps = kept_gaps
+        compose_svc._renumber(plan.items)
+    if filled_total:
+        notes.insert(0, f"已调用 AI 补齐 {filled_total} 道题目")
+    return "；".join(n for n in notes if n)
+
+
 def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict[str, Any]:
     """两种组卷模式共用的参数解析与引擎调用。"""
     grade, subject = _grade_subject(db, data.get("grade_id"), data.get("subject_id"))
@@ -398,9 +501,27 @@ def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict
             avoid_duplicate_kp=bool(data.get("avoid_duplicate_kp", True)),
             exclude_paper_id=data.get("exclude_paper_id"),
             total_score_override=data.get("total_score") or None,
+            # 题库可见范围：公共库 + 本人私有；管理员不限
+            viewer_id=user.id, allow_all_banks=_is_sys_admin(user),
         )
     except compose_svc.ComposeError as exc:
         raise BusinessException(str(exc))
+
+    # 题库缺口 / 全 AI：补上"上层调 AI 生成"这一步（否则 ai_only 得到空卷）。
+    # 调用方自带最终题目（保存时前端已传 items）则跳过，避免重复生成污染草稿库。
+    ai_note = ""
+    if (source_strategy != compose_svc.SOURCE_BANK_ONLY
+            and plan.gaps and not data.get("items")):
+        ai_note = _ai_fill_gaps(
+            db, user, plan=plan, grade=grade, subject=subject,
+            difficulty_norm=difficulty_norm)
+        if data.get("total_score") and plan.items:
+            compose_svc._rescale_scores(plan.items, float(data["total_score"]))
+    if source_strategy == compose_svc.SOURCE_AI_ONLY and not plan.items:
+        raise BusinessException(
+            "「仅使用 AI 生成」未能生成题目"
+            + (f"（{ai_note}）" if ai_note else "")
+            + "，请改用「题库优先 + AI 补充」或先在题库录入题目")
 
     reports = compose_svc.build_reports(plan.items, difficulty_norm, sections)
     return {
@@ -408,7 +529,7 @@ def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict
         "sections": sections, "difficulty": difficulty_norm,
         "plan": plan, "reports": reports,
         "source_strategy": source_strategy, "kp_ids": kp_ids,
-        "standard_fallback": standard_fallback,
+        "standard_fallback": standard_fallback, "ai_note": ai_note,
     }
 
 
@@ -442,6 +563,10 @@ def _plan_response(ctx: Dict[str, Any], *, ai_message: str = "") -> Dict[str, An
     if getattr(plan, "relaxed_count", 0):
         note = (f"「避免近 3 次考试重复」把部分大题清空，已自动放宽去重并复用 "
                 f"{plan.relaxed_count} 题；如需完全不重复，请先补充题库。")
+        body["message"] = f"{body['message']}；{note}" if body.get("message") else note
+    # AI 补题提示（失败原因 / 规则引擎兜底说明）如实透传到前端，便于诊断
+    if ctx.get("ai_note"):
+        note = ctx["ai_note"]
         body["message"] = f"{body['message']}；{note}" if body.get("message") else note
     return body
 
@@ -1336,11 +1461,15 @@ def paper_library(
     if scope == "mine":
         stmt = stmt.where(Paper.creator_id == user.id)
     elif scope == "shared":
-        stmt = stmt.where(Paper.creator_id != user.id).where(or_(
-            Paper.id.in_(select(PaperShare.paper_id).where(
-                PaperShare.to_user_id == user.id)),
-            Paper.share_scope.in_([ShareScope.GRADE.value, ShareScope.SCHOOL.value]),
-        ))
+        # 旧实现只写了 `share_scope in (grade, school)` —— 任何 teacher 都能在
+        # 「共享给我」里看到**全校所有年级/所有学校的**范围共享卷（含标准答案），
+        # 点进详情又被 `_assert_readable` 按年级/学校逐级校验拒掉（403）。
+        # 这正是 `_paper_visibility_clause` 文档里禁止的「列表看得到、详情打不开」漂移。
+        # 这里改为复用唯一可见性判定，并排除自己创建的卷。
+        stmt = stmt.where(Paper.creator_id != user.id)
+        shared_vis = _paper_visibility_clause(user)
+        if shared_vis is not None:
+            stmt = stmt.where(shared_vis)
     elif scope == "public":
         stmt = stmt.where(
             Paper.share_scope == ShareScope.PUBLIC.value,
@@ -1349,6 +1478,10 @@ def paper_library(
     else:  # favorite
         stmt = stmt.where(Paper.id.in_(
             select(PaperFavorite.paper_id).where(PaperFavorite.user_id == user.id)))
+        # 收藏后共享范围可能被撤回：仍用同一可见性判定过滤，避免收藏夹里留下打不开的卷
+        fav_vis = _paper_visibility_clause(user)
+        if fav_vis is not None:
+            stmt = stmt.where(fav_vis)
 
     if grade_id:
         stmt = stmt.where(Paper.grade_id == grade_id)

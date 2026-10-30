@@ -39,7 +39,10 @@ class BaseAgent:
             if isinstance(data, dict) and "__llm_result__" in data:
                 llm_meta = data.pop("__llm_result__")
                 if not llm_meta.get("success"):
-                    fallback = self.fallback(db, **kwargs)
+                    # user_id 必须透传：降级实现要按「当前用户可用」收窄数据范围
+                    # （如出题 Agent 复用题库题时不能拿到他人私有题）。它不是
+                    # execute 的普通 kwarg，所以这里显式补一次。
+                    fallback = self.fallback(db, user_id=user_id, **kwargs)
                     return AgentResult(
                         success=True, data=fallback, message="模型不可用，已使用规则引擎生成",
                         agent=self.name, is_fallback=True,

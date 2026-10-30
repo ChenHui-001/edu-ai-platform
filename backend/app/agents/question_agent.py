@@ -2,7 +2,7 @@
 import hashlib
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -234,11 +234,25 @@ difficulty 取值：easy / medium / hard"""
         subject_id = kwargs.get("subject_id")
         count = kwargs.get("count", 5)
         kp_id = kwargs.get("knowledge_point_id")
+        owner_id = kwargs.get("user_id")
 
         stmt = select(Question).where(
             Question.subject_id == subject_id,
             Question.status == "published",
         )
+        # 复用的题必须**当前用户可用**（公共库或本人私有）：
+        # 旧实现只按学科 + published 取，会把别的教师的私有题（含答案与解析）
+        # 直接返回给调用方。AI 组卷/补题走这条降级路径时，这些题会进入预览——
+        # 预览能看到、保存时却被 `_normalize_items` 以"无权使用题目"拒绝，
+        # 表现为"明明抽到 3 题，保存报错"。在源头收窄，下游无需再猜。
+        if not kwargs.get("allow_all_banks"):
+            if owner_id:
+                stmt = stmt.where(or_(
+                    Question.bank_type == "public",
+                    Question.owner_id == owner_id,
+                ))
+            else:
+                stmt = stmt.where(Question.bank_type == "public")
         if kp_id:
             stmt = stmt.where(Question.knowledge_point_id == kp_id)
         rows = db.scalars(stmt.limit(count)).all()

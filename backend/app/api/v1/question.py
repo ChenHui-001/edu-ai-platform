@@ -16,8 +16,8 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Grade, KnowledgePoint, Notification, Paper, PaperItem, PaperShare, Question,
-    QuestionBankType, QuestionStatus, Subject, Task, User,
+    Grade, KnowledgePoint, Notification, Paper, PaperItem, PaperShare, PaperStatus,
+    Question, QuestionBankType, QuestionStatus, ShareScope, Subject, Task, User,
 )
 from app.utils.common import PageParams, dictify, ok
 
@@ -1473,12 +1473,34 @@ def delete_paper(
 
 
 def _copy_paper_row(db: Session, src: Paper, user: User, name: Optional[str] = None) -> Paper:
+    """复制试卷为当前用户的新私有草稿。
+
+    旧实现只搬 6 个字段，另外两处会造成真实问题：
+
+    1. **不传 status** → 走模型默认值 `published`，于是「复制一份草稿」得到的是
+       「已发布」的卷子，状态凭空跳变；若源卷是 `public` 且顺手复制了
+       `share_scope`，副本还会绕过审核直接进公共库。
+    2. **不传 `section_code`/`section_sort`** → 复制后大题分组退化成按题型猜，
+       标准卷的「一、选择题 / 二、填空题」顺序与题序被拍平，用副本上课会串题。
+
+    因此副本一律 `draft + private`（要公开就走审核流），并把大题结构、
+    命题标准、报告与考试类型等元数据一并带过去。
+    """
     new = Paper(
         name=(name or f"{src.name}副本")[:128], grade_id=src.grade_id,
         subject_id=src.subject_id, total_score=src.total_score,
         duration=src.duration, difficulty_ratio=src.difficulty_ratio,
         knowledge_coverage=src.knowledge_coverage, difficulty_report=src.difficulty_report,
         creator_id=user.id, source=src.source,
+        # 元数据随卷复制（缺了会让副本在列表/预览里"掉档"）
+        description=src.description, exam_type=src.exam_type, stage=src.stage,
+        textbook_version=src.textbook_version, standard_id=src.standard_id,
+        generation_params=src.generation_params, type_report=src.type_report,
+        # 副本是未审核的派生物：草稿 + 私有，不继承源卷的发布态与共享范围
+        status=PaperStatus.DRAFT.value,
+        share_scope=ShareScope.PRIVATE.value,
+        is_shared=False,
+        current_version=1,
     )
     db.add(new)
     db.flush()
@@ -1487,6 +1509,8 @@ def _copy_paper_row(db: Session, src: Paper, user: User, name: Optional[str] = N
         db.add(PaperItem(
             paper_id=new.id, question_id=it.question_id, sort_order=it.sort_order,
             score=it.score, section_name=it.section_name,
+            section_code=it.section_code, section_sort=it.section_sort,
+            score_override=it.score_override,
         ))
         total += float(it.score or 0)
     new.total_score = round(total, 2)

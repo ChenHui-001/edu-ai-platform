@@ -67,6 +67,11 @@ def main():
         "LLM_ENABLED": "false",
         "SECRET_KEY": "verify-v3-secret-key-0123456789abcdef",
         "ENV": "test",
+        # S7 起登录强制图形验证码，测试脚本无法取码 → 必须显式关闭，
+        # 否则所有用例在第一步登录就 FATAL（曾长期如此，误以为脚本过期）。
+        "CAPTCHA_ENFORCED": "false",
+        # 出厂管理员带 must_change_password，脚本不做改密流程 → 关掉拦截
+        "MUST_CHANGE_PASSWORD_ENFORCED": "false",
     })
 
     print(f"[env] db={db_path}\n[env] port={port}\n")

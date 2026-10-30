@@ -74,6 +74,10 @@ def main():
         "DATABASE_URL": f"sqlite:///{db_path}",
         "SECRET_KEY": "paper-manage-test-key-0123456789",
         "TZ": "Asia/Shanghai",
+        # 登录强制图形验证码 + 出厂管理员强制改密：脚本不做这两步，
+        # 必须显式关闭，否则在登录处就失败（不是业务缺陷）。
+        "CAPTCHA_ENFORCED": "false",
+        "MUST_CHANGE_PASSWORD_ENFORCED": "false",
     })
     logf = open(log_path, "w", encoding="utf-8")
     proc = subprocess.Popen(

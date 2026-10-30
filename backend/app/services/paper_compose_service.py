@@ -281,13 +281,37 @@ def _recent_question_ids(
     return {int(r) for r in rows if r}
 
 
+def _bank_visibility_clause(viewer_id: Optional[int], allow_all_banks: bool):
+    """题库可见范围：公共库 + 本人私有（管理员不限）。
+
+    旧实现的抽题 SQL **完全不看题库归属**，只要 `status=published` 就抽——私有
+    题库的"已发布"题（教师自编/校内卷）会被抽进**别的教师**的组卷预览，
+    题干、答案、解析全部随预览返回（越权泄露）；而保存时 `_normalize_items`
+    又会以"无权使用题目"拒绝，于是出现"预览明明有 12 题、保存报错"的断裂。
+    这里把归属条件下沉到 `_base_stmt`，抽题/预览/保存三处口径一致。
+    """
+    if allow_all_banks:
+        return None
+    from sqlalchemy import or_ as _or
+    if viewer_id:
+        return _or(
+            Question.bank_type == "public",
+            Question.owner_id == viewer_id,
+        )
+    # 无观看者上下文时只取公共题：宁可少抽，也不越权
+    return Question.bank_type == "public"
+
+
 def _base_stmt(*, grade_id: int, subject_id: int, qtype: str,
                kp_ids: Sequence[int], difficulty: Optional[str],
-               exclude_ids: set):
+               exclude_ids: set,
+               viewer_id: Optional[int] = None,
+               allow_all_banks: bool = False):
     """统一的基础查询。
 
     **所有**抽题分支（含放宽条件的那一支）都必须走这里，
     否则知识范围会在"放宽"时被悄悄丢掉——这是旧实现的 P1 缺陷。
+    题库归属（公共 + 本人私有）同样只在这里过滤一次，避免某条兜底分支绕过。
     """
     stmt = select(Question).where(
         Question.grade_id == grade_id,
@@ -295,6 +319,9 @@ def _base_stmt(*, grade_id: int, subject_id: int, qtype: str,
         Question.type == qtype,
         Question.status == QuestionStatus.PUBLISHED.value,
     )
+    bank_clause = _bank_visibility_clause(viewer_id, allow_all_banks)
+    if bank_clause is not None:
+        stmt = stmt.where(bank_clause)
     if kp_ids:
         stmt = stmt.where(Question.knowledge_point_id.in_(list(kp_ids)))
     if difficulty:
@@ -320,6 +347,8 @@ def compose(
     avoid_duplicate_kp: bool = True,
     exclude_paper_id: Optional[int] = None,
     total_score_override: Optional[float] = None,
+    viewer_id: Optional[int] = None,
+    allow_all_banks: bool = False,
 ) -> ComposePlan:
     """按标准结构从题库抽题，返回预览计划（不写库）。
 
@@ -327,6 +356,9 @@ def compose(
     - bank_only：只用题库。抽不满就留缺口，不补。
     - ai_only：完全不用题库（返回空计划 + 全部缺口，由上层调 AI 生成）。
     - bank_first：题库优先，缺口标记出来供上层补题。
+
+    viewer_id / allow_all_banks：题库可见范围（公共库 + 本人私有；管理员放开）。
+    不传 viewer_id 时只抽公共题——**调用方必须传**，否则教师试卷会悄悄变短。
     """
     if source_strategy not in VALID_SOURCES:
         raise ComposeError(f"出题来源不合法：{source_strategy}")
@@ -378,6 +410,7 @@ def compose(
             want=want, kp_ids=kp_ids, difficulty_ratio=ratio,
             prefer_difficulty=sec_difficulty, exclude=exclude,
             kp_used=kp_used, kp_cap=kp_cap,
+            viewer_id=viewer_id, allow_all_banks=allow_all_banks,
         )
         # 「忽略近 N 次去重」的兜底在 `_pick_for_section` 第三级内完成；
         # 这里只统计「本应被去重排除、但为了不出白卷而复用」的题量，
@@ -426,6 +459,7 @@ def _pick_for_section(
     kp_ids: Sequence[int], difficulty_ratio: Dict[str, int],
     prefer_difficulty: str, exclude: set,
     kp_used: Dict[int, int], kp_cap: int,
+    viewer_id: Optional[int] = None, allow_all_banks: bool = False,
 ) -> List[Question]:
     """单个大题抽题：先按难度配额抽，不够再放宽难度（**保留**知识点过滤）。
 
@@ -465,7 +499,8 @@ def _pick_for_section(
             continue
         rows = db.scalars(
             _base_stmt(grade_id=grade_id, subject_id=subject_id, qtype=qtype,
-                       kp_ids=kp_ids, difficulty=diff, exclude_ids=exclude)
+                       kp_ids=kp_ids, difficulty=diff, exclude_ids=exclude,
+                       viewer_id=viewer_id, allow_all_banks=allow_all_banks)
             .limit(need * 4)
         ).all()
         _take(list(rows), need)
@@ -474,7 +509,8 @@ def _pick_for_section(
     if len(picked) < want:
         rows = db.scalars(
             _base_stmt(grade_id=grade_id, subject_id=subject_id, qtype=qtype,
-                       kp_ids=kp_ids, difficulty=None, exclude_ids=exclude)
+                       kp_ids=kp_ids, difficulty=None, exclude_ids=exclude,
+                       viewer_id=viewer_id, allow_all_banks=allow_all_banks)
             .limit((want - len(picked)) * 5)
         ).all()
         _take(list(rows), want - len(picked))
@@ -483,7 +519,8 @@ def _pick_for_section(
     if len(picked) < want and exclude:
         rows = db.scalars(
             _base_stmt(grade_id=grade_id, subject_id=subject_id, qtype=qtype,
-                       kp_ids=kp_ids, difficulty=None, exclude_ids=set())
+                       kp_ids=kp_ids, difficulty=None, exclude_ids=set(),
+                       viewer_id=viewer_id, allow_all_banks=allow_all_banks)
             .limit((want - len(picked)) * 5)
         ).all()
         _take(list(rows), want - len(picked), ignore_exclude=True)
