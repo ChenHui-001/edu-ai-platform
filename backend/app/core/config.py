@@ -184,6 +184,15 @@ class Settings(BaseSettings):
     # - SQLite 写锁是库级的，并发写只会排队，再高也压不出吞吐。
     # 设为 1 即退回串行（排障用）。
     AI_FILL_CONCURRENCY: int = 3
+    # Chroma 向量模型的后台预热（首次会下载 ~79MB onnx 模型）。
+    #
+    # 为什么要有开关：预热是 `daemon=True` 的线程，里面跑的是 onnxruntime 的
+    # native 代码。进程正常退出时 Python 会**强杀** daemon 线程，Linux 上
+    # onnxruntime 在 native 层 abort（`terminate called without an active
+    # exception` → exit code 134）。命令行脚本 import app 并走 lifespan 后
+    # 即使所有断言通过也会被这个退出码判成失败（CI 上实测）。
+    # 测试/CI 用不到向量检索，直接关掉既避免崩溃也省掉 79MB 下载。
+    RAG_WARMUP_ENABLED: bool = True
 
     # ---------------- 日志 / 任务 ----------------
     LOG_LEVEL: str = "INFO"

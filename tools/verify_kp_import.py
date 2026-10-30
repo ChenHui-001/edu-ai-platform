@@ -30,6 +30,10 @@ os.environ.update({
     "CAPTCHA_ENFORCED": "false",
     "SCHEDULER_ENABLED": "false",
     "SEED_DEMO_DATA": "false",
+    # 关掉 Chroma 后台预热：它是 daemon 线程 + onnxruntime native 代码，
+    # 进程退出时被强杀会让 Linux 上的解释器 abort（exit code 134）。
+    # 本脚本只用 TestClient 打 API，不需要向量检索。
+    "RAG_WARMUP_ENABLED": "false",
     "APP_VERSION": "test",
     "SECRET_KEY": "kp-import-test-key-0123456789abcdef0123456789",
 })
@@ -185,10 +189,24 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    code = 1
     try:
-        sys.exit(main())
+        code = main()
+    except Exception:  # noqa: BLE001  命令行工具：打到 stderr 再硬退出
+        import traceback
+
+        traceback.print_exc()
+        code = 1
     finally:
         try:
             os.remove(DB_PATH)
         except OSError:
             pass
+        # 必须硬退出，不能用 sys.exit()：
+        # TestClient 关掉 lifespan 后仍可能有 native 线程（onnxruntime /
+        # chromadb）没干完，解释器正常退出会强杀它们；Linux 上表现为
+        # "terminate called without an active exception" + SIGABRT，
+        # 退出码 134 —— 断言全过也会被 CI 判失败（实测踩过）。
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)

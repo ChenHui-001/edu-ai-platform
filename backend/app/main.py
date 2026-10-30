@@ -206,13 +206,17 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Agent 引擎初始化异常: {exc}")
 
-    # 后台预热 Chroma embedding 模型：避免首次 AI 请求触发 79MB 下载而卡住
-    try:
-        from app.agents.rag import start_chroma_warmup
+    # 后台预热 Chroma embedding 模型：避免首次 AI 请求触发 79MB 下载而卡住。
+    # 测试/CI 用不到检索，且预热线程是 daemon —— 进程退出时被强杀会让
+    # onnxruntime 在 native 层 abort（Linux 上 exit code 134），
+    # 命令行脚本即使断言全过也会判失败，因此可关。
+    if settings.RAG_WARMUP_ENABLED:
+        try:
+            from app.agents.rag import start_chroma_warmup
 
-        start_chroma_warmup()
-    except Exception as exc:
-        logger.warning(f"Chroma 预热启动失败: {exc}")
+            start_chroma_warmup()
+        except Exception as exc:
+            logger.warning(f"Chroma 预热启动失败: {exc}")
 
     # 定时任务
     if settings.SCHEDULER_ENABLED:

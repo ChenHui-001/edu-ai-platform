@@ -89,6 +89,8 @@ def main():
         "CAPTCHA_ENFORCED": "false",
         "SEED_DEMO_DATA": "false",
         "SCHEDULER_ENABLED": "false",
+        # 关掉 Chroma 预热：测试只用规则/DB 路径，不必下载 79MB 向量模型
+        "RAG_WARMUP_ENABLED": "false",
         "APP_VERSION": "test",
         "DATABASE_URL": f"sqlite:///{db_path}",
         "SECRET_KEY": "paper-module-test-key-0123456789",
