@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   composeBlockReason, requiresGradeSubject, buildComposePayload,
-  isComposeButtonDisabled,
+  isComposeButtonDisabled, AI_MODE_SOURCE,
 } from '../paperWizard'
 
 /**
@@ -121,5 +121,28 @@ describe('buildComposePayload（提交参数）', () => {
   it('知识点 id 透传', () => {
     const p = buildComposePayload(base, { knowledgePointIds: [11, 12] })
     expect(p.knowledge_point_ids).toEqual([11, 12])
+  })
+
+  /**
+   * 回归锁：AI 模式的「出题来源」下拉此前是可选的，用户可以在 AI 一键组卷里
+   * 选「仅使用 AI 生成」—— 同一请求里就叠加了两轮模型调用（解析 + 逐大题造题），
+   * 耗时随大题数线性增长，题库里有同题型的题也不用。现在 UI 禁用该下拉，
+   * 且 payload 侧强制归位，避免"界面禁用但残留值仍被发送"的漏网。
+   */
+  it('AI 模式固定发送 bank_first，即使表单残留 ai_only', () => {
+    const p = buildComposePayload({ ...base, mode: 'ai', source: 'ai_only' })
+    expect(p.source).toBe(AI_MODE_SOURCE)
+    expect(p.source).toBe('bank_first')
+  })
+
+  it('AI 模式残留 bank_only 同样被归位（不能靠"只在选 ai_only 时才改"）', () => {
+    const p = buildComposePayload({ ...base, mode: 'ai', source: 'bank_only' })
+    expect(p.source).toBe('bank_first')
+  })
+
+  it('自定义模式原样透传来源（含 ai_only，纯 AI 造题仍可用）', () => {
+    const p = buildComposePayload(
+      { ...base, mode: 'custom', source: 'ai_only' }, { sections: [] })
+    expect(p.source).toBe('ai_only')
   })
 })

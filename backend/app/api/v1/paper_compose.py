@@ -27,6 +27,7 @@
 import io
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
@@ -35,6 +36,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, noload
 
 from app.api.deps import require_perm
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
@@ -43,6 +45,7 @@ from app.models import (
     ShareScope, Subject, Submission, Task, User,
 )
 from app.services import paper_compose_service as compose_svc
+from app.services.question_access import question_usable_error
 from app.services.paper_export_service import (
     build_answer_sheet, build_docx, build_pdf,
 )
@@ -343,6 +346,101 @@ def _resolve_ai_subject(
     return None
 
 
+def _fill_one_gap(
+    gap: Dict[str, Any], *,
+    user_id: int, is_admin: bool, grade_id: int, subject_id: int,
+    default_diff: str,
+) -> Dict[str, Any]:
+    """为**单个大题**补题，跑在自己的 Session 里（因此可并行）。
+
+    为什么必须独立 Session：SQLAlchemy 的 `Session` 不是线程安全的，跨线程共用
+    会撞出 "This session is in 'prepared' state" 之类的随机错误。这里只接受
+    标量参数（id / bool / str），不接收 ORM 对象 —— 传对象就等于把某个线程的
+    session 泄漏到另一个线程。
+
+    不抛异常：单个大题失败（模型超时、无同题型题）不该拖垮整卷，原因通过
+    `notes` 回传给调用方拼进 message。
+
+    返回 `{"gap", "items", "notes", "filled"}`，`items` 已是可直接追加进 plan 的字典。
+    """
+    from app.agents.question_agent import QuestionGeneratorAgent
+    # 函数内导入：question.py 与本模块互相引用，放模块顶层会形成循环导入
+    from app.api.v1.question import normalize_question_type
+    from app.core.database import SessionLocal
+    from app.services.question_access import question_usable_error
+
+    name = str(gap.get("name") or "未知大题")
+    out: Dict[str, Any] = {"gap": gap, "items": [], "notes": [], "filled": 0}
+    take = max(0, int(gap["need"]) - int(gap.get("got", 0)))
+    if take <= 0:
+        return out
+
+    gtype = str(gap.get("code") or "single")
+    gdiff = str(gap.get("difficulty") or default_diff)
+
+    db = SessionLocal()
+    try:
+        try:
+            res = QuestionGeneratorAgent().run(
+                db, user_id=user_id, grade_id=grade_id, subject_id=subject_id,
+                question_type=gtype, count=take, difficulty=gdiff, save=True,
+                allow_all_banks=is_admin,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "AI 补题失败（grade=%s subject=%s type=%s need=%s）: %s",
+                grade_id, subject_id, gtype, take, exc)
+            out["notes"].append(f"{name}补题失败：{exc}")
+            return out
+
+        if not (res or {}).get("success", True):
+            out["notes"].append(res.get("message") or f"{name}补题执行失败")
+            return out
+        data = (res or {}).get("data") or {}
+        qs = data.get("questions") or []
+        if not qs:
+            out["notes"].append(
+                data.get("tip") or f"{name}未生成题目（模型未启用或返回为空）")
+            return out
+
+        for q in qs:
+            if out["filled"] >= take:
+                break
+            qid = q.get("id") or q.get("question_id")
+            if not qid:
+                continue
+            qrow = db.get(Question, int(qid))
+            if not qrow:
+                continue
+            # 1) 只接受当前用户可用的题：规则引擎 fallback 会复用「任意已发布题」，
+            #    其中可能含他人私有题——若放进来，预览看得到、保存时却被
+            #    `_normalize_items` 拒（"无权使用题目"），必须提前过滤。
+            #    与保存侧共用 question_access 判定，保证"补进来的一定存得下"。
+            # 2) 题型必须与本大题一致：fallback 不按题型筛选，混进来会让
+            #    "填空题"大题里出现单选题。
+            if question_usable_error(qrow, user_id=user_id, is_admin=is_admin):
+                continue
+            if normalize_question_type(qrow.type, strict=False) != gtype:
+                continue
+            out["filled"] += 1
+            out["items"].append({
+                "question_id": int(qid),
+                "type": qrow.type,
+                "type_label": TYPE_LABEL.get(qrow.type, qrow.type),
+                "stem": qrow.stem,
+                "difficulty": qrow.difficulty or gdiff,
+                "score": round(float(gap.get("score_per") or 0), 2),
+                "section_code": gtype,
+                "section_name": name,
+                "section_sort": gap.get("sort", 0),
+                "knowledge_point_id": qrow.knowledge_point_id,
+                "knowledge_point_name": "AI 生成",
+            })
+        return out
+    finally:
+        db.close()
+
+
 def _ai_fill_gaps(
     db: Session, user: User, *, plan, grade: Grade, subject: Subject,
     difficulty_norm: Dict[str, int],
@@ -357,86 +455,64 @@ def _ai_fill_gaps(
 
     **按大题逐个补**而不是一次性按总题量补：Agent 一次调用只产出一种题型
     （`question_type`），混着补会把单选题塞进"填空题"大题，卷面直接错乱。
+
+    **各大题并行**（`settings.AI_FILL_CONCURRENCY`，默认 3）：串行时总耗时 =
+    大题数 × 单次模型耗时，4~5 个大题就能顶到 nginx 的 proxy_read_timeout。
+    并行后最坏耗时 ≈ 单次最长耗时。结果按 gap 原始顺序合并（不是完成顺序），
+    所以卷面大题顺序不受线程调度影响。
+
     返回提示串（空=无异常）。
     """
-    from app.agents.question_agent import QuestionGeneratorAgent
-    # 函数内导入：question.py 与本模块互相引用，放在模块顶层会形成循环导入
-    from app.api.v1.question import normalize_question_type
-
     default_diff = max(difficulty_norm, key=difficulty_norm.get) if difficulty_norm else "medium"
     notes: List[str] = []
     kept_gaps: List[Dict[str, Any]] = []
     filled_total = 0
 
-    for g in plan.gaps:
-        take = max(0, int(g["need"]) - int(g.get("got", 0)))
-        if take <= 0:
-            continue
-        gtype = str(g.get("code") or "single")
-        gdiff = str(g.get("difficulty") or default_diff)
-        try:
-            res = QuestionGeneratorAgent().run(
-                db, user_id=user.id, grade_id=grade.id, subject_id=subject.id,
-                question_type=gtype, count=take, difficulty=gdiff, save=True,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "AI 补题失败（grade=%s subject=%s type=%s need=%s）: %s",
-                grade.id, subject.id, gtype, take, exc)
-            notes.append(f"{g['name']}补题失败：{exc}")
-            kept_gaps.append(g)
-            continue
+    # 只提取标量，不把 ORM 对象带进工作线程
+    user_id = int(user.id)
+    is_admin = _is_sys_admin(user)
+    grade_id = int(grade.id)
+    subject_id = int(subject.id)
 
-        if not (res or {}).get("success", True):
-            notes.append(res.get("message") or f"{g['name']}补题执行失败")
-            kept_gaps.append(g)
-            continue
-        data = (res or {}).get("data") or {}
-        qs = data.get("questions") or []
-        if not qs:
-            notes.append(data.get("tip") or f"{g['name']}未生成题目（模型未启用或返回为空）")
-            kept_gaps.append(g)
-            continue
+    pending = [g for g in plan.gaps
+               if max(0, int(g["need"]) - int(g.get("got", 0))) > 0]
+    if not pending:
+        return ""
 
-        filled = 0
-        for q in qs:
-            if filled >= take:
-                break
-            qid = q.get("id") or q.get("question_id")
-            if not qid:
-                continue
-            qrow = db.get(Question, int(qid))
-            if not qrow:
-                continue
-            # 1) 只接受当前用户可用的题（公共库或本人）：规则引擎 fallback 会复用
-            #    「任意已发布题」，其中可能含他人私有题——若放进来，预览看得到、
-            #    保存时却被 `_normalize_items` 拒（"无权使用题目"），必须提前过滤。
-            # 2) 题型必须与本大题一致：fallback 不按题型筛选，混进来会让
-            #    "填空题"大题里出现单选题。
-            if not (qrow.bank_type == "public" or qrow.owner_id == user.id):
-                continue
-            if normalize_question_type(qrow.type, strict=False) != gtype:
-                continue
-            filled += 1
-            plan.items.append({
-                "question_id": int(qid),
-                "type": qrow.type,
-                "type_label": TYPE_LABEL.get(qrow.type, qrow.type),
-                "stem": qrow.stem,
-                "difficulty": qrow.difficulty or gdiff,
-                "score": round(float(g.get("score_per") or 0), 2),
-                "section_code": g["code"],
-                "section_name": g["name"],
-                "section_sort": g.get("sort", 0),
-                "knowledge_point_id": qrow.knowledge_point_id,
-                "knowledge_point_name": "AI 生成",
-            })
-        filled_total += filled
-        g["got"] = int(g.get("got", 0)) + filled
-        if g["got"] < int(g["need"]):
+    workers = max(1, min(int(settings.AI_FILL_CONCURRENCY or 1), len(pending), 4))
+    tasks = [
+        (g, dict(user_id=user_id, is_admin=is_admin, grade_id=grade_id,
+                 subject_id=subject_id, default_diff=default_diff))
+        for g in pending
+    ]
+    if workers == 1:
+        results = [_fill_one_gap(g, **kw) for g, kw in tasks]
+    else:
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="ai-fill") as pool:
+            futures = [pool.submit(_fill_one_gap, g, **kw) for g, kw in tasks]
+            # 按提交顺序取结果 → 合并顺序确定，重复调用结果一致
+            results = [f.result() for f in futures]
+
+    # 补题线程各自 commit（新题已落库），但主 Session 此时很可能还开着事务：
+    # SQLite/PostgreSQL 的读快照在事务开始时确定，主 Session 看不到其他连接
+    # 新提交的行 —— 后续 `db.get(Question, qid)` 会返回 None，表现为"补了几题、
+    # 保存却报题目不存在"。这里结束主 Session 的当前事务以刷新快照。
+    # 调用方此前只有只读操作（组卷引擎不写库），commit 不会提交任何半成品。
+    db.commit()
+
+    for res in results:
+        g = res["gap"]
+        notes.extend(res["notes"])
+        if res["filled"]:
+            plan.items.extend(res["items"])
+            filled_total += res["filled"]
+            g["got"] = int(g.get("got", 0)) + res["filled"]
+        if int(g.get("got", 0)) < int(g["need"]):
             kept_gaps.append(g)
             notes.append(
-                f"{g['name']}仍缺 {int(g['need']) - int(g['got'])} 题（题库/模型可提供的同题型题目不足）")
+                f"{g['name']}仍缺 {int(g['need']) - int(g.get('got', 0))} 题"
+                "（题库/模型可提供的同题型题目不足）")
 
     if plan.items:
         plan.gaps = kept_gaps
@@ -524,12 +600,25 @@ def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict
             + "，请改用「题库优先 + AI 补充」或先在题库录入题目")
 
     reports = compose_svc.build_reports(plan.items, difficulty_norm, sections)
+    # 知识点缺口只在"没有指定知识点"时判定：用户显式指定了知识点，
+    # 说明该学科知识点存在且被选中，不需要再提示（指定必然已被上面的校验通过）。
+    kp_missing = False
+    if not kp_ids:
+        kp_total = db.scalar(
+            select(func.count()).select_from(KnowledgePoint).where(
+                KnowledgePoint.grade_id == grade.id,
+                KnowledgePoint.subject_id == subject.id,
+                KnowledgePoint.is_active.is_(True),
+            )
+        ) or 0
+        kp_missing = int(kp_total) == 0
     return {
         "grade": grade, "subject": subject, "standard": standard,
         "sections": sections, "difficulty": difficulty_norm,
         "plan": plan, "reports": reports,
         "source_strategy": source_strategy, "kp_ids": kp_ids,
         "standard_fallback": standard_fallback, "ai_note": ai_note,
+        "kp_missing": kp_missing,
     }
 
 
@@ -552,12 +641,20 @@ def _plan_response(ctx: Dict[str, Any], *, ai_message: str = "") -> Dict[str, An
         "standard_total_score": std.total_score if std else None,
         # true = 该学段学科没有命题标准，结构来自通用模板（不是权威结构）
         "standard_fallback": bool(ctx.get("standard_fallback")),
+        # true = 该学科一条知识点都没有：组卷仍可出题，但题目挂不上考点，
+        # 掌握度图谱与复习计划在这门课上必然失效。让前端能明确提示，
+        # 而不是让教师以为"AI 没识别出考点"。
+        "knowledge_point_missing": bool(ctx.get("kp_missing")),
     }
     if ai_message:
         body["message"] = ai_message
     if body.get("standard_fallback"):
         note = ("该学段学科尚未配置命题标准，本次已用通用结构（单选/填空/解答）生成卷面；"
                 "建议管理员在「命题标准」中补配后再生成一次。")
+        body["message"] = f"{body['message']}；{note}" if body.get("message") else note
+    if body["knowledge_point_missing"]:
+        note = (f"{ctx['grade'].name}{ctx['subject'].name}尚未维护知识点，本次组卷无法按考点选题，"
+                "题目也不会进入掌握度图谱；请联系管理员补齐该学科知识点后重新组卷。")
         body["message"] = f"{body['message']}；{note}" if body.get("message") else note
     # 去重曾把整大题清空、已自动放宽：必须告诉教师，否则"复用了老题"是隐形的
     if getattr(plan, "relaxed_count", 0):
@@ -822,9 +919,12 @@ def _normalize_items(
         q = db.get(Question, qid)
         if not q:
             raise BusinessException(f"题目不存在或已删除（id={qid}）")
-        if not _is_sys_admin(user) and not (
-                q.bank_type == "public" or q.owner_id == user.id):
-            raise BusinessException(f"无权使用题目（id={qid}）：仅可选公共题或本人私有题")
+        # 与 question._normalize_paper_items 共用同一判定（含 status 校验），
+        # 避免"预览能过、保存被拒"或两处口径漂移。
+        err = question_usable_error(
+            q, user_id=user.id, is_admin=_is_sys_admin(user))
+        if err:
+            raise BusinessException(err)
         if q.grade_id != grade_id or q.subject_id != subject_id:
             raise BusinessException(f"题目年级/学科与试卷不一致（id={qid}）")
 
@@ -896,9 +996,6 @@ def _write_items(db: Session, paper: Paper, items: List[Dict[str, Any]],
         db.add(row)
         db.flush()
         new_map[int(it["question_id"])] = int(row.id)
-        q = db.get(Question, it["question_id"])
-        if q:
-            q.usage_count += 1
 
     # 3) 迁移作答：把旧 item 上的 Answer 改挂到同 question_id 的新 item
     migrated = 0
@@ -925,14 +1022,17 @@ def _write_items(db: Session, paper: Paper, items: List[Dict[str, Any]],
 
     # 4) 删除旧题项（此时已无作答指向，级联删除安全）
     if old_ids:
-        # usage_count 必须与步骤 2 的「每道新题 +1」对称递减，否则每次改卷都只增
-        # 不减，长期虚高会污染 compose() 的「使用次数少优先」排序（BUG-001）。
-        # 停留在卷内的题：新 +1 与旧 -1 抵消；被移除的题：净 -1。
-        for _old_item_id, qid in old_rows:
-            q_obj = db.get(Question, int(qid))
-            if q_obj is not None:
-                q_obj.usage_count = max(0, int(q_obj.usage_count or 0) - 1)
         db.execute(PaperItem.__table__.delete().where(PaperItem.id.in_(old_ids)))
+        db.flush()
+
+    # 5) 重算引用计数：本次涉及的题目 = 新题项 ∪ 旧题项。
+    # **不能沿用「插新 +1 / 删旧 -1」的记账法**：首次给一份没有题项的卷子补题时
+    # 没有"旧题"可减，净效果是凭空 +n；配合删除试卷不减，同一道题的计数会朝
+    # 相反方向漂移且无法追溯。重算幂等，值恒等于真实引用数。
+    from app.services.question_usage import recount_usage
+    touched = set(new_map.keys()) | set(old_by_question.keys())
+    if touched:
+        recount_usage(db, touched)
         db.flush()
 
     paper.total_score = round(sum(float(i["score"]) for i in items), 2)
@@ -1235,7 +1335,13 @@ def remove_item(
         raise BusinessException("试卷至少保留一道题目")
 
     version_svc.snapshot(db, paper, user.id, change_note="移除题目")
+    removed_qid = int(item.question_id)
     db.delete(item)
+    db.flush()
+    # 逐题移除同样要让引用计数回到真实值：删掉最后一个引用后应归零，
+    # 否则该题的 usage_count 会永久停在旧值上，一直排在"少用优先"的末尾。
+    from app.services.question_usage import recount_usage
+    recount_usage(db, {removed_qid})
     db.flush()
     # 重排剩余题项，避免 sort_order 出现空洞
     remaining = [it for it in paper.items if it.id != item_id]

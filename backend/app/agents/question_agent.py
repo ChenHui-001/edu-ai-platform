@@ -2,7 +2,7 @@
 import hashlib
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,24 @@ from app.agents.base import BaseAgent
 from app.agents.rag import build_context, search
 from app.core.exception import BusinessException
 from app.models import KnowledgePoint, Question, Subject, User
+
+
+def subject_kp_missing(db: Session, subject_id: Optional[int]) -> bool:
+    """该学科是否一条可用知识点都没有。
+
+    没有知识点时出题照常进行（题目 `knowledge_point_id` 留空），但下游
+    掌握度图谱与复习计划按知识点统计 —— 这些学科上两项功能必然失效。
+    这个判定让调用方能主动提示，而不是让用户以为"AI 没识别出考点"。
+    """
+    if not subject_id:
+        return False
+    total = db.scalar(
+        select(func.count()).select_from(KnowledgePoint).where(
+            KnowledgePoint.subject_id == subject_id,
+            KnowledgePoint.is_active.is_(True),
+        )
+    ) or 0
+    return int(total) == 0
 
 
 class QuestionGeneratorAgent(BaseAgent):
@@ -227,6 +245,7 @@ difficulty 取值：easy / medium / hard"""
             "saved": saved,
             "subject": subject.name,
             "tip": "AI 生成题目已进入待审核库，审核通过后方可上架使用" if save else "",
+            "knowledge_point_missing": subject_kp_missing(db, subject_id),
         }
 
     def fallback(self, db: Session, **kwargs) -> Dict[str, Any]:
@@ -282,6 +301,7 @@ difficulty 取值：easy / medium / hard"""
             "saved": 0,
             "reused": len(items),
             "tip": tip,
+            "knowledge_point_missing": subject_kp_missing(db, subject_id),
         }
 
     # ---------------- 工具 ----------------

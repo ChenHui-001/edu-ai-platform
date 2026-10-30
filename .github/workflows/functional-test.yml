@@ -146,11 +146,17 @@ jobs:
           python audit-reports/qa/functional_cases.py --emit
           python audit-reports/qa/functional_cases.py --run
 
-      - name: 试卷模块完整功能校验（自起服务，78 项断言）
+      - name: 试卷模块完整功能校验（自起服务，106 项断言）
         # 这一步是「真正的功能回归」：创建/编辑/删除/查询/发布/复制/组卷，
         # 含异常输入、边界值、越权隔离与 AI 补题降级路径。脚本自己分配端口、
         # 建临时库、起 uvicorn，不依赖上一步那个 8899 实例。
+        # H 组覆盖引用计数对称性、待审题入卷、单题详情、整数分值、知识点缺口。
         run: python tools/verify_paper_module.py
+
+      - name: AI 补题并行化校验（注入固定延迟，10 项断言）
+        # 纯进程内：临时库 + 假 Agent。断言"并行耗时接近单次调用"、
+        # "合并顺序不随线程完成顺序变化"、"单大题失败不拖垮其余大题"。
+        run: python tools/verify_ai_fill_parallel.py
 
       - name: 汇总结果并判定
         run: |

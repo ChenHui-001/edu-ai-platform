@@ -175,6 +175,15 @@ class Settings(BaseSettings):
     AGENT_RATE_LIMIT_PER_MIN: int = 12
     LLM_TIMEOUT: int = 60
     LLM_ENABLED: bool = True  # 未配置 Key 时自动降级为规则引擎
+    # AI 组卷「缺口补题」的并发度（按大题并行）。
+    #
+    # 每大题单独调一次模型是题型正确性的前提（混着补会把单选题塞进填空题），
+    # 串行时耗时随大题数线性增长，4~5 个大题可能顶到 nginx proxy_read_timeout。
+    # 并行后最坏耗时 ≈ 单次最长耗时。默认 3 而非更高：
+    # - 上游模型普遍对并发有速率限制，且本项目有 429 熔断（触发后整站 AI 冷却 30~300s）；
+    # - SQLite 写锁是库级的，并发写只会排队，再高也压不出吞吐。
+    # 设为 1 即退回串行（排障用）。
+    AI_FILL_CONCURRENCY: int = 3
 
     # ---------------- 日志 / 任务 ----------------
     LOG_LEVEL: str = "INFO"

@@ -54,11 +54,25 @@ export function requiresGradeSubject(mode) {
 }
 
 /**
+ * AI 模式下「出题来源」的固定取值。
+ *
+ * AI 一键组卷的语义是**让模型把自然语言翻译成结构化参数，再交给确定性引擎
+ * 从题库抽题**。若允许在这里选「仅使用 AI 生成」，同一请求里就出现了两轮
+ * 模型调用（解析 + 逐大题造题），耗时随大题数线性增长，且题库里明明有同题型
+ * 的题也不会用 —— 用户看到的现象是"选了 AI 组卷，等很久还缺题"。
+ * 因此 AI 模式锁定为「题库优先 + AI 补充」，需要纯 AI 造题时走自定义模式。
+ */
+export const AI_MODE_SOURCE = 'bank_first'
+
+/**
  * 组装组卷请求参数。
  *
  * AI 模式下**不发送** `difficulty_ratio`：界面上的难度滑块此时是禁用的，
  * 一旦发送固定 70/20/10，后端 `/compose/ai` 的「客户端给了就不覆盖」合并逻辑
  * 会把 AI 从描述里解析出的难度顶掉，而用户又改不动滑块 —— 难度既不随描述也不随用户。
+ *
+ * 同理，AI 模式固定发送 `AI_MODE_SOURCE`：界面上的来源下拉在 AI 模式已禁用，
+ * 但用户可能先在自定义模式选了 `ai_only` 再切回来，若原样发送就会绕过禁用。
  */
 export function buildComposePayload(form, { sections, knowledgePointIds = [] } = {}) {
   const isAi = form.mode === 'ai'
@@ -69,7 +83,7 @@ export function buildComposePayload(form, { sections, knowledgePointIds = [] } =
     sections: isAi ? undefined : sections,
     total_score: form.total_score,
     duration: form.duration,
-    source: form.source,
+    source: isAi ? AI_MODE_SOURCE : form.source,
     difficulty_ratio: isAi ? undefined : form.difficulty_ratio,
     knowledge_point_ids: knowledgePointIds,
     avoid_recent: form.avoid_recent,

@@ -212,11 +212,16 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="出题来源">
-              <el-select v-model="form.source" style="width:100%">
+              <el-select v-model="form.source" style="width:100%"
+                         :disabled="form.mode === 'ai'">
                 <el-option label="题库优先 + AI 补充（推荐）" value="bank_first" />
                 <el-option label="仅使用题库" value="bank_only" />
                 <el-option label="仅使用 AI 生成" value="ai_only" />
               </el-select>
+              <span v-if="form.mode === 'ai'" class="unit-hint">
+                AI 组卷固定「题库优先 + AI 补充」：模型只解析参数，抽题走题库；
+                需要纯 AI 造题请切到「自定义参数组卷」
+              </span>
             </el-form-item>
           </el-col>
         </el-row>
@@ -467,7 +472,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -480,6 +485,7 @@ import {
   buildComposePayload as wizardBuildComposePayload,
   requiresGradeSubject,
   isComposeButtonDisabled,
+  AI_MODE_SOURCE,
 } from '@/utils/paperWizard'
 
 const router = useRouter()
@@ -520,6 +526,18 @@ const form = reactive({
 })
 
 const saveForm = reactive({ name: '', description: '', duration: 90, after: 'edit' })
+
+/**
+ * 切到 AI 模式时把「出题来源」归位。
+ *
+ * 下拉在 AI 模式是禁用状态，但用户可能先在自定义模式选了 `ai_only` 再切过来：
+ * 此时控件仍显示「仅使用 AI 生成」，而提交参数已被 `buildComposePayload`
+ * 锁定为 `bank_first` —— 界面与实际行为不一致，用户会以为设置没生效。
+ * 让值跟着模式走，UI 与 payload 始终一致。
+ */
+watch(() => form.mode, (mode) => {
+  if (mode === 'ai') form.source = AI_MODE_SOURCE
+})
 
 const previewItems = ref([])
 const gaps = ref([])

@@ -618,7 +618,228 @@ def run_cases(httpx, api):
           d.get("item_count", 0) == 3 and len(d.get("sections") or []) == 1,
           f"item_count={d.get('item_count')} sections={len(d.get('sections') or [])}")
 
+    run_legacy_cases(httpx, api, loc=locals())
     return not FAILED
+
+
+def run_legacy_cases(httpx, api, loc):
+    """H 组：上一轮登记但未修的 6 项遗留问题的回归断言。
+
+    `loc` 传 `run_cases` 的 `locals()`，直接复用已建好的账号、年级学科、
+    `new_q` / `new_paper` / `post` / `get` —— 避免复制 200 行引导代码。
+    """
+    g7, s7 = loc["g7"], loc["s7"]
+    g_items, subjects_of = loc["g_items"], loc["subjects_of"]
+    HA, HAa, HAb = loc["HA"], loc["HAa"], loc["HAb"]
+    uniq, new_q, new_paper, post, get = (
+        loc["uniq"], loc["new_q"], loc["new_paper"], loc["post"], loc["get"])
+
+    def dele(path, hdr=None):
+        return httpx.delete(f"{api}{path}", headers=hdr or {}, timeout=60)
+
+    def usage_of(qid, tag):
+        """读某题的 usage_count。用列表接口按唯一题干前缀定位（不依赖新加的详情端点）。"""
+        d = data_of(get("/question/questions", HA, {"keyword": tag}).json())
+        for row in (d.get("items") or []):
+            if row.get("id") == qid:
+                return int(row.get("usage_count") or 0)
+        return None
+
+    # ------------------------------------------------ H1 引用计数（usage_count）
+    print("\n=== H1. 题目引用计数（创建/复制/删除/移除/批量删 是否对称）===")
+    tag_a, tag_b, tag_c, tag_d = (f"【计数{i}{uniq}】" for i in "ABCD")
+    qa = new_q(tag_a, HA)
+    qb = new_q(tag_b, HA)
+    qc = new_q(tag_c, HA)
+    qd = new_q(tag_d, HA)
+    check("H1-0 新题初始引用数为 0",
+          all(usage_of(q, t) == 0 for q, t in ((qa, tag_a), (qb, tag_b), (qc, tag_c))),
+          str([usage_of(qa, tag_a), usage_of(qb, tag_b)]))
+
+    p_a = data_of(new_paper(f"计数卷A{uniq}", HAa, items=[
+        {"question_id": qa, "score": 10}, {"question_id": qb, "score": 10}]).json()).get("id")
+    check("H1-1 手动组卷计入引用（修复前恒为 0）",
+          usage_of(qa, tag_a) == 1 and usage_of(qb, tag_b) == 1,
+          f"a={usage_of(qa, tag_a)} b={usage_of(qb, tag_b)}")
+
+    p_b = data_of(new_paper(f"计数卷B{uniq}", HAa,
+                            items=[{"question_id": qa, "score": 10}]).json()).get("id")
+    check("H1-2 同一题进第二份卷 → 2",
+          usage_of(qa, tag_a) == 2, f"a={usage_of(qa, tag_a)}")
+
+    dele(f"/question/papers/{p_b}", HAa)
+    check("H1-3 删除试卷后引用数回落（修复前只增不减）",
+          usage_of(qa, tag_a) == 1, f"a={usage_of(qa, tag_a)}")
+
+    copy_id = data_of(post(f"/question/papers/{p_a}/copy", {}, HAa).json()).get("id")
+    check("H1-4 复制试卷也计入引用",
+          bool(copy_id) and usage_of(qa, tag_a) == 2 and usage_of(qb, tag_b) == 2,
+          f"copy={copy_id} a={usage_of(qa, tag_a)} b={usage_of(qb, tag_b)}")
+
+    detail = data_of(get(f"/question/papers/{copy_id}", HAa).json())
+    copy_items = detail.get("items") or []
+    if copy_items:
+        victim = copy_items[0]
+        dele(f"/question/papers/{copy_id}/items/{victim['paper_item_id']}", HAa)
+        vq_tag = tag_a if victim["question_id"] == qa else tag_b
+        check("H1-5 移除单题后该题引用数 -1",
+              usage_of(victim["question_id"], vq_tag) == 1,
+              f"qid={victim['question_id']} count={usage_of(victim['question_id'], vq_tag)}")
+    else:
+        check("H1-5 移除单题后该题引用数 -1", False, "副本没有题项")
+
+    p_c = data_of(new_paper(f"计数卷C{uniq}", HAa,
+                            items=[{"question_id": qd, "score": 10}]).json()).get("id")
+    check("H1-6 新卷引用题目 D → 1", usage_of(qd, tag_d) == 1, f"d={usage_of(qd, tag_d)}")
+    r = httpx.put(f"{api}/question/papers/{p_c}", headers=HAa, timeout=60,
+                  json={"items": [{"question_id": qc, "score": 10}]})
+    check("H1-7 编辑换题：被移除的题归零、新加的题计入",
+          r.status_code == 200 and usage_of(qd, tag_d) == 0 and usage_of(qc, tag_c) == 1,
+          f"{r.status_code} d={usage_of(qd, tag_d)} c={usage_of(qc, tag_c)}")
+
+    r = post("/question/papers/batch", {"action": "delete", "ids": [copy_id, p_c]}, HAa)
+    check("H1-8 批量删除后引用数同步回落",
+          r.status_code == 200 and usage_of(qc, tag_c) == 0,
+          f"{r.status_code} c={usage_of(qc, tag_c)} {msg_of(r)}")
+
+    # ------------------------------------------------ H2 待审题能否入卷
+    print("\n=== H2. 公共题库待审/下架题不得入卷（本人题不受限）===")
+    tag_draft = f"【待审公共{uniq}】"
+    q_draft = new_q(tag_draft, HAa, bank_type="public")
+    rows = data_of(get("/question/questions", HAa, {"keyword": tag_draft}).json()).get("items") or []
+    is_draft = bool(rows) and rows[0].get("status") == "draft"
+    check("H2-0 教师建公共题被降级为待审核", is_draft,
+          str(rows[0].get("status") if rows else None))
+
+    if is_draft and q_draft:
+        r = new_paper(f"违规卷{uniq}", HAb, items=[{"question_id": q_draft, "score": 10}])
+        check("H2-1 他人待审题入卷被拒（修复前可静默通过）",
+              r.status_code == 400 and "尚未发布" in msg_of(r),
+              f"{r.status_code} {msg_of(r)}")
+
+        r = new_paper(f"本人草稿卷{uniq}", HAa, items=[{"question_id": q_draft, "score": 10}])
+        check("H2-2 本人待审题仍可入卷（保留教师备课合法场景）",
+              r.status_code == 200, f"{r.status_code} {msg_of(r)}")
+
+        r = new_paper(f"管理员卷{uniq}", HA, items=[{"question_id": q_draft, "score": 10}])
+        check("H2-3 管理员不受状态限制", r.status_code == 200, f"{r.status_code} {msg_of(r)}")
+
+        r = post("/question/papers/compose/save", {
+            "name": f"组卷越界{uniq}", "grade_id": g7["id"], "subject_id": s7["id"],
+            "items": [{"question_id": q_draft, "score": 10}],
+        }, HAb)
+        check("H2-4 保存组卷与手动组卷同一口径（都拒）",
+              r.status_code == 400 and "尚未发布" in msg_of(r),
+              f"{r.status_code} {msg_of(r)}")
+    else:
+        skip("H2-1 他人待审题入卷被拒", "教师建公共题未降级为 draft")
+
+    # ------------------------------------------------ H3 单题详情端点
+    print("\n=== H3. 单题详情端点 ===")
+    r = get(f"/question/questions/{qa}", HA)
+    d = data_of(r.json())
+    check("H3-1 公共题详情可读且含题干",
+          r.status_code == 200 and tag_a in str(d.get("stem") or ""),
+          f"{r.status_code} {str(d.get('stem'))[:40]}")
+
+    r = get(f"/question/questions/{qa}", HA, {"include_answer": "false"})
+    d = data_of(r.json())
+    check("H3-2 include_answer=false 时不返回答案与解析",
+          r.status_code == 200 and d.get("answer") is None and d.get("analysis") is None,
+          f"{r.status_code} answer={d.get('answer')!r}")
+
+    r = get(f"/question/questions/{loc['q_priv_b']}", HAa)
+    check("H3-3 他人私有题详情 403（防猜 id 枚举）",
+          r.status_code == 403, f"{r.status_code} {msg_of(r)}")
+
+    r = get("/question/questions/99999999", HA)
+    check("H3-4 不存在的题目 404", r.status_code == 404, str(r.status_code))
+
+    # ------------------------------------------------ H4 分值缩放不留小数
+    print("\n=== H4. 卷面分值整数分配 ===")
+    def preview_scores(sections, total_score):
+        r = post("/question/papers/compose/preview", {
+            "grade_id": g7["id"], "subject_id": s7["id"], "sections": sections,
+            "source": "bank_only", "total_score": total_score, "avoid_recent": False,
+        }, HAa, timeout=120)
+        d = data_of(r.json())
+        return r, [i.get("score") for i in (d.get("items") or [])]
+
+    sec3 = [{"code": "single", "name": "单选题", "count": 3,
+             "score_per": 5, "difficulty": "medium"}]
+    r, scores = preview_scores(sec3, 100)
+    check("H4-1 目标总分 100 时每题都是整数（修复前为 33.33/33.33/33.34）",
+          r.status_code == 200 and len(scores) == 3
+          and all(float(x) == int(float(x)) for x in scores), str(scores))
+    check("H4-2 合计精确等于目标总分", abs(sum(float(x) for x in scores) - 100) < 1e-6,
+          str(sum(float(x) for x in scores)))
+
+    sec2 = [{"code": "single", "name": "单选题", "count": 2,
+             "score_per": 5, "difficulty": "medium"}]
+    r, scores = preview_scores(sec2, 90)
+    check("H4-3 90 分 2 题 → 45/45（无尾差）",
+          r.status_code == 200 and scores == [45.0, 45.0], str(scores))
+
+    r, scores = preview_scores(sec2, 90.5)
+    check("H4-4 目标带小数时落在 0.5 分网格上（无 45.25 这类尾数）",
+          r.status_code == 200
+          and abs(sum(float(x) for x in scores) - 90.5) < 1e-6
+          and all(abs(float(x) * 2 - round(float(x) * 2)) < 1e-9 for x in scores),
+          str(scores))
+
+    sec_half = [{"code": "single", "name": "单选题", "count": 2,
+                 "score_per": 2.5, "difficulty": "medium"}]
+    r, scores = preview_scores(sec_half, 100.5)
+    check("H4-5 原分值 2.5 分时按 0.5 网格分配（50.5 + 50.0）",
+          r.status_code == 200 and scores == [50.5, 50.0],
+          str(scores))
+
+    # ------------------------------------------------ H5 知识点缺口显式化
+    print("\n=== H5. 知识点缺失不再静默 ===")
+    empty_pair = None
+    for g in g_items:
+        for s in subjects_of(g["id"]):
+            kd = data_of(get("/edu/knowledge", HA,
+                             {"grade_id": g["id"], "subject_id": s["id"]}).json())
+            kp_rows = kd if isinstance(kd, list) else (kd.get("items") or [])
+            if not kp_rows:
+                empty_pair = (g, s)
+                break
+        if empty_pair:
+            break
+
+    one_sec = [{"code": "single", "name": "单选题", "count": 1,
+                "score_per": 10, "difficulty": "medium"}]
+    if empty_pair:
+        eg, es = empty_pair
+        r = post("/question/papers/compose/preview", {
+            "grade_id": eg["id"], "subject_id": es["id"], "sections": one_sec,
+            "source": "bank_only", "avoid_recent": False,
+        }, HAa, timeout=120)
+        d = data_of(r.json())
+        check("H5-1 无知识点学科组卷返回 knowledge_point_missing=true",
+              r.status_code == 200 and d.get("knowledge_point_missing") is True,
+              f"{r.status_code} flag={d.get('knowledge_point_missing')}")
+        check("H5-2 同步给出可操作提示",
+              "尚未维护知识点" in str(d.get("message") or ""),
+              str(d.get("message"))[:120])
+    else:
+        skip("H5-1 无知识点学科组卷返回 knowledge_point_missing=true",
+             "所有学科都已有知识点")
+
+    kd = data_of(get("/edu/knowledge", HA,
+                     {"grade_id": g7["id"], "subject_id": s7["id"]}).json())
+    kp_rows = kd if isinstance(kd, list) else (kd.get("items") or [])
+    if kp_rows:
+        r = post("/question/papers/compose/preview", {
+            "grade_id": g7["id"], "subject_id": s7["id"], "sections": one_sec,
+            "source": "bank_only", "avoid_recent": False,
+        }, HAa, timeout=120)
+        check("H5-3 有知识点学科不误报",
+              data_of(r.json()).get("knowledge_point_missing") is False,
+              str(data_of(r.json()).get("knowledge_point_missing")))
+    else:
+        skip("H5-3 有知识点学科不误报", "七年级数学无知识点数据")
 
 
 if __name__ == "__main__":

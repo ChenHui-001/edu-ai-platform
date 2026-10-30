@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
 from app.core.exception import BusinessException
 from app.models import KnowledgePoint, Paper, PaperItem, Question
+from app.services.question_usage import recount_usage as _recount_usage
 from app.utils.common import now_local
 
 DIFFICULTY_WEIGHT = {"easy": 0.3, "medium": 0.5, "hard": 0.2}
@@ -113,9 +114,9 @@ class PaperComposerAgent(BaseAgent):
                         section_name=it.get("section_name"),
                     )
                 )
-                q = db.get(Question, it["question_id"])
-                if q:
-                    q.usage_count += 1
+            db.flush()
+            # 引用计数统一重算，不再逐题 +1（重算幂等，避免与其它入口的记账漂移）
+            _recount_usage(db, [it["question_id"] for it in plan["items"]])
             db.commit()
             db.refresh(paper)
 
@@ -327,9 +328,8 @@ class PaperComposerAgent(BaseAgent):
                     section_name=preview[i]["section_name"],
                 )
             )
-            qq = db.get(Question, qid)
-            if qq:
-                qq.usage_count += 1
+            db.flush()
+            _recount_usage(db, {int(qid)})
             db.commit()
             db.refresh(paper)
 

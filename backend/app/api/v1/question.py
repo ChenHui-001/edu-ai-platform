@@ -19,6 +19,10 @@ from app.models import (
     Grade, KnowledgePoint, Notification, Paper, PaperItem, PaperShare, PaperStatus,
     Question, QuestionBankType, QuestionStatus, ShareScope, Subject, Task, User,
 )
+from app.services.question_access import question_usable_error
+from app.services.question_usage import (
+    question_ids_of_paper, question_ids_of_papers, recount_usage as _recount_usage,
+)
 from app.utils.common import PageParams, dictify, ok
 
 router = APIRouter(prefix="/question", tags=["题库与试卷"])
@@ -932,6 +936,40 @@ def export_questions(
     )
 
 
+@router.get("/questions/{q_id}", summary="题目详情")
+def get_question(
+    q_id: int,
+    include_answer: bool = Query(True, description="false 时不返回答案与解析（学生视角）"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_LIST)),
+):
+    """单题详情。
+
+    为什么补这个端点：题项编辑原先只能整卷 `GET /papers/{id}` 拉全量再挑一条，
+    大题量卷子编辑一道题要传回上百条题目（含全部答案与解析）。详情端点让
+    前端按需取一条，也给学生端一个"只看这一题、不含答案"的口径。
+
+    鉴权与列表保持同一口径（`_visibility_clause`）：列表能看到的才允许看详情，
+    否则会出现"列表里没有、猜 id 就能读"的枚举漏洞。
+    """
+    q = db.get(Question, q_id)
+    if not q:
+        raise NotFoundException("题目不存在")
+    if not (
+        _is_sys_admin(user)
+        or q.bank_type == QuestionBankType.PUBLIC.value
+        or q.owner_id == user.id
+    ):
+        raise PermissionException("无权查看该题目")
+
+    data = _question_out(q, _kp_name_map(db, [q]))
+    if not include_answer:
+        # 选项里可能内嵌"以上都对"之类线索，但答案本身只在这两个字段里
+        data["answer"] = None
+        data["analysis"] = None
+    return ok(data)
+
+
 # ---------------------------------------------------------------- 试卷
 def _clean_str(value: Any) -> Optional[str]:
     if value is None:
@@ -1018,11 +1056,12 @@ def _normalize_paper_items(
         q = db.get(Question, qid)
         if not q:
             raise BusinessException(f"题目不存在或已删除（id={qid}）")
-        # 可访问题目：公共题库或本人私有（共享试卷不扩大题库权限）
-        if not _is_sys_admin(user) and not (
-                q.bank_type == QuestionBankType.PUBLIC.value
-                or q.owner_id == user.id):
-            raise BusinessException(f"无权使用题目（id={qid}）：仅可选公共题或本人私有题")
+        # 可用性判定收口到 services.question_access：原来这里只判"公共库 or 本人私有"，
+        # 不看 status，导致公共库里待审核（draft）/已下架（offline）的题也能被塞进卷子。
+        err = question_usable_error(
+            q, user_id=user.id, is_admin=_is_sys_admin(user))
+        if err:
+            raise BusinessException(err)
         if q.grade_id != grade_id or q.subject_id != subject_id:
             raise BusinessException(f"题目年级/学科与试卷不一致（id={qid}）")
         try:
@@ -1274,6 +1313,7 @@ def batch_papers(
                 Task.paper_id.in_([p.id for p in papers])
             ).group_by(Task.paper_id)
         ).all())
+        deleted_ids: List[int] = []
         for p in papers:
             ref = int(ref_counts.get(p.id, 0) or 0)
             if ref:
@@ -1283,7 +1323,14 @@ def batch_papers(
                 })
                 continue
             db.delete(p)
+            deleted_ids.append(p.id)
             done.append(p.id)
+        if deleted_ids:
+            # 删除前必须先取题目 id：题项随试卷级联删除后无法反查，
+            # 漏掉这一步这些题的 usage_count 会永久停在旧值（批量删更明显）。
+            touched = question_ids_of_papers(db, deleted_ids)
+            db.flush()
+            _recount_usage(db, touched)
     elif action == "copy":
         for p in papers:
             new = _copy_paper_row(db, p, user)
@@ -1369,6 +1416,10 @@ def create_paper(
             paper_id=paper.id, question_id=item["question_id"],
             sort_order=i, score=item["score"], section_name=item["section_name"],
         ))
+    db.flush()
+    # 手动组卷也要计入引用：此前这条路径完全不写 usage_count，
+    # 导致手工卷里的题永远算"没用过"，组卷「少用优先」把它们反复抽中。
+    _recount_usage(db, [item["question_id"] for item in items])
     db.commit()
     db.refresh(paper)
     return ok({"id": paper.id, "name": paper.name, "total_score": paper.total_score},
@@ -1467,7 +1518,12 @@ def delete_paper(
             f"该试卷已被 {task_count} 个作业/考试引用，删除会连同学生作答与成绩一起丢失；"
             "请先删除相关任务或改为停用"
         )
+    # 先快照引用的题目：删完题项就查不到了，而计数必须覆盖"被删掉的这些题"
+    referenced = question_ids_of_paper(db, paper_id)
     db.delete(paper)
+    db.flush()
+    # 删除前已记下该卷引用的题目；删除后重算，让不再被任何卷引用的题归零。
+    _recount_usage(db, referenced)
     db.commit()
     return ok(message="试卷已删除")
 
@@ -1514,6 +1570,9 @@ def _copy_paper_row(db: Session, src: Paper, user: User, name: Optional[str] = N
         ))
         total += float(it.score or 0)
     new.total_score = round(total, 2)
+    # 副本同样引用这些题，计数要跟上（旧实现完全不写，复制 N 次也不计入）
+    db.flush()
+    _recount_usage(db, [it.question_id for it in src.items])
     return new
 
 

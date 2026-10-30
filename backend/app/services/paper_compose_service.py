@@ -534,19 +534,71 @@ def _pick_for_section(
     return picked
 
 
+def _on_grid(value: float, unit: float) -> bool:
+    """value 是否是 unit 的整数倍（浮点容差内）。"""
+    return abs(value / unit - round(value / unit)) < 1e-9
+
+
+def _distribute_on_grid(items: List[Dict[str, Any]], target: float, unit: float) -> None:
+    """最大余数法：把 target 按原分值比例分成 unit 的整数倍，合计**精确**等于 target。
+
+    先按比例取整（floor），再把差额按小数部分从大到小每个补一个 unit。
+    余数相同按原顺序，保证同参数重复调用结果一致。
+    """
+    current = sum(float(i["score"]) for i in items)
+    factor = target / current
+    exact = [float(i["score"]) * factor / unit for i in items]
+    floors = [int(math.floor(x + 1e-9)) for x in exact]
+    order = sorted(range(len(items)), key=lambda idx: (-(exact[idx] - floors[idx]), idx))
+    diff = int(round(target / unit)) - sum(floors)
+    if diff > 0:
+        for idx in order[:diff]:
+            floors[idx] += 1
+    elif diff < 0:
+        # 浮点误差可能让 floor 之和超出 1 个单位，从余数最小的往回退
+        for idx in reversed(order[: -diff]):
+            if floors[idx] > 0:
+                floors[idx] -= 1
+    for idx, value in enumerate(floors):
+        items[idx]["score"] = round(max(0.0, value * unit), 2)
+
+
 def _rescale_scores(items: List[Dict[str, Any]], target_total: float) -> None:
     """把卷面总分调整到 target_total，按原分值比例缩放。
 
     只改 score 不动题目：教师改"试卷总分"时不应清空已选题目。
+
+    **按"分值网格"分配，不产生无意义的尾数**：直接比例缩放会把 3 道 5 分题
+    摊成 6.67/6.67/6.66，卷面上出现"值 6.67 分"的题既不常见也无法心算核对。
+    这里按网格取整后补齐差额：
+
+    - 原分值全为整数、目标也是整数 → 以 **1 分**为网格；
+    - 否则若都能落在 **0.5 分**上 → 以 0.5 分为网格（0.5 分小题是常见卷面口径）；
+    - 更细（0.25 等）或题量多于总分（网格分配必然出现 0 分题）→ 退回比例法。
+
+    合计始终**精确**等于目标总分，不靠"把误差丢给最后一题"。
     """
     current = sum(float(i["score"]) for i in items)
     if current <= 0 or abs(current - target_total) < 0.01:
         return
-    factor = target_total / current
+    target = float(target_total)
+    originals = [float(i["score"]) for i in items]
+
+    for unit in (1.0, 0.5):
+        if not _on_grid(target, unit):
+            continue
+        if any(not _on_grid(s, unit) for s in originals):
+            continue
+        # 网格分配要求每题至少 1 个 unit，否则必然有题被压成 0 分
+        if int(round(target / unit)) < len(items):
+            continue
+        _distribute_on_grid(items, target, unit)
+        return
+
+    factor = target / current
     for it in items:
         it["score"] = round(float(it["score"]) * factor, 2)
-    # 缩放误差补到最后一题，保证合计精确
-    drift = round(target_total - sum(float(i["score"]) for i in items), 2)
+    drift = round(target - sum(float(i["score"]) for i in items), 2)
     if drift and items:
         items[-1]["score"] = round(float(items[-1]["score"]) + drift, 2)
 
