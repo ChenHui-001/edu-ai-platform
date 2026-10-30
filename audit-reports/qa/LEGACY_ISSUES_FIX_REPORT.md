@@ -714,3 +714,78 @@ Linux 上 onnxruntime 在 native 层 abort（SIGABRT = 134）。Windows 上退�
 
 > 2.2.6 因上述退出码问题**未投产**（镜像已构建但不具备"CI 全绿"的发布资格）；
 > 生产从 2.2.5 直接升到 2.2.7。
+
+---
+
+## 九、空基线开关：让「只剩账号」成为可持久化的状态
+
+### 9.1 问题
+
+清库脚本把学科、知识点、命题标准删空之后，**容器一重启就全回来了**：
+
+| 函数 | 播种条件 | 后果 |
+|---|---|---|
+| `init_grades_subjects` | 学科表为空就播 59 条 | 重启重建 |
+| `init_knowledge_points` | 知识点表为空就播 323 条 | 重启重建 |
+| `init_exam_standards` | 靠 `sys_config` 标记位 | 不会重建（标记还在） |
+
+也就是说「删数据」只能得到一次性的空环境，任何一次重启/部署都会把它冲掉。
+QA 需要的是**可复现的空基线**，不是"删完赶紧看，别重启"。
+
+### 9.2 方案
+
+新增 `settings.SEED_BASE_DATA`（默认 `true`，保持既有行为），在三处播种前判断：
+
+```python
+if not settings.SEED_BASE_DATA:
+    logger.info("SEED_BASE_DATA=false，跳过学科初始化（保留空基线）")
+    return
+```
+
+**年级不受此开关影响**，始终播种 —— `sys_user.grade_id` 是非空外键，没有年级
+连账号都建不出来（删年级还会级联删账号）。这是"只剩账号"的硬边界：
+账号可以留，但它必须依附的年级必须留。
+
+部署侧：`deploy_run.py` 从仓库 `.env` 读 `SEED_BASE_DATA`（缺省 `true`），
+以 `-e SEED_BASE_DATA=...` 传给容器。生产 `.env` 里写 `false` 后，
+每次部署/重启都保持空基线；改回 `true` 并重启即刻恢复学科与知识点。
+
+### 9.3 验证（`tools/verify_empty_baseline.py`，12 项）
+
+```
+A1 年级照常播种（账号的 grade_id 依赖它）   {'user': 1, 'grade': 9, 'subject': 0, 'kp': 0, 'standard': 0}
+A2 学科为空（开关生效）                     0
+A3 知识点为空                               0
+A4 命题标准为空                             0
+A5 只有出厂管理员（SEED_DEMO_DATA=false）   1
+A6 管理员可登录（空基线不影响认证）         200
+A7 /edu/subjects 返回空数组（前端不会 500） 200 n=0
+A8 /edu/grades 仍有 9 条                    9
+B1 重启后学科仍为 0（开关挡住「空表就播种」）0     ← 核心
+B2 重启后知识点仍为 0                       0
+B3 重启后命题标准仍为 0                     0
+B4 重启不会重复建账号                       1
+```
+
+B 组通过**连续两次进入 lifespan** 模拟容器重启 —— 这条最容易回归：
+只要有人把某个 `if not settings.SEED_BASE_DATA` 删掉，学科就会被灌回来，CI 立刻红。
+
+### 9.4 代价（必须说清楚）
+
+关掉之后，教师端登录**看不到学科**，组卷/出题/布置作业全部不可用；
+学生端也没有课程。这是"能登录"而不是"能体验功能"。适合空基线验证与
+性能/权限压测，不适合当演示环境 —— 要演示就把 `.env` 改回 `true` 重启。
+
+### 9.5 回归
+
+| 套件 | 结果 |
+|---|---|
+| `verify_empty_baseline.py`（新） | 12 项全通过 |
+| `verify_paper_module.py` | 106 项全通过（显式 `SEED_BASE_DATA=true`，否则无学科可组卷） |
+| `verify_kp_import.py` / `verify_ai_fill_parallel.py` | 13 / 13 全通过 |
+| `verify_paper_v3` / `manage` | 63 / 57 全通过 |
+| 五道静态门禁 | 全绿 |
+
+> 注意：仓库 `.env` 设了 `false` 之后，**所有需要学科的本地脚本都必须显式
+> `SEED_BASE_DATA=true`**（四个起服务的脚本已加），否则会在"无学科"的前提下
+> 跑出一片红 —— 这不是产品缺陷，是环境配置串了。

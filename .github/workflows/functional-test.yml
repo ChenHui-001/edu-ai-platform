@@ -169,6 +169,12 @@ jobs:
         # 这三类会让掌握度统计重复计数、按 path 查子树漏数据。
         run: python tools/audit_kp_quality.py --strict --limit 5
 
+      - name: 空基线开关校验（SEED_BASE_DATA=false，12 项断言）
+        # 锁住"只有账号、没有学科"的空环境：① 年级照播、学科/知识点/标准为空；
+        # ② **连续两次 lifespan 后仍为空**（这条最易回归 —— 谁把开关判断删了，
+        #    学科会被「空表就播种」灌回来）；③ 账号仍可登录。
+        run: python tools/verify_empty_baseline.py
+
       - name: 汇总结果并判定
         run: |
           python - <<'PY'

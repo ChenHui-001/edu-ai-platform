@@ -65,7 +65,7 @@ def main():
     env.update({
         "DATABASE_URL": f"sqlite:///{db_path}",
         "LLM_ENABLED": "false",
-        "RAG_WARMUP_ENABLED": "false",
+        "RAG_WARMUP_ENABLED": "false", "SEED_BASE_DATA": "true",
         "SECRET_KEY": "verify-v3-secret-key-0123456789abcdef",
         "ENV": "test",
         # S7 起登录强制图形验证码，测试脚本无法取码 → 必须显式关闭，

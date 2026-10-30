@@ -34,6 +34,8 @@ os.environ.update({
     # 进程退出时被强杀会让 Linux 上的解释器 abort（exit code 134）。
     # 本脚本只用 TestClient 打 API，不需要向量检索。
     "RAG_WARMUP_ENABLED": "false",
+    # 本脚本要验证知识点导入，必须有学科（.env 里可能是空基线）
+    "SEED_BASE_DATA": "true",
     "APP_VERSION": "test",
     "SECRET_KEY": "kp-import-test-key-0123456789abcdef0123456789",
 })

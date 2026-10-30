@@ -351,12 +351,21 @@ def init_roles(db: Session) -> None:
 
 
 def init_grades_subjects(db: Session) -> None:
-    """初始化 1-9 年级与对应学科。"""
+    """初始化 1-9 年级与对应学科。
+
+    年级**总是**播种（`sys_user.grade_id` 是非空外键，没有年级就建不了账号，
+    删年级还会级联删账号）；学科受 `settings.SEED_BASE_DATA` 控制 —— 关掉后
+    学科表保持为空，知识点与命题标准随之为空，得到「只有账号」的空基线。
+    """
     if db.scalar(select(func.count()).select_from(Grade)) == 0:
         for name, stage, num in GRADES:
             db.add(Grade(name=name, stage=stage, grade_num=num, sort=num))
         db.commit()
         logger.info("年级初始化完成（1-9 年级）")
+
+    if not settings.SEED_BASE_DATA:
+        logger.info("SEED_BASE_DATA=false，跳过学科初始化（保留空基线）")
+        return
 
     if db.scalar(select(func.count()).select_from(Subject)) == 0:
         grades = {g.grade_num: g for g in db.scalars(select(Grade)).all()}
@@ -493,6 +502,9 @@ def init_knowledge_points(db: Session) -> None:
     知识点是 AI 组卷、错题归因、掌握地图的共同基础；空表才播种，
     已有数据（管理员/教师维护或导入）一律不覆盖。
     """
+    if not settings.SEED_BASE_DATA:
+        logger.info("SEED_BASE_DATA=false，跳过知识点初始化（保留空基线）")
+        return
     if db.scalar(select(func.count()).select_from(KnowledgePoint)) or 0:
         return
     grades = {g.grade_num: g for g in db.scalars(select(Grade)).all()}
@@ -748,6 +760,13 @@ def init_exam_standards(db: Session) -> None:
     知识点，但演示数据里的试卷可能引用标准，顺序上不能颠倒。
     管理员之后在后台改的标准**不会被后续升级覆盖**——播种函数有标记位。
     """
+    if not settings.SEED_BASE_DATA:
+        # 命题标准的标记位在 sys_config（exam_standard_seed_v1），只删标准表
+        # 不会让它在重启时复活；但在**空库**上必须也跳过，否则空基线里会凭空
+        # 多出 10 条标准，与"没有学科"自相矛盾。
+        logger.info("SEED_BASE_DATA=false，跳过命题标准初始化（保留空基线）")
+        return
+
     from app.services.exam_standard_seed import seed_exam_standards
 
     result = seed_exam_standards(db)

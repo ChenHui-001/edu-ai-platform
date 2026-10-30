@@ -70,7 +70,7 @@ def main():
 
     env = dict(os.environ)
     env.update({
-        "LLM_ENABLED": "false", "RAG_WARMUP_ENABLED": "false", "APP_VERSION": "2.1.1",
+        "LLM_ENABLED": "false", "RAG_WARMUP_ENABLED": "false", "SEED_BASE_DATA": "true", "APP_VERSION": "2.1.1",
         "DATABASE_URL": f"sqlite:///{db_path}",
         "SECRET_KEY": "paper-manage-test-key-0123456789",
         "TZ": "Asia/Shanghai",
