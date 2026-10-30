@@ -201,7 +201,7 @@
       "path": "/system/version",
       "own_status": 200,
       "status": "PASS",
-      "detail": "{\"app_name\": \"新芽学堂\", \"version\": \"2.2.2\", \"build_number\": \"\", \"commit\": \"\", \"built_at\": \"\", \"updated_at\": \"2026-10-30 09:"
+      "detail": "{\"app_name\": \"新芽学堂\", \"version\": \"2.2.4\", \"build_number\": \"\", \"commit\": \"\", \"built_at\": \"\", \"updated_at\": \"2026-10-30 11:"
     },
     {
       "id": "FUNC-CFG",

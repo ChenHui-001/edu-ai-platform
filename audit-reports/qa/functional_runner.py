@@ -59,6 +59,26 @@ def _get(url, token, timeout=20):
     return last
 
 
+def _put(url, body, token=None, timeout=20):
+    """改密接口是 PUT /auth/password：用 POST 打会得到 405，
+    表现为"强制改密没生效 → 后续业务接口全 403"，很容易被误判成权限缺陷。"""
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="PUT",
+                                 headers={"Content-Type": "application/json"})
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8") or "{}")
+        except Exception:
+            return e.code, {}
+    except Exception as e:  # noqa
+        return -1, {"error": str(e)}
+
+
 # 端点可达即算通过：服务端已路由并响应（200/鉴权/需参均非缺陷）。
 # 仅 404(路径错)/500(服务端错误)/持续 -1(连接失败) 判 FAIL。
 REACHABLE = {200, 400, 401, 403, 422, 429}
@@ -83,8 +103,8 @@ def login(base, role):
         pst, pbody = _get(f"{base}{probe}", token)
         if pst == 403 and "修改密码" in str((pbody or {}).get("message", "")):
             newpwd = pwd + "Xy9!"  # 与原口令不同且仍满足策略（字母+数字+符号）
-            cs, _ = _post(f"{base}/auth/password",
-                          {"old_password": pwd, "new_password": newpwd}, token=token)
+            cs, _ = _put(f"{base}/auth/password",
+                         {"old_password": pwd, "new_password": newpwd}, token=token)
             if cs == 200:
                 st2, body2 = _post(f"{base}/auth/login", {"username": user, "password": newpwd})
                 if st2 == 200 and body2.get("data", {}).get("access_token"):
