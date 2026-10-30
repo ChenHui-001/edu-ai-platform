@@ -236,11 +236,14 @@ def run_cases(httpx, api):
     # 乙教师的私有题**先建**：id 最小，旧版抽题（按 usage_count desc→id asc）
     # 会优先抽到它 —— 这是"组卷抽到他人私有题"缺陷的复现前提。
     q_priv_b = new_q(f"【私有·乙】{uniq} 私有题", HAb, bank_type="private")
-    pub = [new_q(f"【公共·{uniq}】单选 {i}", HA) for i in range(1, 7)]
+    # 填空题**故意建在单选题之前**：它的 id 更小。若缺口丢失大题顺序（sort=0），
+    # `_renumber` 只能按题号排，"填空题"会跑到"单选题"前面 —— 这条数据布局
+    # 让顺序缺陷必然暴露，而不是靠运气。
     q_blank = new_q(f"【公共·{uniq}】填空题", HA, qtype="blank", answer="2")
-    check("题库准备（1 私有 + 6 单选 + 1 填空）",
-          bool(q_priv_b) and all(pub) and bool(q_blank),
-          f"priv={q_priv_b} pub={pub} blank={q_blank}")
+    pub = [new_q(f"【公共·{uniq}】单选 {i}", HA) for i in range(1, 7)]
+    check("题库准备（1 私有 + 1 填空 + 6 单选）",
+          bool(q_priv_b) and bool(q_blank) and all(pub),
+          f"priv={q_priv_b} blank={q_blank} pub={pub}")
     # 教师建公共题会被强制降级为 draft（防自行上架），这里顺带确认该守卫仍在
     new_q(f"【教师建·{uniq}】公共题", HAa, bank_type="public")
     rr = get("/question/questions", HAa, {"keyword": f"【教师建·{uniq}】"})
@@ -578,6 +581,25 @@ def run_cases(httpx, api):
 
     r = post("/question/papers/compose/preview", {**body, "source": "bogus"}, HAa)
     check("非法出题来源被拒", r.status_code == 400, f"{r.status_code} {msg_of(r)}")
+
+    # 多题型全 AI：大题顺序必须与请求的结构一致，不能被题号顺序带偏
+    sec2 = [
+        {"code": "single", "name": "单选题", "count": 2, "score_per": 10,
+         "difficulty": "medium", "sort": 1},
+        {"code": "blank", "name": "填空题", "count": 1, "score_per": 10,
+         "difficulty": "medium", "sort": 2},
+    ]
+    r = post("/question/papers/compose/preview",
+             {"grade_id": g7["id"], "subject_id": s7["id"], "sections": sec2,
+              "source": "ai_only", "avoid_recent": False}, HAa, timeout=180)
+    d = data_of(r.json())
+    codes = [i.get("section_code") for i in (d.get("items") or [])]
+    check("多题型 AI 补题后大题顺序与请求一致（不被题号带偏）",
+          r.status_code == 200 and codes == ["single", "single", "blank"],
+          f"{r.status_code} codes={codes}")
+    names = [i.get("section_name") for i in (d.get("items") or [])]
+    check("大题序号按结构生成（一、二、而非全是一、）",
+          names[:1] == ["一、单选题"] and names[-1:] == ["二、填空题"], str(names))
 
     kp = data_of(get("/edu/knowledge", HA,
                      {"grade_id": g9["id"], "subject_id": s9["id"]}).json())

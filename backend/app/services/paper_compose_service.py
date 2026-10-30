@@ -376,6 +376,10 @@ def compose(
                 "need": int(sec["count"]), "got": 0,
                 "score_per": sec["score_per"],
                 "difficulty": sec.get("difficulty", "medium"),
+                # sort 必须带上：上层调 AI 补题后要按它定大题顺序，
+                # 缺了会全部落到默认 0，`_renumber` 只能改按题号排，
+                # 于是「二、填空题」的题可能因为 id 更小而变成「一、填空题」。
+                "sort": sec.get("sort", 0),
             })
         return plan
 
@@ -444,6 +448,8 @@ def compose(
                 "need": want, "got": len(picked),
                 "score_per": score_per,
                 "difficulty": sec_difficulty,
+                # 同上：缺口要记住自己属于第几大题，补题时才能排回原位
+                "sort": sec.get("sort", 0),
             })
 
     # 卷面总分与标准总分不符时，按比例把差额摊到各题（保持题型内均分）

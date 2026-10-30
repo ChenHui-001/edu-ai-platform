@@ -235,6 +235,7 @@ difficulty 取值：easy / medium / hard"""
         count = kwargs.get("count", 5)
         kp_id = kwargs.get("knowledge_point_id")
         owner_id = kwargs.get("user_id")
+        want_type = kwargs.get("question_type")
 
         stmt = select(Question).where(
             Question.subject_id == subject_id,
@@ -253,6 +254,11 @@ difficulty 取值：easy / medium / hard"""
                 ))
             else:
                 stmt = stmt.where(Question.bank_type == "public")
+        # 题型必须匹配：调用方要 3 道单选题时，旧实现会把题库里排在前面的
+        # 填空题一起 `limit(3)` 出来，白占配额——上层过滤后只剩 1~2 道，
+        # 表现为"要 3 题只给 2 题"，且混进别的大题还会把卷面结构搞乱。
+        if want_type:
+            stmt = stmt.where(Question.type == str(want_type))
         if kp_id:
             stmt = stmt.where(Question.knowledge_point_id == kp_id)
         rows = db.scalars(stmt.limit(count)).all()

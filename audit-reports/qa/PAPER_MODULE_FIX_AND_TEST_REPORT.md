@@ -11,10 +11,10 @@
 
 | 项 | 结果 |
 |---|---|
-| 修复缺陷 | 5 项（1 项 P0 功能失效、2 项越权泄露、1 项状态/结构丢失、1 项列表越界） |
-| 新增校验脚本 | `tools/verify_paper_module.py`（78 项断言，自起服务自建库，可独立运行） |
-| 覆盖维度 | 正常 28 项 / 异常 38 项 / 边界 8 项 / 越权与隔离 4 项 |
-| 本次执行结果 | `verify_paper_module` 78/78、`verify_paper_v3` 63/63、`verify_paper_manage` 57/57、`verify_compose_engine` 全通过 |
+| 修复缺陷 | 5 项（1 项 P0 功能失效、2 项越权泄露、1 项状态/结构丢失、1 项列表越界）+ 1 项 CI 从未启动 |
+| 新增校验脚本 | `tools/verify_paper_module.py`（80 项断言，自起服务自建库，可独立运行） |
+| 覆盖维度 | 正常 30 项 / 异常 38 项 / 边界 8 项 / 越权与隔离 4 项 |
+| 本次执行结果 | `verify_paper_module` 80/80、`verify_paper_v3` 63/63、`verify_paper_manage` 57/57、`verify_compose_engine` 全通过；CI（ubuntu-latest）上 80 项同样全通过 |
 | 静态门禁 | 5 道全绿（硬编码地址 / 恒真断言 / 时间契约 / 模型写外键 / ruff F·E9） |
 | 未解决（已登记） | 6 项，均不阻塞发布，见第五节 |
 
@@ -30,6 +30,8 @@
   - 新增 `_ai_fill_gaps()`：按**大题逐个**调用现成的 `QuestionGeneratorAgent`（`question_type` 取该大题题型、`count` 取该题缺口数），生成的题以 `draft` 入库并回填 id，再按该大题的分值/序号组装进 `plan.items`，刷新 `got`、保留未填满的缺口。
   - 为什么要"逐大题"而不是"按总题量一次性补"：Agent 单次调用只产一种题型，混着补会把单选题塞进"填空题"大题。填充时按 `question_type` 二次校验，题型不符直接丢弃。
   - 填充时校验题目可用性（`public` 或 `owner_id == 当前用户`），避免"预览看得到、保存报无权限"。
+  - 缺口字典补上 `sort`（大题序号）：不带它时补题结果全部落到 `section_sort=0`，`_renumber` 只能退化为按题号排序，于是「二、填空题」可能因为题目 id 更小而变成「一、填空题」，大题顺序与命题标准不一致。
+  - 降级 `fallback()` 补题型过滤：它原本不按 `question_type` 筛选，`limit(3)` 会把填空题也算进"3 道单选题"的配额，上层过滤后只剩 1~2 道（表现为"要 3 题只给 2 题"）。
   - 接线：`_compose_from_payload()` 在 `source != bank_only` 且存在缺口且调用方未自带 items 时触发补题；若 `total_score` 有指定值，补题后按比例 `_rescale_scores` 到目标总分。
   - `ai_only` 补完仍无题时，从"静默返回空卷"改为明确报错（含补题失败原因），提示改用「题库优先 + AI 补充」或先录题。
   - 补题过程说明（补了几题 / 哪一大题还缺几题 / 失败原因）随 `message` 透传到前端，不再静默。
@@ -68,6 +70,13 @@
 - **修复**：两个脚本的启动 env 显式注入这两个开关（仅测试进程内生效，不影响生产默认值）。
 - **验证**：修复后 `verify_paper_v3` 63/63、`verify_paper_manage` 57/57 全部通过。
 
+### D6 · 功能回归 CI 从未真正启动过（P1，红灯被当噪音）
+
+- **现象**：`.github/workflows/functional-test.yml` 每次 push 都显示失败，但点进去**没有任何 job**，只有一句"workflow 配置有误"。此前连续 3 次推送（2.2.3 起）都是这个状态，被当成"测试本来就红"忽略。
+- **根因**：workflow 级 `env` 里写了 `DATABASE_URL: sqlite:///${{ runner.temp }}/...`。**`runner.*` 上下文在 workflow 级 env 不可用**，GitHub 在解析阶段就返回 422，于是只留下一个 0 job 的 failure 记录。另外 `functional_runner` 改密用了 `POST /auth/password`，而该接口是 `PUT` → 405，强制改密闭环失效后所有业务接口 403，会进一步被误读成权限缺陷。
+- **修复**：`DATABASE_URL` 改为绝对路径 `/tmp/func_regression.db`；执行器新增 `_put()` 并用于改密；工作流新增一步执行 `tools/verify_paper_module.py`（80 项），让这个 job 真正覆盖业务语义而不只是"路由存在"。
+- **验证**：先在临时分支 `ci/selftest` 上用 `workflow_dispatch` 自检（dispatch 接口 422 → 204 即证明解析通过），两个 job 全部 success，其中「试卷模块完整功能校验」在 ubuntu-latest 上同样全部通过；确认后再推 master。
+
 ---
 
 ## 三、测试范围与覆盖矩阵
@@ -97,19 +106,24 @@
 ### F. 删除（7 项）
 非创建者 403；被任务引用的卷拒绝删除（并提示引用数）；删除无引用副本成功 + 后续 404；批量删除含非本人卷整体 403；批量删除中被引用卷进 `skipped` 而非静默删除；非法 action 400。
 
-### G. 组卷（9 项）
-题库优先抽到 3 题；不抽他人私有题；保存落库；**仅 AI 生成能出 3 题**；AI 补题题型与大题一致；补题说明透传；仅 AI 生成可保存；非法来源 400；跨年级知识点 400；保存后可按大题预览。
+### G. 组卷（11 项）
+题库优先抽到 3 题；不抽他人私有题；保存落库；**仅 AI 生成能出 3 题**；AI 补题题型与大题一致；补题说明透传；仅 AI 生成可保存；非法来源 400；**多题型 AI 补题后大题顺序与请求一致**；**大题序号按结构生成（一、二、而非全是一、）**；跨年级知识点 400；保存后可按大题预览。
+
+> 顺序相关的两条断言用"填空题 id 小于单选题"的数据布局来构造：缺口若丢失 `sort`，题号排序必然把填空题顶到前面，断言立即失败——不依赖运气。
 
 ---
 
 ## 四、执行结果
 
 ```
-tools/verify_paper_module.py    全部通过：78 项
+tools/verify_paper_module.py    全部通过：80 项
 tools/verify_paper_v3.py        通过 63 项，失败 0 项
 tools/verify_paper_manage.py    全部通过：57 项（试卷管理缺陷回归）
 tools/verify_compose_engine.py  全部通过（含 ai_only/bank_only 来源策略、分值缩放、跨年级隔离）
 静态门禁                         5/5 PASS（含 ruff --select F,E9 无告警）
+GitHub Actions「功能回归测试」    validate-cases + run-suite 两个 job 全绿
+                                 （run-suite 内 20 项接口冒烟 + 80 项试卷模块校验，Linux 环境）
+GitHub Actions「CI」             后端检查 / 前端构建 全绿
 ```
 
 ---
