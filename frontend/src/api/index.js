@@ -71,7 +71,9 @@ export const eduApi = {
   updateClass: (id, data) => request.put(`/edu/classes/${id}`, data),
   deleteClass: (id) => request.delete(`/edu/classes/${id}`),
   importStudents: (id, students) => request.post(`/edu/classes/${id}/students`, students),
-  removeStudent: (cid, sid) => request.delete(`/edu/classes/${cid}/students/${sid}`)
+  removeStudent: (cid, sid) => request.delete(`/edu/classes/${cid}/students/${sid}`),
+  // 任课总览：年级 × 学科 → 任教教师（grade_admin 只返回本年级）
+  teachingMatrix: (params) => request.get('/edu/teaching-matrix', { params })
 }
 
 // ---------------- 知识点 V2（树 / 批量 / 导入导出） ----------------

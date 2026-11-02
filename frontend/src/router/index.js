@@ -37,6 +37,8 @@ const routes = [
         meta: { title: '知识点管理', icon: 'Share', perm: 'resource:knowledge:list' } },
       { path: 'admin/classes', name: 'ClassManage', component: () => import('@/views/admin/ClassManage.vue'),
         meta: { title: '班级管理', icon: 'OfficeBuilding', perm: 'resource:class:list' } },
+      { path: 'admin/teaching-matrix', name: 'TeachingMatrix', component: () => import('@/views/admin/TeachingMatrix.vue'),
+        meta: { title: '任课总览', icon: 'Reading', perm: 'resource:teaching:list' } },
       { path: 'admin/logs', name: 'LogManage', component: () => import('@/views/admin/LogManage.vue'),
         meta: { title: '日志审计', icon: 'Document', roles: ['sys_admin', 'grade_admin'] } },
       { path: 'admin/jobs', name: 'JobManage', component: () => import('@/views/admin/JobManage.vue'),

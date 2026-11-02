@@ -127,6 +127,7 @@ PERMISSIONS: List[Tuple[str, str, str, str, str, int]] = [
     ("resource:knowledge:write", "知识点维护", "button", None, None, 221),
     ("resource:class:list", "班级管理", "menu", "/admin/classes", "OfficeBuilding", 230),
     ("resource:class:write", "班级维护", "button", None, None, 231),
+    ("resource:teaching:list", "任课总览", "menu", "/admin/teaching-matrix", "Reading", 232),
 
     # 题库
     ("question:bank:list", "题库管理", "menu", "/teacher/questions", "Notebook", 300),
@@ -204,6 +205,7 @@ ROLES: List[Dict] = [
             "resource:grade:list", "resource:subject:list", "resource:knowledge:list",
             "resource:subject:write",
             "resource:knowledge:write", "resource:class:list", "resource:class:write",
+            "resource:teaching:list",
             "question:bank:list", "question:bank:write", "question:bank:audit",
             "question:bank:export",
             "paper:list", "paper:write", "paper:export", "task:list",
@@ -216,6 +218,7 @@ ROLES: List[Dict] = [
         "description": "所授班级学生数据，出题组卷、发布作业考试、批改、学情分析",
         "perms": [
             "resource:knowledge:list", "resource:knowledge:write", "resource:class:list",
+            "resource:teaching:list",
             "question:bank:list", "question:bank:write", "question:bank:import",
             "question:bank:export",
             "paper:list", "paper:write", "paper:ai", "paper:share", "paper:export",
