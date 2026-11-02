@@ -31,68 +31,85 @@
       </el-col>
     </el-row>
 
-    <!-- 过滤 -->
+    <!-- 搜索：年级 / 班级 / 科目 / 教师 -->
     <el-card shadow="never" class="filter-card">
       <el-form :inline="true">
         <el-form-item label="年级">
-          <el-select v-model="query.grade_id" placeholder="全部年级" clearable style="width: 140px">
+          <el-select v-model="filters.grade_id" placeholder="全部年级" clearable style="width: 150px">
             <el-option v-for="g in items" :key="g.grade_id"
                        :label="`${g.grade_name}（${stageText(g.stage)}）`" :value="g.grade_id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="教师姓名">
-          <el-input v-model="keyword" placeholder="输入教师姓名 / 用户名过滤" clearable
-                    style="width: 220px" :prefix-icon="Search" />
+        <el-form-item label="班级">
+          <el-select v-model="filters.class_id" placeholder="全部班级" clearable filterable
+                     style="width: 170px">
+            <el-option-group v-for="grp in classGroups" :key="grp.grade_id" :label="grp.grade_name">
+              <el-option v-for="c in grp.classes" :key="c.class_id"
+                         :label="c.class_name" :value="c.class_id" />
+            </el-option-group>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="科目">
+          <el-select v-model="filters.subject" placeholder="全部科目" clearable style="width: 130px">
+            <el-option v-for="s in subjectNames" :key="s" :label="s" :value="s" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="教师">
+          <el-input v-model="teacherKw" placeholder="姓名 / 用户名" clearable
+                    style="width: 170px" :prefix-icon="Search" />
         </el-form-item>
         <el-form-item>
-          <span class="filter-tip">层级：年级 → 班级 → 科目 → 任教老师；跨年级任课的教师会出现在多个班级中。</span>
+          <el-button @click="resetFilters">重置</el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
-    <div v-loading="loading">
-      <el-card v-for="g in filteredItems" :key="g.grade_id" shadow="never" class="grade-card">
-        <template #header>
-          <div class="grade-head">
-            <div class="grade-title">
-              <span class="grade-bar"></span>
-              <span>{{ g.grade_name }}</span>
-              <el-tag :type="g.stage === 'primary' ? 'success' : 'primary'" size="small" effect="light">
-                {{ stageText(g.stage) }}
+    <!-- 宽表：年级 → 班级 → 科目 → 任教老师（年级/班级列纵向合并） -->
+    <el-card shadow="never" class="table-card" v-loading="loading">
+      <template #header>
+        <div class="table-head">
+          <span class="table-title">任课明细</span>
+          <span class="table-sub">共 {{ filteredRows.length }} 条 · 同年级/同班级已合并显示</span>
+        </div>
+      </template>
+
+      <el-table :data="filteredRows" border :span-method="spanMethod" class="matrix-table">
+        <el-table-column label="年级" width="110" align="center">
+          <template #default="{ row }">
+            <div class="grade-cell">
+              <div class="grade-name">{{ row.grade_name }}</div>
+              <el-tag size="small" effect="light" :type="row.stage === 'primary' ? 'success' : 'primary'">
+                {{ stageText(row.stage) }}
               </el-tag>
             </div>
-            <span class="grade-sub">{{ g.classes.length }} 个班级 · {{ g.teacher_count }} 名教师参与</span>
-          </div>
-        </template>
-
-        <el-row :gutter="14">
-          <el-col v-for="k in g.view_classes" :key="k.class_id" :xs="24" :sm="12" :md="8">
-            <div class="class-card">
-              <div class="class-head">
-                <span class="class-name">{{ k.class_name }}</span>
-                <span v-if="k.head_teacher" class="head-tag">班主任 · {{ k.head_teacher }}</span>
-                <span v-else class="head-tag none">暂无班主任</span>
-              </div>
-              <div class="sub-list">
-                <div v-for="s in k.subjects" :key="s.subject_id" class="sub-row">
-                  <span class="sub-name">{{ s.name }}</span>
-                  <span class="sub-line"></span>
-                  <template v-if="s.teacher">
-                    <el-tag size="small" effect="plain" :type="hit(s.teacher) ? 'warning' : 'info'"
-                            :title="s.teacher.username">
-                      {{ s.teacher.name }}
-                    </el-tag>
-                  </template>
-                  <el-tag v-else size="small" type="danger" effect="plain">暂无教师</el-tag>
-                </div>
-              </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="班级" width="210">
+          <template #default="{ row }">
+            <div class="class-cell">
+              <div class="class-name">{{ row.class_name }}</div>
+              <div v-if="row.head_teacher" class="head-sub">班主任：{{ row.head_teacher }}</div>
             </div>
-          </el-col>
-        </el-row>
-      </el-card>
+          </template>
+        </el-table-column>
+        <el-table-column label="科目" width="130">
+          <template #default="{ row }">{{ row.subject.name }}</template>
+        </el-table-column>
+        <el-table-column label="任教老师" min-width="220">
+          <template #default="{ row }">
+            <template v-if="row.subject.teacher">
+              <el-tag effect="plain" :type="isHit(row.subject.teacher) ? 'warning' : 'info'">
+                {{ row.subject.teacher.name }}
+              </el-tag>
+              <span class="username">{{ row.subject.teacher.username }}</span>
+            </template>
+            <el-tag v-else type="danger" effect="plain">暂无教师</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
 
-      <el-empty v-if="!loading && !filteredItems.length" description="没有匹配的任课数据" />
-    </div>
+      <el-empty v-if="!loading && !filteredRows.length" description="没有匹配的任课数据" />
+    </el-card>
   </div>
 </template>
 
@@ -104,16 +121,17 @@ import { eduApi } from '@/api'
 const loading = ref(false)
 const items = ref([])
 const stats = ref({ grades: 0, classes: 0, assignments: 0, teachers: 0 })
-const query = ref({ grade_id: null })
-const keyword = ref('')
+const filters = ref({ grade_id: null, class_id: null, subject: null })
+const teacherKw = ref('')
 
 const stageText = (s) => (s === 'primary' ? '小学' : s === 'junior' ? '初中' : (s || ''))
 
 async function load() {
   loading.value = true
   try {
-    const res = await eduApi.teachingMatrix(
-      query.value.grade_id ? { grade_id: query.value.grade_id } : {})
+    // 一次取全量（grade_admin 由后端强制本年级），四维过滤全部前端完成，
+    // 合并单元格随过滤结果实时重算
+    const res = await eduApi.teachingMatrix({})
     items.value = res.data?.items || []
     stats.value = res.data?.stats || { grades: 0, classes: 0, assignments: 0, teachers: 0 }
   } finally {
@@ -121,108 +139,124 @@ async function load() {
   }
 }
 
-function hit(t) {
-  const kw = keyword.value.trim().toLowerCase()
+// 拍平：年级 → 班级 → 科目（严格保持层级顺序，合并连续性由此保证）
+const allRows = computed(() => {
+  const rows = []
+  for (const g of items.value) {
+    for (const k of g.classes) {
+      for (const s of k.subjects) {
+        rows.push({
+          grade_id: g.grade_id,
+          grade_name: g.grade_name,
+          stage: g.stage,
+          class_id: k.class_id,
+          class_name: k.class_name,
+          head_teacher: k.head_teacher,
+          subject: s,
+        })
+      }
+    }
+  }
+  return rows
+})
+
+const classGroups = computed(() => {
+  const groups = items.value.map(g => ({
+    grade_id: g.grade_id,
+    grade_name: g.grade_name,
+    classes: g.classes.map(c => ({ class_id: c.class_id, class_name: c.class_name })),
+  }))
+  if (filters.value.grade_id) {
+    return groups.filter(g => g.grade_id === filters.value.grade_id)
+  }
+  return groups
+})
+
+const subjectNames = computed(() => {
+  const seen = new Set()
+  for (const g of items.value) {
+    for (const k of g.classes) {
+      for (const s of k.subjects) seen.add(s.name)
+    }
+  }
+  return [...seen]
+})
+
+function isHit(t) {
+  const kw = teacherKw.value.trim().toLowerCase()
   if (!kw) return false
   return (t.name || '').toLowerCase().includes(kw)
     || (t.username || '').toLowerCase().includes(kw)
 }
 
-// 搜索时只保留命中教师的科目；班级/年级无命中则整块隐藏
-const filteredItems = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  return items.value
-    .filter(g => !query.value.grade_id || g.grade_id === query.value.grade_id)
-    .map(g => {
-      const tids = new Set()
-      const view_classes = g.classes
-        .map(k => {
-          const subjects = kw
-            ? k.subjects.filter(s => s.teacher && hit(s.teacher))
-            : k.subjects
-          for (const s of subjects) if (s.teacher) tids.add(s.teacher.teacher_id)
-          return { ...k, subjects }
-        })
-        .filter(k => !kw || k.subjects.length > 0)
-      return { ...g, view_classes, teacher_count: tids.size }
-    })
-    .filter(g => !kw || g.view_classes.length > 0)
+// 过滤 + 重算合并跨度：档内连续分组，保证 rowspan 不串档
+const filteredRows = computed(() => {
+  const kw = teacherKw.value.trim().toLowerCase()
+  const rows = allRows.value.filter(r => {
+    if (filters.value.grade_id && r.grade_id !== filters.value.grade_id) return false
+    if (filters.value.class_id && r.class_id !== filters.value.class_id) return false
+    if (filters.value.subject && r.subject.name !== filters.value.subject) return false
+    if (kw) {
+      const t = r.subject.teacher
+      if (!t) return false
+      if (!isHit(t)) return false
+    }
+    return true
+  })
+
+  let i = 0
+  while (i < rows.length) {
+    let j = i
+    while (j < rows.length && rows[j].grade_id === rows[i].grade_id) j++
+    rows[i].grade_span = j - i
+    for (let k = i + 1; k < j; k++) rows[k].grade_span = 0
+
+    let a = i
+    while (a < j) {
+      let b = a
+      while (b < j && rows[b].class_id === rows[a].class_id) b++
+      rows[a].class_span = b - a
+      for (let k = a + 1; k < b; k++) rows[k].class_span = 0
+      a = b
+    }
+    i = j
+  }
+  return rows
 })
+
+function spanMethod({ row, columnIndex }) {
+  if (columnIndex === 0) {
+    return { rowspan: row.grade_span, colspan: row.grade_span > 0 ? 1 : 0 }
+  }
+  if (columnIndex === 1) {
+    return { rowspan: row.class_span, colspan: row.class_span > 0 ? 1 : 0 }
+  }
+  return { rowspan: 1, colspan: 1 }
+}
+
+function resetFilters() {
+  filters.value = { grade_id: null, class_id: null, subject: null }
+  teacherKw.value = ''
+}
 
 onMounted(load)
 </script>
 
 <style scoped>
-.grade-card { margin-bottom: 16px; border-radius: 10px; }
-.grade-head {
+.table-card { border-radius: 10px; }
+.table-head {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.grade-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 16px;
-  font-weight: 700;
-}
-.grade-bar {
-  width: 4px;
-  height: 16px;
-  border-radius: 2px;
-  background: var(--el-color-primary);
-  display: inline-block;
-}
-.grade-sub { font-size: 12px; color: #909399; }
-.class-card {
-  border: 1px solid #eceff4;
-  border-radius: 10px;
-  background: #fff;
-  padding: 12px 14px;
-  margin-bottom: 14px;
-  box-shadow: 0 1px 4px rgba(31, 45, 61, 0.05);
-  transition: box-shadow 0.2s, transform 0.2s;
-}
-.class-card:hover {
-  box-shadow: 0 4px 14px rgba(31, 45, 61, 0.1);
-  transform: translateY(-2px);
-}
-.class-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 8px;
-  border-bottom: 1px dashed #ebeef5;
-  margin-bottom: 6px;
-  gap: 6px;
+  gap: 10px;
   flex-wrap: wrap;
 }
-.class-name { font-weight: 600; font-size: 14px; }
-.head-tag {
-  font-size: 12px;
-  color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
-  border-radius: 10px;
-  padding: 2px 8px;
-  white-space: nowrap;
-}
-.head-tag.none { color: #c0c4cc; background: #f5f7fa; }
-.sub-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  font-size: 13px;
-}
-.sub-name { color: #303133; min-width: 5.5em; }
-.sub-line {
-  flex: 1;
-  border-bottom: 1px dotted #dcdfe6;
-  height: 1px;
-  margin: 0 2px;
-  min-width: 8px;
-}
-.filter-tip { font-size: 12px; color: #909399; }
+.table-title { font-size: 15px; font-weight: 700; }
+.table-sub { font-size: 12px; color: #909399; }
+.matrix-table { font-size: 14px; }
+.grade-cell { font-weight: 700; font-size: 15px; }
+.class-cell { line-height: 1.5; }
+.class-name { font-weight: 600; }
+.head-sub { font-size: 12px; color: #909399; }
+.username { margin-left: 8px; font-size: 12px; color: #909399; }
 </style>
