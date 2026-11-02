@@ -285,14 +285,15 @@ def create_plan(
     grade_id = data.get("grade_id")
     if not (title and topic and subject_id and grade_id):
         raise BusinessException("标题/课题/学科/年级为必填")
-    # 关联对象存在性
+    # 关联对象存在性（提示需指明「缺什么」并给出可操作指引）
     if not db.get(Subject, subject_id):
-        raise BusinessException("学科不存在")
+        raise BusinessException("所选学科不存在或已被删除，请刷新学科列表后重新选择")
     if not db.get(Grade, grade_id):
-        raise BusinessException("年级不存在")
+        raise BusinessException("所选年级不存在或已被删除，请刷新年级列表后重新选择")
     kp_id = data.get("knowledge_point_id")
     if kp_id and not db.get(KnowledgePoint, kp_id):
-        raise BusinessException("知识点不存在")
+        raise BusinessException(
+            "关联的知识点不存在或已被删除，请清除该关联或重新选择知识点")
 
     plan = LessonPlan(
         title=title, topic=topic,

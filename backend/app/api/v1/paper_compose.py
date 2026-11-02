@@ -933,7 +933,9 @@ def _normalize_items(
         seen.add(qid)
         q = db.get(Question, qid)
         if not q:
-            raise BusinessException(f"题目不存在或已删除（id={qid}）")
+            raise BusinessException(
+                f"题目不存在或已删除（id={qid}），无法保存到试卷。"
+                f"请从试卷中移除该题，或在题库中确认题目状态后重新添加")
         # 与 question._normalize_paper_items 共用同一判定（含 status 校验），
         # 避免"预览能过、保存被拒"或两处口径漂移。
         err = question_usable_error(

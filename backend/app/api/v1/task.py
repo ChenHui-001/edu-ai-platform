@@ -15,8 +15,8 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Answer, Class, Notification, Paper, Submission, Task, TaskAssignment, TaskStatus,
-    TaskType, User, UserStatus,
+    Answer, Class, Notification, Paper, PaperStatus, Submission, Task, TaskAssignment,
+    TaskStatus, TaskType, User, UserStatus,
 )
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, now_local, ok
@@ -42,6 +42,59 @@ TASK_SORT_MAP = {
     "end_desc": (Task.end_at.desc().nullslast(), Task.id.desc()),
     "updated_desc": (Task.updated_at.desc(), Task.id.desc()),
 }
+
+# 试卷状态 -> 面向教师的提示词（只用于报错文案）
+_PAPER_STATUS_LABEL = {
+    PaperStatus.DRAFT.value: "草稿",
+    PaperStatus.PENDING.value: "待审核",
+    PaperStatus.REJECTED.value: "审核驳回",
+    PaperStatus.ARCHIVED.value: "已停用",
+}
+
+
+def _load_paper_for_task(db: Session, raw_paper_id: Any, user: User) -> Paper:
+    """发布前校验引用试卷的可用性，错误提示必须说清「缺什么 + 去哪里处理」。
+
+    以前这里只判 `db.get(Paper, id)` 为空就报「请选择试卷」：试卷被删、
+    被停用、还是压根没传，三种情况同一句话，教师只会反复重试同一个失效
+    引用。现在逐项区分并给出操作指引。
+    """
+    if raw_paper_id in (None, "", 0):
+        raise BusinessException(
+            "请选择试卷：发布作业/考试前需先在「试卷管理」中创建或选择一份试卷")
+    try:
+        paper_id = int(raw_paper_id)
+    except (TypeError, ValueError):
+        raise BusinessException(
+            f"试卷参数无效（{raw_paper_id!r}），请刷新页面后在「试卷管理」中重新选择试卷")
+
+    paper = db.get(Paper, paper_id)
+    if not paper:
+        raise BusinessException(
+            f"试卷不存在或已被删除（ID={paper_id}），无法发布。"
+            f"请到「试卷管理」确认该试卷是否仍在，重新选择或重新组卷后再发布")
+    # 可见性：复用 paper_compose 的唯一真源，但把拒绝语气换成可操作指引
+    try:
+        _assert_readable(db, paper, user)
+    except PermissionException:
+        raise BusinessException(
+            f"你没有使用试卷「{paper.name}」的权限：它不是你创建的，也未共享给你。"
+            f"请选择自己的试卷，或联系该卷创建者共享后再发布")
+    status = (paper.status or PaperStatus.PUBLISHED.value)
+    if status == PaperStatus.ARCHIVED.value:
+        raise BusinessException(
+            f"试卷「{paper.name}」已停用，不能用于发布。"
+            f"请在「试卷管理」中重新启用该试卷，或选择其他试卷后重试")
+    if status != PaperStatus.PUBLISHED.value:
+        label = _PAPER_STATUS_LABEL.get(status, status)
+        raise BusinessException(
+            f"试卷「{paper.name}」当前为{label}状态，尚不能用于发布。"
+            f"请先在「试卷管理」中完成组卷并确认状态为「已发布」后再发布")
+    if not paper.items:
+        raise BusinessException(
+            f"试卷「{paper.name}」还没有题目，发布后学生将无题可做。"
+            f"请先在「试卷管理」中为该试卷添加题目后再发布")
+    return paper
 
 
 def _is_sys_admin(user: User) -> bool:
@@ -340,6 +393,29 @@ def batch_tasks(
             if t.status != TaskStatus.DRAFT.value:
                 skipped.append({"id": t.id, "reason": "仅草稿任务可发布"})
                 continue
+            # 批量发布同样要校验引用试卷：草稿任务可能是在试卷被停用/清空
+            # 之后才被勾选发布的，不能因为它"早先建过"就放行。
+            paper = db.get(Paper, t.paper_id)
+            if not paper:
+                skipped.append({
+                    "id": t.id,
+                    "reason": f"「{t.title}」关联的试卷已不存在，无法发布；请在试卷管理中重新组卷",
+                })
+                continue
+            if (paper.status or "") == PaperStatus.ARCHIVED.value:
+                skipped.append({
+                    "id": t.id,
+                    "reason": f"「{t.title}」关联的试卷「{paper.name}」已停用，"
+                              f"请先在试卷管理中启用后再发布",
+                })
+                continue
+            if not paper.items:
+                skipped.append({
+                    "id": t.id,
+                    "reason": f"「{t.title}」关联的试卷「{paper.name}」没有题目，"
+                              f"请先在试卷管理中补充题目",
+                })
+                continue
             t.status = TaskStatus.PUBLISHED.value
             t.publish_at = now_local()
             done.append(t.id)
@@ -354,14 +430,12 @@ def create_task(
     data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm(TASK_PERM_WRITE)),
 ):
-    paper = db.get(Paper, data.get("paper_id"))
-    if not paper:
-        raise BusinessException("请选择试卷")
     # 试卷可见性：此前只判存在。任意持 task:write 的教师都能用他人的私有
     # paper_id 建任务，成为 creator_id 后即可通过 GET /tasks/{id}/paper 拿到
     # reveal_answer=True 而读到整卷 answer/analysis —— 单请求即可完成答案窃取。
     # 复用 paper_compose 的全仓唯一可见性真源，不在此另写一套判定。
-    _assert_readable(db, paper, user)
+    # 存在性 / 可读性 / 状态 / 是否有题，四道关卡统一在 _load_paper_for_task 内完成。
+    paper = _load_paper_for_task(db, data.get("paper_id"), user)
 
     # 校验任务类型：仅允许 homework / exam，非法值直接拒绝，
     # 否则 db 会写脏数据进入 task.type（SQLite String 列不强制枚举）
@@ -427,14 +501,19 @@ def create_task(
     # 下发对象存在性 + 状态 + 教师任教范围校验（管理员不限）
     role_codes = user.role_codes
     is_admin = "sys_admin" in role_codes
-    for cid in class_ids:
-        if not db.get(Class, cid):
-            raise BusinessException(f"班级 {cid} 不存在")
+    for idx, cid in enumerate(class_ids, start=1):
+        cls = db.get(Class, cid)
+        if not cls:
+            raise BusinessException(
+                f"第 {idx} 个下发班级不存在或已被删除（ID={cid}），无法下发。"
+                f"请刷新班级列表后重新选择")
         if not is_admin:
             scope = DataScope(user=user, db=db)
             allowed = scope.class_ids()
             if allowed is not None and cid not in allowed:
-                raise BusinessException(f"只能给自己任教的班级下发（班级 {cid} 不在任教范围）")
+                raise BusinessException(
+                    f"班级「{cls.name}」不在你的任教范围内，不能给它下发。"
+                    f"请选择自己任教的班级，或联系年级管理员调整任课关系")
 
     # 指定学生必须显式校验 active，且**报错而非静默剔除**。
     #
@@ -455,7 +534,9 @@ def create_task(
     for sid in student_ids:
         stu = db.get(User, sid)
         if not stu:
-            raise BusinessException(f"学生 {sid} 不存在")
+            raise BusinessException(
+                f"下发对象中有学生不存在或已被删除（ID={sid}），无法下发。"
+                f"请刷新学生列表后重新选择")
         if stu.status != UserStatus.ACTIVE.value:
             label = _STATUS_LABEL.get(stu.status, stu.status)
             inactive.append(f"{stu.username}（ID={stu.id}，{label}）")
