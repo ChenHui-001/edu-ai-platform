@@ -1604,6 +1604,56 @@ _G79: Dict[int, Dict[str, list]] = {
 
 CURRICULUM: Dict[int, Dict[str, list]] = {**_G13, **_G46, **_G79}
 
+# ---------------------------------------------------------------- 扩充模板
+# 每个教材单元自动补 4 个「教学环节」小节考点（基础→应用→辨析→提升），
+# 以单元名实例化，把知识点密度提升到可用教学粒度；可按学科定制措辞。
+EXTRA_BY_SUBJECT: Dict[str, list] = {
+    "数学": [
+        ("基础计算训练", "「{u}」相关计算与运算规则的专项训练", "easy", "计算,专项"),
+        ("实际应用建模", "「{u}」在生活情境中的列式、建模与求解", "medium", "应用,建模"),
+        ("易错点辨析", "「{u}」常见错误类型与辨析方法", "hard", "易错,辨析"),
+        ("综合能力提升", "「{u}」与前后知识的综合运用", "medium", "综合,提升"),
+    ],
+    "语文": [
+        ("字词积累", "「{u}」重点字词、成语与语言积累", "easy", "字词,积累"),
+        ("阅读理解", "「{u}」相关文段的阅读方法与答题要点", "medium", "阅读,方法"),
+        ("表达运用", "「{u}」相关的口语交际与书面表达训练", "medium", "表达,运用"),
+        ("积累与拓展", "「{u}」的名句、文化常识与拓展阅读", "hard", "积累,拓展"),
+    ],
+    "英语": [
+        ("词汇拓展", "「{u}」核心词汇、短语与拼写", "easy", "词汇,拼写"),
+        ("句型运用", "「{u}」重点句型的结构与操练", "medium", "句型,操练"),
+        ("听说实践", "「{u}」话题的听说交际活动", "medium", "听说,交际"),
+        ("读写提升", "「{u}」话题的阅读与书面表达", "hard", "读写,表达"),
+    ],
+    "物理": [
+        ("实验探究", "「{u}」相关实验的设计、操作与数据处理", "medium", "实验,探究"),
+        ("计算应用", "「{u}」公式推导与计算题训练", "hard", "计算,应用"),
+        ("易错辨析", "「{u}」概念易混点与典型错误", "medium", "易错,辨析"),
+        ("联系生活科技", "「{u}」在生活与科技中的应用", "easy", "生活,科技"),
+    ],
+    "化学": [
+        ("实验探究", "「{u}」相关实验操作与现象分析", "medium", "实验,现象"),
+        ("化学计算", "「{u}」相关计算（方程式/质量分数）", "hard", "计算,方程式"),
+        ("易错辨析", "「{u}」易混概念与规范表达", "medium", "易错,规范"),
+        ("联系生产生活", "「{u}」在生活生产中的实际应用", "easy", "实际,应用"),
+    ],
+}
+
+DEFAULT_EXTRA: list = [
+    ("核心概念梳理", "「{u}」核心概念、原理与内在联系", "easy", "概念,梳理"),
+    ("材料与图表分析", "「{u}」相关材料、图表与数据的解读方法", "medium", "材料,分析"),
+    ("联系实际应用", "「{u}」在生活与社会情境中的运用", "medium", "应用,情境"),
+    ("综合探究提升", "「{u}」跨知识点综合探究与提升", "hard", "综合,探究"),
+]
+
+COMPREHENSIVE_NAME = "综合复习·{s}总复习"
+COMPREHENSIVE_KPS = [
+    ("知识网络梳理", "梳理{s}全册知识结构与内在联系", "medium", "知识网络,梳理"),
+    ("综合应用训练", "综合运用{s}知识解决跨单元问题", "hard", "综合,应用"),
+    ("易错与规范提升", "汇总{s}高频易错点与答题规范", "hard", "易错,规范"),
+]
+
 
 # ---------------------------------------------------------------- 范围解析
 def parse_numbers(spec: str, universe: List[int], label: str) -> List[int]:
@@ -1652,7 +1702,13 @@ def parse_subjects(spec: str, universe: List[str]) -> List[str]:
 
 # ---------------------------------------------------------------- 构建
 def build_tree(grades: List[int], subjects: List[str]) -> Dict:
-    """按范围生成 {subjects: [...], counts: {...}}（JSON 契约与 import 工具对齐）。"""
+    """按范围生成 {subjects: [...], counts: {...}}（JSON 契约与 import 工具对齐）。
+
+    内容 = 教材主线单元（上方 CURRICULUM 手工教研）+ 每个单元的 4 个课程化
+    小节考点（按学科模板、以单元名实例化）+ 每个「年级×学科」的综合复习单元。
+    模板化部分用于把知识点密度提升到可用的教学粒度（原 749 → 约 2200），
+    后续可按单元逐步替换为更细的人工教研内容。
+    """
     blocks = []
     n_units = 0
     n_kps = 0
@@ -1667,17 +1723,28 @@ def build_tree(grades: List[int], subjects: List[str]) -> Dict:
                 continue
             abbr = SUBJECT_ABBR[subj]
             nodes = []
+            extra = EXTRA_BY_SUBJECT.get(subj, DEFAULT_EXTRA)
+
+            def _kp(code, name, desc, diff, kw, sort):
+                return {
+                    "name": name, "level": 2, "term": 1,
+                    "difficulty": diff, "keywords": kw,
+                    "description": desc, "source": "seed",
+                    "code": code, "sort": sort, "children": [],
+                }
+
             for ui, (unit_name, kp_list) in enumerate(units, start=1):
                 unit_code = f"G{gnum:02d}-{abbr}-U{ui:02d}"
                 children = []
                 for ki, (kp_name, desc, diff, kw) in enumerate(kp_list, start=1):
-                    children.append({
-                        "name": kp_name, "level": 2, "term": 1,
-                        "difficulty": diff, "keywords": kw,
-                        "description": desc, "source": "seed",
-                        "code": f"{unit_code}-K{ki:02d}",
-                        "sort": ki, "children": [],
-                    })
+                    children.append(_kp(f"{unit_code}-K{ki:02d}", kp_name,
+                                        desc, diff, kw, ki))
+                # 模板化小节考点：基础→应用→辨析→提升，覆盖四个教学环节
+                base = len(children)
+                for ti, (label, desc_t, diff, kw) in enumerate(extra, start=1):
+                    children.append(_kp(
+                        f"{unit_code}-K{base + ti:02d}", label,
+                        desc_t.format(u=unit_name), diff, kw, base + ti))
                 nodes.append({
                     "name": unit_name, "level": 1, "term": 1,
                     "difficulty": "medium", "keywords": "",
@@ -1687,6 +1754,24 @@ def build_tree(grades: List[int], subjects: List[str]) -> Dict:
                 })
                 n_units += 1
                 n_kps += len(children)
+
+            # 每学科的综合复习单元（知识网络→综合应用→易错规范）
+            ui = len(units) + 1
+            unit_code = f"G{gnum:02d}-{abbr}-U{ui:02d}"
+            comp_children = [
+                _kp(f"{unit_code}-K{ci:02d}", name,
+                    desc.format(s=subj), diff, kw, ci)
+                for ci, (name, desc, diff, kw) in enumerate(COMPREHENSIVE_KPS, start=1)
+            ]
+            nodes.append({
+                "name": COMPREHENSIVE_NAME.format(s=subj), "level": 1, "term": 1,
+                "difficulty": "medium", "keywords": "",
+                "description": f"{GRADE_NAMES[gnum]}{subj}全册综合复习",
+                "source": "seed", "code": unit_code,
+                "sort": ui * 10, "children": comp_children,
+            })
+            n_units += 1
+            n_kps += len(comp_children)
             blocks.append({
                 "grade_num": gnum, "grade_name": GRADE_NAMES[gnum],
                 "subject_name": subj, "nodes": nodes,

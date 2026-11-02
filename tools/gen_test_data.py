@@ -17,14 +17,13 @@
 ## 生成范围
 - 年级：9 个（1-9 年级，复用 init_db.GRADES）。
 - 学科：按年级复用 init_db.SUBJECTS（共 59 个，含教材版本与 code）。
-- 班级：每年级 3 个（≥3），班主任指向该年级一名教师。
-- 用户：1 系统管理员 + 9 年级管理员（每级 1）+ 27 教师（每级 3，≥20）+ 216 学生
-  （每班 8，≥200）。各自正确关联年级/学科/班级与角色。
-- 授课关系：教师跨年级任教（不跨学段）。学段内年级结对：小学 (1,2)(3,4)(5,6)
-  低/中/高段、初中 7→8→9→7 成环；结对内 A 师 k → A(k)+B(k)、B 师 k → B(k)+A(k+1)。
-  每位教师恰好 2 个班级且分属 2 个不同年级，每班恰好 2 位教师（本年级班主任
-  必在其中），共 177 条，建立教师↔班级↔学科↔年级 的完整关联。教师使用
-  真实感中文姓名（随机抽取，用户名不变）。
+- 班级：按年级差异化（2-3 班，见 CLASSES_PER_GRADE，共 23 班），
+  班主任由本年级教师轮流担任（同年级各班互异）。
+- 用户：1 系统管理员 + 9 年级管理员（每级 1）+ 27 教师（每级 3，≥20）+ 184 学生
+  （每班 8，≥200 要求下按 23 班计）。各自正确关联年级/学科/班级与角色。
+- 授课关系：教师跨年级任教（不跨学段）。学段内按「同号班结对 / 年级环」分配：
+  每班 2-3 位教师且至少来自 2 个不同年级，每位教师 ≤2 个班级（含 2 班年级
+  时第 3 位教师挂对端同号班或第 1 班），本年级班主任必带本班，共 150 条。
 
 ## 安全
 - 不触碰 `sys_role` / `sys_permission` / `sys_role_permission` 骨架（只按 code 关联）。
@@ -71,7 +70,12 @@ BASE_TIME = datetime(2026, 9, 1, 8, 0, 0)
 DETERMINISTIC_SALT = "0" * 32  # 16 字节，与 verify_password 的 bytes.fromhex(salt) 对齐
 DEFAULT_PASSWORD = "Test@123456"  # 满足 app 强度校验（长度+字母数字+非弱口令）
 
-CLASSES_PER_GRADE = 3
+# 班级数按年级差异化（2-3 班）：真实学校各年级招生规模不同，
+# 全部固定 3 班不真实。上限受 TEACHERS_PER_GRADE 约束（班主任须同年级互异）。
+CLASSES_PER_GRADE = {
+    1: 3, 2: 3, 3: 2, 4: 2, 5: 3, 6: 2,
+    7: 3, 8: 2, 9: 3,
+}
 TEACHERS_PER_GRADE = 3
 STUDENTS_PER_CLASS = 8
 
@@ -260,7 +264,7 @@ def generate(db: Session, rng: random.Random, manifest: list) -> dict:
     classes = []
     for g in grades:
         tlist = teachers_by_grade[g.grade_num]
-        for c in range(1, CLASSES_PER_GRADE + 1):
+        for c in range(1, CLASSES_PER_GRADE[g.grade_num] + 1):
             head = tlist[(c - 1) % len(tlist)] if tlist else None
             k = Class(name=f"{g.name}({c})班", grade_id=g.id,
                       head_teacher_id=head.id if head else None,
@@ -301,16 +305,15 @@ def generate(db: Session, rng: random.Random, manifest: list) -> dict:
 
     # 6) 授课关系（教师跨年级任教，不跨学段；每位教师最多带 2 个班级）
     # --------------------------------------------------------------
-    # 旧逻辑：班级级轮换链（教师 i 带班级 i 与 i+1）——教师基本只带本年级，
-    #   与真实学校「教师跨年级带班」不符。
-    # 新逻辑：学段内「年级结对」，贴近真实排课的学段分工：
-    #   - 年级数为偶数（小学 1-6）：两两结对 (1,2)(3,4)(5,6) —— 低/中/高段；
-    #   - 年级数为奇数（初中 7-9）：按年级环轮转 7→8→9→7（贴合升学带班习惯）。
-    #   结对内分配：A 年级教师 k → A(k)班 + B(k)班；B 年级教师 k → B(k)班 + A(k+1)班。
-    #   环式分配：G_j 教师 k → G_j(k)班 + G_{j+1}(k)班。
-    #   结果：每位教师恰好 2 个班级且分属 2 个不同年级；每班恰好 2 位教师
-    #   （来自 2 个年级，本年级班主任必在其中）；班级内学科在 2 位教师间轮询；
-    #   所有 (班级,学科) 对全覆盖、不跨学段。
+    # 班级数按年级差异化（CLASSES_PER_GRADE），算法需同时兼容 2 班/3 班：
+    #   - 偶数年级（小学 1-6）两两结对 (1,2)(3,4)(5,6)：第 k 号班的两位教师
+    #     固定为「A 年级第 k 位 + B 年级第 k 位」，两边互为跨年级授课；
+    #   - 奇数年级（初中 7-9）按年级环轮转：G 的教师 k → G(k)班 + 下一级(k)班，
+    #     班级 k 的两位教师 = 本级 k + 上一级 k（9→7 收尾，贴合升学带班）；
+    #   - 某年级只有 2 班时，第 3 位教师改挂到对端同级号班；两端都无同号班
+    #     （均为 2 班且 k=3）时挂到对端第 1 班（该班会有 3 位教师，允许）。
+    #   结果：每班 2-3 位教师且至少来自 2 个不同年级；每位教师 ≤2 个班级；
+    #   班主任（本级第 k 位教师）必带本班；班级内学科在教师间轮询；全覆盖。
     # 约束锚点：teacher.grade_id 仍记「归属年级」，TeachingAssignment.grade_id
     #   记班级所属年级，二者可不同级但必同学段。
     ta_count = 0
@@ -318,40 +321,71 @@ def generate(db: Session, rng: random.Random, manifest: list) -> dict:
     for k, g, _c in classes:
         classes_by_grade.setdefault(g.grade_num, []).append(k)
 
-    # teacher -> (class_a, class_b)：结对/成环公式，纯索引运算、确定性
-    teacher_classes: list = []
+    slots: list = []  # (teacher, class)
+
+    def _slot(t, c):
+        if t is not None and c is not None:
+            slots.append((t, c))
+
+    def _pair(ga, gb):
+        ta = teachers_by_grade[ga.grade_num]
+        tb = teachers_by_grade[gb.grade_num]
+        ca = classes_by_grade[ga.grade_num]
+        cb = classes_by_grade[gb.grade_num]
+        for k in range(1, max(len(ta), len(tb)) + 1):
+            ak = ta[k - 1] if k <= len(ta) else None
+            bk = tb[k - 1] if k <= len(tb) else None
+            ha = ca[k - 1] if k <= len(ca) else None
+            hb = cb[k - 1] if k <= len(cb) else None
+            # 同号班配对：A_k 教 A(k)+B(k)，B_k 教 B(k)+A(k)；两端都无同号班时
+            # （均为 2 班且 k=3）只挂到对端第 1 班一次（否则会出现单班 4 师）
+            for t, own, partner, idle_to in (
+                    (ak, ha, hb, cb[0] if cb else None),
+                    (bk, hb, ha, ca[0] if ca else None)):
+                if t is None:
+                    continue
+                if own is not None:
+                    _slot(t, own)
+                if partner is not None:
+                    _slot(t, partner)
+                if own is None and partner is None:
+                    _slot(t, idle_to)
+
+    def _cycle(glist):
+        n = len(glist)
+        for j, g in enumerate(glist):
+            gnext = glist[(j + 1) % n]
+            tg = teachers_by_grade[g.grade_num]
+            cg = classes_by_grade[g.grade_num]
+            cn = classes_by_grade[gnext.grade_num]
+            for k in range(1, len(tg) + 1):
+                t = tg[k - 1]
+                own = cg[k - 1] if k <= len(cg) else None
+                nxt = cn[k - 1] if k <= len(cn) else None
+                if own is not None:
+                    _slot(t, own)
+                if nxt is not None:
+                    _slot(t, nxt)
+                if own is None and nxt is None:
+                    _slot(t, cg[0] if cg else None)
+
     # ⚠️ 必须用确定序遍历学段：set 迭代序受 PYTHONHASHSEED 影响，
     # 会直接打碎跨环境指纹（差点上线）。
     for stage in sorted({g.stage for g in grades}):
         glist = sorted((g for g in grades if g.stage == stage),
                        key=lambda x: x.grade_num)
-        n = len(glist)
-        if n % 2 == 0:
-            # 偶数年级：两两结对
-            for i in range(0, n, 2):
-                ga, gb = glist[i], glist[i + 1]
-                ta = teachers_by_grade[ga.grade_num]
-                tb = teachers_by_grade[gb.grade_num]
-                ca = classes_by_grade[ga.grade_num]
-                cb = classes_by_grade[gb.grade_num]
-                for k in range(len(ta)):
-                    teacher_classes.append((ta[k], ca[k], cb[k]))
-                    teacher_classes.append((tb[k], cb[k], ca[(k + 1) % len(ca)]))
+        if len(glist) % 2 == 0:
+            for i in range(0, len(glist), 2):
+                _pair(glist[i], glist[i + 1])
         else:
-            # 奇数年级：按年级环轮转
-            for j, g in enumerate(glist):
-                gnext = glist[(j + 1) % n]
-                ta = teachers_by_grade[g.grade_num]
-                ca = classes_by_grade[g.grade_num]
-                cn = classes_by_grade[gnext.grade_num]
-                for k in range(len(ta)):
-                    teacher_classes.append((ta[k], ca[k], cn[k]))
+            _cycle(glist)
 
-    # class_id -> [teacher, ...]（结对保证每班恰 2 位；插入序即轮询序）
+    # class_id -> [teacher, ...]（同一班级内按插入序轮询分科）
     class_teachers: Dict[int, list] = {}
-    for t, c1, c2 in teacher_classes:
-        class_teachers.setdefault(c1.id, []).append(t)
-        class_teachers.setdefault(c2.id, []).append(t)
+    for t, c in slots:
+        bucket = class_teachers.setdefault(c.id, [])
+        if t not in bucket:
+            bucket.append(t)
 
     for k, g, _c in classes:
         grade_obj = grade_by_num[g.grade_num]

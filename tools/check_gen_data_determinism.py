@@ -55,10 +55,10 @@ DEFAULT_GEN = os.path.join(ROOT, "tools", "gen_test_data.py")
 EXPECTED = {
     "grades": 9,        # GRADES：1-9 年级
     "subjects": 59,     # SUBJECTS 全年级合计（1-5 级各 5 门、6/7 级 7 门、8/9 级 10 门）
-    "classes": 27,      # 每级 3 班 × 9
+    "classes": 23,      # CLASSES_PER_GRADE 差异化合计（3+3+2+2+3+2+3+2+3）
     "teachers": 27,     # 每级 3 师 × 9
-    "students": 216,    # 每班 8 生 × 27 班
-    "teaching": 177,    # 全部 (班级,学科) 对：小学 96 + 初中 81
+    "students": 184,    # 每班 8 生 × 23 班
+    "teaching": 150,    # 全部 (班级,学科) 对：小学 79 + 初中 71
 }
 
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -144,14 +144,25 @@ def _check_invariants(db_path: str, label: str) -> None:
                             "(SELECT teacher_id, COUNT(DISTINCT class_id) cnt "
                             "FROM edu_teaching_assignment GROUP BY teacher_id)")
         assert max_cls <= 2, f"{label}: 存在教师带 {max_cls} 个班级（约束上限 2）"
-        # 跨年级任教（2026-11-02 二次重构）：每位教师所带班级必须分属
-        # ≥2 个年级（学段内结对/成环的设计不变式）
+        # 跨年级任教（班级粒度必须成立）：每个班级至少 2 位教师、且至少来自
+        # 2 个不同年级。班级数差异化（2-3 班/年级）后，部分教师只带 1 个班
+        # （单年级）不可避免，故教师粒度放宽为「占比不超过 1/3」。
+        bad_same_grade_class = _one(cur, "SELECT COUNT(*) FROM ("
+            "SELECT t.class_id FROM edu_teaching_assignment t "
+            "JOIN sys_user u ON u.id=t.teacher_id "
+            "GROUP BY t.class_id "
+            "HAVING COUNT(DISTINCT t.teacher_id) < 2 "
+            "OR COUNT(DISTINCT u.grade_id) < 2)")
+        assert bad_same_grade_class == 0, (
+            f"{label}: {bad_same_grade_class} 个班级的教师不足 2 人或来自单一年级")
+        total_teachers = _one(cur, "SELECT COUNT(*) FROM sys_user WHERE identity='teacher'")
         single_grade = _one(cur, "SELECT COUNT(*) FROM ("
                                  "SELECT teacher_id FROM edu_teaching_assignment "
                                  "GROUP BY teacher_id "
                                  "HAVING COUNT(DISTINCT grade_id) < 2)")
-        assert single_grade == 0, (
-            f"{label}: {single_grade} 名教师只在一个年级任教（违背跨年级设计）")
+        assert single_grade <= max(1, total_teachers // 3), (
+            f"{label}: {single_grade}/{total_teachers} 名教师只在单一年级任教，"
+            f"超过 1/3 上限（跨年级设计被破坏）")
         pairs = _one(cur, "SELECT COUNT(*) FROM edu_class c JOIN edu_subject s "
                           "ON s.grade_id=c.grade_id")
         assigned = _one(cur, "SELECT COUNT(*) FROM (SELECT DISTINCT class_id, "
@@ -161,7 +172,8 @@ def _check_invariants(db_path: str, label: str) -> None:
             f"期望={EXPECTED['teaching']}"
         )
         print(f"  [{label}] 不变式全绿：行数契约 ✓ 班主任互异 ✓ "
-              f"不跨学段 ✓ 每师≤{max_cls}班且跨年级 ✓ 覆盖 {assigned}/{pairs} ✓")
+              f"不跨学段 ✓ 每师≤{max_cls}班 ✓ 每班跨年级 ✓ "
+              f"覆盖 {assigned}/{pairs} ✓")
     finally:
         con.close()
 
