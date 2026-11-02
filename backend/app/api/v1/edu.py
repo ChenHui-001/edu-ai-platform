@@ -294,11 +294,33 @@ def list_subjects(
     if keyword:
         stmt = stmt.where(Subject.name.like(f"%{keyword}%"))
     rows = db.scalars(stmt.order_by(Subject.sort)).all()
+
+    # 年级名一次查清，**不要**在循环里 `db.get(Grade, ...)`。
+    #
+    # 原因（实测 /edu/subjects 单次 42.5ms / 178 条 SQL）：
+    # ① Grade.subjects 与 Grade.classes 都是 lazy="selectin"，每加载一个
+    #    Grade 实体就额外发 2 条查询（subjects、classes），一条变三条。
+    # ② Session 的 identity map 是 **weakref** 的：循环里 `g = db.get(...)`
+    #    下一轮被覆盖即失去强引用，缓存条目随之失效，于是每行都真实回表 ——
+    #    60 个学科 = 60 × 3 = 180 条查询。学科表本身只有 60 行，查询开销
+    #    是数据量的 3 倍，纯属放大。
+    #
+    # 用列查询（select(Grade.id, Grade.name)）而不是 ORM 实体：返回的是 Row，
+    # 不实例化 Grade，就不会触发任何 selectin 关系加载 → 固定 1 条 SQL。
+    grade_ids = {s.grade_id for s in rows if s.grade_id}
+    grade_names: Dict[int, str] = {}
+    if grade_ids:
+        grade_names = {
+            gid: gname
+            for gid, gname in db.execute(
+                select(Grade.id, Grade.name).where(Grade.id.in_(grade_ids))
+            ).all()
+        }
+
     items = []
     for s in rows:
         d = dictify(s)
-        g = db.get(Grade, s.grade_id)
-        d["grade_name"] = g.name if g else None
+        d["grade_name"] = grade_names.get(s.grade_id)
         items.append(d)
 
     if distinct:
