@@ -144,6 +144,14 @@ def _check_invariants(db_path: str, label: str) -> None:
                             "(SELECT teacher_id, COUNT(DISTINCT class_id) cnt "
                             "FROM edu_teaching_assignment GROUP BY teacher_id)")
         assert max_cls <= 2, f"{label}: 存在教师带 {max_cls} 个班级（约束上限 2）"
+        # 跨年级任教（2026-11-02 二次重构）：每位教师所带班级必须分属
+        # ≥2 个年级（学段内结对/成环的设计不变式）
+        single_grade = _one(cur, "SELECT COUNT(*) FROM ("
+                                 "SELECT teacher_id FROM edu_teaching_assignment "
+                                 "GROUP BY teacher_id "
+                                 "HAVING COUNT(DISTINCT grade_id) < 2)")
+        assert single_grade == 0, (
+            f"{label}: {single_grade} 名教师只在一个年级任教（违背跨年级设计）")
         pairs = _one(cur, "SELECT COUNT(*) FROM edu_class c JOIN edu_subject s "
                           "ON s.grade_id=c.grade_id")
         assigned = _one(cur, "SELECT COUNT(*) FROM (SELECT DISTINCT class_id, "
@@ -153,7 +161,7 @@ def _check_invariants(db_path: str, label: str) -> None:
             f"期望={EXPECTED['teaching']}"
         )
         print(f"  [{label}] 不变式全绿：行数契约 ✓ 班主任互异 ✓ "
-              f"不跨学段 ✓ 每师≤{max_cls}班 ✓ 覆盖 {assigned}/{pairs} ✓")
+              f"不跨学段 ✓ 每师≤{max_cls}班且跨年级 ✓ 覆盖 {assigned}/{pairs} ✓")
     finally:
         con.close()
 

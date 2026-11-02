@@ -20,9 +20,11 @@
 - 班级：每年级 3 个（≥3），班主任指向该年级一名教师。
 - 用户：1 系统管理员 + 9 年级管理员（每级 1）+ 27 教师（每级 3，≥20）+ 216 学生
   （每班 8，≥200）。各自正确关联年级/学科/班级与角色。
-- 授课关系：按学段集中师资，跨年级不跨学段轮换分配（共 177 条）。
-  每位教师最多带 2 个班级、每个班级恰好 2 位教师（其班主任 + 学段内下一班教师），
-  消除「单年级 3 师扛 7~10 门课」的过载；建立教师↔班级↔学科↔年级 的完整关联。
+- 授课关系：教师跨年级任教（不跨学段）。学段内年级结对：小学 (1,2)(3,4)(5,6)
+  低/中/高段、初中 7→8→9→7 成环；结对内 A 师 k → A(k)+B(k)、B 师 k → B(k)+A(k+1)。
+  每位教师恰好 2 个班级且分属 2 个不同年级，每班恰好 2 位教师（本年级班主任
+  必在其中），共 177 条，建立教师↔班级↔学科↔年级 的完整关联。教师使用
+  真实感中文姓名（随机抽取，用户名不变）。
 
 ## 安全
 - 不触碰 `sys_role` / `sys_permission` / `sys_role_permission` 骨架（只按 code 关联）。
@@ -42,8 +44,8 @@ import json
 import os
 import random
 import sys
-from collections import defaultdict
 from datetime import datetime
+from typing import Dict
 
 # 让脚本在「仓库内直接跑」与「容器内 PYTHONPATH=/app 跑」都能 import app
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -235,12 +237,10 @@ def generate(db: Session, rng: random.Random, manifest: list) -> dict:
         # 教师
         for _ in range(TEACHERS_PER_GRADE):
             teacher_seq += 1
-            # 占位随机 draw（理由同上：维持随机序列，别删）
-            rng.choice(_SURNAMES)
-            rng.choice(_GIVEN)
+            tname = rng.choice(_SURNAMES) + rng.choice(_GIVEN)
             t = User(
                 username=f"teacher{teacher_seq:03d}", password=pw_hash,
-                real_name=f"{g.name}教师{teacher_seq}", identity="teacher",
+                real_name=tname, identity="teacher",
                 status="active", school_name="示范学校",
                 gender=("男" if teacher_seq % 2 else "女"),
                 grade_id=g.id, must_change_password=False,
@@ -299,46 +299,78 @@ def generate(db: Session, rng: random.Random, manifest: list) -> dict:
                              "password": stu.password, "status": stu.status,
                              "must_change_password": stu.must_change_password})
 
-    # 6) 授课关系（跨年级不跨学段，每位教师最多带 2 个班级）
+    # 6) 授课关系（教师跨年级任教，不跨学段；每位教师最多带 2 个班级）
     # --------------------------------------------------------------
-    # 旧逻辑：每班学科只在「本级 3 名教师」内轮询 → 单年级 3 师扛 7~10 门 ×3 班，过载。
-    # 新逻辑：师资按学段集中（小学 18 师 / 初中 9 师，与班级同序排列），
-    #   教师 i 负责班级 i（其本班，即班主任）+ 班级 (i+1)%m（学段内下一班教师），
-    #   形成轮换链：每位教师恰好 2 个班级、每个班级恰好 2 位教师，且班主任必带本班课。
-    #   班级内学科在 2 位教师间轮询分配 → 所有 (班级,学科) 对全覆盖、无跨学段、无单年级过载。
-    # 约束锚点：teacher.grade_id 仍记其「归属年级」（家级），TeachingAssignment.grade_id 记班级所属年级；
-    #   跨年级任课即 teacher.grade_id != assignment.grade_id，但二者同属一个 stage，故不跨学段。
+    # 旧逻辑：班级级轮换链（教师 i 带班级 i 与 i+1）——教师基本只带本年级，
+    #   与真实学校「教师跨年级带班」不符。
+    # 新逻辑：学段内「年级结对」，贴近真实排课的学段分工：
+    #   - 年级数为偶数（小学 1-6）：两两结对 (1,2)(3,4)(5,6) —— 低/中/高段；
+    #   - 年级数为奇数（初中 7-9）：按年级环轮转 7→8→9→7（贴合升学带班习惯）。
+    #   结对内分配：A 年级教师 k → A(k)班 + B(k)班；B 年级教师 k → B(k)班 + A(k+1)班。
+    #   环式分配：G_j 教师 k → G_j(k)班 + G_{j+1}(k)班。
+    #   结果：每位教师恰好 2 个班级且分属 2 个不同年级；每班恰好 2 位教师
+    #   （来自 2 个年级，本年级班主任必在其中）；班级内学科在 2 位教师间轮询；
+    #   所有 (班级,学科) 对全覆盖、不跨学段。
+    # 约束锚点：teacher.grade_id 仍记「归属年级」，TeachingAssignment.grade_id
+    #   记班级所属年级，二者可不同级但必同学段。
     ta_count = 0
-    stage_classes = defaultdict(list)   # stage -> [(class_obj, grade_num)]
-    stage_teachers = defaultdict(list)  # stage -> [User]
+    classes_by_grade: Dict[int, list] = {}
     for k, g, _c in classes:
-        stage_classes[g.stage].append((k, g.grade_num))
-    for g in grades:
-        stage_teachers[g.stage].extend(teachers_by_grade[g.grade_num])
+        classes_by_grade.setdefault(g.grade_num, []).append(k)
 
-    for stage, cls_list in stage_classes.items():
-        tlist = stage_teachers[stage]
-        m = len(tlist)
-        if m == 0:
-            continue
-        # 班级与教师同序排列：cls_list[i] 的班主任正是 tlist[i]
-        for i, (k, gnum) in enumerate(cls_list):
-            grade_obj = grade_by_num[gnum]
-            subs = [s for s in subjects if s.grade_id == grade_obj.id]
-            t_a = tlist[i % m]                # 本班班主任（必然与班级同学段）
-            t_b = tlist[(i + 1) % m]          # 学段内下一班教师（轮换，同属该学段）
-            for idx, s in enumerate(subs):
-                teacher = t_a if idx % 2 == 0 else t_b
-                ta = TeachingAssignment(
-                    teacher_id=teacher.id, class_id=k.id, subject_id=s.id,
-                    grade_id=grade_obj.id, school_year="2026-2027",
-                    is_active=True, created_at=BASE_TIME,
-                )
-                db.add(ta)
-                ta_count += 1
-                manifest.append({"t": "teach", "teacher_id": teacher.id,
-                                 "class_id": k.id, "subject_id": s.id,
-                                 "grade_id": grade_obj.id})
+    # teacher -> (class_a, class_b)：结对/成环公式，纯索引运算、确定性
+    teacher_classes: list = []
+    # ⚠️ 必须用确定序遍历学段：set 迭代序受 PYTHONHASHSEED 影响，
+    # 会直接打碎跨环境指纹（差点上线）。
+    for stage in sorted({g.stage for g in grades}):
+        glist = sorted((g for g in grades if g.stage == stage),
+                       key=lambda x: x.grade_num)
+        n = len(glist)
+        if n % 2 == 0:
+            # 偶数年级：两两结对
+            for i in range(0, n, 2):
+                ga, gb = glist[i], glist[i + 1]
+                ta = teachers_by_grade[ga.grade_num]
+                tb = teachers_by_grade[gb.grade_num]
+                ca = classes_by_grade[ga.grade_num]
+                cb = classes_by_grade[gb.grade_num]
+                for k in range(len(ta)):
+                    teacher_classes.append((ta[k], ca[k], cb[k]))
+                    teacher_classes.append((tb[k], cb[k], ca[(k + 1) % len(ca)]))
+        else:
+            # 奇数年级：按年级环轮转
+            for j, g in enumerate(glist):
+                gnext = glist[(j + 1) % n]
+                ta = teachers_by_grade[g.grade_num]
+                ca = classes_by_grade[g.grade_num]
+                cn = classes_by_grade[gnext.grade_num]
+                for k in range(len(ta)):
+                    teacher_classes.append((ta[k], ca[k], cn[k]))
+
+    # class_id -> [teacher, ...]（结对保证每班恰 2 位；插入序即轮询序）
+    class_teachers: Dict[int, list] = {}
+    for t, c1, c2 in teacher_classes:
+        class_teachers.setdefault(c1.id, []).append(t)
+        class_teachers.setdefault(c2.id, []).append(t)
+
+    for k, g, _c in classes:
+        grade_obj = grade_by_num[g.grade_num]
+        subs = [s for s in subjects if s.grade_id == grade_obj.id]
+        tlist = class_teachers.get(k.id, [])
+        for idx, s in enumerate(subs):
+            if not tlist:
+                continue
+            teacher = tlist[idx % len(tlist)]
+            ta = TeachingAssignment(
+                teacher_id=teacher.id, class_id=k.id, subject_id=s.id,
+                grade_id=grade_obj.id, school_year="2026-2027",
+                is_active=True, created_at=BASE_TIME,
+            )
+            db.add(ta)
+            ta_count += 1
+            manifest.append({"t": "teach", "teacher_id": teacher.id,
+                             "class_id": k.id, "subject_id": s.id,
+                             "grade_id": grade_obj.id})
     db.flush()
 
     # 7) 角色关联（按 code 取 ID，跨环境稳定）
