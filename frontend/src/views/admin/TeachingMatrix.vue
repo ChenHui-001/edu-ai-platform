@@ -16,7 +16,7 @@
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ stats.subjects }}</div><div class="stat-label">学科单元</div>
+          <div class="stat-value">{{ stats.classes }}</div><div class="stat-label">班级总数</div>
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
@@ -45,7 +45,7 @@
                     style="width: 220px" :prefix-icon="Search" />
         </el-form-item>
         <el-form-item>
-          <span class="filter-tip">跨年级任课的教师会出现在多个年级中；「暂无教师」为任课缺口，请及时安排。</span>
+          <span class="filter-tip">层级：年级 → 班级 → 科目 → 任教老师；跨年级任课的教师会出现在多个班级中，「暂无教师」为任课缺口。</span>
         </el-form-item>
       </el-form>
     </el-card>
@@ -59,31 +59,38 @@
               {{ stageText(g.stage) }}
             </el-tag>
             <span class="grade-sub">
-              {{ g.subjects.length }} 门学科 · {{ gradeTeacherCount(g) }} 名教师参与
+              {{ g.classes.length }} 个班级 · {{ g.teacher_count }} 名教师参与
             </span>
           </div>
         </template>
 
-        <el-table :data="g.subjects" size="small" stripe>
-          <el-table-column prop="name" label="学科" width="110" />
-          <el-table-column prop="textbook_version" label="教材版本" width="120" />
-          <el-table-column label="任教教师" min-width="170">
+        <el-table :data="g.rows" size="small" :span-method="spanClass" :show-header="true">
+          <el-table-column label="班级" width="220">
             <template #default="{ row }">
-              <template v-if="row.teachers.length">
-                <el-tag v-for="t in row.teachers" :key="t.teacher_id"
-                        :type="hit(t) ? 'warning' : 'info'" effect="plain" class="t-tag">
-                  {{ t.name }}
+              <div class="cls-cell">
+                <span class="cls-name">{{ row.class_name }}</span>
+                <el-tag v-if="row.head_teacher" type="success" effect="plain" size="small">
+                  班主任：{{ row.head_teacher }}
                 </el-tag>
-              </template>
-              <el-tag v-else type="danger" effect="plain">暂无教师（缺口）</el-tag>
+                <span v-else class="muted">暂无班主任</span>
+              </div>
             </template>
           </el-table-column>
-          <el-table-column label="任教明细（教师 · 所带班级）" min-width="300">
+          <el-table-column label="科目" width="120">
+            <template #default="{ row }">{{ row.subject.name }}</template>
+          </el-table-column>
+          <el-table-column label="教材版本" width="120">
+            <template #default="{ row }">{{ row.subject.textbook_version || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="任教老师" min-width="220">
             <template #default="{ row }">
-              <span v-if="row.teachers.length" class="detail">
-                {{ row.teachers.map(t => `${t.name}（${t.classes.join('、')}）`).join('；') }}
-              </span>
-              <span v-else class="muted">—</span>
+              <template v-if="row.subject.teacher">
+                <el-tag :type="hit(row.subject.teacher) ? 'warning' : 'info'" effect="plain">
+                  {{ row.subject.teacher.name }}
+                </el-tag>
+                <span class="muted">{{ row.subject.teacher.username }}</span>
+              </template>
+              <el-tag v-else type="danger" effect="plain">暂无教师（缺口）</el-tag>
             </template>
           </el-table-column>
         </el-table>
@@ -101,7 +108,7 @@ import { eduApi } from '@/api'
 
 const loading = ref(false)
 const items = ref([])
-const stats = ref({ grades: 0, subjects: 0, assignments: 0, teachers: 0 })
+const stats = ref({ grades: 0, classes: 0, assignments: 0, teachers: 0 })
 const query = ref({ grade_id: null })
 const keyword = ref('')
 
@@ -113,23 +120,43 @@ async function load() {
     const res = await eduApi.teachingMatrix(
       query.value.grade_id ? { grade_id: query.value.grade_id } : {})
     items.value = res.data?.items || []
-    stats.value = res.data?.stats || { grades: 0, subjects: 0, assignments: 0, teachers: 0 }
+    stats.value = res.data?.stats || { grades: 0, classes: 0, assignments: 0, teachers: 0 }
   } finally {
     loading.value = false
   }
 }
 
-// 前端过滤：年级走后端参数（grade_admin 有年级硬约束），姓名/用户名走前端即时过滤
+// 把 年级→班级→科目 拍平成表格行；「班级」列用 rowspan 合并，
+// 搜索时只保留命中教师的科目行（rowspan 随之重算，保证合并不错位）
 const filteredItems = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   return items.value
     .filter(g => !query.value.grade_id || g.grade_id === query.value.grade_id)
     .map(g => {
-      if (!kw) return g
-      const subjects = g.subjects.filter(s => s.teachers.some(t => hit(t)))
-      return { ...g, subjects }
+      const rows = []
+      const tids = new Set()
+      for (const k of g.classes) {
+        const kept = kw
+          ? k.subjects.filter(s => s.teacher && hit(s.teacher))
+          : k.subjects
+        if (kw && !kept.length) continue
+        kept.forEach((s, i) => {
+          rows.push({
+            class_name: k.class_name,
+            head_teacher: k.head_teacher,
+            rowspan: i === 0 ? kept.length : 0,
+            subject: s,
+          })
+        })
+        for (const s of kept) if (s.teacher) tids.add(s.teacher.teacher_id)
+      }
+      return {
+        ...g,
+        rows,
+        teacher_count: tids.size,
+      }
     })
-    .filter(g => !kw || g.subjects.length > 0)
+    .filter(g => (kw ? g.rows.length > 0 : true))
 })
 
 function hit(t) {
@@ -139,10 +166,12 @@ function hit(t) {
     || (t.username || '').toLowerCase().includes(kw)
 }
 
-function gradeTeacherCount(g) {
-  const ids = new Set()
-  for (const s of g.subjects) for (const t of s.teachers) ids.add(t.teacher_id)
-  return ids.size
+// 合并「班级」列：rowspan>0 的行占位，=0 的行被上方合并覆盖
+function spanClass({ columnIndex, row }) {
+  if (columnIndex === 0) {
+    return { rowspan: row.rowspan, colspan: row.rowspan > 0 ? 1 : 0 }
+  }
+  return { rowspan: 1, colspan: 1 }
 }
 
 onMounted(load)
@@ -159,7 +188,7 @@ onMounted(load)
 .grade-head { display: flex; align-items: center; gap: 8px; }
 .grade-name { font-weight: 700; font-size: 15px; }
 .grade-sub { font-size: 12px; color: #909399; }
-.t-tag { margin-right: 6px; }
-.detail { font-size: 13px; color: #606266; }
-.muted { color: #c0c4cc; }
+.cls-cell { display: flex; flex-direction: column; gap: 4px; }
+.cls-name { font-weight: 600; }
+.muted { font-size: 12px; color: #909399; }
 </style>

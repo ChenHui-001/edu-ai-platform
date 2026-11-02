@@ -1095,24 +1095,21 @@ def withdraw_class_request(
 
 
 # ---------------------------------------------------------------- 任课总览
-@router.get("/teaching-matrix", summary="任课总览：年级 × 学科 → 任教教师")
+@router.get("/teaching-matrix", summary="任课总览：年级 → 班级 → 科目 → 任教教师")
 def teaching_matrix(
     grade_id: Optional[int] = Query(None, description="按年级过滤；缺省返回全部年级"),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("resource:teaching:list")),
 ):
-    """每个年级、每个学科的任教教师对应关系。
+    """按「年级 → 班级 → 科目 → 任教教师」层级返回任课对应关系。
 
-    结构：年级（按 grade_num 升序）→ 学科（按 sort 升序）→ 教师列表
-    （含该教师在此年级此学科下带的具体班级）。跨年级任课的教师会自然
-    出现在多个年级的单元格里，与 TeachingAssignment 实际数据一致。
+    每个班级单元格里带班主任姓名；某班某学科暂无教师时 teacher 为 null
+    —— 缺口如实展示，便于管理补齐，这是「数据准确」的一部分。
 
     管理口径：
     - sys_admin / teacher：全校视图；
     - grade_admin：**强制只看本年级**（与 `_assert_grade_write_scope`
       同一口径，传其他 grade_id 直接拒绝）。
-    - 无教师的学科照常返回空 teachers —— 缺口如实展示，便于管理补齐，
-      这是「数据准确」的一部分，不要在前端隐藏。
     """
     codes = set(user.role_codes or [])
     if "grade_admin" in codes and "sys_admin" not in codes:
@@ -1129,64 +1126,72 @@ def teaching_matrix(
     for s in db.scalars(select(Subject).order_by(Subject.grade_id, Subject.sort)).all():
         subs_by_grade.setdefault(s.grade_id, []).append(s)
 
-    # 授课关系一次取齐：量级 = 班级数 × 学科数（几百行），不值得按年级循环查
-    rows = db.execute(
+    classes_by_grade: Dict[int, List[Class]] = {}
+    for k in db.scalars(select(Class).order_by(Class.grade_id, Class.id)).all():
+        classes_by_grade.setdefault(k.grade_id, []).append(k)
+
+    # (class_id, subject_id) -> 教师；数据约束下每班每科一位教师，
+    # 同班同学科若存在多条（历史学年）以最后一次为准
+    teach_map: Dict[Any, Dict[str, Any]] = {}
+    teacher_ids: set = set()
+    assignment_count = 0
+    for r in db.execute(
         select(
-            Subject.grade_id.label("grade_id"),
+            TeachingAssignment.class_id.label("class_id"),
             TeachingAssignment.subject_id.label("subject_id"),
             User.id.label("teacher_id"),
             User.real_name.label("real_name"),
             User.username.label("username"),
-            Class.name.label("class_name"),
         )
-        .join(Subject, Subject.id == TeachingAssignment.subject_id)
         .join(User, User.id == TeachingAssignment.teacher_id)
-        .join(Class, Class.id == TeachingAssignment.class_id)
         .where(TeachingAssignment.is_active.is_(True))
-        .order_by(Subject.grade_id, TeachingAssignment.subject_id, User.id)
-    ).all()
-
-    # (grade_id, subject_id) -> {teacher_id: {name, username, classes[]}}
-    cell: Dict[Any, Dict[int, Dict[str, Any]]] = {}
-    for r in rows:
-        teachers = cell.setdefault((r.grade_id, r.subject_id), {})
-        t = teachers.setdefault(r.teacher_id, {
+        .order_by(TeachingAssignment.class_id, TeachingAssignment.subject_id, User.id)
+    ).all():
+        teach_map[(r.class_id, r.subject_id)] = {
             "teacher_id": r.teacher_id, "name": r.real_name,
-            "username": r.username, "classes": [],
-        })
-        if r.class_name and r.class_name not in t["classes"]:
-            t["classes"].append(r.class_name)
+            "username": r.username,
+        }
+        teacher_ids.add(r.teacher_id)
+        assignment_count += 1
+
+    # 班主任：class_id -> 姓名（班级-centric 视图的管理上下文）
+    head_names: Dict[int, str] = {}
+    for r in db.execute(
+        select(Class.id.label("class_id"), User.real_name.label("real_name"))
+        .join(User, User.id == Class.head_teacher_id)
+    ).all():
+        head_names[r.class_id] = r.real_name
 
     items = []
-    teacher_ids: set = set()
-    assignment_count = 0
     for g in grades:
-        gsubs = []
-        for s in subs_by_grade.get(g.id, []):
-            teachers = list(cell.get((g.id, s.id), {}).values())
-            for t in teachers:
-                teacher_ids.add(t["teacher_id"])
-                assignment_count += len(t["classes"])
-            gsubs.append({
+        gsubs = subs_by_grade.get(g.id, [])
+        cls_items = []
+        for k in classes_by_grade.get(g.id, []):
+            s_items = [{
                 "subject_id": s.id,
                 "name": s.name,
                 "textbook_version": s.textbook_version,
-                "teacher_count": len(teachers),
-                "teachers": teachers,
+                "teacher": teach_map.get((k.id, s.id)),
+            } for s in gsubs]
+            cls_items.append({
+                "class_id": k.id,
+                "class_name": k.name,
+                "head_teacher": head_names.get(k.id),
+                "subjects": s_items,
             })
         items.append({
             "grade_id": g.id,
             "grade_name": g.name,
             "stage": g.stage,
             "grade_num": g.grade_num,
-            "subjects": gsubs,
+            "classes": cls_items,
         })
 
     return ok({
         "items": items,
         "stats": {
             "grades": len(items),
-            "subjects": sum(len(x["subjects"]) for x in items),
+            "classes": sum(len(x["classes"]) for x in items),
             "assignments": assignment_count,
             "teachers": len(teacher_ids),
         },
