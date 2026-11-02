@@ -33,6 +33,7 @@ Level3 考点层由 `knowledge_level3_seed` 单独播种，本脚本不生成，
     python tools/gen_knowledge_points.py --grades 1-3 --subjects 数学,语文
     python tools/gen_knowledge_points.py --format json --out-dir /tmp/kp
     python tools/gen_knowledge_points.py --apply                 # 幂等入库（需 DB）
+    python tools/gen_knowledge_points.py --apply --replace       # 以本体系替换目标学科
     python tools/gen_knowledge_points.py --apply --db sqlite:///C:/temp/x.db
 
 退出码：0 成功；1 参数/内容错误；2 入库失败。
@@ -1776,13 +1777,46 @@ def write_outputs(data: Dict, out_dir: str, fmt: str) -> None:
 
 
 # ---------------------------------------------------------------- 入库（可选）
-def apply_to_db(data: Dict, db_url: str = "") -> int:
-    """幂等入库：按 (父级, 名称) 复用，不覆盖已有内容（与 audit 工具同语义）。"""
+def _reference_counts(db) -> Dict[str, int]:
+    """统计业务表对知识点的引用行数（sqlite 专用；其他方言跳过检查）。"""
+    from sqlalchemy import text  # noqa: E402
+
+    try:
+        tables = db.execute(text(
+            "SELECT m.name FROM sqlite_master m "
+            "JOIN pragma_table_info(m.name) p "
+            "WHERE p.name='knowledge_point_id' AND m.type='table'"
+        )).all()
+    except Exception:  # noqa: BLE001 非 sqlite 方言：放弃检查，交给 --force 兜底
+        return {}
+    out: Dict[str, int] = {}
+    for (tname,) in tables:
+        try:
+            n = db.execute(text(
+                f"SELECT COUNT(*) FROM {tname} WHERE knowledge_point_id IS NOT NULL"
+            )).scalar() or 0
+        except Exception:  # noqa: BLE001
+            continue
+        if n:
+            out[tname] = int(n)
+    return out
+
+
+def apply_to_db(data: Dict, db_url: str = "", *,
+                replace: bool = False, force: bool = False) -> int:
+    """幂等入库：按 (父级, 名称) 复用，不覆盖已有内容（与 audit 工具同语义）。
+
+    `replace=True` 时先删除目标 (年级, 学科) 下的既有知识点再导入 —— 即
+    「以本套体系替换」，可用于反复重生成。删除会触发外键级联：题目/教案/
+    任务挂靠为 SET NULL（保留业务数据、仅解绑考点），掌握/错题类为 CASCADE
+    （**会被一并删除**）。因此 replace 前会统计引用行数，存在引用且未传
+    force 时拒绝执行。
+    """
     backend = os.path.join(ROOT, "backend")
     if backend not in sys.path:
         sys.path.insert(0, backend)
     os.environ.setdefault("LLM_ENABLED", "false")
-    from sqlalchemy import create_engine, select  # noqa: E402
+    from sqlalchemy import create_engine, delete, select  # noqa: E402
     from sqlalchemy.orm import Session  # noqa: E402
 
     from app.core.config import settings  # noqa: E402
@@ -1796,11 +1830,36 @@ def apply_to_db(data: Dict, db_url: str = "") -> int:
         return 2
     engine = create_engine(url, future=True, connect_args={"check_same_thread": False})
 
-    stats = {"created": 0, "reused": 0}
+    stats = {"created": 0, "reused": 0, "deleted": 0}
     missing = []
     with Session(engine) as db:
         grades = {g.grade_num: g for g in db.scalars(select(Grade)).all()}
         subjects = {(s.grade_id, s.name): s for s in db.scalars(select(Subject)).all()}
+
+        targets = []
+        for block in data["subjects"]:
+            grade = grades.get(int(block["grade_num"]))
+            subject = subjects.get((grade.id, block["subject_name"])) if grade else None
+            if not grade or not subject:
+                missing.append(f"{block['grade_name']}/{block['subject_name']}")
+                continue
+            targets.append((grade, subject))
+
+        if replace and targets:
+            refs = _reference_counts(db)
+            if refs and not force:
+                print(f"✗ 拒绝替换：以下业务表引用了知识点 {refs}，replace 会级联清理。"
+                      f"确认无误请加 --force。")
+                return 2
+            for grade, subject in targets:
+                stats["deleted"] += db.execute(
+                    delete(KnowledgePoint).where(
+                        KnowledgePoint.grade_id == grade.id,
+                        KnowledgePoint.subject_id == subject.id,
+                    )
+                ).rowcount or 0
+            db.flush()
+            print(f"  ✔ 已清理目标学科既有知识点 {stats['deleted']} 条")
 
         def walk(grade, subject, nodes, parent):
             for node in nodes or []:
@@ -1843,7 +1902,6 @@ def apply_to_db(data: Dict, db_url: str = "") -> int:
                 grade = grades.get(int(block["grade_num"]))
                 subject = subjects.get((grade.id, block["subject_name"])) if grade else None
                 if not grade or not subject:
-                    missing.append(f"{block['grade_name']}/{block['subject_name']}")
                     continue
                 walk(grade, subject, block["nodes"], None)
             db.commit()
@@ -1852,6 +1910,7 @@ def apply_to_db(data: Dict, db_url: str = "") -> int:
             print(f"✗ 入库失败（已回滚）: {exc}")
             return 2
     print(f"  ✔ 入库完成：新增 {stats['created']}，复用 {stats['reused']}"
+          f"{'，清理 ' + str(stats['deleted']) if replace else ''}"
           f"{'，缺失学科 ' + str(len(missing)) if missing else ''}")
     if missing:
         print(f"    缺失（库中无对应 grade/subject）: {', '.join(missing[:8])}"
@@ -1868,6 +1927,10 @@ def main() -> int:
                     help=f"输出目录（默认 {os.path.relpath(DEFAULT_OUT, ROOT)}）")
     ap.add_argument("--list", action="store_true", help="只打印覆盖矩阵，不写文件")
     ap.add_argument("--apply", action="store_true", help="生成后幂等写入数据库")
+    ap.add_argument("--replace", action="store_true",
+                    help="配合 --apply：先删除目标 (年级,学科) 既有知识点再导入（以本体系替换）")
+    ap.add_argument("--force", action="store_true",
+                    help="目标知识点被业务数据引用时，仍允许 --replace（级联清理，慎用）")
     ap.add_argument("--db", default="", help="入库目标库（默认 DATABASE_URL）")
     args = ap.parse_args()
 
@@ -1891,7 +1954,7 @@ def main() -> int:
 
     write_outputs(data, args.out_dir, args.format)
     if args.apply:
-        rc = apply_to_db(data, args.db)
+        rc = apply_to_db(data, args.db, replace=args.replace, force=args.force)
         if rc:
             return rc
     return 0
