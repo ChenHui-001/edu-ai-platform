@@ -45,7 +45,7 @@
                     style="width: 220px" :prefix-icon="Search" />
         </el-form-item>
         <el-form-item>
-          <span class="filter-tip">层级：年级 → 班级 → 科目 → 任教老师；跨年级任课的教师会出现在多个班级中，「暂无教师」为任课缺口。</span>
+          <span class="filter-tip">层级：年级 → 班级 → 科目 → 任教老师；跨年级任课的教师会出现在多个班级中。</span>
         </el-form-item>
       </el-form>
     </el-card>
@@ -54,46 +54,41 @@
       <el-card v-for="g in filteredItems" :key="g.grade_id" shadow="never" class="grade-card">
         <template #header>
           <div class="grade-head">
-            <span class="grade-name">{{ g.grade_name }}</span>
-            <el-tag :type="g.stage === 'primary' ? 'success' : 'primary'" size="small">
-              {{ stageText(g.stage) }}
-            </el-tag>
-            <span class="grade-sub">
-              {{ g.classes.length }} 个班级 · {{ g.teacher_count }} 名教师参与
-            </span>
+            <div class="grade-title">
+              <span class="grade-bar"></span>
+              <span>{{ g.grade_name }}</span>
+              <el-tag :type="g.stage === 'primary' ? 'success' : 'primary'" size="small" effect="light">
+                {{ stageText(g.stage) }}
+              </el-tag>
+            </div>
+            <span class="grade-sub">{{ g.classes.length }} 个班级 · {{ g.teacher_count }} 名教师参与</span>
           </div>
         </template>
 
-        <el-table :data="g.rows" size="small" :span-method="spanClass" :show-header="true">
-          <el-table-column label="班级" width="220">
-            <template #default="{ row }">
-              <div class="cls-cell">
-                <span class="cls-name">{{ row.class_name }}</span>
-                <el-tag v-if="row.head_teacher" type="success" effect="plain" size="small">
-                  班主任：{{ row.head_teacher }}
-                </el-tag>
-                <span v-else class="muted">暂无班主任</span>
+        <el-row :gutter="14">
+          <el-col v-for="k in g.view_classes" :key="k.class_id" :xs="24" :sm="12" :md="8">
+            <div class="class-card">
+              <div class="class-head">
+                <span class="class-name">{{ k.class_name }}</span>
+                <span v-if="k.head_teacher" class="head-tag">班主任 · {{ k.head_teacher }}</span>
+                <span v-else class="head-tag none">暂无班主任</span>
               </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="科目" width="120">
-            <template #default="{ row }">{{ row.subject.name }}</template>
-          </el-table-column>
-          <el-table-column label="教材版本" width="120">
-            <template #default="{ row }">{{ row.subject.textbook_version || '—' }}</template>
-          </el-table-column>
-          <el-table-column label="任教老师" min-width="220">
-            <template #default="{ row }">
-              <template v-if="row.subject.teacher">
-                <el-tag :type="hit(row.subject.teacher) ? 'warning' : 'info'" effect="plain">
-                  {{ row.subject.teacher.name }}
-                </el-tag>
-                <span class="muted">{{ row.subject.teacher.username }}</span>
-              </template>
-              <el-tag v-else type="danger" effect="plain">暂无教师（缺口）</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
+              <div class="sub-list">
+                <div v-for="s in k.subjects" :key="s.subject_id" class="sub-row">
+                  <span class="sub-name">{{ s.name }}</span>
+                  <span class="sub-line"></span>
+                  <template v-if="s.teacher">
+                    <el-tag size="small" effect="plain" :type="hit(s.teacher) ? 'warning' : 'info'"
+                            :title="s.teacher.username">
+                      {{ s.teacher.name }}
+                    </el-tag>
+                  </template>
+                  <el-tag v-else size="small" type="danger" effect="plain">暂无教师</el-tag>
+                </div>
+              </div>
+            </div>
+          </el-col>
+        </el-row>
       </el-card>
 
       <el-empty v-if="!loading && !filteredItems.length" description="没有匹配的任课数据" />
@@ -126,39 +121,6 @@ async function load() {
   }
 }
 
-// 把 年级→班级→科目 拍平成表格行；「班级」列用 rowspan 合并，
-// 搜索时只保留命中教师的科目行（rowspan 随之重算，保证合并不错位）
-const filteredItems = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  return items.value
-    .filter(g => !query.value.grade_id || g.grade_id === query.value.grade_id)
-    .map(g => {
-      const rows = []
-      const tids = new Set()
-      for (const k of g.classes) {
-        const kept = kw
-          ? k.subjects.filter(s => s.teacher && hit(s.teacher))
-          : k.subjects
-        if (kw && !kept.length) continue
-        kept.forEach((s, i) => {
-          rows.push({
-            class_name: k.class_name,
-            head_teacher: k.head_teacher,
-            rowspan: i === 0 ? kept.length : 0,
-            subject: s,
-          })
-        })
-        for (const s of kept) if (s.teacher) tids.add(s.teacher.teacher_id)
-      }
-      return {
-        ...g,
-        rows,
-        teacher_count: tids.size,
-      }
-    })
-    .filter(g => (kw ? g.rows.length > 0 : true))
-})
-
 function hit(t) {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return false
@@ -166,29 +128,101 @@ function hit(t) {
     || (t.username || '').toLowerCase().includes(kw)
 }
 
-// 合并「班级」列：rowspan>0 的行占位，=0 的行被上方合并覆盖
-function spanClass({ columnIndex, row }) {
-  if (columnIndex === 0) {
-    return { rowspan: row.rowspan, colspan: row.rowspan > 0 ? 1 : 0 }
-  }
-  return { rowspan: 1, colspan: 1 }
-}
+// 搜索时只保留命中教师的科目；班级/年级无命中则整块隐藏
+const filteredItems = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return items.value
+    .filter(g => !query.value.grade_id || g.grade_id === query.value.grade_id)
+    .map(g => {
+      const tids = new Set()
+      const view_classes = g.classes
+        .map(k => {
+          const subjects = kw
+            ? k.subjects.filter(s => s.teacher && hit(s.teacher))
+            : k.subjects
+          for (const s of subjects) if (s.teacher) tids.add(s.teacher.teacher_id)
+          return { ...k, subjects }
+        })
+        .filter(k => !kw || k.subjects.length > 0)
+      return { ...g, view_classes, teacher_count: tids.size }
+    })
+    .filter(g => !kw || g.view_classes.length > 0)
+})
 
 onMounted(load)
 </script>
 
 <style scoped>
-.stats-row { margin-bottom: 14px; }
-.stat-card { text-align: center; }
-.stat-value { font-size: 26px; font-weight: 700; }
-.stat-label { font-size: 13px; color: #909399; margin-top: 2px; }
-.filter-card { margin-bottom: 14px; }
-.filter-tip { font-size: 12px; color: #909399; }
-.grade-card { margin-bottom: 14px; }
-.grade-head { display: flex; align-items: center; gap: 8px; }
-.grade-name { font-weight: 700; font-size: 15px; }
+.grade-card { margin-bottom: 16px; border-radius: 10px; }
+.grade-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.grade-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.grade-bar {
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--el-color-primary);
+  display: inline-block;
+}
 .grade-sub { font-size: 12px; color: #909399; }
-.cls-cell { display: flex; flex-direction: column; gap: 4px; }
-.cls-name { font-weight: 600; }
-.muted { font-size: 12px; color: #909399; }
+.class-card {
+  border: 1px solid #eceff4;
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 4px rgba(31, 45, 61, 0.05);
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+.class-card:hover {
+  box-shadow: 0 4px 14px rgba(31, 45, 61, 0.1);
+  transform: translateY(-2px);
+}
+.class-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #ebeef5;
+  margin-bottom: 6px;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.class-name { font-weight: 600; font-size: 14px; }
+.head-tag {
+  font-size: 12px;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.head-tag.none { color: #c0c4cc; background: #f5f7fa; }
+.sub-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.sub-name { color: #303133; min-width: 5.5em; }
+.sub-line {
+  flex: 1;
+  border-bottom: 1px dotted #dcdfe6;
+  height: 1px;
+  margin: 0 2px;
+  min-width: 8px;
+}
+.filter-tip { font-size: 12px; color: #909399; }
 </style>

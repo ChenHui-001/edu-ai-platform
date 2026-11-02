@@ -49,6 +49,10 @@ body {
   margin-bottom: 16px;
 }
 
+.stats-row {
+  margin-bottom: 16px;
+}
+
 .filter-card :deep(.el-form-item) {
   margin-bottom: 12px;
 }
@@ -160,4 +164,30 @@ body {
 @media (max-width: 768px) {
   .page-container { padding: 10px; }
   .stat-value { font-size: 22px; }
+}
+
+/* ---------------- 全局表格观感统一（全部管理页生效） ----------------
+ * 之前全站 el-table 无任何定制：白底黑框、表头无底色、行高拥挤，
+ * 是「表格不美观」的系统性根源。这里只动配色/行距/圆角，不改结构，
+ * 对既有页面零破坏。 */
+.el-table {
+  --el-table-header-bg-color: #f7f9fc;
+  --el-table-header-text-color: #5a6472;
+  --el-table-row-hover-bg-color: #f0f6ff;
+  --el-table-border-color: #eceff4;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.el-table th.el-table__cell {
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.el-table .el-table__cell {
+  padding: 9px 0;
+}
+
+.el-table--border {
+  border-color: #eceff4;
 }
