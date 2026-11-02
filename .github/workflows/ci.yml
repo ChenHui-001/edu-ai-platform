@@ -40,6 +40,14 @@ jobs:
           pip install -q ruff
           python tools/lint_gate.py
 
+      - name: 测试数据确定性门禁（两次生成指纹一致 + 行数契约 + 任课不变式）
+        # gen_test_data.py 是 QA 铺底数据唯一来源。此前「确定性 + 合理性」
+        # 只靠仓库外脚本人工跑两次，改生成逻辑忘了验就带病上生产
+        # （真实发生过：同年级班主任全同、单年级 3 师扛 7~10 门课）。
+        # 本门禁连续生成两次比对指纹，并对每个库断言行数契约与结构不变式
+        # （班主任互异 / 不跨学段 / 每师带班≤2 / (班级,学科) 全覆盖）。
+        run: python tools/check_gen_data_determinism.py
+
       - name: 应用导入与建表检查
         # ⚠️ 这一步曾经**靠一个无关的副作用**才能通过：`core/logger.py` 默认
         # 启用 loguru FileSink，路径 `./data/logs/...`，loguru 会 makedirs 整个
