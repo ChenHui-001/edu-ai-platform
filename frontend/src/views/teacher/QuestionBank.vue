@@ -422,8 +422,12 @@
           </el-col>
         </el-row>
         <el-form-item label="知识点">
-          <el-select v-model="aiForm.knowledge_point_id" clearable filterable
-                     style="width:100%" placeholder="可选，AI 将紧扣该知识点出题">
+          <!-- 多选：单选只能「紧扣一个」，不选则是全学科前 12 个候选（模型自选），
+               缺一个「限定在这几个范围内」的中间态 —— 单元复习/专项训练要用它。
+               题量在各知识点之间怎么分由模型决定，前端不做硬分配。 -->
+          <el-select v-model="aiForm.knowledge_point_ids" multiple collapse-tags
+                     collapse-tags-tooltip clearable filterable style="width:100%"
+                     placeholder="可选；多选时 AI 在该范围内自行分配">
             <el-option v-for="k in aiKps" :key="k.id" :label="k.name" :value="k.id" />
           </el-select>
         </el-form-item>
@@ -1082,7 +1086,7 @@ const aiResultSaved = ref(0)
 const aiResultTip = ref('')
 const aiForm = reactive({
   subject_id: null, grade_id: null, type: 'single',
-  difficulty: 'medium', count: 5, knowledge_point_id: null
+  difficulty: 'medium', count: 5, knowledge_point_ids: []
 })
 
 // 条件一变，上一批结果就不再对应当前参数 —— 必须清掉。
@@ -1096,7 +1100,7 @@ function resetAiResult() {
 async function openAiDlg() {
   Object.assign(aiForm, {
     subject_id: null, grade_id: query.grade_id,
-    type: 'single', difficulty: 'medium', count: 5, knowledge_point_id: null
+    type: 'single', difficulty: 'medium', count: 5, knowledge_point_ids: []
   })
   resetAiResult()
   aiDlg.value = true
@@ -1121,14 +1125,14 @@ async function loadAiSubjects(gradeId) {
 
 async function onAiGradeChange() {
   aiForm.subject_id = null
-  aiForm.knowledge_point_id = null
+  aiForm.knowledge_point_ids = []
   aiKps.value = []
   resetAiResult()
   await loadAiSubjects(aiForm.grade_id)
 }
 
 function onAiSubjectChange() {
-  aiForm.knowledge_point_id = null
+  aiForm.knowledge_point_ids = []
   resetAiResult()
   loadAiKps()
 }

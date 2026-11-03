@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
 from app.agents.rag import build_context, search
 from app.core.exception import BusinessException
-from app.models import KnowledgePoint, Question, Subject, User
+from app.models import Grade, KnowledgePoint, Question, Subject, User
 
 
 def subject_kp_missing(db: Session, subject_id: Optional[int]) -> bool:
@@ -72,6 +72,7 @@ difficulty 取值：easy / medium / hard"""
         grade_id: Optional[int] = None,
         subject_id: Optional[int] = None,
         knowledge_point_id: Optional[int] = None,
+        knowledge_point_ids: Optional[List[int]] = None,
         question_type: str = "single",
         count: int = 5,
         difficulty: str = "medium",
@@ -86,27 +87,65 @@ difficulty 取值：easy / medium / hard"""
         if not subject:
             raise BusinessException("学科不存在")
 
-        # 组装上下文：相关知识点 + 同类题参考
-        context: List[str] = []
-        if knowledge_point_id:
-            kp = db.get(KnowledgePoint, knowledge_point_id)
+        # ---- 知识点入参归一化 ----
+        # 两种形态并存：`knowledge_point_ids`（多选，新）与
+        # `knowledge_point_id`（单选，旧前端与既有脚本仍在使用）。
+        # 统一收敛成一个去重保序的列表，下游只认 kp_ids，避免出现
+        # 「两个字段各写一套逻辑」这种最难维护的形态。
+        raw_ids: List[Any] = []
+        if knowledge_point_ids:
+            raw_ids = list(knowledge_point_ids)
+        elif knowledge_point_id:
+            raw_ids = [knowledge_point_id]
+        kp_ids: List[int] = []
+        for raw in raw_ids:
+            try:
+                v = int(str(raw).strip())
+            except (TypeError, ValueError):
+                raise BusinessException(f"知识点参数格式不正确：{raw!r}")
+            if v > 0 and v not in kp_ids:
+                kp_ids.append(v)
+        # 数量上限：前端知识点下拉最多 200 条，超过 20 个已无法「围绕」，
+        # 更像是误传（例如把整棵树的 id 都塞进来），直接拒绝而不是静默截断。
+        if len(kp_ids) > 20:
+            raise BusinessException(f"一次最多选择 20 个知识点（当前 {len(kp_ids)} 个）")
+
+        # 逐个校验：存在 + 属于所选学科。
+        # 必须显式拦截而不是跳过 —— 跳过会让题目落到不属于本学科的
+        # 知识点上，掌握图谱/复习计划按知识点统计时全部错位（历史脏数据来源）。
+        kps: List[KnowledgePoint] = []
+        for kp_id in kp_ids:
+            kp = db.get(KnowledgePoint, kp_id)
             if not kp:
-                # 原来这里只是 if kp: 静默跳过，知识点 id 错的会被忽略并继续出题，
-                # 之后题目落到一个不属于本学科的 knowledge_point_id 上，
-                # 掌握图谱/复习计划按知识点统计时全部错位。必须显式拦截。
-                raise BusinessException("知识点不存在，请重新选择")
+                raise BusinessException(f"知识点(id={kp_id})不存在，请重新选择")
             if kp.subject_id and kp.subject_id != subject_id:
-                # 知识点必须属于所选学科。前端若传了跨年级的学科 id
-                # （Subject 唯一键是 (grade_id, name)，代表 id 永远指向最低年级），
-                # 就会走到这里 —— 实测产生过「七年级一元一次方程的题
-                # 挂在一年级『20以内加减法』知识点上」的脏数据。
+                # 学科唯一键是 (grade_id, name)，所以「数学」在一到九年级各有一条、
+                # 名称完全相同。只报名称会出现「知识点『xx』属于数学，与所选学科
+                # 『数学』不匹配」这种自相矛盾的提示，用户无从判断该改什么 ——
+                # 必须带上学段/年级才能定位。
                 other = db.get(Subject, kp.subject_id)
+                other_grade = db.get(Grade, other.grade_id) if other else None
+                own_grade = db.get(Grade, subject.grade_id)
                 raise BusinessException(
                     f"知识点「{kp.name}」属于"
-                    f"{other.name if other else '其他学科'}，与所选学科「{subject.name}」不匹配，"
+                    f"{other_grade.name if other_grade else ''}{other.name if other else '其他学科'}，"
+                    f"与所选学科「{own_grade.name if own_grade else ''}{subject.name}」不匹配，"
                     f"请重新选择年级与学科"
                 )
-            context.append(f"目标知识点：{kp.name}（{kp.description or '无描述'}）")
+            kps.append(kp)
+
+        # 组装上下文：相关知识点 + 同类题参考
+        context: List[str] = []
+        if kps:
+            if len(kps) == 1:
+                context.append(f"目标知识点：{kps[0].name}（{kps[0].description or '无描述'}）")
+            else:
+                # 多选时给「限定范围」而不是逐个描述：这些是**可选题源**，
+                # 模型需要为每道题挑一个，而不是让每道题都覆盖全部知识点。
+                context.append(
+                    f"限定知识点范围（共 {len(kps)} 个，每道题只归属其中 1 个）："
+                    + "、".join(f"{k.name}(id={k.id})" for k in kps)
+                )
         else:
             # 候选知识点：**不能按 level==3 过滤** —— 实测种子数据只到 level 1/2，
             # level=3 恒为 0 条，过滤后候选永远为空，模型拿不到任何真实 id
@@ -138,8 +177,20 @@ difficulty 取值：easy / medium / hard"""
             f"难度要求：{self._difficulty_name(difficulty)}，"
             f"学科：{subject.name}（教材 {subject.textbook_version or '默认'}）。"
         )
-        if knowledge_point_id and context:
-            prompt += f"\n必须紧扣知识点：{context[0].split('：')[1].split('（')[0]}。"
+        if kps:
+            if len(kps) == 1:
+                prompt += f"\n必须紧扣知识点：{kps[0].name}。"
+            else:
+                # 分配策略：**由模型自行决定各知识点的题量比例**，不做硬性
+                # 「2/2/1」式分配。硬分配要求模型按题号严格映射知识点，
+                # 实测会让它为了凑够分布而硬编不贴题的题目；只给范围 + 要求
+                # 尽量覆盖，出题质量更稳。
+                prompt += (
+                    f"\n必须围绕以下 {len(kps)} 个知识点出题，每道题的 knowledge_point_id "
+                    f"只能从这些 id 中选：{','.join(str(k.id) for k in kps)}。"
+                    "各知识点的题量比例由你根据知识点的重要性与覆盖度自行决定，"
+                    "尽量让每个知识点都有题，不要全部集中在某一个上。"
+                )
 
         result = self.call_llm(prompt, db=db, user_id=user_id, context=context,
                                biz_type="question_generate", json_mode=True)
@@ -176,7 +227,10 @@ difficulty 取值：easy / medium / hard"""
             kp_id = self._resolve_kp_id(
                 db, it.get("knowledge_point_id"), subject_id,
                 kp_name=it.get("knowledge_point_name"),
-                fallback_id=knowledge_point_id,
+                # 多选时回退到第一个选定知识点，且模型给的 id 必须落在给定集合内；
+                # 单选/未选时 allowed_ids 为 None，行为与改动前一致。
+                fallback_id=kps[0].id if kps else None,
+                allowed_ids={k.id for k in kps} or None,
             )
             q = Question(
                 type=it.get("type", question_type),
@@ -312,6 +366,7 @@ difficulty 取值：easy / medium / hard"""
         subject_id: Optional[int],
         kp_name: Optional[str] = None,
         fallback_id: Optional[int] = None,
+        allowed_ids: Optional[set] = None,
     ) -> Optional[int]:
         """校验模型给出的知识点 id，返回**可安全落库**的值（无效则回退或置空）。
 
@@ -322,7 +377,8 @@ difficulty 取值：easy / medium / hard"""
         三重判据：
           1. id 必须真实存在；
           2. 必须属于当前学科（跨学科挂靠会让掌握度/复习计划按知识点统计错位）；
-          3. 都不过则回退：请求指定的知识点 → 按名称在同学科内匹配 → 留空。
+          3. 多选场景下必须落在用户给定的知识点集合内（allowed_ids）；
+          都不过则回退：请求指定的知识点 → 按名称在同学科内匹配 → 留空。
              留空是可接受的：题目照样入库，只是未挂知识点，用户可在审核台补挂。
         """
         def _valid(kp_id: Optional[int]) -> Optional[int]:
@@ -332,6 +388,10 @@ difficulty 取值：easy / medium / hard"""
             if kp is None:
                 return None
             if subject_id and kp.subject_id != subject_id:
+                return None
+            # 限定范围：模型只能从用户勾选的知识点里挑。越界按无效处理，
+            # 交给下面的 fallback（而不是放行到范围外，那等于多选形同虚设）。
+            if allowed_ids and kp.id not in allowed_ids:
                 return None
             return kp.id
 

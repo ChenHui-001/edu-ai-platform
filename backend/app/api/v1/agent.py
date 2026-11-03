@@ -404,7 +404,11 @@ def question_generator(
     res = QuestionGeneratorAgent().run(
         db, user_id=user.id,
         grade_id=data.get("grade_id"), subject_id=int(data.get("subject_id", 0)),
+        # 两个字段都透传：新前端用数组，旧调用方（含既有脚本）仍传单值。
+        # 形态归一化与合法性校验都在 Agent 内部完成（那里拿得到 db，
+        # 且错误信息要带上「知识点属于哪个学科」这类上下文）。
         knowledge_point_id=data.get("knowledge_point_id"),
+        knowledge_point_ids=data.get("knowledge_point_ids"),
         question_type=data.get("type", "single"),
         count=count,
         difficulty=data.get("difficulty", "medium"),
