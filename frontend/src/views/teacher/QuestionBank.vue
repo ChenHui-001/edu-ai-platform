@@ -327,6 +327,9 @@
     <el-dialog v-model="importVisible" title="批量导入题目" width="560px">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom:14px">
         <template #title>请先下载模板，按模板格式填写后上传</template>
+        <div class="muted" style="font-size:12px; line-height:1.6; margin-top:4px">
+          题干指纹相同的重复题会被<b>跳过</b>（不会覆盖已有题目），导入结果里逐行给出原因。
+        </div>
         <el-link type="primary" :underline="false" @click="downloadTemplate">下载 Excel 模板</el-link>
       </el-alert>
       <el-form label-width="90px">
@@ -1362,28 +1365,42 @@ async function createVariants() {
   aiVarCreating.value = true
   let success = 0
   const failed = []
-  try {
-    for (const item of rows) {
+
+  // 限并发 3，而不是逐条串行：10 条变式串行 = 10 个完整往返，
+  // 在弱网下能到十几秒。但也不能全并发 —— 后端是 SQLite 单写者，
+  // 并发写只会排队等锁（busy_timeout 5s），压太满反而更容易撞
+  // 「database is locked」。3 是「填满 RTT 又不积压写锁」的折中。
+  const CONCURRENCY = 3
+  let cursor = 0
+  const build = (item) => ({
+    type: item.type || base.type,
+    stem: item.stem,
+    options: item.options ?? [],
+    answer: item.answer,
+    analysis: item.analysis || '',
+    score: item.score ?? base.score,
+    difficulty: item.difficulty || aiVarForm.difficulty || base.difficulty || 'medium',
+    grade_id: base.grade_id,
+    subject_id: base.subject_id,
+    knowledge_point_id: item.knowledge_point_id ?? base.knowledge_point_id ?? null,
+    bank_type: base.bank_type || 'private',
+    status: 'draft'
+  })
+  async function worker() {
+    while (cursor < rows.length) {
+      const item = rows[cursor++]
       try {
-        await questionApi.create({
-          type: item.type || base.type,
-          stem: item.stem,
-          options: item.options ?? [],
-          answer: item.answer,
-          analysis: item.analysis || '',
-          score: item.score ?? base.score,
-          difficulty: item.difficulty || aiVarForm.difficulty || base.difficulty || 'medium',
-          grade_id: base.grade_id,
-          subject_id: base.subject_id,
-          knowledge_point_id: item.knowledge_point_id ?? base.knowledge_point_id ?? null,
-          bank_type: base.bank_type || 'private',
-          status: 'draft'
-        })
+        await questionApi.create(build(item))
         success++
       } catch {
         failed.push(item.stem ? stripHtml(item.stem).slice(0, 20) : '未命名')
       }
     }
+  }
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, rows.length) }, () => worker())
+    )
   } finally {
     aiVarCreating.value = false
   }

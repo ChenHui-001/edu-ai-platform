@@ -23,8 +23,15 @@ class Grade(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
-    subjects: Mapped[List["Subject"]] = relationship(back_populates="grade", lazy="selectin")
-    classes: Mapped[List["Class"]] = relationship(back_populates="grade", lazy="selectin")
+    # 刻意**不用** lazy="selectin"：
+    # 这两个集合是「年级 → 学科/班级」的反向导航，全项目没有任何读取点
+    # （已 grep 确认），而 selectin 的语义是「每次加载 Grade 就自动多发一条
+    # IN 查询」—— 于是每次 `select(Grade)` 都要白拉 60 条学科 + 23 条班级。
+    # /edu/grades 因此固定多出 2 条 SQL，teaching_matrix 等同样受累。
+    # 保留关系（Subject.grade 的 back_populates 需要它），改为默认懒加载：
+    # 真要用时显式 joinedload/selectinload，而不是让所有查询替它买单。
+    subjects: Mapped[List["Subject"]] = relationship(back_populates="grade")
+    classes: Mapped[List["Class"]] = relationship(back_populates="grade")
 
 
 class Subject(Base):

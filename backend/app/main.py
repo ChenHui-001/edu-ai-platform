@@ -109,7 +109,8 @@ async def lifespan(app: FastAPI):
 
         # 老库补列（create_all 不会给已存在的表加新列，模型加字段后必须跑这步）
         from app.core.db_migrations import (
-            run_column_migrations, run_knowledge_v2_migration, run_question_v2_migration,
+            run_column_migrations, run_index_migrations,
+            run_knowledge_v2_migration, run_question_v2_migration,
         )
 
         _mig_db = SessionLocal()
@@ -117,6 +118,11 @@ async def lifespan(app: FastAPI):
             applied = run_column_migrations(_mig_db)
             if applied:
                 logger.warning(f"已执行结构补列迁移: {applied}")
+            # 补索引必须放在补列之后、create_all 之后：create_all 只建表不加索引，
+            # 老库缺的索引只能在这里补（详见 db_migrations.MIGRATION_INDEXES）。
+            idx_applied = run_index_migrations(_mig_db)
+            if idx_applied:
+                logger.warning(f"已执行索引迁移: {idx_applied}")
             run_knowledge_v2_migration(_mig_db)
             # 题库 V2：首次启动清空历史题库（用户已确认可删；放在知识库迁移之后）
             run_question_v2_migration(_mig_db)

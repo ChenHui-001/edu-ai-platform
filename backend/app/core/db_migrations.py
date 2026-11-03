@@ -80,6 +80,55 @@ _QUESTION_V2_MARKER = "question_bank_v2_migrated"
 _QUESTION_V2_MARKER_VALUE = "1"
 
 
+# 索引迁移清单：(索引名, 表名, 列名)。
+#
+# 为什么需要独立清单：`Base.metadata.create_all` **只建缺失的表**，不会给
+# 已存在的表补索引 —— 模型上写 `index=True` 只对全新库生效，老库永远不会
+# 有这个索引。这与「补列」是同一类问题，因此放在同一个启动步骤里做。
+#
+# 只登记「确实会被 where/join 用到、且表会持续增长」的列。表只有几十行时
+# 加索引收益接近 0，登记进来只会让每次启动多做一次无意义的 DDL。
+MIGRATION_INDEXES: List[Tuple[str, str, str]] = [
+    # 分享列表按分享人过滤（PaperShare.from_user_id 原先无索引）。
+    # 索引名必须与 SQLAlchemy 的默认命名（ix_<表>_<列>）**完全一致**：
+    # 新建库时 create_all 会按模型上的 index=True 自动建同名索引，这里若用
+    # 别的名字（如 ix_..._from_user），新库就会同时存在两个等价索引 ——
+    # 浪费空间且拖慢写入。同名才能让「已有则跳过」的判断真正生效。
+    ("ix_edu_paper_share_from_user_id", "edu_paper_share", "from_user_id"),
+]
+
+
+def run_index_migrations(db: Session) -> List[str]:
+    """幂等补建缺失索引。返回本次实际创建的索引名。
+
+    SQLite 的 `CREATE INDEX IF NOT EXISTS` 本身幂等，但仍先查 sqlite_master：
+    ① 便于只对真正缺失的项执行 DDL（避免每次启动都写一次 schema）；
+    ② 表尚未创建时（极端情况下的半初始化库）能跳过而不是抛错。
+    """
+    applied: List[str] = []
+    for name, table, column in MIGRATION_INDEXES:
+        try:
+            table_exists = db.execute(
+                text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:t"),
+                {"t": table},
+            ).first()
+            if not table_exists:
+                continue
+            index_exists = db.execute(
+                text("SELECT 1 FROM sqlite_master WHERE type='index' AND name=:n"),
+                {"n": name},
+            ).first()
+            if index_exists:
+                continue
+            db.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})"))
+            applied.append(f"{table}.{column}")
+        except Exception as exc:  # noqa: BLE001 索引失败绝不能阻断启动
+            logger.warning(f"索引迁移跳过 {table}.{column}: {exc}")
+    if applied:
+        db.commit()
+    return applied
+
+
 def run_question_v2_migration(db: Session) -> bool:
     """题库 V2 数据迁移：首次启动清空历史题库（只执行一次）。
 

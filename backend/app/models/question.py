@@ -222,7 +222,8 @@ class PaperShare(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     paper_id: Mapped[int] = mapped_column(ForeignKey("edu_paper.id", ondelete="CASCADE"), index=True)
-    from_user_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id", ondelete="CASCADE"))
+    from_user_id: Mapped[int] = mapped_column(
+        ForeignKey("sys_user.id", ondelete="CASCADE"), index=True)
     to_user_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id", ondelete="CASCADE"), index=True)
     permission: Mapped[str] = mapped_column(
         String(16), default="view", comment="view仅查看 / reuse可另存 / edit可编辑")

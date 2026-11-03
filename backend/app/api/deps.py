@@ -5,13 +5,13 @@ from typing import List, Optional
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import AuthException, PermissionException
 from app.core.security import decode_token
-from app.models import User
+from app.models import Role, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -64,7 +64,24 @@ def get_current_user(
     if datetime.fromtimestamp(payload["exp"], timezone.utc) < datetime.now(timezone.utc):
         raise AuthException("令牌已过期，请重新登录")
 
-    user = db.scalar(select(User).where(User.id == int(payload["sub"])))
+    # 一次 JOIN 取全：User + roles + role.permissions。
+    #
+    # 原来只 `db.scalar(select(User))`，roles / permissions 由关系上的
+    # lazy="selectin" 自动补两条 IN 查询 —— 每个鉴权请求 4 条 SQL
+    # （user、roles、permissions、revoked_token）。改成 joinedload 后为 3 条。
+    #
+    # 为什么不加「权限快照缓存」：实测鉴权 4 条 SQL 只占端点响应的约 10%
+    # （60 次采样 p50 5.7ms，SQLite 单条 0.15ms 量级），而缓存会引入
+    # 「撤权后仍可操作直到 TTL 过期」的新问题，需要覆盖 6 个权限变更入口
+    # 逐一失效。收益 0.3~0.5ms、风险是越权，不做。
+    #
+    # unique() 是必须的：joinedload 对集合列会产生多行（1 用户 × N 角色 ×
+    # M 权限），不去重会抛 "The unique() method must be invoked"。
+    user = db.execute(
+        select(User)
+        .options(joinedload(User.roles).joinedload(Role.permissions))
+        .where(User.id == int(payload["sub"]))
+    ).unique().scalar_one_or_none()
     if not user:
         raise AuthException("用户不存在")
     if not user.is_active:
