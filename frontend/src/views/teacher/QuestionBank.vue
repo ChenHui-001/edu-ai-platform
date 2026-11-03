@@ -40,7 +40,7 @@
         <el-form-item label="知识点">
           <el-select v-model="query.knowledge_point_id" placeholder="全部" clearable filterable
                      :disabled="!query.grade_id || !query.subject_id" style="width:170px">
-            <el-option v-for="k in knowledgePoints" :key="k.id" :label="k.name" :value="k.id" />
+            <el-option v-for="k in filterKpOptions" :key="k.id" :label="k.label" :value="k.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="题型">
@@ -307,7 +307,7 @@
           <el-col :span="8">
             <el-form-item label="知识点">
               <el-select v-model="form.knowledge_point_id" filterable clearable style="width:100%">
-                <el-option v-for="k in formKnowledge" :key="k.id" :label="k.name" :value="k.id" />
+                <el-option v-for="k in formKpOptions" :key="k.id" :label="k.label" :value="k.id" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -438,7 +438,7 @@
           <el-select v-model="aiForm.knowledge_point_ids" multiple collapse-tags
                      collapse-tags-tooltip clearable filterable style="width:100%"
                      placeholder="可选；多选时 AI 在该范围内自行分配">
-            <el-option v-for="k in aiKps" :key="k.id" :label="k.name" :value="k.id" />
+            <el-option v-for="k in aiKpOptions" :key="k.id" :label="k.label" :value="k.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -1155,6 +1155,25 @@ async function loadAiKps() {
     aiKps.value = res.data?.items || res.data || []
   } catch { aiKps.value = [] }
 }
+
+// 同名的知识点在同一个学科里可能有多条（真实知识点在不同单元复用，
+// 或者种子数据给每个单元都补了「实验探究/计算应用」这类训练栏目）。
+// 只显示名称时下拉里看起来全是重复项，且选中后也分不清是哪个单元的。
+// 这里只对**重名**的项补上父级路径，唯一名保持原样，避免整列变长。
+function withParentPath(list) {
+  const byId = new Map(list.map(k => [k.id, k]))
+  const nameCount = new Map()
+  for (const k of list) nameCount.set(k.name, (nameCount.get(k.name) || 0) + 1)
+  return list.map(k => {
+    if ((nameCount.get(k.name) || 0) <= 1) return { ...k, label: k.name }
+    const parent = k.parent_id ? byId.get(k.parent_id) : null
+    return { ...k, label: parent ? `${parent.name} › ${k.name}` : k.name }
+  })
+}
+
+const aiKpOptions = computed(() => withParentPath(aiKps.value))
+const formKpOptions = computed(() => withParentPath(formKnowledge.value))
+const filterKpOptions = computed(() => withParentPath(knowledgePoints.value))
 
 async function generateAi() {
   if (!aiForm.grade_id) return ElMessage.warning('请选择年级')

@@ -93,6 +93,9 @@ export const knowledgeApi = {
   create: (data) => request.post('/edu/knowledge', data),
   update: (id, data) => request.put(`/edu/knowledge/${id}`, data),
   remove: (id) => request.delete(`/edu/knowledge/${id}`),
+  // 清理「通用训练栏目」：同一学科下同名、跨多个单元重复出现的节点
+  // （实验探究/计算应用/易错辨析…）。dry_run=true 只返回候选，不写库。
+  purgeGeneric: (data) => request.post('/edu/knowledge/purge-generic', data),
   batch: (data) => request.post('/edu/knowledge/batch', data),
   // 导入导出（二进制走 blob，模板/导出均为 xlsx）
   import: (formData) => request.post('/edu/knowledge/import', formData, {

@@ -18,7 +18,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.agents import rag as rag_engine
@@ -1669,3 +1669,152 @@ def reindex(
         message=("向量索引重建完成" if not slow
                  else f"向量索引重建耗时偏长({elapsed}ms)，建议分批执行"),
     )
+
+
+# ---------------------------------------------------------------- 通用栏目清理
+# 知识点种子数据给每个单元都补了一组「训练栏目」（实验探究 / 计算应用 / 易错辨析
+# / 联系生活科技…），于是同一学科下同名节点重复十几次：
+#   下拉框里看起来全是重复项；
+#   AI 出题选中它，等于要求模型围绕「实验探究」这种泛概念出题，出来的题偏空泛；
+#   掌握度/复习计划按单元被切成碎片，看不出真实薄弱点。
+# 这些节点是「训练维度」而不是「知识点」，应当从知识点树里摘掉。
+#
+# 识别规则刻意保守：同一学科 + 同名 + **父级互不相同** + 出现 ≥ 3 次。
+# 只看「同名」会误伤真实知识点在不同单元复用的情况（如「分数的意义」）。
+GENERIC_NODE_MIN_REPEAT = 3
+
+
+@router.post("/knowledge/purge-generic", summary="清理「通用训练栏目」节点（预览/执行）")
+def purge_generic_nodes(
+    data: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm(WRITE_PERM)),
+):
+    """识别并停用（is_active=false）重复出现的通用栏目节点。
+
+    默认 `dry_run=true`，只返回候选清单与将执行的动作，不写库。
+    传 `dry_run=false` 才真正停用。
+
+    三条硬性保护：
+    1. **有引用的节点不动**（题目/掌握度/复习计划任一 > 0）。停用会让它在
+       知识点下拉里消失，教师改题时 v-model 指向一个不可选项，界面显示成数字
+       （这个坑在学科/知识点联动里踩过）。
+    2. **有子节点的不动**：父节点停用后子节点仍会显示，树会断在半截。
+    3. **grade_admin 只能清本年级**（`_forced_grade` 已收敛）。
+    """
+    dry_run = bool(data.get("dry_run", True))
+    grade_filter = _forced_grade(user, data.get("grade_id"))
+    subject_filter = data.get("subject_id")
+
+    stmt = select(KnowledgePoint).where(KnowledgePoint.is_active.is_(True))
+    if grade_filter:
+        stmt = stmt.where(KnowledgePoint.grade_id == grade_filter)
+    if subject_filter:
+        stmt = stmt.where(KnowledgePoint.subject_id == subject_filter)
+    rows = list(db.scalars(stmt).all())
+
+    # 分组：同 (学科, 名称) 视为同一组
+    grouped: Dict[tuple, List[KnowledgePoint]] = {}
+    for kp in rows:
+        grouped.setdefault((kp.subject_id, kp.name), []).append(kp)
+
+    parents_of: Dict[int, int] = {}
+    for kp in rows:
+        if kp.parent_id:
+            parents_of[kp.parent_id] = parents_of.get(kp.parent_id, 0) + 1
+
+    candidate_ids: List[int] = []
+    candidate_groups: List[tuple] = []
+    for (sid, name), group in grouped.items():
+        if len(group) < GENERIC_NODE_MIN_REPEAT:
+            continue
+        if len({g.parent_id for g in group}) < GENERIC_NODE_MIN_REPEAT:
+            continue
+        candidate_groups.append((sid, name, group))
+        candidate_ids.extend(g.id for g in group)
+
+    # 引用统计（一次查完，避免逐条 N+1）
+    refs: Dict[int, Dict[str, int]] = {
+        i: {"questions": 0, "mastery": 0, "reviews": 0} for i in candidate_ids
+    }
+    if candidate_ids:
+        for label, model, col in (
+            ("questions", Question, Question.knowledge_point_id),
+            ("mastery", KnowledgeMastery, KnowledgeMastery.knowledge_point_id),
+            ("reviews", ReviewPlan, ReviewPlan.knowledge_point_id),
+        ):
+            for kp_id, cnt in db.execute(
+                select(col, func.count()).where(col.in_(candidate_ids)).group_by(col)
+            ).all():
+                if kp_id in refs:
+                    refs[kp_id][label] = int(cnt or 0)
+
+    subject_names = {
+        s.id: s.name for s in db.scalars(
+            select(Subject).where(Subject.id.in_({sid for sid, _, _ in candidate_groups}))
+        ).all()
+    } if candidate_groups else {}
+    name_by_id = {kp.id: kp.name for kp in rows}
+
+    groups_out: List[Dict[str, Any]] = []
+    will_disable: List[int] = []
+    for sid, name, group in sorted(candidate_groups, key=lambda g: (-len(g[2]), g[1])):
+        nodes_out = []
+        disable_ids = []
+        for kp in group:
+            r = refs.get(kp.id, {})
+            blocked_reason = ""
+            if any(r.values()):
+                blocked_reason = (
+                    f"被引用（题目{r['questions']}/掌握度{r['mastery']}/复习{r['reviews']}）"
+                )
+            elif parents_of.get(kp.id):
+                blocked_reason = f"有 {parents_of[kp.id]} 个子节点"
+            nodes_out.append({
+                "id": kp.id,
+                "parent_id": kp.parent_id,
+                "parent_name": name_by_id.get(kp.parent_id),
+                "level": kp.level,
+                **r,
+                "blocked_reason": blocked_reason,
+            })
+            if not blocked_reason:
+                disable_ids.append(kp.id)
+        groups_out.append({
+            "subject_id": sid,
+            "subject_name": subject_names.get(sid),
+            "name": name,
+            "count": len(group),
+            "disable_count": len(disable_ids),
+            "nodes": nodes_out,
+        })
+        if not dry_run:
+            will_disable.extend(disable_ids)
+
+    applied = 0
+    if not dry_run and will_disable:
+        db.execute(
+            update(KnowledgePoint)
+            .where(KnowledgePoint.id.in_(will_disable))
+            .values(is_active=False)
+        )
+        db.commit()
+        applied = len(will_disable)
+        from app.core.logger import get_logger
+        get_logger("knowledge").warning(
+            f"通用栏目清理：停用 {applied} 个节点（{len(groups_out)} 组），操作人 {user.id}"
+        )
+
+    total_nodes = sum(g["count"] for g in groups_out)
+    total_disable = sum(g["disable_count"] for g in groups_out)
+    return ok({
+        "dry_run": dry_run,
+        "groups": groups_out,
+        "summary": {
+            "groups": len(groups_out),
+            "nodes": total_nodes,
+            "disable": total_disable,
+            "keep": total_nodes - total_disable,
+            "applied": applied,
+        },
+    })

@@ -37,6 +37,7 @@
         <el-button v-if="canWrite" :icon="MagicStick" :loading="reindexing" @click="reindex">
           重建索引
         </el-button>
+        <el-button v-if="canWrite" :icon="Delete" @click="openPurgeGeneric">清理栏目</el-button>
       </div>
     </div>
 
@@ -736,6 +737,37 @@
       <el-empty v-else description="附件加载失败或类型不支持预览" :image-size="70" />
       <template #footer>
         <el-button @click="attPreviewVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 清理通用训练栏目：同一学科下同名、跨多个单元重复出现的节点 -->
+    <el-dialog v-model="purgeDlg" title="清理通用训练栏目" width="760px">
+      <el-alert type="warning" :closable="false" show-icon class="mb12"
+                title="这些是每个单元都重复出现的「训练栏目」（如 实验探究 / 计算应用 / 易错辨析），不是知识点。停用后从知识点树与下拉中隐藏，数据保留、可恢复。" />
+      <div v-loading="purgeLoading" style="min-height:120px">
+        <div v-if="purgeResult" class="mb12">
+          共 <b>{{ purgeResult.summary.groups }}</b> 组 /
+          <b>{{ purgeResult.summary.nodes }}</b> 个节点：可停用
+          <b class="purge-ok">{{ purgeResult.summary.disable }}</b> 个，保留
+          <b>{{ purgeResult.summary.keep }}</b> 个（已被题目/掌握度/复习计划引用，或有子节点）
+        </div>
+        <el-table :data="purgeResult?.groups || []" size="small" border max-height="380">
+          <el-table-column prop="subject_name" label="学科" width="110" show-overflow-tooltip />
+          <el-table-column prop="name" label="栏目名" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="count" label="出现次数" width="90" align="center" />
+          <el-table-column prop="disable_count" label="可停用" width="90" align="center" />
+        </el-table>
+        <div v-if="purgeResult && !purgeResult.summary.disable" class="muted mt8">
+          没有可停用的节点——要么已经清理过，要么全部都有引用。
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="purgeDlg = false">取消</el-button>
+        <el-button type="danger" :loading="purgeLoading"
+                   :disabled="!purgeResult?.summary?.disable"
+                   @click="doPurgeGeneric">
+          确认停用 {{ purgeResult?.summary?.disable || 0 }} 个
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -1536,6 +1568,50 @@ const importResult = ref(null)
 
 const reindexing = ref(false)
 
+// ---------------- 清理通用训练栏目 ----------------
+// 种子数据给每个单元都补了一组训练栏目（实验探究/计算应用/易错辨析…），
+// 同一学科下同名节点会重复出现十几次。它们不是知识点，停用后从树与下拉中隐藏，
+// 但数据保留、可恢复（is_active=false），且后端会跳过有引用或有子节点的节点。
+const purgeDlg = ref(false)
+const purgeLoading = ref(false)
+const purgeResult = ref(null)
+
+async function openPurgeGeneric() {
+  purgeDlg.value = true
+  purgeResult.value = null
+  purgeLoading.value = true
+  try {
+    const res = await knowledgeApi.purgeGeneric({ dry_run: true })
+    purgeResult.value = res.data
+  } catch (e) {
+    ElMessage.error(e.message || '预览失败')
+    purgeDlg.value = false
+  } finally {
+    purgeLoading.value = false
+  }
+}
+
+async function doPurgeGeneric() {
+  const n = purgeResult.value?.summary?.disable || 0
+  if (!n) return
+  try {
+    await ElMessageBox.confirm(
+      `确认停用 ${n} 个通用栏目节点？停用后可从「已停用」恢复，不会删除任何数据。`,
+      '清理确认', { type: 'warning' })
+  } catch { return }
+  purgeLoading.value = true
+  try {
+    const res = await knowledgeApi.purgeGeneric({ dry_run: false })
+    ElMessage.success(`已停用 ${res.data?.summary?.applied || 0} 个节点`)
+    purgeDlg.value = false
+    await refreshAll()
+  } catch (e) {
+    ElMessage.error(e.message || '清理失败')
+  } finally {
+    purgeLoading.value = false
+  }
+}
+
 function openImport() {
   if (!canWrite.value) return
   importFile.value = null
@@ -2034,4 +2110,5 @@ onMounted(async () => {
 .att-op { display: inline-flex; align-items: center; }
 .att-op + .att-op { margin-left: 6px; }
 .att-switch-wrap { display: inline-flex; align-items: center; }
+.purge-ok { color: var(--el-color-danger); }
 </style>
