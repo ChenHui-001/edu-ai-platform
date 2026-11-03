@@ -331,13 +331,18 @@
       </el-alert>
       <el-form label-width="90px">
         <el-form-item label="年级">
-          <el-select v-model="importForm.grade_id" style="width:100%">
+          <!-- 导入的题目要挂到「该年级的该学科」上，而学科 id 精确到年级。
+               旧写法用去重列表（value 是代表 id）且年级切换不重载学科，
+               导入时会把题目挂到别的年级的学科上 —— 静默错配，比报错更难查。 -->
+          <el-select v-model="importForm.grade_id" style="width:100%"
+                     placeholder="先选年级" @change="onImportGradeChange">
             <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="学科">
-          <el-select v-model="importForm.subject_id" style="width:100%">
-            <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
+          <el-select v-model="importForm.subject_id" style="width:100%"
+                     :disabled="!importForm.grade_id" placeholder="先选年级">
+            <el-option v-for="s in importSubjects" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -367,21 +372,26 @@
     <el-dialog v-model="aiDlg" title="AI 智能出题" width="640px" destroy-on-close>
       <el-form :model="aiForm" label-width="90px">
         <el-row :gutter="10">
+          <!-- 顺序必须是「先年级后学科」：学科 id 精确到年级（唯一键是
+               (grade_id,name)），年级没定就无法确定该用哪一条 subject 记录。
+               历史上这里是「学科在前 + 用去重列表」，而列表里的 value 是
+               代表 id（最早年级那条），年级切换后又把 v-model 改成该年级的
+               精确 id —— 两者对不上，el-select 找不到 option 就把原始 id
+               当文本渲染出来（表现为「学科显示为数字」）。 -->
           <el-col :span="12">
-            <el-form-item label="学科" required>
-              <el-select v-model="aiForm.subject_id" style="width:100%" @change="loadAiKps">
-                <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id">
-                  <span>{{ s.name }}</span>
-                  <span v-if="s.grade_count > 1" class="ai-grade-count">{{ s.grade_count }} 个年级</span>
-                </el-option>
+            <el-form-item label="年级" required>
+              <el-select v-model="aiForm.grade_id" style="width:100%"
+                         placeholder="先选年级" @change="onAiGradeChange">
+                <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
               </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="年级">
-              <el-select v-model="aiForm.grade_id" clearable style="width:100%"
-                         @change="onAiGradeChange">
-                <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
+            <el-form-item label="学科" required>
+              <el-select v-model="aiForm.subject_id" style="width:100%"
+                         :disabled="!aiForm.grade_id" placeholder="先选年级"
+                         @change="onAiSubjectChange">
+                <el-option v-for="s in aiSubjects" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -417,9 +427,16 @@
       </el-form>
 
       <div v-if="aiResult?.length" class="mb12">
-        <el-alert type="success" :closable="false" show-icon
-                  :title="`已生成 ${aiResult.length} 题并保存至题库（草稿状态）`"
-                  description="草稿题审核通过后即可用于组卷；可在列表用「来源=AI」筛选查看" />
+        <!-- 文案必须跟随 saved，而不是「有结果 = 已保存」：
+             规则引擎降级 / 题库复用那条路径返回 saved=0（题目已生成但一题
+             都没入库），旧代码照样弹「已保存至题库」，属于谎报成功。 -->
+        <el-alert :type="aiResultSaved > 0 ? 'success' : 'warning'" :closable="false" show-icon
+                  :title="aiResultSaved > 0
+                    ? `已生成 ${aiResult.length} 题，其中 ${aiResultSaved} 题已保存至题库（草稿状态）`
+                    : `已生成 ${aiResult.length} 题，但均未入库`"
+                  :description="aiResultSaved > 0
+                    ? '草稿题审核通过后即可用于组卷；可在列表用「来源=AI」筛选查看'
+                    : (aiResultTip || '题库中已存在同类题被复用，本次未新增；调整条件后可重试')" />
         <el-table :data="aiResult" size="small" border max-height="240" class="mt8">
           <el-table-column label="题型" width="76">
             <template #default="{ row }">{{ typeLabel(row.type) }}</template>
@@ -435,8 +452,15 @@
       </div>
 
       <template #footer>
-        <el-button @click="aiDlg = false">关闭</el-button>
-        <el-button type="primary" :loading="aiLoading" :disabled="!aiForm.subject_id"
+        <el-button @click="aiDlg = false">{{ aiResult?.length ? '完成' : '关闭' }}</el-button>
+        <!-- 生成成功后主按钮必须换语义：旧写法一直是 primary「生成并入库」，
+             用户看到结果表格后无法判断「是否还要再点一次才保存」，容易重复
+             入库。有结果时降级为次要按钮「再生成一批」，主行动让位给「完成」。 -->
+        <el-button v-if="aiResult?.length" :loading="aiLoading" @click="generateAi">
+          再生成一批
+        </el-button>
+        <el-button v-else type="primary" :loading="aiLoading"
+                   :disabled="!aiForm.grade_id || !aiForm.subject_id"
                    @click="generateAi">生成并入库</el-button>
       </template>
     </el-dialog>
@@ -680,8 +704,12 @@ function severityLabel(s) { return { error: '错误', warning: '警告', info: '
 
 // ---------------- 基础数据 ----------------
 const grades = ref([])
-// AI 智能出题用「按名称去重」的学科（带 same_name_ids，用于年级切换时映射精确 subject_id）
-const subjects = ref([])
+// 所有需要回传 subject_id 的表单一律用「当前年级的精确学科」。
+// 学科唯一键是 (grade_id, name)，id 与年级强绑定；去重列表（distinct=true）
+// 返回的 value 是「代表 id」（sort 最小的那条，通常是一年级），拿它回传会
+// 把题目挂到别的年级 —— 所以去重列表只适合纯展示，不用于任何提交型表单。
+const aiSubjects = ref([])
+const importSubjects = ref([])
 // 筛选/批量分配用「当前年级精确学科」
 const filterSubjects = ref([])
 const knowledgePoints = ref([])
@@ -789,12 +817,16 @@ async function loadFilterKnowledge(gid, sid) {
 function onGradeChange() {
   query.subject_id = null
   query.knowledge_point_id = null
+  // 页码必须一起重置：否则在第 3 页切换年级后点「查询」，会请求第 3 页
+  // 而新条件下的结果只有 1 页，用户看到空列表却以为「这个年级没有题」。
+  query.page = 1
   knowledgePoints.value = []
   loadFilterSubjects(query.grade_id)
 }
 
 function onFilterSubjectChange() {
   query.knowledge_point_id = null
+  query.page = 1
   loadFilterKnowledge(query.grade_id, query.subject_id)
 }
 
@@ -889,7 +921,7 @@ async function onFormSubjectChange() {
   await loadFormKnowledge(form.grade_id, form.subject_id)
 }
 
-function openDialog(row) {
+async function openDialog(row) {
   Object.assign(form, {
     id: row?.id ?? null,
     type: normalizeType(row?.type),
@@ -918,7 +950,16 @@ function openDialog(row) {
       ? ans
       : (form.type === 'multiple' && ans ? [String(ans)] : [])
   }
-  if (form.grade_id) loadFormSubjects(form.grade_id)
+  if (form.grade_id) {
+    await loadFormSubjects(form.grade_id)
+    // 防御：subject_id 必须属于当前年级。老数据/手工构造的行可能出现
+    // 「年级=七年级、学科=一年级数学」的错配，el-select 找不到 option
+    // 就会把原始 id 当文本渲染（与 AI 出题表单同一类问题）。
+    if (form.subject_id && !formSubjects.value.some((s) => s.id === form.subject_id)) {
+      form.subject_id = null
+      form.knowledge_point_id = null
+    }
+  }
   if (form.grade_id && form.subject_id) loadFormKnowledge(form.grade_id, form.subject_id)
   dialogVisible.value = true
 }
@@ -981,6 +1022,20 @@ const fileList = ref([])
 const importResult = ref(null)
 const importForm = reactive({ grade_id: null, subject_id: null })
 
+async function loadImportSubjects(gradeId) {
+  importSubjects.value = []
+  if (!gradeId) return
+  try {
+    const res = await eduApi.subjects({ grade_id: gradeId })
+    importSubjects.value = res.data || []
+  } catch { importSubjects.value = [] }
+}
+
+function onImportGradeChange() {
+  importForm.subject_id = null
+  loadImportSubjects(importForm.grade_id)
+}
+
 async function downloadTemplate() {
   await downloadBlob(questionApi.downloadTemplate(), '题目导入模板.xlsx')
 }
@@ -1013,41 +1068,65 @@ async function doImport() {
   }
 }
 
-// ---------------- AI 智能出题（保留旧逻辑） ----------------
+// ---------------- AI 智能出题 ----------------
 const aiDlg = ref(false)
 const aiLoading = ref(false)
 const aiResult = ref(null)
+// saved 与 tip 是后端 AgentResult 的真实语义：
+//   saved>0 → 已落库 N 条（草稿）；saved=0 → 题库复用/降级，一条都没写。
+// 旧代码只看 questions.length 就报「已保存」，在 saved=0 时是谎报。
+const aiResultSaved = ref(0)
+const aiResultTip = ref('')
 const aiForm = reactive({
   subject_id: null, grade_id: null, type: 'single',
   difficulty: 'medium', count: 5, knowledge_point_id: null
 })
 
-function openAiDlg() {
+// 条件一变，上一批结果就不再对应当前参数 —— 必须清掉。
+// 否则用户改完年级/学科后，表格里还挂着上一批题，会误以为「这批是刚生成的」。
+function resetAiResult() {
+  aiResult.value = null
+  aiResultSaved.value = 0
+  aiResultTip.value = ''
+}
+
+async function openAiDlg() {
   Object.assign(aiForm, {
-    subject_id: query.subject_id, grade_id: query.grade_id,
+    subject_id: null, grade_id: query.grade_id,
     type: 'single', difficulty: 'medium', count: 5, knowledge_point_id: null
   })
-  syncAiSubjectByGrade()
-  aiResult.value = null
+  resetAiResult()
   aiDlg.value = true
-  if (aiForm.subject_id) loadAiKps()
+  if (!aiForm.grade_id) return
+  await loadAiSubjects(aiForm.grade_id)
+  // 从列表页带过来的 subject_id 只在「属于当前年级」时保留，
+  // 否则宁可让用户重选，也不要塞一个不在候选项里的 id。
+  if (query.subject_id && aiSubjects.value.some((s) => s.id === query.subject_id)) {
+    aiForm.subject_id = query.subject_id
+    loadAiKps()
+  }
 }
 
-// subjects 是按名称去重后的列表（同一条目带 same_name_grade_ids），
-// 而 subject_id 精确到年级。切换年级时必须同步换成该年级对应的那条。
-function syncAiSubjectByGrade() {
-  if (!aiForm.subject_id) return
-  const s = subjects.value.find((x) =>
-    x.id === aiForm.subject_id || (x.same_name_ids || []).includes(aiForm.subject_id))
-  if (!s) return
-  if (!aiForm.grade_id) { aiForm.subject_id = s.id; return }
-  const idx = (s.same_name_grade_ids || []).indexOf(aiForm.grade_id)
-  if (idx >= 0) aiForm.subject_id = s.same_name_ids[idx]
+async function loadAiSubjects(gradeId) {
+  aiSubjects.value = []
+  if (!gradeId) return
+  try {
+    const res = await eduApi.subjects({ grade_id: gradeId })
+    aiSubjects.value = res.data || []
+  } catch { aiSubjects.value = [] }
 }
 
-function onAiGradeChange() {
-  syncAiSubjectByGrade()
+async function onAiGradeChange() {
+  aiForm.subject_id = null
   aiForm.knowledge_point_id = null
+  aiKps.value = []
+  resetAiResult()
+  await loadAiSubjects(aiForm.grade_id)
+}
+
+function onAiSubjectChange() {
+  aiForm.knowledge_point_id = null
+  resetAiResult()
   loadAiKps()
 }
 
@@ -1060,21 +1139,25 @@ async function loadAiKps() {
 }
 
 async function generateAi() {
+  if (!aiForm.grade_id) return ElMessage.warning('请选择年级')
   if (!aiForm.subject_id) return ElMessage.warning('请选择学科')
-  syncAiSubjectByGrade()
-  if (!aiForm.grade_id) {
-    aiForm.grade_id = subjects.value.find((s) => s.id === aiForm.subject_id)?.grade_id ?? null
-  }
   aiLoading.value = true
   try {
     const res = await agentApi.questionGenerator({ ...aiForm, save: true })
     const d = res.data || {}
     aiResult.value = d.questions || []
-    if (aiResult.value.length) {
-      ElMessage.success(`已生成 ${aiResult.value.length} 题并保存至题库（草稿）`)
+    aiResultSaved.value = Number(d.saved || 0)
+    aiResultTip.value = d.tip || ''
+    if (!aiResult.value.length) {
+      ElMessage.warning(d.tip || '未能生成题目，请调整条件后重试')
+      return
+    }
+    if (aiResultSaved.value > 0) {
+      ElMessage.success(`已生成 ${aiResult.value.length} 题，${aiResultSaved.value} 题已入库（草稿）`)
       await refreshAll()
     } else {
-      ElMessage.warning(d.tip || '未能生成题目，请调整条件后重试')
+      // 生成成功但没落库（题库复用 / 规则引擎降级）—— 不能报 success
+      ElMessage.warning(d.tip || '已生成但未入库：题库中已有同类题被复用')
     }
   } finally {
     aiLoading.value = false
@@ -1425,12 +1508,8 @@ function locateQuestion(id) {
 }
 
 onMounted(async () => {
-  const [g, s] = await Promise.all([
-    eduApi.grades(),
-    eduApi.subjects({ distinct: true })
-  ])
+  const g = await eduApi.grades()
   grades.value = g.data || []
-  subjects.value = s.data || []
   await refreshAll()
 })
 </script>
@@ -1479,7 +1558,6 @@ onMounted(async () => {
 }
 .err-tip { color: #f56c6c; font-size: 12px; }
 .import-result { margin-top: 14px; }
-.ai-grade-count { float: right; color: var(--el-text-color-secondary); font-size: 12px; }
 .ai-base {
   display: flex; align-items: center; gap: 6px; margin-bottom: 10px;
   padding: 8px 10px; background: var(--el-fill-color-light); border-radius: 4px;
