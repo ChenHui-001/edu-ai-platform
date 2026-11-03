@@ -421,6 +421,7 @@ def generate_missing_standards(
     - 时长：小学 90 分钟；初中 120 分卷 120 分钟、其余 60 分钟
     - 题型结构：与组卷兜底**同一实现**（paper_compose_service.generic_sections）
     """
+    from app.services.exam_structures import difficulty_gradient
     from app.services.paper_compose_service import generic_sections
 
     _require_admin(user)
@@ -459,14 +460,17 @@ def generate_missing_standards(
             total = float(120 if subject_name in ("语文", "数学", "英语")
                           else junior_score.get(subject_name, 100))
             duration = 120 if total >= 120 else 60
-        sections = generic_sections(total)
+        sections = generic_sections(total, stage=stage, subject_name=subject_name)
         std = ExamStandard(
             name=f"湖北省{stage_label.get(stage, '')}{subject_name}"
                  f"{EXAM_TYPE_LABEL.get(exam_type, '')}（草案）"[:128],
             region="hubei", stage=stage, subject_name=subject_name,
             exam_type=exam_type, total_score=total, duration=duration,
             sections=json.dumps(sections, ensure_ascii=False),
-            difficulty_ratio=json.dumps(DEFAULT_DIFFICULTY, ensure_ascii=False),
+            # 难度分布由题型结构反推（每道大题自带难度，前面易后面难），
+            # 不再一律套 30/50/20 —— 结构与难度不匹配时，组卷会先按比例抽，
+            # 结果「最后一题不难、前面反而难」，与卷面梯度矛盾。
+            difficulty_ratio=json.dumps(difficulty_gradient(sections), ensure_ascii=False),
             description="系统按通用结构自动生成的草案：题量/分值请按教研要求修订。",
             is_active=True, is_default=True,
             # 用 manual 而不是新造 source 值：reset 只认 seed，

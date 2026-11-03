@@ -549,7 +549,11 @@ def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict
     # 让教师先能拿到卷子，再由管理员补标准（B 提供一键生成草案）。
     standard_fallback = False
     if not sections:
-        sections = compose_svc.generic_sections(float(data.get("total_score") or 100))
+        # 传学段/学科：结构按真实考试模板出（小学/初中各学科不同），
+        # 而不是所有学科共用一套「单选+填空+解答」。
+        sections = compose_svc.generic_sections(
+            float(data.get("total_score") or 100),
+            stage=_stage_of(grade), subject_name=subject.name)
         standard_fallback = True
 
     source_strategy = str(data.get("source") or compose_svc.SOURCE_BANK_FIRST).strip()
@@ -767,9 +771,16 @@ def compose_ai(
                 "knowledge_point_ids", "source", "total_score"):
         if not merged.get(key) and parsed.get(key):
             merged[key] = parsed[key]
-    # AI 给的 sections 只在用户没指定时采用
+    # AI 给的 sections 只在用户没指定时采用，且**至少 2 个大题**才采纳 ——
+    # 单一题型的结构不符合考试规范，几乎总是模型解析不完整的产物。
+    # 不采纳时上层会回退到学科命题标准（多题型），比照残缺结构出卷好。
     if not merged.get("sections") and parsed.get("sections"):
-        merged["sections"] = parsed["sections"]
+        ai_sections = _parse_sections_input(parsed["sections"])
+        if ai_sections and len(ai_sections) >= 2:
+            merged["sections"] = ai_sections
+        elif ai_sections:
+            logger.warning("AI 仅解析出 %d 个大题，已忽略并改用命题标准结构",
+                           len(ai_sections))
     # 题型分布（type_ratio）→ sections：AI 常用 {"single":10} 形式
     if not merged.get("sections") and parsed.get("type_ratio"):
         merged["sections"] = _type_ratio_to_sections(
@@ -823,6 +834,13 @@ def _type_ratio_to_sections(type_ratio: Any, total_score: float) -> List[Dict[st
         logger.warning("AI 返回了非法题型，已丢弃：%s（合法值 %s）",
                        dropped, sorted(TYPE_LABEL))
     if not result or total_count <= 0:
+        return []
+    # 单一题型的结构不予采纳：整卷只有一种题型不符合考试规范，而且这几乎
+    # 总是「模型照抄了 prompt 里的错误示例 / 只写了 single」的产物。
+    # 返回空让上层回退到学科命题标准（多题型），比照着一条 type_ratio 出卷好。
+    if len(result) < 2:
+        logger.warning("AI 只给出 1 种题型（%s），已忽略并改用命题标准结构",
+                       [s["code"] for s in result])
         return []
     score_per = round(float(total_score) / total_count, 2)
     for s in result:

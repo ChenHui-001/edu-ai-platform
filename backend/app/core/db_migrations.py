@@ -129,6 +129,66 @@ def run_index_migrations(db: Session) -> List[str]:
     return applied
 
 
+def upgrade_generic_standards(db: Session) -> List[str]:
+    """把「旧通用结构」生成的命题标准草案，升级为分学段学科的真实考试结构。
+
+    背景：旧版 `generic_sections()` 只输出「单选 10 / 填空 5 / 解答 5」三种题型，
+    而生产环境 `SEED_BASE_DATA=false`（规范种子标准不播种），命题标准是用
+    「一键生成草案」批量造的 —— 于是所有学科的标准都是这三种题型，AI 一键
+    组卷跟着只剩三种题型（用户反馈的「题型单一」）。
+
+    **识别条件必须精确**，否则会覆盖管理员手工配过的结构：
+    题型序列恰为 ["single","blank","short"] **且**题量为 [10,5,5]。
+    只要有一项不同就跳过 —— 宁可漏升级，也不能改坏别人的配置。
+
+    幂等：升级后序列变成 4~6 个题型，下次启动不再命中。
+    """
+    import json
+
+    from app.services.exam_structures import (
+        difficulty_gradient, legacy_draft_codes, sections_for,
+    )
+
+    old_codes = legacy_draft_codes()
+    try:
+        rows = db.execute(text(
+            "SELECT id, stage, subject_name, total_score, sections FROM edu_exam_standard"
+        )).fetchall()
+    except Exception as exc:  # noqa: BLE001 表不存在（全新库）时跳过
+        logger.debug(f"命题标准升级跳过：{exc}")
+        return []
+
+    upgraded: List[str] = []
+    for row in rows:
+        try:
+            sections = json.loads(row.sections or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(sections, list) or len(sections) != len(old_codes):
+            continue
+        if [str(s.get("code")) for s in sections] != old_codes:
+            continue
+        if [int(s.get("count") or 0) for s in sections] != [10, 5, 5]:
+            continue
+
+        new_sections = sections_for(
+            row.stage, row.subject_name, float(row.total_score or 100))
+        db.execute(
+            text("UPDATE edu_exam_standard SET sections=:s, difficulty_ratio=:d WHERE id=:i"),
+            {
+                "s": json.dumps(new_sections, ensure_ascii=False),
+                "d": json.dumps(difficulty_gradient(new_sections), ensure_ascii=False),
+                "i": row.id,
+            },
+        )
+        upgraded.append(f"{row.stage}/{row.subject_name}({row.total_score}分)")
+
+    if upgraded:
+        db.commit()
+        logger.warning(f"命题标准结构升级完成（{len(upgraded)} 条）：{upgraded}")
+    return upgraded
+
+
 def run_question_v2_migration(db: Session) -> bool:
     """题库 V2 数据迁移：首次启动清空历史题库（只执行一次）。
 

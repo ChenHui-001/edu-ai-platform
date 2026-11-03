@@ -31,7 +31,13 @@ class PaperComposerAgent(BaseAgent):
 - total_score: 总分，默认 100
 - duration: 建议时长（分钟），默认 60
 - difficulty_ratio: 难度分布，形如 {"easy":3,"medium":5,"hard":2}
-- type_ratio: 题型分布，形如 {"single":10,"fill":5,"solve":4}，key 可用 single/multiple/judge/blank/short/calc/material/composition
+- type_ratio: 题型分布**（可选）**，形如 {"single":10,"multiple":5,"judge":5,"blank":5,"short":5}。
+  key 只能取 single / multiple / judge / blank / short / calc / material / composition
+  之一，**不要编造 fill、solve、essay 等别名**（会被系统丢弃）。
+  要求：
+  ① 至少给出 2 种题型，单一题型的卷子不符合考试规范；
+  ② 用户没有明确指定题型分布时**留空**（null 或不填），系统会按该学科
+     命题标准的完整结构出卷，比自行编造更准确。
 - knowledge_point_ids: 知识点ID数组，空数组表示不限
 - knowledge_keywords: 涉及的知识点关键词数组
 

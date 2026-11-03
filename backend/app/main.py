@@ -111,6 +111,7 @@ async def lifespan(app: FastAPI):
         from app.core.db_migrations import (
             run_column_migrations, run_index_migrations,
             run_knowledge_v2_migration, run_question_v2_migration,
+            upgrade_generic_standards,
         )
 
         _mig_db = SessionLocal()
@@ -123,6 +124,11 @@ async def lifespan(app: FastAPI):
             idx_applied = run_index_migrations(_mig_db)
             if idx_applied:
                 logger.warning(f"已执行索引迁移: {idx_applied}")
+            # 命题标准结构升级：只处理「旧版通用模板批量生成的草案」
+            # （题型恰为 单选/填空/解答 且 10/5/5），手工配置的标准不动。
+            upgraded_std = upgrade_generic_standards(_mig_db)
+            if upgraded_std:
+                logger.warning(f"已升级命题标准结构: {upgraded_std}")
             run_knowledge_v2_migration(_mig_db)
             # 题库 V2：首次启动清空历史题库（用户已确认可删；放在知识库迁移之后）
             run_question_v2_migration(_mig_db)
