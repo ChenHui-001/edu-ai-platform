@@ -73,7 +73,11 @@ export const eduApi = {
   importStudents: (id, students) => request.post(`/edu/classes/${id}/students`, students),
   removeStudent: (cid, sid) => request.delete(`/edu/classes/${cid}/students/${sid}`),
   // 任课总览：年级 × 学科 → 任教教师（grade_admin 只返回本年级）
-  teachingMatrix: (params) => request.get('/edu/teaching-matrix', { params })
+  teachingMatrix: (params) => request.get('/edu/teaching-matrix', { params }),
+  // 任课关系维护（新增 2026-11-03：此前只有读接口，新教师无法分配班级）
+  teachingAssignments: (params) => request.get('/edu/teaching-assignments', { params }),
+  createTeachingAssignment: (data) => request.post('/edu/teaching-assignments', data),
+  deleteTeachingAssignment: (id) => request.delete(`/edu/teaching-assignments/${id}`)
 }
 
 // ---------------- 知识点 V2（树 / 批量 / 导入导出） ----------------

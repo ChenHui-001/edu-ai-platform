@@ -699,6 +699,20 @@ def delete_task(
         raise NotFoundException("任务不存在")
     if not _task_editable(task, user):
         raise PermissionException("无权限删除该任务")
+
+    # 与批量删除（batch_tasks 的 delete 分支）保持同一口径。
+    # 此前只有批量入口检查提交数，单条删除直接 db.delete → Submission 随
+    # CASCADE 一起消失，学生的成绩不可恢复；而前端两处文案还互相矛盾
+    # （批量说"会跳过"、单条说"一并删除"），用户按哪个理解都可能吃亏。
+    sub_cnt = db.scalar(
+        select(func.count()).select_from(Submission).where(Submission.task_id == task_id)
+    ) or 0
+    if sub_cnt:
+        raise BusinessException(
+            f"该任务已有 {sub_cnt} 份提交记录，删除会连带丢失学生成绩。"
+            f"如需终止，请使用「结束」；确需删除请先导出成绩。"
+        )
+
     db.delete(task)
     db.commit()
     return ok(message="任务已删除")

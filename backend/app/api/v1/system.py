@@ -10,8 +10,8 @@ from app.api.deps import get_current_admin, get_current_manager, get_current_use
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException
 from app.models import (
-    Notification, Permission, Role, RolePermission, SysConfig, TeachingAssignment,
-    User, UserRole,
+    LessonPlan, Notification, Paper, Permission, Question, Role, RolePermission,
+    Submission, SysConfig, Task, TeachingAssignment, User, UserRole,
 )
 from app.utils.common import PageParams, dictify, ok
 
@@ -177,6 +177,31 @@ def delete_user(
     user = db.get(User, user_id)
     if not user:
         raise NotFoundException("用户不存在")
+
+    # 删账号会通过外键 CASCADE 连带清空该账号名下的教学资产与学习记录：
+    # Question.owner_id / Paper.creator_id / Task.creator_id /
+    # LessonPlan.creator_id / Submission.student_id，以及 learning 的 8 张表。
+    # 以前这里直接 db.delete()，删一个教师会静默销毁他创建的全部题目/试卷/
+    # 任务/教案，连学生成绩也一起消失（实测：建 1 题 → 删教师 → 题目归零）。
+    # 现在把影响一次列全并**拒绝删除**，引导改用「停用」——物理删除一份
+    # 学业档案是不可逆的，不该由一次误点决定。
+    refs: List[str] = []
+    for label, model, col in (
+        ("题目", Question, Question.owner_id),
+        ("试卷", Paper, Paper.creator_id),
+        ("作业/考试", Task, Task.creator_id),
+        ("教案", LessonPlan, LessonPlan.creator_id),
+        ("作答记录", Submission, Submission.student_id),
+    ):
+        cnt = db.scalar(select(func.count()).select_from(model).where(col == user_id)) or 0
+        if cnt:
+            refs.append(f"{cnt} 个{label}")
+    if refs:
+        raise BusinessException(
+            f"该账号仍关联 {'、'.join(refs)}，删除会一并清除且不可恢复。"
+            f"如只是离职或转岗，请改用「停用」（账号保留、禁止登录）。"
+        )
+
     db.delete(user)
     db.commit()
     return ok(message="用户已删除")

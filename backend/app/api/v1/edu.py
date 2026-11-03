@@ -20,7 +20,7 @@ from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
     Class, ClassRequest, Grade, KnowledgePoint, Notification,
-    Subject, TeachingAssignment, User,
+    Subject, TaskAssignment, TeachingAssignment, User,
 )
 from app.utils.common import dictify, now_local, ok
 
@@ -777,9 +777,25 @@ def delete_class(
     _assert_grade_write_scope(user, k.grade_id)
     student_cnt = db.scalar(select(func.count()).select_from(User).where(
         User.class_id == class_id, User.identity == "student")) or 0
+    # 任课关系与任务下发都是 CASCADE，删班会让它们在无人察觉的情况下消失：
+    # 教师端该班直接不见、学生端历史作业从"我的作业"里消失，且无法恢复。
+    # 只拦学生是不够的 —— 毕业班清理时学生已转走，恰恰是这两个引用最多的时候。
+    asg_cnt = db.scalar(select(func.count()).select_from(TeachingAssignment).where(
+        TeachingAssignment.class_id == class_id)) or 0
+    task_cnt = db.scalar(select(func.count()).select_from(TaskAssignment).where(
+        TaskAssignment.class_id == class_id)) or 0
+    blockers = []
     if student_cnt:
+        blockers.append(f"仍有 {student_cnt} 名学生")
+    if asg_cnt:
+        blockers.append(f"{asg_cnt} 条任课关系")
+    if task_cnt:
+        blockers.append(f"{task_cnt} 条任务下发记录")
+    if blockers:
         raise BusinessException(
-            f"该班级仍有 {student_cnt} 名学生，请先转移学生后再删除")
+            f"该班级还有 {'、'.join(blockers)}，删除会一并清除且无法恢复。"
+            f"如班级已解散，建议改为「停用」（is_active=false）。"
+        )
     db.delete(k)
     db.commit()
     return ok(message="班级已删除")
@@ -1218,3 +1234,148 @@ def teaching_matrix(
             "teachers": len(teacher_ids),
         },
     })
+
+
+# ---------------------------------------------------------------- 任课关系维护
+# 在此之前 TeachingAssignment **只有读接口**（teaching-matrix / users/{id}/teachings），
+# 写入仅存在于 init_db 的种子数据里。后果是：新入职教师登录后
+# DataScope.class_ids() 返回空 → 班级列表空、无法布置作业，
+# 而管理员在界面上没有任何地方能解决。这三个接口补上这个断层。
+
+
+@router.get("/teaching-assignments", summary="任课关系列表")
+def list_teaching_assignments(
+    teacher_id: Optional[int] = None, class_id: Optional[int] = None,
+    subject_id: Optional[int] = None, grade_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("resource:teaching:list")),
+):
+    """按教师/班级/学科/年级筛选生效中的任课关系。"""
+    stmt = (
+        select(
+            TeachingAssignment.id, TeachingAssignment.teacher_id,
+            TeachingAssignment.class_id, TeachingAssignment.subject_id,
+            TeachingAssignment.grade_id, TeachingAssignment.school_year,
+            User.real_name.label("teacher_name"), User.username,
+            Class.name.label("class_name"), Subject.name.label("subject_name"),
+        )
+        .join(User, User.id == TeachingAssignment.teacher_id)
+        .join(Class, Class.id == TeachingAssignment.class_id)
+        .join(Subject, Subject.id == TeachingAssignment.subject_id)
+        .where(TeachingAssignment.is_active.is_(True))
+    )
+    if teacher_id:
+        stmt = stmt.where(TeachingAssignment.teacher_id == teacher_id)
+    if class_id:
+        stmt = stmt.where(TeachingAssignment.class_id == class_id)
+    if subject_id:
+        stmt = stmt.where(TeachingAssignment.subject_id == subject_id)
+    if grade_id:
+        stmt = stmt.where(TeachingAssignment.grade_id == grade_id)
+    # 年级管理员只看本年级（与 teaching-matrix 同一口径）
+    codes = set(user.role_codes or [])
+    if "grade_admin" in codes and "sys_admin" not in codes:
+        scope = user.grade_admin_grade_id or user.grade_id
+        if scope:
+            stmt = stmt.where(TeachingAssignment.grade_id == scope)
+
+    rows = db.execute(
+        stmt.order_by(TeachingAssignment.grade_id, TeachingAssignment.class_id,
+                      TeachingAssignment.subject_id)
+    ).all()
+    return ok([dict(r._mapping) for r in rows])
+
+
+@router.post("/teaching-assignments", summary="新增任课关系")
+def create_teaching_assignment(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm("resource:teaching:write")),
+):
+    def _int(v: Any, label: str) -> int:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            raise BusinessException(f"请选择{label}")
+
+    teacher_id = _int(data.get("teacher_id"), "教师")
+    class_id = _int(data.get("class_id"), "班级")
+    subject_id = _int(data.get("subject_id"), "学科")
+
+    klass = db.get(Class, class_id)
+    if not klass:
+        raise NotFoundException("班级不存在")
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise NotFoundException("学科不存在")
+    teacher = db.get(User, teacher_id)
+    if not teacher:
+        raise NotFoundException("教师不存在")
+    _assert_grade_write_scope(user, klass.grade_id)
+
+    # ① 班级与学科必须同年级。跨年级任课在教学上不存在，放任会造出
+    #    「一年级班由七年级数学老师任教」这种查不出来的错配。
+    if klass.grade_id != subject.grade_id:
+        k_grade = db.get(Grade, klass.grade_id)
+        s_grade = db.get(Grade, subject.grade_id)
+        raise BusinessException(
+            f"班级「{klass.name}」属于{k_grade.name if k_grade else '?'}，"
+            f"学科「{subject.name}」属于{s_grade.name if s_grade else '?'}，不能跨年级任课"
+        )
+
+    # ② 教师身份。允许 teacher 角色（含兼任管理员的教师）。
+    if teacher.identity != "teacher" and "teacher" not in (teacher.role_codes or []):
+        raise BusinessException(f"账号「{teacher.real_name}」不是教师，无法设为任课教师")
+
+    # ③ 同班同科已有其他教师：明确告知是谁，而不是静默产生第二条记录。
+    #    teaching-matrix 的注释写着「同班同科多条以最后一条为准」——
+    #    那是读侧的兜底，写侧必须拦住，否则教师可见范围会随记录顺序漂移。
+    existing = db.scalar(
+        select(TeachingAssignment).where(
+            TeachingAssignment.class_id == class_id,
+            TeachingAssignment.subject_id == subject_id,
+            TeachingAssignment.is_active.is_(True),
+        ).limit(1)
+    )
+    if existing:
+        if existing.teacher_id == teacher_id:
+            raise BusinessException(
+                f"「{klass.name}」的{subject.name}已由{teacher.real_name}任教，无需重复添加")
+        old = db.get(User, existing.teacher_id)
+        if not data.get("replace"):
+            raise BusinessException(
+                f"「{klass.name}」的{subject.name}已由"
+                f"{old.real_name if old else '其他教师'}任教，请先解除原任课关系，"
+                f"或选择「更换任教」"
+            )
+        # 更换任教：在**同一个事务**里解除旧记录并建立新记录。
+        # 若拆成「前端先 DELETE 再 POST」，第二步失败就会让该班该科
+        # 处于无人任教状态，且用户以为已经换好了。
+        existing.is_active = False
+
+    asg = TeachingAssignment(
+        teacher_id=teacher_id, class_id=class_id, subject_id=subject_id,
+        grade_id=klass.grade_id,
+        school_year=str(data.get("school_year") or "2026-2027"),
+        is_active=True,
+    )
+    db.add(asg)
+    db.commit()
+    db.refresh(asg)
+    return ok({"id": asg.id}, message=f"已设置 {teacher.real_name} 任教「{klass.name}」{subject.name}")
+
+
+@router.delete("/teaching-assignments/{asg_id}", summary="解除任课关系")
+def delete_teaching_assignment(
+    asg_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm("resource:teaching:write")),
+):
+    asg = db.get(TeachingAssignment, asg_id)
+    if not asg or not asg.is_active:
+        raise NotFoundException("任课关系不存在")
+    _assert_grade_write_scope(user, asg.grade_id)
+
+    # 软删（is_active=False）而非物理删除：学期轮换要保留历史任课记录，
+    # 且唯一性检查只认 is_active=True 的记录，解除后可立即重新分配。
+    asg.is_active = False
+    db.commit()
+    return ok(message="已解除任课关系")

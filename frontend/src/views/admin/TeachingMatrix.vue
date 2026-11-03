@@ -3,9 +3,57 @@
     <div class="page-header">
       <h2 class="page-title">任课总览</h2>
       <div class="header-actions">
+        <el-button v-if="canWrite" type="primary" :icon="Plus" @click="openAsg">设置任课</el-button>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
       </div>
     </div>
+
+    <!-- 任课维护：班级与学科必须同年级；同班同科已有教师时由后端拦截 -->
+    <el-dialog v-model="asgDlg" title="设置任课" width="520px" destroy-on-close>
+      <el-form label-width="80px">
+        <el-form-item label="年级" required>
+          <el-select v-model="asgForm.grade_id" style="width:100%"
+                     placeholder="先选年级" @change="onAsgGradeChange">
+            <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="班级" required>
+          <el-select v-model="asgForm.class_id" style="width:100%"
+                     :disabled="!asgForm.grade_id" placeholder="先选年级"
+                     @change="loadCurrentAsg">
+            <el-option v-for="c in asgClasses" :key="c.id" :label="c.name" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="学科" required>
+          <el-select v-model="asgForm.subject_id" style="width:100%"
+                     :disabled="!asgForm.grade_id" placeholder="先选年级"
+                     @change="loadCurrentAsg">
+            <el-option v-for="s in asgSubjects" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="教师" required>
+          <el-select v-model="asgForm.teacher_id" filterable style="width:100%"
+                     placeholder="选择任课教师">
+            <el-option v-for="t in asgTeachers" :key="t.id"
+                       :label="`${t.real_name}（${t.username}）`" :value="t.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <el-alert v-if="currentAsg" type="info" :closable="false" show-icon class="mb12">
+        <template #title>
+          当前任课：{{ currentAsg.teacher_name }}
+          <el-button link type="danger" size="small" @click="removeAsg">解除</el-button>
+        </template>
+      </el-alert>
+
+      <template #footer>
+        <el-button @click="asgDlg = false">取消</el-button>
+        <el-button type="primary" :loading="asgSaving" @click="saveAsg">
+          {{ currentAsg ? '更换任教' : '保存' }}
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- 统计卡片 -->
     <el-row :gutter="14" class="stats-row">
@@ -115,8 +163,96 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Refresh, Search } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { eduApi } from '@/api'
+import { useUserStore } from '@/store/user'
+
+const userStore = useUserStore()
+const canWrite = computed(() => userStore.can('resource:teaching:write'))
+
+// ---------------- 任课维护 ----------------
+const grades = ref([])
+const asgDlg = ref(false)
+const asgSaving = ref(false)
+const asgClasses = ref([])
+const asgSubjects = ref([])
+const asgTeachers = ref([])
+const currentAsg = ref(null)
+const asgForm = ref({ grade_id: null, class_id: null, subject_id: null, teacher_id: null })
+
+async function openAsg() {
+  asgForm.value = { grade_id: null, class_id: null, subject_id: null, teacher_id: null }
+  asgClasses.value = []
+  asgSubjects.value = []
+  currentAsg.value = null
+  asgDlg.value = true
+  if (!grades.value.length) grades.value = (await eduApi.grades()).data || []
+  if (!asgTeachers.value.length) {
+    asgTeachers.value = (await eduApi.peopleBrief({ identity: 'teacher' })).data || []
+  }
+}
+
+async function onAsgGradeChange() {
+  asgForm.value.class_id = null
+  asgForm.value.subject_id = null
+  currentAsg.value = null
+  const gid = asgForm.value.grade_id
+  if (!gid) { asgClasses.value = []; asgSubjects.value = []; return }
+  // 班级与学科都按年级精确加载：学科唯一键是 (grade_id, name)，
+  // 用去重列表会出现「选了一年级班级、配七年级数学」这种跨年级错配。
+  const [c, s] = await Promise.all([
+    eduApi.classes({ grade_id: gid, status: 'active' }),
+    eduApi.subjects({ grade_id: gid })
+  ])
+  asgClasses.value = Array.isArray(c.data) ? c.data : (c.data?.items || [])
+  asgSubjects.value = s.data || []
+}
+
+async function loadCurrentAsg() {
+  currentAsg.value = null
+  const { class_id, subject_id } = asgForm.value
+  if (!class_id || !subject_id) return
+  const res = await eduApi.teachingAssignments({ class_id, subject_id })
+  currentAsg.value = (res.data || [])[0] || null
+  if (currentAsg.value) asgForm.value.teacher_id = currentAsg.value.teacher_id
+}
+
+async function saveAsg() {
+  const f = asgForm.value
+  if (!f.grade_id || !f.class_id || !f.subject_id || !f.teacher_id) {
+    return ElMessage.warning('请选择年级、班级、学科与教师')
+  }
+  asgSaving.value = true
+  try {
+    // replace=true 让后端在同一个事务里「解除旧任课 + 建立新任课」，
+    // 避免前端拆两步时第二步失败导致该班该科无人任教。
+    await eduApi.createTeachingAssignment({
+      class_id: f.class_id, subject_id: f.subject_id,
+      teacher_id: f.teacher_id, replace: true
+    })
+    ElMessage.success(currentAsg.value ? '已更换任教教师' : '任课已设置')
+    asgDlg.value = false
+    await load()
+  } finally {
+    asgSaving.value = false
+  }
+}
+
+async function removeAsg() {
+  if (!currentAsg.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确认解除「${currentAsg.value.teacher_name}」在「${currentAsg.value.class_name}」的`
+      + `${currentAsg.value.subject_name}任课？解除后该教师将看不到这个班级。`,
+      '提示', { type: 'warning' })
+  } catch { return }
+  await eduApi.deleteTeachingAssignment(currentAsg.value.id)
+  ElMessage.success('已解除任课关系')
+  currentAsg.value = null
+  asgForm.value.teacher_id = null
+  await load()
+}
 
 const loading = ref(false)
 const items = ref([])

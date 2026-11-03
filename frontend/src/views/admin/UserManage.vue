@@ -290,7 +290,10 @@ async function doReset() {
 }
 
 async function remove(row) {
-  await ElMessageBox.confirm(`确认删除用户「${row.real_name}」？此操作不可恢复。`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(
+    `确认删除用户「${row.real_name}」？\n` +
+    '若该账号已创建题目/试卷/作业/教案，或有作答记录，系统会拒绝删除——请改用「停用」。',
+    '提示', { type: 'warning' })
   await systemApi.deleteUser(row.id)
   ElMessage.success('已删除')
   load()

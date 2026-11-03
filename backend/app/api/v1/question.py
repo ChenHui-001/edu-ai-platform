@@ -622,6 +622,20 @@ def update_question(
     if not _can_edit_question(q, user):
         raise PermissionException("只能编辑自己的题目")
 
+    # 已组卷的题目不允许改分值/题型/年级/学科：这些字段直接决定卷面结构，
+    # 而 PaperItem.score 与 Paper.total_score 都是组建试卷时算好的快照，
+    # 改题目**不会**回写它们 —— 结果就是「卷面 5 分、题目 10 分」，
+    # 导出与人工核对都对不上。删除有引用检查（见 delete_question），
+    # 修改此前没有，属于同一类问题的漏网。
+    if any(k in data for k in ("score", "type", "grade_id", "subject_id")):
+        ref_cnt = db.scalar(select(func.count()).select_from(PaperItem).where(
+            PaperItem.question_id == q_id)) or 0
+        if ref_cnt:
+            raise BusinessException(
+                f"该题目已被 {ref_cnt} 份试卷引用，不能修改分值/题型/年级/学科"
+                f"（会导致试卷总分与题项不一致）。如需调整，请先调整相关试卷。"
+            )
+
     # 年级/学科不允许单独改到不匹配组合：先算出生效值并整体校验
     effective_grade = q.grade_id
     effective_subject = q.subject_id

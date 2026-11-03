@@ -508,7 +508,9 @@ async function save() {
 
 async function remove(row) {
   if (!canEditTask(row)) return ElMessage.warning('只能删除自己创建的任务')
-  await ElMessageBox.confirm(`确认删除任务「${row.title}」？相关提交记录将一并删除。`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(
+    `确认删除任务「${row.title}」？\n已有提交记录的任务无法删除（请使用「结束」保留成绩）。`,
+    '提示', { type: 'warning' })
   await taskApi.remove(row.id)
   ElMessage.success('已删除')
   await refreshAll()
