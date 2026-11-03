@@ -175,6 +175,25 @@ def _validate_difficulty(value: Any, default: str = "medium") -> str:
     return diff
 
 
+def _validate_min_words(value: Any) -> Optional[int]:
+    """建议最少字数（作文用）。None/0 表示不限，上限 2000。
+
+    上限与 AI 出题侧（`QuestionGeneratorAgent._min_words`）保持一致：
+    中考作文上限约 1500 字，超过 2000 基本是把分值或题号误填进来。
+    两处口径必须相同，否则手工建题能存 5000、AI 出的只能存 2000，
+    同一个字段出现两种合法区间，排查时很难判断是数据问题还是代码问题。
+    """
+    if value in (None, "", 0, "0"):
+        return None
+    try:
+        words = int(value)
+    except (TypeError, ValueError):
+        raise BusinessException("建议字数必须是整数")
+    if words < 0 or words > 2000:
+        raise BusinessException("建议字数应在 0~2000 之间")
+    return words or None
+
+
 def _validate_score(value: Any, default: float = 5.0) -> float:
     try:
         score = float(value if value not in (None, "") else default)
@@ -445,6 +464,7 @@ def create_question(
         stem=stem,
         options=_dump(options), answer=_dump(data.get("answer")),
         analysis=data.get("analysis"), score=score,
+        answer_min_words=_validate_min_words(data.get("answer_min_words")),
         difficulty=difficulty,
         grade_id=grade.id, subject_id=subject.id,
         knowledge_point_id=kp_id,
@@ -669,6 +689,8 @@ def update_question(
         q.difficulty = _validate_difficulty(data["difficulty"], default=q.difficulty)
     if "score" in data:
         q.score = _validate_score(data["score"], default=q.score)
+    if "answer_min_words" in data:
+        q.answer_min_words = _validate_min_words(data.get("answer_min_words"))
     if "knowledge_point_id" in data:
         raw_kp = data.get("knowledge_point_id")
         if raw_kp in (None, ""):

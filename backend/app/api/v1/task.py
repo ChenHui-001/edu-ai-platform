@@ -15,8 +15,8 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Answer, Class, Notification, Paper, PaperStatus, Submission, Task, TaskAssignment,
-    TaskStatus, TaskType, User, UserStatus,
+    Answer, Class, Grade, Notification, Paper, PaperStatus, Submission, Task,
+    TaskAssignment, TaskStatus, TaskType, User, UserStatus,
 )
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, now_local, ok
@@ -950,6 +950,11 @@ def get_task_paper(
     reveal_answer = is_creator or (task.show_answer and (has_submitted or task_finished))
 
     items = []
+    # 作文的建议字数：题目自己配了就用题目的，没配按学段给默认
+    # （小学 400 / 初中 600）。在服务端算出生效值下发，前端不必自己判断学段
+    # —— 前端拿不到 Grade.stage，只能靠 grade_id 猜，那是不可靠的。
+    grade = db.get(Grade, task.grade_id) if task.grade_id else None
+    default_min_words = 400 if (grade and grade.stage == "primary") else 600
     for it in sorted(paper.items, key=lambda x: x.sort_order):
         q = it.question
         d = {
@@ -957,6 +962,8 @@ def get_task_paper(
             "score": it.score, "section_name": it.section_name, "type": q.type,
             "stem": q.stem, "options": _load(q.options),
         }
+        if q.type == "composition":
+            d["answer_min_words"] = int(q.answer_min_words or default_min_words)
         if reveal_answer:
             d["answer"] = _load(q.answer)
             d["analysis"] = q.analysis

@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 # (表名, 列名, 列类型 DDL)。新加模型字段若老库可能缺列，登记到这里。
 MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
+    # v2.2.27: 作文题建议最少字数。老库无此列时 ORM 读写直接 500
+    # （create_all 只建缺失的表，不会给已有表补列）。
+    ("edu_question", "answer_min_words", "INTEGER"),
     # v1.0.19: Attachment 业务绑定（教案/作业等按 biz_type+biz_id 挂附件）
     ("sys_attachment", "biz_type", "VARCHAR(32)"),
     # v1.0.42: AI 教案 —— 教案主体补齐「教学准备 / 课堂练习」与生成溯源，

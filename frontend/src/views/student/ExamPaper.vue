@@ -66,11 +66,27 @@
             </el-checkbox>
           </el-checkbox-group>
 
-          <!-- 填空 / 主观 -->
+          <!-- 填空 -->
           <el-input v-else-if="it.type === 'blank'" v-model="answers[it.paper_item_id]"
                     placeholder="请输入答案" />
+          <!-- 作文：单独给足空间。通用主观题框只有 4 行，写 600 字要一直滚动，
+               而且字数写在 placeholder 里，一开始输入就消失，学生无法自查。 -->
+          <div v-else-if="it.type === 'composition'" class="composition-box">
+            <el-input v-model="answers[it.paper_item_id]" type="textarea"
+                      :autosize="{ minRows: 12, maxRows: 30 }" resize="vertical"
+                      placeholder="请在此作答，建议分段书写" />
+            <div class="word-bar">
+              <span :class="{ 'word-warn': isBelowMinWords(it) }">
+                已写 {{ wordCount(it) }} 字
+              </span>
+              <span v-if="it.answer_min_words" class="muted">
+                · 建议不少于 {{ it.answer_min_words }} 字
+              </span>
+            </div>
+          </div>
+          <!-- 其余主观题（简答/计算/材料分析） -->
           <el-input v-else v-model="answers[it.paper_item_id]" type="textarea" :rows="4"
-                    :placeholder="`请作答（${(answers[it.paper_item_id] || '').length} 字）`" />
+                    placeholder="请作答" />
         </div>
       </div>
     </template>
@@ -147,6 +163,16 @@
                 :title="`还有 ${items.length - answeredCount} 题未作答，未答题计 0 分`" />
       <el-alert v-if="hasSubjective" type="info" :closable="false" show-icon
                 title="含主观题，交卷后需教师批改，成绩稍后发布" />
+      <!-- 作文只写了几行就交卷，多半是误操作。这里只提醒不阻断：
+           学生有权交白卷或写短文，硬拦会变成"系统不让交卷"。 -->
+      <el-alert v-if="shortCompositions.length" type="warning" :closable="false" show-icon
+                class="mb8">
+        <template #title>
+          <span v-for="(c, i) in shortCompositions" :key="c.label">
+            {{ i ? '；' : '' }}{{ c.label }}当前 {{ c.words }} 字，低于建议的 {{ c.need }} 字
+          </span>
+        </template>
+      </el-alert>
       <el-input v-if="task.anti_cheat && switchCount > 0" type="textarea" :rows="2" readonly
                 style="margin-top:10px" :model-value="`检测到答题期间切换页面 ${switchCount} 次，已记录`" />
       <template #footer>
@@ -211,6 +237,34 @@ const answered = computed(() => {
 const answeredCount = computed(() => answered.value.length)
 const progress = computed(() =>
   items.value.length ? Math.round((answeredCount.value / items.value.length) * 100) : 0)
+
+// ---------------- 作文作答 ----------------
+// 字数口径：去掉空白后的字符数（**含标点**），与语文老师按稿纸格子计数的
+// 习惯一致。若改成"只数汉字"，学生按标点也算字的方式估算会对不上。
+function wordCount(it) {
+  return String(answers.value[it.paper_item_id] || '').replace(/\s/g, '').length
+}
+
+function isBelowMinWords(it) {
+  const need = Number(it.answer_min_words || 0)
+  return need > 0 && wordCount(it) < need
+}
+
+// 交卷前提醒：只针对「写了一点但明显不够」的作文。完全空白的由
+// 「还有 N 题未作答」覆盖，不重复提示。
+const shortCompositions = computed(() => {
+  const out = []
+  for (const it of items.value) {
+    if (it.type !== 'composition') continue
+    const need = Number(it.answer_min_words || 0)
+    if (!need) continue
+    const words = wordCount(it)
+    if (words > 0 && words < need) {
+      out.push({ label: it.section_name || '作文', words, need })
+    }
+  }
+  return out
+})
 
 let timer = null
 let heartbeatTimer = null
@@ -551,4 +605,15 @@ onBeforeUnmount(() => {
   margin-top: 10px; padding: 10px; background: #f5f7fa; border-radius: 4px;
   font-size: 13px; line-height: 1.7; color: #606266;
 }
+
+/* 作文作答区：字号与行高按"能长时间阅读写作"调，比通用输入框宽松 */
+.composition-box :deep(.el-textarea__inner) {
+  font-size: 15px; line-height: 1.9; padding: 12px 14px;
+}
+.word-bar {
+  display: flex; justify-content: flex-end; align-items: center; gap: 6px;
+  padding: 6px 2px 0; font-size: 12px; color: var(--el-text-color-secondary);
+}
+.word-bar .muted { color: var(--el-text-color-secondary); }
+.word-warn { color: var(--el-color-warning); font-weight: 600; }
 </style>

@@ -59,6 +59,11 @@ class Question(Base):
     answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="标准答案 JSON")
     analysis: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="解析")
     score: Mapped[float] = mapped_column(Float, default=5.0)
+    # 主观题建议最少字数（主要给作文用）。留空则按学段回退默认：
+    # 小学 400 / 初中 600。学生端只做「弱提示」不阻断提交 —— 学生有权交白卷，
+    # 但「只写了两行就交卷」多半是误操作，需要在交卷前提醒。
+    answer_min_words: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, comment="建议最少字数（作文题；空=按学段默认）")
     difficulty: Mapped[str] = mapped_column(String(16), default=Difficulty.MEDIUM.value, index=True)
 
     # 关联维度

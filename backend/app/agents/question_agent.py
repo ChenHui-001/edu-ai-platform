@@ -58,12 +58,15 @@ class QuestionGeneratorAgent(BaseAgent):
     "difficulty": "medium",
     "score": 5,
     "knowledge_point_id": 0,
-    "knowledge_point_name": "知识点名称"
+    "knowledge_point_name": "知识点名称",
+    "answer_min_words": 0
   }
 ]
 
 type 取值：single(单选) multiple(多选) judge(判断) blank(填空) short(简答) calc(计算) material(材料分析) composition(作文)
-difficulty 取值：easy / medium / hard"""
+difficulty 取值：easy / medium / hard
+answer_min_words：仅作文题(composition)填建议最少字数（小学 400、初中 600），
+  其他题型一律填 0。学生端会据此提示字数，填 0 表示不限。"""
 
     def execute(
         self,
@@ -239,6 +242,8 @@ difficulty 取值：easy / medium / hard"""
                 answer=self._dump(it.get("answer")),
                 analysis=it.get("analysis"),
                 score=float(it.get("score", 5)),
+                answer_min_words=self._min_words(it.get("answer_min_words"),
+                                                 it.get("type") or question_type),
                 difficulty=it.get("difficulty", difficulty),
                 grade_id=grade_id,
                 subject_id=subject_id,
@@ -359,6 +364,22 @@ difficulty 取值：easy / medium / hard"""
         }
 
     # ---------------- 工具 ----------------
+    @staticmethod
+    def _min_words(raw: Any, qtype: Any) -> Optional[int]:
+        """校验模型给的建议字数，只有作文题保留。
+
+        模型会给出 0、负数、字符串甚至夸张值；直接落库会导致学生端显示
+        「建议不少于 -3 字」。区间取 1~2000：中考作文上限约 1500 字，
+        超过这个量级基本是模型把分值/题号填进来了。
+        """
+        if str(qtype or "").strip().lower() != "composition":
+            return None
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        return value if 0 < value <= 2000 else None
+
     @staticmethod
     def _resolve_kp_id(
         db: Session,

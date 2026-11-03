@@ -254,6 +254,16 @@
                     placeholder="支持 HTML 富文本、公式（LaTeX）、图片" />
         </el-form-item>
 
+        <!-- 作文题的建议字数：学生端据此提示「已写 N 字 / 建议不少于 M 字」，
+             并在交卷前对「写得太少」做弱提醒。留空则按学段给默认值。 -->
+        <el-form-item v-if="form.type === 'composition'" label="建议字数">
+          <el-input-number v-model="form.answer_min_words" :min="0" :max="2000" :step="100"
+                           style="width:160px" />
+          <span class="muted" style="margin-left:10px">
+            留空则按学段默认（小学 400 / 初中 600），0 表示不限
+          </span>
+        </el-form-item>
+
         <!-- 选择题/判断题选项 -->
         <el-form-item v-if="showOptions" label="选项">
           <div class="options-editor">
@@ -889,7 +899,7 @@ const formRef = ref()
 const form = reactive({
   id: null, type: 'single', stem: '', options: [], answer: '',
   analysis: '', score: 5, difficulty: 'medium', grade_id: null, subject_id: null,
-  knowledge_point_id: null, bank_type: 'private'
+  knowledge_point_id: null, bank_type: 'private', answer_min_words: null
 })
 const optionList = ref([])
 const multiAnswer = ref([])
@@ -940,6 +950,7 @@ async function openDialog(row) {
     subject_id: row?.subject_id ?? query.subject_id,
     knowledge_point_id: row?.knowledge_point_id ?? null,
     bank_type: row?.bank_type ?? 'private',
+    answer_min_words: row?.answer_min_words ?? null,
     options: [], answer: ''
   })
   const opts = parseJson(row?.options) || []
