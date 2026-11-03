@@ -17,7 +17,8 @@ from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
     Grade, KnowledgePoint, Notification, Paper, PaperItem, PaperShare, PaperStatus,
-    Question, QuestionBankType, QuestionStatus, ShareScope, Subject, Task, User,
+    Question, QuestionBankType, QuestionStatus, ShareScope, Subject, Task, TaskStatus,
+    User,
 )
 from app.services.question_access import question_usable_error
 from app.services.question_usage import (
@@ -1540,6 +1541,53 @@ def delete_paper(
     _recount_usage(db, referenced)
     db.commit()
     return ok(message="试卷已删除")
+
+
+@router.post("/papers/{paper_id}/archive", summary="停用 / 恢复试卷")
+def archive_paper(
+    paper_id: int, data: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:write")),
+):
+    """停用试卷（body 传 archived=false 则恢复）。
+
+    补的是 `PaperStatus.ARCHIVED` 的写入口：此前枚举和模型注释都写着
+    「被任务引用时不可删，只能停用」，delete_paper 的错误提示也这么建议，
+    但**系统里没有任何地方能把试卷置为停用** —— 用户按提示操作只会卡住，
+    最后被迫删任务（连带学生成绩一起没）。停用不动任何题项与提交记录。
+    """
+    paper = db.get(Paper, paper_id)
+    if not paper:
+        raise NotFoundException("试卷不存在")
+    if not _can_edit_paper(paper, user):
+        raise PermissionException("只能操作自己创建的试卷")
+
+    archived = bool(data.get("archived", True))
+    if archived:
+        if paper.status == PaperStatus.ARCHIVED.value:
+            raise BusinessException("该试卷已是停用状态")
+        # 进行中的考试不能停卷：学生端此时可能还在答题，卷面被撤会直接白屏。
+        active = db.scalar(
+            select(func.count()).select_from(Task).where(
+                Task.paper_id == paper_id,
+                Task.status.in_((TaskStatus.PUBLISHED.value, TaskStatus.ONGOING.value)),
+            )
+        ) or 0
+        if active:
+            raise BusinessException(
+                f"该试卷有 {active} 个进行中的作业/考试，请先结束相关任务后再停用")
+        paper.status = PaperStatus.ARCHIVED.value
+        tip = "试卷已停用，可随时恢复"
+    else:
+        if paper.status != PaperStatus.ARCHIVED.value:
+            raise BusinessException("该试卷未停用，无需恢复")
+        # 恢复为草稿而不是 published：原状态没有留痕，直接回 published 会让
+        # 曾经进过公共库的旧卷绕过审核重新上架。要上架就重新走审核流。
+        paper.status = PaperStatus.DRAFT.value
+        tip = "试卷已恢复为草稿，如需进入公共库请重新提交审核"
+
+    db.commit()
+    return ok({"status": paper.status}, message=tip)
 
 
 def _copy_paper_row(db: Session, src: Paper, user: User, name: Optional[str] = None) -> Paper:

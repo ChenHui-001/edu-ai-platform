@@ -154,6 +154,9 @@ export const questionApi = {
   createPaper: (data) => request.post('/question/papers', data),
   updatePaper: (id, data) => request.put(`/question/papers/${id}`, data),
   removePaper: (id) => request.delete(`/question/papers/${id}`),
+  // 停用/恢复：被任务引用的试卷不能删，只能停用（此前无此入口）
+  archivePaper: (id, archived = true) =>
+    request.post(`/question/papers/${id}/archive`, { archived }),
   copyPaper: (id, data) => request.post(`/question/papers/${id}/copy`, data),
   sharePaper: (id, data) => request.post(`/question/papers/${id}/share`, data),
   // 注意：**没有** exportPaperUrl 这类"只拼 URL"的辅助函数。
@@ -188,7 +191,8 @@ export const questionApi = {
 
   paperVersions: (id) => request.get(`/question/papers/${id}/versions`),
   paperVersionDetail: (id, v) => request.get(`/question/papers/${id}/versions/${v}`),
-  restorePaperVersion: (id, v) => request.post(`/question/papers/${id}/versions/${v}/restore`),
+  restorePaperVersion: (id, v, data) =>
+    request.post(`/question/papers/${id}/versions/${v}/restore`, data || {}),
 
   paperLibrary: (params) => request.get('/question/papers/library/list', { params }),
   toggleFavorite: (id, favorite) => request.post(`/question/papers/${id}/favorite`, { favorite }),

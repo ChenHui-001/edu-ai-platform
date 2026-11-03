@@ -98,9 +98,18 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="状态" width="92" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'archived'" size="small" type="info">已停用</el-tag>
+            <el-tag v-else-if="row.status === 'pending'" size="small" type="warning">待审核</el-tag>
+            <el-tag v-else-if="row.status === 'rejected'" size="small" type="danger">已驳回</el-tag>
+            <el-tag v-else-if="row.status === 'draft'" size="small" type="info" effect="plain">草稿</el-tag>
+            <span v-else class="muted">正常</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="creator_name" label="创建者" width="100" show-overflow-tooltip />
         <el-table-column prop="created_at" label="创建时间" width="160" show-overflow-tooltip />
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="330" fixed="right">
           <template #default="{ row }">
             <div class="row-ops" @click.stop>
               <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
@@ -110,6 +119,12 @@
                          @click="copyPaper(row)">复制</el-button>
               <el-button v-if="canShare" link type="primary" size="small"
                          @click="openShare(row)">共享</el-button>
+              <!-- 被任务引用的试卷删不掉，停用是唯一可行出路（此前无此入口） -->
+              <el-button v-if="canWrite" link size="small"
+                         :type="row.status === 'archived' ? 'success' : 'info'"
+                         @click="toggleArchive(row)">
+                {{ row.status === 'archived' ? '恢复' : '停用' }}
+              </el-button>
               <el-dropdown v-if="canExport" trigger="click" @command="(fmt) => exportPaper(row, fmt)">
                 <el-button link type="warning" size="small">导出</el-button>
                 <template #dropdown>
@@ -993,6 +1008,26 @@ async function copyPaper(row) {
   } catch {
     // 用户取消 / 请求失败由拦截器提示
   }
+}
+
+async function toggleArchive(row) {
+  const archived = row.status !== 'archived'
+  try {
+    await ElMessageBox.confirm(
+      archived
+        ? `确认停用试卷「${row.name}」？停用不会影响已结束考试的记录与成绩，可随时恢复。`
+        : `确认恢复试卷「${row.name}」？将恢复为草稿，如需进入公共库需重新提交审核。`,
+      archived ? '停用确认' : '恢复确认', { type: 'warning' })
+  } catch { return }
+  try {
+    const res = await questionApi.archivePaper(row.id, archived)
+    ElMessage.success(res.message || (archived ? '已停用' : '已恢复'))
+  } catch (e) {
+    // 进行中的考试会拒绝停用，把原因原样带出来（如「有 1 个进行中的作业/考试」）
+    ElMessage.error(e.message || '操作失败')
+    return
+  }
+  await refreshAll()
 }
 
 async function removePaper(row) {

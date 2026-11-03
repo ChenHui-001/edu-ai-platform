@@ -1501,13 +1501,18 @@ def get_version(
 
 @router.post("/{paper_id}/versions/{version}/restore", summary="回溯到指定版本")
 def restore_version(
-    paper_id: int, version: int, db: Session = Depends(get_db),
+    paper_id: int, version: int, data: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
     """把试卷恢复到历史版本。
 
     回溯本身也产生一个新版本（不改历史），符合"版本只增不改"的原则。
     题库中已删除的题目会被跳过并如实报告，不会静默丢题。
+
+    **有学生提交时默认拒绝**：回溯会重写题项（插新 → 迁同题作答 → 删旧），
+    旧版本里不存在的题目，其实作答无法迁移，只能丢弃 —— 学生的分数会变。
+    这类操作不可逆，必须由调用方显式带 force=true 二次确认。
     """
     paper = db.get(Paper, paper_id)
     if not paper:
@@ -1518,6 +1523,18 @@ def restore_version(
         PaperVersion.paper_id == paper_id, PaperVersion.version == version))
     if not row:
         raise NotFoundException("版本不存在")
+
+    sub_cnt = db.scalar(
+        select(func.count()).select_from(Submission)
+        .join(Task, Task.id == Submission.task_id)
+        .where(Task.paper_id == paper_id)
+    ) or 0
+    if sub_cnt and not bool(data.get("force")):
+        raise BusinessException(
+            f"该试卷已有 {sub_cnt} 份学生提交。回溯会重写题目结构："
+            f"旧版本中不存在的题目，其作答将被丢弃，相关学生分数会随之变化。"
+            f"如确认承担此风险，请二次确认后重试。"
+        )
     snapshot = _load_json(row.snapshot) or {}
     raw_items = snapshot.get("items") or []
 

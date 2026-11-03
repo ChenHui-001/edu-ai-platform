@@ -19,6 +19,43 @@ from app.models import Paper, PaperVersion
 
 logger = logging.getLogger(__name__)
 
+# 每份试卷保留的版本数上限。
+#
+# 快照里冗余存了题干/答案/解析全文，一条几十 KB。而 snapshot() 在每次「编辑题目 /
+# 移除题目 / 重构大题 / 回溯」时都会写一条 —— 一份反复打磨的卷子很容易攒到几十个
+# 版本，版本抽屉一次全量读出来会明显变慢，DB 也会持续膨胀。
+#
+# 只保留最近 N 条，外加 version 最小的那条（首次组卷的原始结构，回溯时常被当作
+# 「回到最初」的锚点）。删除不影响版本号递增：后续仍按 max(version)+1 生成。
+KEEP_RECENT_VERSIONS = 20
+
+
+def _prune_versions(db: Session, paper_id: int) -> int:
+    """裁剪超出保留上限的历史版本，返回删除条数。
+
+    保留策略：最近 KEEP_RECENT_VERSIONS 条 + version 最小的一条。
+    早期版本连题干都被冗余保存过，删掉它们不会影响回溯到较新版本，
+    因为每个版本的 snapshot 都是**自包含**的（不依赖前序版本）。
+    """
+    rows = db.scalars(
+        select(PaperVersion)
+        .where(PaperVersion.paper_id == paper_id)
+        .order_by(PaperVersion.version.desc())
+    ).all()
+    if len(rows) <= KEEP_RECENT_VERSIONS:
+        return 0
+    keep_ids = {r.id for r in rows[:KEEP_RECENT_VERSIONS]}
+    keep_ids.add(min(rows, key=lambda r: r.version).id)
+    removed = 0
+    for old in rows[KEEP_RECENT_VERSIONS:]:
+        if old.id not in keep_ids:
+            db.delete(old)
+            removed += 1
+    if removed:
+        db.flush()
+        logger.info(f"试卷 {paper_id} 版本裁剪：删除 {removed} 条历史快照")
+    return removed
+
 
 def build_snapshot(db: Session, paper: Paper) -> Dict[str, Any]:
     """构造整卷快照（标量字段 + 题目明细）。"""
@@ -86,6 +123,8 @@ def snapshot(db: Session, paper: Paper, user_id: Optional[int],
     db.add(row)
     paper.current_version = version
     db.flush()
+    # 裁剪必须在 flush 之后：此时新版本已入库，按 version 倒序切片才是准的。
+    _prune_versions(db, paper.id)
     return row
 
 

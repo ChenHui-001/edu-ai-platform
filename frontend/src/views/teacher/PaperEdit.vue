@@ -677,12 +677,33 @@ async function doRestore(row) {
       `回溯到 v${row.version}？当前内容会先存为一个新版本，不会丢失。`,
       '回溯版本', { type: 'warning' })
   } catch { return }
-  try {
-    await questionApi.restorePaperVersion(paperId, row.version)
+
+  const apply = async (force) => {
+    await questionApi.restorePaperVersion(paperId, row.version, force ? { force: true } : {})
     ElMessage.success(`已回溯到 v${row.version}`)
     versionDrawer.value = false
     await loadPaper()
+  }
+
+  try {
+    await apply(false)
   } catch (e) {
+    // 后端在有学生提交时会拒绝（旧版本里不存在的题目，其作答无法迁移）。
+    // 这里再给一次带风险说明的确认，而不是简单报错让用户无从下手。
+    if (/份学生提交/.test(e.message || '')) {
+      try {
+        await ElMessageBox.confirm(
+          `${e.message}\n\n确认继续回溯？该操作不可撤销。`,
+          '回溯风险确认',
+          { type: 'warning', confirmButtonText: '我已知晓，继续回溯', cancelButtonText: '取消' })
+      } catch { return }
+      try {
+        await apply(true)
+      } catch (e2) {
+        ElMessage.error('回溯失败：' + (e2.message || '未知错误'))
+      }
+      return
+    }
     ElMessage.error('回溯失败：' + (e.message || '未知错误'))
   }
 }
