@@ -499,6 +499,7 @@ def _fill_one_gap(
     user_id: int, is_admin: bool, grade_id: int, subject_id: int,
     default_diff: str,
     used_ids: Optional[set] = None,
+    source: str = "ai_fill",
 ) -> Dict[str, Any]:
     """为**单个大题**补题，跑在自己的 Session 里（因此可并行）。
 
@@ -555,7 +556,7 @@ def _fill_one_gap(
                     # 来源标记与「题库页主动出题」的 ai 区分开：
                     # 组卷补题是副产物，预览一次就会落一批 draft 题，
                     # 混在一起以后没法批量清理。
-                    source="ai_fill",
+                    source=source,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
@@ -680,6 +681,380 @@ def _fill_one_gap(
         return out
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------- 预览态重新生成
+# 组卷结果**保存之前**在前端是纯内存数组（`plan.items` 只活在响应里），
+# 没有 paper_id / item_id 可用 —— 所以既有的
+# `POST /{paper_id}/items/{item_id}/regenerate`（面向已落库的试卷）帮不上忙。
+# 这里按「当前预览快照」重新出题：前端把整卷题目连同要替换的位置一起发上来，
+# 后端只重算被点名的那几道，其余原样返回，教师改过的题干/分值不会被覆盖。
+REGEN_MAX_COUNT = 20   # 单次最多重生 20 题（全为作文时已经要跑 10 轮模型）
+
+
+def _regen_targets(items: List[Dict[str, Any]], section_code: str) -> List[int]:
+    """取某大题内、题型与 section_code 一致的题目下标（保持卷面顺序）。"""
+    code = str(section_code or "").strip().lower()
+    return [i for i, it in enumerate(items)
+            if str(it.get("section_code") or it.get("type") or "").lower() == code]
+
+
+def _regen_forbid_ids(items: List[Dict[str, Any]]) -> set:
+    """生成时禁止复用的 question_id = **本卷全部已有题目**。
+
+    注意不能只排除「范围外」的题：被重生那道题自己也在卷面上，若允许复用它的
+    id，点「重新生成」会原地返回同一道题（教师看到毫无变化，还以为按钮失效）。
+    重生的新题在采纳后同样加入集合，保证整段重生时卷内不出现重复题。
+    """
+    out = set()
+    for it in items:
+        try:
+            qid = int(it.get("question_id") or it.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if qid:
+            out.add(qid)
+    return out
+
+
+def _regen_stem_keys(
+    db: Session, *, grade_id: int, subject_id: int, qtypes: set,
+) -> List[str]:
+    """已落库题干（用于近似去重）。
+
+    与补题路径的 `_existing_stem_keys` 不同：这里一次要覆盖**多个题型**，
+    且组卷预览还没入卷，无法用"本卷已用 id"兜住「换了个说法的同一道题」。
+    """
+    if not qtypes:
+        return []
+    rows = db.scalars(
+        select(Question.stem).where(
+            Question.grade_id == grade_id,
+            Question.subject_id == subject_id,
+            Question.type.in_(list(qtypes)),
+        ).order_by(Question.id.desc()).limit(400)
+    ).all()
+    return [k for k in (_stem_key(x) for x in rows) if k]
+
+
+def _regen_one(
+    *,
+    db_factory, user_id: int, is_admin: bool, grade_id: int, subject_id: int,
+    qtype: str, difficulty: str, kp_ids: List[int], need: int = 1,
+    forbid_ids: Optional[set] = None, forbid_keys: Optional[List[str]] = None,
+    source: str = "ai_regen",
+) -> Dict[str, Any]:
+    """给单个（题型, 难度）组合生成 1~N 道新题，返回已落库的题目字典列表。
+
+    与 `_fill_one_gap` 的区别：那个函数服务"补齐缺口"（按大题补到 need 道），
+    这个服务"替换某几道"（只要 1 道就够，但题型/难度/知识点必须精确对齐）。
+
+    三条硬约束，缺一条就会出问题：
+    1. **难度精确**：模型常无视难度要求给"中等"，而重生成的目的往往就是
+       "这道题太简单了换一道难的"。所以生成后按 difficulty 过滤，不匹配就重试一次。
+    2. **题型精确**：混进别的题型会让「选择题」大题里出现填空题。
+    3. **不重复**：与卷内其余题（id）和题库题干（近似）都不能撞。
+    """
+    from app.agents.question_agent import QuestionGeneratorAgent
+    from app.api.v1.question import normalize_question_type
+    from app.services.question_access import question_usable_error
+
+    out: Dict[str, Any] = {"items": [], "reason": "", "skipped_dup": 0}
+    forbid_ids = set(forbid_ids or ())
+    keys = list(forbid_keys or [])
+    # 单批上限与补题共用同一张表：作文一题上千字、解答题要完整解题过程，
+    # 一次 10 道必然把 max_tokens 烧在推理阶段（见 FILL_BATCH_BY_TYPE 注释）。
+    cap = max(1, FILL_BATCH_BY_TYPE.get(qtype, FILL_BATCH_DEFAULT))
+    # 空转保护：连续两轮"一点没多拿到"就停（模型持续给重复题 / 难度不符时
+    # 单纯加轮次只会白烧 60~90s）。轮数上限按 need 动态算，否则 need=9、
+    # cap=3 时 2 轮最多只拿到 6 题，剩下 3 题会被误报成"模型生成不了"。
+    rounds = min(6, max(2, (need + cap - 1) // cap + 1))
+    idle = 0
+    # 减半标记必须落在**循环外**的 batch_cap 上：如果只在分支里改 batch，
+    # 下一轮开头 `batch = min(cap, ...)` 会把它重新算回去，减半等于没做
+    # （首版就踩了这个坑：三轮调用恒为 count=3）。
+    batch_cap = cap
+    budget_retried = False
+
+    while len(out["items"]) < need and rounds > 0:
+        rounds -= 1
+        batch = max(1, min(batch_cap, need - len(out["items"])))
+        before = len(out["items"])
+        db = db_factory()
+        try:
+            try:
+                res = QuestionGeneratorAgent().run(
+                    db, user_id=user_id, grade_id=grade_id, subject_id=subject_id,
+                    question_type=qtype, count=batch, difficulty=difficulty,
+                    knowledge_point_ids=kp_ids or None, save=True,
+                    allow_all_banks=is_admin, source=source,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("预览重生失败（type=%s diff=%s）: %s", qtype, difficulty, exc)
+                out["reason"] = f"生成调用异常：{exc}"
+                break
+
+            if not (res or {}).get("success", True):
+                out["reason"] = str(res.get("message") or "生成执行失败")
+                break
+            data = (res or {}).get("data") or {}
+            got = data.get("questions") or []
+            if not got:
+                raw = str(data.get("reason") or data.get("tip") or "")
+                out["reason"] = _fill_fail_hint(data)
+                # 预算被推理吃光的，第二批自动减半（同补题口径：只减一次，
+                # 否则会一路减到 1 道，白耗轮次）
+                if _is_budget_failure(raw) and not budget_retried:
+                    budget_retried = True
+                    batch_cap = max(1, batch // 2)
+                    out["reason"] += "（已缩小批次重试）"
+                continue
+
+            for q in got:
+                if len(out["items"]) >= need:
+                    break
+                qid = q.get("id") or q.get("question_id")
+                if not qid:
+                    continue
+                qid_int = int(qid)
+                if qid_int in forbid_ids:
+                    continue
+                qrow = db.get(Question, qid_int)
+                if not qrow:
+                    continue
+                if question_usable_error(qrow, user_id=user_id, is_admin=is_admin):
+                    continue
+                if normalize_question_type(qrow.type, strict=False) != qtype:
+                    continue
+                # 难度必须精确匹配：放宽就失去"换一道同难度的题"的意义
+                if (qrow.difficulty or difficulty) != difficulty:
+                    continue
+                stem_key = _stem_key(qrow.stem)
+                if any(_is_similar_stem(stem_key, k) for k in keys):
+                    out["skipped_dup"] += 1
+                    continue
+                keys.append(stem_key)
+                forbid_ids.add(qid_int)
+                kp_name = None
+                if qrow.knowledge_point_id:
+                    kp_name = db.scalar(select(KnowledgePoint.name).where(
+                        KnowledgePoint.id == qrow.knowledge_point_id))
+                out["items"].append({
+                    "question_id": qid_int,
+                    "type": qrow.type,
+                    "type_label": TYPE_LABEL.get(qrow.type, qrow.type),
+                    "stem": qrow.stem,
+                    "difficulty": qrow.difficulty or difficulty,
+                    "options": _load_json(qrow.options),
+                    "answer": _load_json(qrow.answer),
+                    "analysis": qrow.analysis,
+                    "knowledge_point_id": qrow.knowledge_point_id,
+                    "knowledge_point_name": kp_name or "AI 生成",
+                })
+        finally:
+            db.close()
+
+        # 空转计数：本轮一道没多拿到就累加，连两轮没进展直接放弃（避免空烧模型）
+        idle = 0 if len(out["items"]) > before else idle + 1
+        if idle >= 2:
+            if not out["items"] and not out["reason"]:
+                out["reason"] = (f"未生成符合「{TYPE_LABEL.get(qtype, qtype)}·"
+                                 f"{_diff_label(difficulty)}」要求的新题")
+            break
+
+    if not out["items"] and not out["reason"]:
+        out["reason"] = f"未生成符合「{TYPE_LABEL.get(qtype, qtype)}·{_diff_label(difficulty)}」要求的新题"
+    if out["skipped_dup"]:
+        out["reason"] = (out["reason"] + "；" if out["reason"] else "") + \
+            f"跳过 {out['skipped_dup']} 道与题库重复的题"
+    return out
+
+
+def _diff_label(diff: str) -> str:
+    return {"easy": "简单", "medium": "中等", "hard": "困难"}.get(diff, diff)
+
+
+@router.post("/compose/regenerate", summary="组卷预览：重新生成单题或某题型")
+def compose_regenerate(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:ai")),
+):
+    """在**保存之前**替换预览里的某些题目（不写试卷，只把新题返回给前端）。
+
+    请求体：
+    ```json
+    {
+      "grade_id": 3, "subject_id": 21,
+      "mode": "item" | "section",
+      "index": 5,                    // mode=item：要替换的题在下表 items 里的下标
+      "section_code": "single",      // mode=section：要整段重生的大题
+      "items": [ {...当前预览的完整题目...} ]
+    }
+    ```
+
+    响应：
+    ```json
+    {
+      "mode": "section", "replaced": 9,
+      "items": [...替换后的完整题目（含 section_pos / section_sort / section_name）...],
+      "pending": [{ "index": 3, "reason": "..." }],   // 没换成的，前端保留原题
+      "message": "..."
+    }
+    ```
+
+    设计取舍：**沿用原题的分值/槽位/大题归属**，只换题目内容。分值是按槽位给的
+    （阶梯分值 6/6/6/8…），换题时若重算分，压轴题的 12 分会被抹成均分。
+    """
+    from app.core.database import SessionLocal
+
+    grade, subject = _grade_subject(db, data.get("grade_id"), data.get("subject_id"))
+    raw_items = data.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        raise BusinessException("缺少当前试卷题目列表，无法重新生成")
+    items: List[Dict[str, Any]] = [dict(it) for it in raw_items if isinstance(it, dict)]
+    if not items:
+        raise BusinessException("缺少当前试卷题目列表，无法重新生成")
+
+    mode = str(data.get("mode") or "item").strip().lower()
+    if mode not in ("item", "section"):
+        raise BusinessException("重新生成方式仅支持 item / section")
+
+    user_id = int(user.id)
+    is_admin = _is_sys_admin(user)
+    grade_id = int(grade.id)
+    subject_id = int(subject.id)
+
+    if mode == "item":
+        try:
+            index = int(data.get("index"))
+        except (TypeError, ValueError):
+            raise BusinessException("请指定要重新生成的题目位置")
+        if index < 0 or index >= len(items):
+            raise BusinessException(f"题目位置越界（index={index}，共 {len(items)} 题）")
+        targets = [index]
+    else:
+        code = str(data.get("section_code") or "").strip().lower()
+        if not code:
+            raise BusinessException("请指定要重新生成的大题")
+        targets = _regen_targets(items, code)
+        if not targets:
+            raise BusinessException(f"试卷中没有「{code}」大题")
+    if len(targets) > REGEN_MAX_COUNT:
+        raise BusinessException(
+            f"单次最多重新生成 {REGEN_MAX_COUNT} 题（当前 {len(targets)} 题），请分大题操作")
+
+    # 熔断/冷却期直接拒绝：重生是即时交互，转圈 1 分钟后报错比立刻告知更糟
+    state = llm_breaker.snapshot()
+    if state.get("breaker") == "auth":
+        raise BusinessException(
+            "AI 重新生成不可用：模型鉴权失败处于熔断状态"
+            f"（{state.get('reason') or '密钥无效'}），请先修复密钥")
+    remaining = int(state.get("cooldown_remaining") or 0)
+    if remaining > 0:
+        raise BusinessException(
+            f"AI 重新生成暂不可用：模型限流冷却中（剩余 {remaining}s），请稍后重试")
+
+    forbid_ids = _regen_forbid_ids(items)
+    # 近似去重对照集：覆盖本次要重生的所有题型（一次取全，避免每题都扫一遍库）
+    qtypes = {str(items[i].get("section_code") or items[i].get("type") or "single").lower()
+              for i in targets}
+    forbid_keys = _regen_stem_keys(db, grade_id=grade_id, subject_id=subject_id,
+                                   qtypes=qtypes)
+    db.commit()   # 结束只读事务，避免下面各线程各自提交时等锁
+
+    # ---- 按「题型 + 难度」分组批量生成 ----
+    # 逐题一次模型调用在整段重生时是最坏形态：9 道解答题 × 单次 60~90s = 13 分钟，
+    # 前端必超时。分组后 9 道解答题只需 2~3 批（受 FILL_BATCH_BY_TYPE 的 calc=3 限制），
+    # 组间并行（同补题口径，AI_FILL_CONCURRENCY），总耗时 ≈ 单组耗时 × 组数/并发。
+    # 分组维度必须同时含难度：同一大题里 easy/medium/hard 混排时，把 9 道塞进一批
+    # 会让模型按"多数难度"出题，替换后整卷难度分布就偏了。
+    groups: Dict[tuple, List[int]] = {}
+    for i in targets:
+        src = items[i]
+        qtype = str(src.get("section_code") or src.get("type") or "single").strip().lower()
+        difficulty = str(src.get("difficulty") or "medium").strip().lower()
+        groups.setdefault((qtype, difficulty), []).append(i)
+
+    def _run_group(key: tuple, idxs: List[int]) -> Dict[str, Any]:
+        qtype, difficulty = key
+        # 知识点沿用：同组内若题目挂了不同知识点，按"出现最多的那个"生成 ——
+        # 一组一调用拿不到逐题不同的知识点，取众数至少保证考点不跑到别的章节。
+        kp_counter: Dict[int, int] = {}
+        for i in idxs:
+            kp = items[i].get("knowledge_point_id")
+            if kp:
+                kp_counter[int(kp)] = kp_counter.get(int(kp), 0) + 1
+        kp_ids = ([max(kp_counter, key=kp_counter.get)] if kp_counter else [])
+        return _regen_one(
+            db_factory=SessionLocal, user_id=user_id, is_admin=is_admin,
+            grade_id=grade_id, subject_id=subject_id, qtype=qtype,
+            difficulty=difficulty, kp_ids=kp_ids, need=len(idxs),
+            forbid_ids=set(forbid_ids), forbid_keys=list(forbid_keys),
+        )
+
+    tasks = sorted(groups.items(), key=lambda kv: min(kv[1]))
+    workers = max(1, min(int(settings.AI_FILL_CONCURRENCY or 1), len(tasks), 4))
+    if workers == 1:
+        results = [_run_group(k, v) for k, v in tasks]
+    else:
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="regen") as pool:
+            futs = {pool.submit(_run_group, k, v): n for n, (k, v) in enumerate(tasks)}
+            done: Dict[int, Dict[str, Any]] = {}
+            for fut in as_completed(futs):
+                done[futs[fut]] = fut.result()
+            results = [done[n] for n in range(len(tasks))]
+
+    pending: List[Dict[str, Any]] = []
+    replaced = 0
+
+    for (key, idxs), res in zip(tasks, results):
+        got = res.get("items") or []
+        # 组内按卷面顺序取用；不够分的其余位置如实上报，前端保留原题
+        for pos, i in enumerate(idxs):
+            if pos >= len(got):
+                pending.append({
+                    "index": i,
+                    "reason": res.get("reason") or "本次未能生成符合要求的新题",
+                })
+                continue
+            new = got[pos]
+            src = items[i]
+            merged = dict(src)
+            merged.update({
+                "question_id": new["question_id"],
+                "type": new["type"],
+                "type_label": new.get("type_label")
+                or TYPE_LABEL.get(new["type"], new["type"]),
+                "stem": new["stem"],
+                "difficulty": new["difficulty"],
+                "options": new.get("options"),
+                "answer": new.get("answer"),
+                "analysis": new.get("analysis"),
+                "knowledge_point_id": new.get("knowledge_point_id"),
+                "knowledge_point_name": new.get("knowledge_point_name"),
+            })
+            # 分值/槽位/大题归属一律保留原值（见函数 docstring 的取舍说明）：
+            # 重算分会把压轴题的 12 分抹成均分。
+            items[i] = merged
+            replaced += 1
+
+    message = f"已重新生成 {replaced} 题"
+    if pending:
+        first = pending[0]
+        message += (f"，{len(pending)} 题未能生成"
+                    f"（{first['reason']}），可对该题单独重试")
+    return ok({
+        "mode": mode,
+        "replaced": replaced,
+        "items": items,
+        "pending": pending,
+        "reports": compose_svc.build_reports(items),
+        # 卷面体检的基准分用「各题分值之和」：重生不改变分值，这一步只是复核
+        # 换题后有没有引入重复题 / 作文离位这类问题。
+        "issues": compose_svc.audit_paper(
+            items, total_score=round(sum(float(i.get("score") or 0) for i in items), 2) or None),
+    }, message=message)
 
 
 def _ai_fill_gaps(

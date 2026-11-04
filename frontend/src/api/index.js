@@ -190,6 +190,11 @@ export const questionApi = {
   composePreview: (data) => request.post('/question/papers/compose/preview', data, { timeout: 300000 }),
   composeAi: (data) => request.post('/question/papers/compose/ai', data, { timeout: 300000 }),
   composeSave: (data) => request.post('/question/papers/compose/save', data, { timeout: 300000 }),
+  // 保存前重新生成（预览态，无 paper_id）：
+  //   mode=item 换一道、mode=section 换整段。单题 60~100s、整段最多 20 题，
+  // 因此单独放宽到 300s，与组卷保持同一口径。
+  composeRegenerate: (data) => request.post(
+    '/question/papers/compose/regenerate', data, { timeout: 300000 }),
 
   paperPreview: (id, params) => request.get(`/question/papers/${id}/preview`, { params }),
   updatePaperItems: (id, data) => request.post(`/question/papers/${id}/items`, data),

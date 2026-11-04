@@ -391,6 +391,13 @@
             <span class="pv-sec-meta">
               {{ sec.items.length }} 题 · {{ sec.total }} 分
             </span>
+            <el-button text size="small" type="primary" :icon="Refresh"
+                       class="pv-sec-regen"
+                       :loading="regenSecLoading(sec.code)"
+                       :disabled="regenBlocked(sec.code, null)"
+                       @click="regenerateSection(sec.code)">
+              {{ regenSecLoading(sec.code) ? '生成中…' : '重新生成本大题' }}
+            </el-button>
           </div>
           <div v-for="(it, idx) in sec.items" :key="it.question_id" class="pv-item">
             <div class="pv-item-head">
@@ -403,10 +410,18 @@
                 {{ it.knowledge_point_name }}
               </span>
               <div class="pv-item-actions">
-                <el-button text size="small" :icon="Edit" @click="editItem(sec.code, idx)">
+                <el-button text size="small" type="primary" :icon="Refresh"
+                           :loading="regenItemLoading(sec.code, idx)"
+                           :disabled="regenBlocked(sec.code, idx)"
+                           @click="regenerateItem(sec.code, idx)">
+                  {{ regenItemLoading(sec.code, idx) ? '生成中…' : '重新生成' }}
+                </el-button>
+                <el-button text size="small" :icon="Edit"
+                           :disabled="regenBusy" @click="editItem(sec.code, idx)">
                   编辑
                 </el-button>
                 <el-button text size="small" type="danger" :icon="Delete"
+                           :disabled="regenBusy"
                            @click="removeLocalItem(sec.code, idx)">移除</el-button>
               </div>
             </div>
@@ -990,6 +1005,143 @@ function removeLocalItem(secCode, idx) {
   previewItems.value = previewItems.value.filter(i => i !== target)
 }
 
+// ---------------- 重新生成（单题 / 整大题） ----------------
+// 组卷结果保存前只活在 previewItems 这个数组里，没有 paper_id，所以走
+// /compose/regenerate：把当前整卷题目发上去，后端只换被点名的那几道，
+// 其余原样返回（教师改过的题干、去掉的题、调过的分值都不会被覆盖）。
+// 正在生成的是哪一项：'' = 空闲；`code|idx` 单题；`code|*` 整大题。
+const regenBusyKey = ref('')
+const regenBusy = computed(() => regenBusyKey.value !== '')
+
+/** 单题按钮是否 loading。整大题生成时不在单题按钮上转（避免 N 个转圈）。 */
+function regenItemLoading(code, idx) {
+  const busy = regenBusyKey.value
+  return busy !== '' && busy === `${code}|${idx}`
+}
+
+/** 整大题按钮是否 loading。 */
+function regenSecLoading(code) {
+  return regenBusyKey.value === `${code}|*`
+}
+
+/** 任一生成进行中时，其它重生按钮统一禁用（避免并发打出多份模型请求）。 */
+function regenBlocked(code, idx) {
+  if (!regenBusy.value) return false
+  return !(idx === null ? regenSecLoading(code) : regenItemLoading(code, idx))
+}
+
+/** 全局下标：previewItems 里的位置（后端按它回填）。 */
+function globalIndexOf(secCode, idx) {
+  const sec = previewSections.value.find(s => s.code === secCode)
+  if (!sec) return -1
+  const target = sec.items[idx]
+  return previewItems.value.indexOf(target)
+}
+
+/** 反向：全局下标 → 该大题内的行下标（失败重试时要还原成按钮的 loading key）。 */
+function localIdx(secCode, globalIdx) {
+  const sec = previewSections.value.find(s => s.code === secCode)
+  if (!sec) return 0
+  return Math.max(0, sec.items.indexOf(previewItems.value[globalIdx]))
+}
+
+async function callRegen({ mode, index, sectionCode, busyKey }) {
+  regenBusyKey.value = busyKey
+  try {
+    const res = await questionApi.composeRegenerate({
+      grade_id: form.grade_id,
+      subject_id: form.subject_id,
+      mode,
+      index,
+      section_code: sectionCode,
+      // 只传后端需要的字段：整份预览里还混着前端展示用的 type_label 等，
+      // 传全量虽然无害，但会让请求体大一倍（一张卷 22 题）。
+      items: previewItems.value.map(i => ({
+        question_id: i.question_id,
+        type: i.type,
+        stem: i.stem,
+        difficulty: i.difficulty,
+        score: i.score,
+        options: i.options,
+        answer: i.answer,
+        analysis: i.analysis,
+        knowledge_point_id: i.knowledge_point_id,
+        knowledge_point_name: i.knowledge_point_name,
+        section_code: i.section_code || i.type,
+        section_name: i.section_name,
+        section_sort: i.section_sort,
+        section_pos: i.section_pos
+      }))
+    })
+    const d = res.data || {}
+    if (Array.isArray(d.items) && d.items.length) {
+      // 整体替换：后端返回的就是"换好之后"的完整卷面，保留前端顺序与已改内容
+      previewItems.value = d.items
+      if (d.reports) {
+        reports.value = {
+          difficulty_report: d.reports.difficulty_report,
+          knowledge_report: d.reports.knowledge_report,
+          type_report: d.reports.type_report
+        }
+      }
+      if (Array.isArray(d.issues)) issues.value = d.issues
+    }
+    const failed = d.pending || []
+    if (failed.length) {
+      // 失败提示必须能直接重试：只弹一句"生成失败"等于把排查成本转给教师。
+      // 单个失败 → 提示里带「重试」；多个失败 → 引导逐题重试（整段再跑一次
+      // 会把已经换好的题也一起换掉，代价更大）。
+      const first = failed[0]
+      const reason = first.reason || '未知原因'
+      if (failed.length === 1) {
+        const gi = first.index
+        const cur = previewItems.value[gi] || {}
+        const code = cur.section_code || cur.type
+        ElMessageBox.confirm(
+          `该题未能重新生成：${reason}。是否再试一次？`,
+          '重新生成失败',
+          { type: 'warning', confirmButtonText: '重试', cancelButtonText: '保留原题' }
+        ).then(() => callRegen({
+          mode: 'item', index: gi, busyKey: `${code}|${localIdx(code, gi)}`
+        })).catch(() => {})
+      } else {
+        ElMessage.warning(
+          `${failed.length} 题未能重新生成（${reason}），可对未换的题单独重试`)
+      }
+    } else {
+      ElMessage.success(res.message || '已重新生成')
+    }
+  } catch (e) {
+    // 全局 axios 拦截器已经弹过一次错误提示，这里不再重复弹，
+    // 只在控制台留痕便于排查（提示词过长的 4xx 只返回 message）。
+    console.warn('重新生成失败：', e?.message)
+  } finally {
+    regenBusyKey.value = ''
+  }
+}
+
+function regenerateItem(secCode, idx) {
+  if (regenBusy.value) return
+  const gi = globalIndexOf(secCode, idx)
+  if (gi < 0) return ElMessage.warning('找不到该题目，请重新生成整卷')
+  return callRegen({ mode: 'item', index: gi, busyKey: `${secCode}|${idx}` })
+}
+
+function regenerateSection(secCode) {
+  if (regenBusy.value) return
+  const sec = previewSections.value.find(s => s.code === secCode)
+  if (!sec || !sec.items.length) return ElMessage.warning('该大题没有题目')
+  const n = sec.items.length
+  return ElMessageBox.confirm(
+    `将重新生成「${sec.name}」全部 ${n} 道题，沿用原有题型、难度与分值。` +
+    '已编辑的其他大题不受影响。确定继续？',
+    '重新生成本大题',
+    { type: 'warning', confirmButtonText: '开始生成', cancelButtonText: '取消' }
+  ).then(() => callRegen({
+    mode: 'section', sectionCode: secCode, busyKey: `${secCode}|*`
+  })).catch(() => {})
+}
+
 function restructureLocal() {
   // 本地按题型重排大题序号
   const cn = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
@@ -1113,6 +1265,7 @@ function goBack() { router.push('/teacher/papers') }
 .gap-reason { font-size: 12.5px; color: var(--el-color-danger); line-height: 1.6; }
 .gap-action { font-size: 12.5px; color: var(--el-text-color-regular); line-height: 1.6; }
 .gap-hint { margin-top: 6px; font-size: 12.5px; color: var(--el-text-color-secondary); }
+.pv-sec-regen { margin-left: 8px; }
 .report-row { margin-bottom: 14px; }
 .report-card { height: 100%; }
 .report-line { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
