@@ -283,6 +283,32 @@
 4. **`difficulty_gradient()` 应按科取用规范区间**
    现有实现统一按题序前 35%/35%/30% 切分。规范给了**每科不同**的难度区间（化学 70/20/10、数学 50/30/20 等），应改为按 `subject_name` 查表，位置法仅作无配置时的兜底。
 
+### 6.4 落地结果（2.4.x，供后续维护对账）
+
+已于 2.4.0 按**方案 B（`Section.score_pattern`）** 落地，并在 2.4.1 补了学科名归一。
+维护时请对照以下四条不变量，任一条被破坏都会让卷面静默走形：
+
+| 环节 | 落点 | 不变量 |
+|---|---|---|
+| 模板 | `exam_structures._JUNIOR` | 第 4 位传 `list` 即阶梯分值，**长度必须等于题量**（不符会记 error 并退化均分） |
+| 小计 | `exam_structures.section_total()` | 全系统唯一小计口径；有 `score_pattern` 用 `sum`，否则 `count × score_per` |
+| 赋分 | `paper_compose_service._section_scores()` + `section_pos` | 分值按**抽题位置**给，`_renumber` 必须按 `(section_sort, section_pos)` 排，否则梯度被打乱 |
+| 顺序 | `normalize_section_order()` | **只把 composition 钉到末位**，不按题型码全量重排（否则语文「古诗文」会被排到「现代文」之后） |
+
+**学科命名坑（2.4.1 修复）**：平台内建学科名是 **`政治`**（`init_db._SUBJECT_SEED`），
+而规范口径是 **`道德与法治`**。两侧不归一，`EXAM_META.get("政治")` 落空 → 该科静默退回
+`_generic` 通用模板（100 分 / 36 题 / 含判断题），线上真实出现过这张标准。
+现由 `SUBJECT_ALIASES` + `normalize_subject()` 在 `exam_meta` / `sections_for` /
+`difficulty_gradient` 三处查表前统一归一；探针见
+`tools/verify_exam_structure_spec.py` 的 `[4b]` 段。
+
+选这个做法而不是把学科改名：学科名被知识点、题库、试卷、作答记录广泛引用，
+改名波及面远大于在查表层做同义合并。**新增学科或改学科名时，务必同步检查这张别名表。**
+
+**规范未覆盖的学科**：`信息科技` 不在本规范的 9 科内（该科通常为考查科目），
+线上仍是通用六题型 100 分结构。这不是缺陷，是缺依据 —— 需要该科规范才能改，
+不要凭"看起来像"去猜结构。
+
 ---
 
 ## 七、需本级方案确定的事项（原文表 7-2）
