@@ -90,6 +90,29 @@ DIFFICULTY_REFERENCE: Dict[str, Dict[str, int]] = {
     "生物": {"easy": 55, "medium": 30, "hard": 15},
 }
 
+# 学科名归一。平台内建学科用的是「政治」（见 `init_db._SUBJECT_SEED`，7/8/9 年级
+# 都只有「政治」，没有「道德与法治」），而规范 / 教材 / 中考口径统一叫
+# 「道德与法治」。两侧不归一，`EXAM_META.get("政治")` 就落空 —— 该科退回
+# 学段通用六题型模板（100 分 / 36 题 / 含判断题），与规范完全不符。
+# 线上确实存在这张标准（一键生成草案按学科名造出来的），所以必须在查表前归一到
+# 规范名，而不是去改学科主数据（学科名被知识点、试卷、题库广泛引用，改名波及面大）。
+SUBJECT_ALIASES: Dict[str, str] = {
+    "政治": "道德与法治",
+    "思想品德": "道德与法治",
+    "道法": "道德与法治",
+    "道德与法制": "道德与法治",  # 常见错字（制/治）
+}
+
+
+def normalize_subject(name: Optional[str]) -> str:
+    """把学科名归一到规范口径（见 `SUBJECT_ALIASES`）。
+
+    未命中的学科原样返回 —— 归一只做「同义合并」，不做「未知填充」。
+    """
+    key = str(name or "").strip()
+    return SUBJECT_ALIASES.get(key, key)
+
+
 # (code, 大题名, 题量, 每题分值或分值序列, 难度)
 # 第 4 位传 list 即表示该大题内每题分值不同（阶梯分值），长度必须等于题量。
 _PRIMARY: Dict[str, List[tuple]] = {
@@ -310,7 +333,7 @@ def exam_meta(stage: Optional[str], subject_name: Optional[str]) -> Optional[Dic
     """
     if str(stage or "").lower() == "primary":
         return None
-    return EXAM_META.get(str(subject_name or "").strip())
+    return EXAM_META.get(normalize_subject(subject_name))
 
 
 def sections_for(
@@ -329,7 +352,9 @@ def sections_for(
     """
     stage_key = "primary" if str(stage or "").lower() == "primary" else "junior"
     table = _PRIMARY if stage_key == "primary" else _JUNIOR
-    subject = str(subject_name or "").strip()
+    # 归一后再查表：「政治」→「道德与法治」，否则该科落到 _generic
+    # （100 分 / 36 题 / 含判断题），与规范的 60 分 / 17 题相差极大。
+    subject = normalize_subject(subject_name)
     raw = table.get(subject) or table["_generic"]
 
     target = total_score
@@ -356,7 +381,7 @@ def difficulty_gradient(
     为什么不用"按大题中位归类"：初中数学「解答题」一个大题就占 60% 分值，
     整块会被归成同一档，实测算出 hard=0%，与卷面完全不符。
     """
-    ref = DIFFICULTY_REFERENCE.get(str(subject_name or "").strip())
+    ref = DIFFICULTY_REFERENCE.get(normalize_subject(subject_name))
     if ref:
         pct = {k: int(ref.get(k, 0)) for k in ("easy", "medium", "hard")}
         drift = 100 - sum(pct.values())

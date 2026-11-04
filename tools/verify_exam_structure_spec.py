@@ -25,7 +25,7 @@ from app.models import (  # noqa: E402
 )
 from app.services.exam_structures import (  # noqa: E402
     DIFFICULTY_REFERENCE, EXAM_META, difficulty_gradient, exam_meta,
-    section_total, sections_for,
+    normalize_subject, section_total, sections_for,
 )
 from app.services.paper_compose_service import (  # noqa: E402
     SOURCE_AI_ONLY, SOURCE_BANK_ONLY, _renumber, audit_paper, compose,
@@ -119,6 +119,38 @@ def verify_difficulty():
     # 无规范区间时退回按题序位置推算，且仍合计 100
     fallback = difficulty_gradient(sections_for("junior", "体育"), "体育")
     check("未覆盖学科回落到按题序推算且合计 100", sum(fallback.values()) == 100, str(fallback))
+
+
+# ------------------------------------------------- 4b. 学科名归一（政治→道德与法治）
+def verify_subject_alias():
+    print("\n[4b] 学科名归一：平台「政治」须解析到规范「道德与法治」")
+    # 平台学科真名是「政治」（init_db），规范叫「道德与法治」。不归一，
+    # exam_meta/sections_for 全部落空 → 该科退回 100 分/36 题的通用模板。
+    check("normalize_subject 政治 → 道德与法治",
+          normalize_subject("政治") == "道德与法治", normalize_subject("政治"))
+    check("normalize_subject 思想品德/道法/道德与法制 均归一",
+          all(normalize_subject(x) == "道德与法治"
+              for x in ("思想品德", "道法", "道德与法制")))
+    check("normalize_subject 未命中学科原样返回",
+          normalize_subject("信息科技") == "信息科技")
+    check("normalize_subject 空值不炸", normalize_subject(None) == "")
+
+    meta = exam_meta("junior", "政治")
+    check("exam_meta(政治) 取到规范元信息（60 分 / 60 分钟 / 17 题）",
+          bool(meta) and meta["written_score"] == 60
+          and meta["duration"] == 60 and meta["question_count"] == 17,
+          str(meta))
+
+    secs = sections_for("junior", "政治")
+    codes = [s["code"] for s in secs]
+    count = sum(int(s["count"]) for s in secs)
+    total = round(sum(section_total(s) for s in secs), 2)
+    check("政治按规范出 17 题", count == 17, str(count))
+    check("政治卷面 60 分", total == 60.0, str(total))
+    check("政治不含判断题（规范未设）", "judge" not in codes, str(codes))
+    check("政治难度取规范 55/30/15",
+          difficulty_gradient(secs, "政治") == {"easy": 55, "medium": 30, "hard": 15},
+          str(difficulty_gradient(secs, "政治")))
 
 
 # ---------------------------------------------------------------- 5. 板块顺序
@@ -257,6 +289,7 @@ def main():
     verify_no_forbidden_types()
     verify_pattern_shapes()
     verify_difficulty()
+    verify_subject_alias()
     verify_section_order()
     verify_parsing()
     verify_compose_uses_pattern()

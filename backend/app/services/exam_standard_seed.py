@@ -167,7 +167,11 @@ _JUNIOR: List[Dict[str, Any]] = [
         ],
     },
     {
-        "subject_name": "道德与法治", "exam_type": "hsee",
+        # 学科名必须写**平台内建学科名**「政治」（`init_db._SUBJECT_SEED`），
+        # 组卷按 `ExamStandard.subject_name == Subject.name` 精确匹配（见
+        # paper_compose._standard_of）；写成规范口径「道德与法治」会生成一条
+        # 永远绑不上任何学科的标准。展示名 `name` 仍用规范全称。
+        "subject_name": "政治", "exam_type": "hsee",
         "name": "湖北省初中学业水平考试道德与法治（60分）",
         "total_score": 60, "duration": 60,
         "description": "选择题 24 + 材料分析 24 + 实践探究 12。",
