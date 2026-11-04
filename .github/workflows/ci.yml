@@ -2,9 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # 本仓库主分支是 master（不是 main）。写错会导致工作流静默不触发，
+    # Actions 页面看起来「什么都没发生」，极易被误判为「CI 挂了」。
+    branches: [master]
+    # 纯文档提交不跑代码检查：以前改一行 README 也要 2 分钟跑完 backend
+    # + frontend + 镜像构建，属于纯噪音。docker-publish 早已有同样的忽略规则。
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'audit-reports/**'
   pull_request:
-    branches: [main, master]
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'audit-reports/**'
 
 jobs:
   backend:
@@ -122,6 +134,11 @@ jobs:
 
   docker:
     name: 镜像构建
+    # **只在 PR 上构建**。push 到 master 时 docker-publish.yml 会构建并推送
+    # 同一个 target=unified 的镜像（还带 preflight/postflight 一致性校验），
+    # 这里再构建一次完全不推送，纯属重复劳动（实测单次 68s + 额外的 job 排队）。
+    # PR 不走发布链路，仍需这一步验证 Dockerfile 没被改坏。
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     needs: [backend, frontend]
     steps:
