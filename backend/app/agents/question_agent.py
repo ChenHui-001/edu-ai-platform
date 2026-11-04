@@ -84,7 +84,12 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
     ) -> Dict[str, Any]:
         if not subject_id:
             raise BusinessException("请指定学科")
-        count = max(1, min(int(count), 20))
+        # 单次最多 10 题。一道题带解析约 300~400 token（中文），20 题会顶到
+        # LLM_MAX_TOKENS=8192；推理模型的 thinking token 还要和正文共享这份
+        # 预算，超了就表现为 JSON 被截断、整批题目全废（历史上出现过"生成了
+        # 但解析失败"的静默降级）。需要更多题由调用方分批：组卷补题已按
+        # 10 题一批循环调用。
+        count = max(1, min(int(count), 10))
 
         subject = db.get(Subject, subject_id)
         if not subject:

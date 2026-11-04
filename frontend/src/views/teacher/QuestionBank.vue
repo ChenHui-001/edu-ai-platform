@@ -427,7 +427,9 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="数量">
-              <el-input-number v-model="aiForm.count" :min="1" :max="20" style="width:100%" />
+              <!-- 单次上限 10：一道题带解析约 300~400 token，20 题会撞模型
+                   输出上限导致 JSON 截断、整批失败。要更多题请分两次生成。 -->
+              <el-input-number v-model="aiForm.count" :min="1" :max="10" style="width:100%" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -668,7 +670,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Download, Plus, Refresh, Search, Upload, UploadFilled, Delete, MagicStick, Cpu
@@ -939,6 +941,14 @@ async function onFormSubjectChange() {
 }
 
 async function openDialog(row) {
+  const targetId = row?.id ?? null
+  if (await restoreKpDraft(targetId)) {
+    // 恢复了草稿：跳过默认赋值，只补加载依赖草稿里年级/学科的下拉数据
+    if (form.grade_id) await loadFormSubjects(form.grade_id)
+    if (form.grade_id && form.subject_id) loadFormKnowledge(form.grade_id, form.subject_id)
+    dialogVisible.value = true
+    return
+  }
   Object.assign(form, {
     id: row?.id ?? null,
     type: normalizeType(row?.type),
@@ -982,6 +992,57 @@ async function openDialog(row) {
   dialogVisible.value = true
 }
 
+// ---------------- 编辑草稿（防丢） ----------------
+// 题目编辑弹窗没有服务端草稿：token 失效（尤其是部署重建 SECRET_KEY 时
+// access + refresh 会一起作废）、误关标签页、浏览器崩溃，都会让写了一半的
+// 题干/选项/解析直接丢失。这里按「当前编辑目标」存一份 localStorage 草稿，
+// 1.5s 防抖写入，保存成功即清除。草稿只是增强能力，写失败不影响编辑本身。
+const KP_DRAFT_KEY = 'kp_edit_draft'
+const KP_DRAFT_TTL = 24 * 3600 * 1000
+let kpDraftTimer = null
+
+function persistKpDraft() {
+  if (!dialogVisible.value) return
+  try {
+    localStorage.setItem(KP_DRAFT_KEY, JSON.stringify({
+      form: { ...form },
+      optionList: optionList.value,
+      multiAnswer: multiAnswer.value,
+      savedAt: Date.now(),
+    }))
+  } catch { /* 配额满 / 隐私模式：忽略 */ }
+}
+
+watch([form, optionList, multiAnswer], () => {
+  clearTimeout(kpDraftTimer)
+  kpDraftTimer = setTimeout(persistKpDraft, 1500)
+}, { deep: true })
+
+async function restoreKpDraft(targetId) {
+  const raw = localStorage.getItem(KP_DRAFT_KEY)
+  if (!raw) return false
+  let draft
+  try { draft = JSON.parse(raw) } catch { localStorage.removeItem(KP_DRAFT_KEY); return false }
+  const draftId = draft?.form?.id ?? null
+  // 草稿属于别的题、或已过期：不打扰用户，直接丢弃
+  if (draftId !== targetId || !draft.savedAt || Date.now() - draft.savedAt > KP_DRAFT_TTL) {
+    localStorage.removeItem(KP_DRAFT_KEY)
+    return false
+  }
+  try {
+    await ElMessageBox.confirm(
+      `检测到 ${new Date(draft.savedAt).toLocaleString()} 未保存的编辑内容，是否恢复？`,
+      '恢复草稿', { type: 'info', confirmButtonText: '恢复', cancelButtonText: '丢弃' })
+  } catch {
+    localStorage.removeItem(KP_DRAFT_KEY)
+    return false
+  }
+  Object.assign(form, draft.form)
+  if (Array.isArray(draft.optionList)) optionList.value = draft.optionList
+  multiAnswer.value = Array.isArray(draft.multiAnswer) ? draft.multiAnswer : []
+  return true
+}
+
 async function save() {
   await formRef.value.validate()
   saving.value = true
@@ -996,6 +1057,8 @@ async function save() {
     if (form.id) await questionApi.update(form.id, payload)
     else await questionApi.create(payload)
     ElMessage.success('保存成功')
+    clearTimeout(kpDraftTimer)
+    localStorage.removeItem(KP_DRAFT_KEY)
     dialogVisible.value = false
     await refreshAll()
   } finally {

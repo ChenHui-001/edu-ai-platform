@@ -180,9 +180,12 @@ export const questionApi = {
   seedStandards: (force = false) => request.post('/question/standards/seed', null,
     { params: { force } }),
 
-  composePreview: (data) => request.post('/question/papers/compose/preview', data),
-  composeAi: (data) => request.post('/question/papers/compose/ai', data),
-  composeSave: (data) => request.post('/question/papers/compose/save', data),
+  // 组卷是长任务：一次要并发调 3 个大题的 LLM 补题，而全局 axios timeout 是
+  // 120s、单次 LLM 60s×1 次重试，缺 6 个大题时后端最坏要 240s —— 前端必然先断，
+  // 用户看到「超时」但卷子其实还在生成。这三个接口单独放宽到 300s。
+  composePreview: (data) => request.post('/question/papers/compose/preview', data, { timeout: 300000 }),
+  composeAi: (data) => request.post('/question/papers/compose/ai', data, { timeout: 300000 }),
+  composeSave: (data) => request.post('/question/papers/compose/save', data, { timeout: 300000 }),
 
   paperPreview: (id, params) => request.get(`/question/papers/${id}/preview`, { params }),
   updatePaperItems: (id, data) => request.post(`/question/papers/${id}/items`, data),

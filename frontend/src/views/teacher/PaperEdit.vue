@@ -243,7 +243,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -363,6 +363,63 @@ function applyPreview(data) {
 }
 
 // ---------------- 加载 ----------------
+// ---------------- 编辑草稿（防丢） ----------------
+// 试卷编辑的改动只存在内存里，dirty 一置真就再无副本：token 失效（部署重建
+// SECRET_KEY 会让 access + refresh 一起作废）、误关标签页、浏览器崩溃，
+// 调了半天的题序与分值全部归零。这里按试卷 id 存 localStorage 草稿，
+// 2s 防抖，只在 dirty 时写（否则加载数据本身会把草稿覆盖成"刚打开的样子"）。
+const PAPER_DRAFT_KEY = `paper_edit_draft_${paperId}`
+const PAPER_DRAFT_TTL = 24 * 3600 * 1000
+let paperDraftTimer = null
+let paperDraftChecked = false
+
+function persistPaperDraft() {
+  if (!dirty.value) return
+  try {
+    localStorage.setItem(PAPER_DRAFT_KEY, JSON.stringify({
+      meta: { ...meta }, sections: sections.value, savedAt: Date.now(),
+    }))
+  } catch { /* 配额满 / 隐私模式：忽略 */ }
+}
+
+function schedulePaperDraft() {
+  if (!dirty.value) return
+  clearTimeout(paperDraftTimer)
+  paperDraftTimer = setTimeout(persistPaperDraft, 2000)
+}
+
+watch(sections, schedulePaperDraft, { deep: true })
+watch(meta, schedulePaperDraft, { deep: true })
+
+async function restorePaperDraft() {
+  if (paperDraftChecked) return
+  paperDraftChecked = true
+  const raw = localStorage.getItem(PAPER_DRAFT_KEY)
+  if (!raw) return
+  let draft
+  try { draft = JSON.parse(raw) } catch { localStorage.removeItem(PAPER_DRAFT_KEY); return }
+  if (!draft.savedAt || Date.now() - draft.savedAt > PAPER_DRAFT_TTL) {
+    localStorage.removeItem(PAPER_DRAFT_KEY)
+    return
+  }
+  const count = (draft.sections || []).reduce((a, x) => a + ((x.items || []).length), 0)
+  if (!count) { localStorage.removeItem(PAPER_DRAFT_KEY); return }
+  try {
+    await ElMessageBox.confirm(
+      `检测到 ${new Date(draft.savedAt).toLocaleString()} 未保存的试卷修改（共 ${count} 题），是否恢复？`,
+      '恢复草稿', { type: 'info', confirmButtonText: '恢复', cancelButtonText: '丢弃' })
+  } catch {
+    localStorage.removeItem(PAPER_DRAFT_KEY)
+    return
+  }
+  if (Array.isArray(draft.sections) && draft.sections.length) {
+    sections.value = draft.sections
+    if (draft.meta) Object.assign(meta, draft.meta)
+    dirty.value = true
+    ElMessage.success('已恢复未保存的修改，请确认后保存')
+  }
+}
+
 async function loadPaper() {
   loading.value = true
   try {
@@ -383,6 +440,8 @@ async function loadPaper() {
     applyPreview(data)
     dirty.value = false
     dropWarning.value = ''
+    // 只有首次加载会真正弹窗（paperDraftChecked 兜住保存后的重新加载）
+    await restorePaperDraft()
   } catch (e) {
     ElMessage.error('加载试卷失败：' + (e.message || '未知错误'))
   } finally {
@@ -438,6 +497,8 @@ async function doSave() {
     const res = await questionApi.updatePaperItems(paperId, payload)
     const d = res.data || {}
     dirty.value = false
+    clearTimeout(paperDraftTimer)
+    localStorage.removeItem(PAPER_DRAFT_KEY)
     dropWarning.value = ''
     let msg = '已保存'
     if (d.affected_submissions) {

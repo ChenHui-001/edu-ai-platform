@@ -379,29 +379,46 @@ def _fill_one_gap(
     gtype = str(gap.get("code") or "single")
     gdiff = str(gap.get("difficulty") or default_diff)
 
+    # 单次生成上限（与 QuestionGeneratorAgent 内部一致）。缺口 20 题时一次
+    # 调用会撞 LLM_MAX_TOKENS 导致 JSON 截断，必须拆成多批循环。
+    BATCH_MAX = 10
+
     db = SessionLocal()
     try:
-        try:
-            res = QuestionGeneratorAgent().run(
-                db, user_id=user_id, grade_id=grade_id, subject_id=subject_id,
-                question_type=gtype, count=take, difficulty=gdiff, save=True,
-                allow_all_banks=is_admin,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "AI 补题失败（grade=%s subject=%s type=%s need=%s）: %s",
-                grade_id, subject_id, gtype, take, exc)
-            out["notes"].append(f"{name}补题失败：{exc}")
-            return out
+        qs: List[Dict[str, Any]] = []
+        remaining = take
+        while remaining > 0:
+            batch = min(BATCH_MAX, remaining)
+            try:
+                res = QuestionGeneratorAgent().run(
+                    db, user_id=user_id, grade_id=grade_id, subject_id=subject_id,
+                    question_type=gtype, count=batch, difficulty=gdiff, save=True,
+                    allow_all_banks=is_admin,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "AI 补题失败（grade=%s subject=%s type=%s need=%s）: %s",
+                    grade_id, subject_id, gtype, remaining, exc)
+                out["notes"].append(f"{name}补题失败：{exc}")
+                break
 
-        if not (res or {}).get("success", True):
-            out["notes"].append(res.get("message") or f"{name}补题执行失败")
-            return out
-        data = (res or {}).get("data") or {}
-        qs = data.get("questions") or []
+            if not (res or {}).get("success", True):
+                out["notes"].append(res.get("message") or f"{name}补题执行失败")
+                break
+            data = (res or {}).get("data") or {}
+            got = data.get("questions") or []
+            if not got:
+                out["notes"].append(
+                    data.get("tip") or f"{name}未生成题目（模型未启用或返回为空）")
+                break
+            qs.extend(got)
+            remaining -= len(got)
+            # 模型实际出的比要求少时（题库复用/模型偷懒），下一批会继续要，
+            # 但它一次都没出就说明这条路走不通，直接退出避免空转。
+            if not got:
+                break
+
         if not qs:
-            out["notes"].append(
-                data.get("tip") or f"{name}未生成题目（模型未启用或返回为空）")
             return out
 
         for q in qs:
