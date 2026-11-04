@@ -326,6 +326,40 @@ def main() -> int:
                       difficulty_norm={"easy": 30, "medium": 50, "hard": 20})
         check("解答题单批上限 = 3", calls_c[0][1] == 3, str(calls_c[:2]))
 
+        # 6d. 同一大题补多批：published 题不得跨批次重复采纳。
+        # 会把 `used_ids` 当快照传进来、补题过程中不回写，第一批选中的 published
+        # 题在第二批还能被再选一次（卷内出现两道同样的题）。假 agent 用「每批都
+        # 从头返回同一批题」来复现最恶劣的情况。
+        def install_repeat_agent(calls):
+            def fake_run(self, db, user_id=None, grade_id=None, subject_id=None,
+                         question_type="single", count=5, difficulty="medium",
+                         save=False, **kwargs):
+                calls.append((question_type, count))
+                rows = db.scalars(
+                    select(Question).where(
+                        Question.subject_id == subject_id,
+                        Question.type == question_type,
+                        Question.status == "published",
+                    ).order_by(Question.id).limit(count)
+                ).all()
+                return {"success": True, "data": {"questions": [
+                    {"id": r.id, "stem": r.stem, "type": r.type} for r in rows
+                ]}}
+            qa_mod.QuestionGeneratorAgent.run = fake_run
+
+        calls_d = []
+        install_repeat_agent(calls_d)
+        # 题库只有 3 道 single，缺口要 8 道 → 必然跨批次（cap=5：5+3）
+        plan_d = build_plan_one(db, grade, subject, teacher, code="single", count=8)
+        _ai_fill_gaps(db, teacher, plan=plan_d, grade=grade, subject=subject,
+                      difficulty_norm={"easy": 30, "medium": 50, "hard": 20})
+        picked_d = [i["question_id"] for i in plan_d.items]
+        check("跨批次不重复采纳 published 题",
+              len(picked_d) == len(set(picked_d)), str(picked_d))
+        check("题库只有 3 道可复用题 → 缺口如实上报，不硬凑",
+              len(picked_d) <= 3 and bool(plan_d.gaps),
+              f"items={len(picked_d)} gaps={len(plan_d.gaps)}")
+
         install_fake_agent()
         set_concurrency(old_conc)
 

@@ -526,6 +526,15 @@ def _fill_one_gap(
     take = max(0, int(gap["need"]) - int(gap.get("got", 0)))
     if take <= 0:
         return out
+    # 本函数自己采纳的 question_id 也要进禁复用集合：`used_ids` 是调用方传进来的
+    # **快照**（`set(plan.used_question_ids)`），补题过程中不会回写，同一大题补
+    # 多批时第二批还能把第一批已选中的 published 题再拿一次（跨批次重复）——
+    # 反向验证时会表现为"题库只有 3 道题却硬凑出 8 道、gaps 归零"。
+    #
+    # 关键：**原地复用传入的 set，不要 copy**。并行补题时各线程拿到的是同一个
+    # 对象引用，原地 `add` 才能让不同大题之间也互斥（copy 就退回各写各的）。
+    # CPython 下 `set.add` / `in` 是原子的（GIL 保护），元素是 int，无需加锁。
+    seen_ids: set = used_ids if isinstance(used_ids, set) else set(used_ids or ())
 
     gtype = str(gap.get("code") or "single")
     gdiff = str(gap.get("difficulty") or default_diff)
@@ -625,7 +634,7 @@ def _fill_one_gap(
                 #    表现为"模型未启用 → 整卷缺口补不上"。
                 #    published 的题由本卷已用集合（plan 级全局互斥）拦重复。
                 if qrow.status != "draft":
-                    if qid_int in (used_ids or ()):
+                    if qid_int in seen_ids:
                         continue
                 else:
                     stem_key = _stem_key(qrow.stem)
@@ -634,6 +643,9 @@ def _fill_one_gap(
                         skipped_dup += 1
                         continue
                     new_keys.append(stem_key)
+                # 采纳即登记：published 题在**同一大题的多批次**之间必须互斥，
+                # 否则第二批会把第一批选中的题再补一遍（卷内出现两道同题）。
+                seen_ids.add(qid_int)
                 # 按位置取分：该大题在本题库中已抽到 got 道，本次补的是第
                 # got+filled 道。阶梯分值（数学解答题 6/6/6/8…、化学选择
                 # 8×1+5×2）靠这一步才能保住，否则补出来的题全是平均分，
