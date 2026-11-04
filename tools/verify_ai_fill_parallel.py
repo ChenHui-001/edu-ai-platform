@@ -129,6 +129,51 @@ def build_plan(db, grade, subject, teacher):
     return plan
 
 
+def build_plan_one(db, grade, subject, teacher, *, code="single", count=12,
+                   name="单选题"):
+    """只有一个大题的 plan：把"补题批次 / 重试次数"变成可数的调用序列。"""
+    secs = [{"code": code, "name": name, "count": count, "score_per": 5,
+             "difficulty": "medium", "sort": 1}]
+    return compose(
+        db, grade_id=grade.id, subject_id=subject.id,
+        sections=secs, source_strategy="ai_only", viewer_id=teacher.id,
+    )
+
+
+EMPTY_REASON = "响应正文为空，通常是 max_tokens 预算被推理 token 耗尽"
+
+
+def install_empty_agent(calls, *, succeed_after=0, type_filter=None):
+    """前 `succeed_after` 次返回**空正文**（预算被推理吃光），之后返回真题。
+
+    用 `served` 游标保证不同批次返回**不同的题**，否则同一道 published 题会被
+    反复采纳，测出来的是"重复题"而不是"批次行为"。
+    """
+    state = {"served": 0}
+
+    def fake_run(self, db, user_id=None, grade_id=None, subject_id=None,
+                 question_type="single", count=5, difficulty="medium",
+                 save=False, **kwargs):
+        calls.append((question_type, count))
+        if len(calls) <= succeed_after:
+            return {"success": True, "data": {"questions": [], "reason": EMPTY_REASON}}
+        asked = type_filter if type_filter else question_type
+        rows = db.scalars(
+            select(Question).where(
+                Question.subject_id == subject_id,
+                Question.type == asked,
+                Question.status == "published",
+            ).order_by(Question.id)
+        ).all()
+        picked = rows[state["served"]: state["served"] + count]
+        state["served"] += len(picked)
+        return {"success": True, "data": {"questions": [
+            {"id": r.id, "stem": r.stem, "type": r.type} for r in picked
+        ]}}
+
+    qa_mod.QuestionGeneratorAgent.run = fake_run
+
+
 def main() -> int:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
@@ -228,6 +273,58 @@ def main() -> int:
                   plan6.items == [] and "熔断" in note6, note6[:120])
         finally:
             llm_breaker.snapshot = orig_snapshot
+
+        # ---- 6. 空正文（推理 token 吃光预算）：分档上限 + 减半重试 ----
+        # 生产事故现场（2026-11-04）：初中数学三个大题并发补题，10 道单选与
+        # 9 道解答两次调用都是 out=8192 / 正文 0，而 5 道填空正常。根因是推理
+        # 模型的 thinking token 与正文共享 max_tokens，批次越大越先撞满。
+        set_concurrency(1)
+
+        # 6a. 一直空正文：只重试一次，且批次必须**减半**
+        calls_a = []
+        install_empty_agent(calls_a, succeed_after=999)
+        plan_a = build_plan_one(db, grade, subject, teacher, code="single", count=12)
+        note_a = _ai_fill_gaps(db, teacher, plan=plan_a, grade=grade, subject=subject,
+                               difficulty_norm={"easy": 30, "medium": 50, "hard": 20})
+        check("单选题单批上限 = 5（不再是 10）",
+              calls_a[0][1] == 5, str(calls_a))
+        check("空正文只重试一次（共 2 次调用，不无限重试）",
+              len(calls_a) == 2, str(calls_a))
+        check("重试时批次减半（5 → 2）",
+              len(calls_a) > 1 and calls_a[1][1] < calls_a[0][1], str(calls_a))
+        gap_a = plan_a.gaps[0] if plan_a.gaps else {}
+        check("缺口上挂出真实原因（不再只说『题库不足』）",
+              "预算" in str(gap_a.get("reason")), str(gap_a.get("reason")))
+        check("缺口上挂出下一步动作",
+              bool(gap_a.get("action")) and "稍后重试" in str(gap_a.get("action")),
+              str(gap_a.get("action")))
+        check("缺口标注 ai_tried=True（AI 确实试过，不是没开）",
+              gap_a.get("ai_tried") is True, str(gap_a.get("ai_tried")))
+        check("缺口补齐 miss 字段（ai_only 整段都是缺口）",
+              gap_a.get("miss") == 12, str(gap_a.get("miss")))
+        check("note 里原因只出现一次（不重复刷屏）",
+              note_a.count("预算被推理") <= 1, note_a[:160])
+
+        # 6b. 首次空正文、重试成功：缺口应被补满且不再留 gap
+        calls_b = []
+        install_empty_agent(calls_b, succeed_after=1)
+        plan_b = build_plan_one(db, grade, subject, teacher, code="single", count=2)
+        _ai_fill_gaps(db, teacher, plan=plan_b, grade=grade, subject=subject,
+                      difficulty_norm={"easy": 30, "medium": 50, "hard": 20})
+        check("空正文后减半重试能补齐（take=2 时 2→1）",
+              len(calls_b) >= 2 and calls_b[0][1] == 2 and calls_b[1][1] == 1,
+              str(calls_b))
+        check("重试成功后缺口清零", plan_b.gaps == [], str(plan_b.gaps))
+        check("重试成功后试卷题目数正确", len(plan_b.items) == 2, str(len(plan_b.items)))
+
+        # 6c. 重题型的单批上限必须显著小于 10（解答题一题就含完整解题过程）
+        calls_c = []
+        install_empty_agent(calls_c, succeed_after=0, type_filter="single")
+        plan_c = build_plan_one(db, grade, subject, teacher, code="calc",
+                                count=12, name="解答题")
+        _ai_fill_gaps(db, teacher, plan=plan_c, grade=grade, subject=subject,
+                      difficulty_norm={"easy": 30, "medium": 50, "hard": 20})
+        check("解答题单批上限 = 3", calls_c[0][1] == 3, str(calls_c[:2]))
 
         install_fake_agent()
         set_concurrency(old_conc)

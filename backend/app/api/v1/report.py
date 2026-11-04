@@ -644,7 +644,11 @@ def admin_overview(
         },
         "ai": {
             "calls": _count(AgentCallLog),
-            "failed": _count(AgentCallLog, AgentCallLog.status == "failed"),
+            # 「空正文」也算失败：模型 200 返回但一个字没输出，对用户就是失败。
+            # 只统计 status=="failed" 会让这类静默失败在报表里彻底消失。
+            "failed": _count(
+                AgentCallLog,
+                AgentCallLog.status.in_(("failed", "empty"))),
             "fallback": _count(AgentCallLog, AgentCallLog.is_fallback.is_(True)),
         },
         "org": {"grade": _count(Grade), "subject": _count(Subject), "class": _count(Class)},
@@ -758,9 +762,12 @@ def system_runtime(db: Session = Depends(get_db), _: User = Depends(get_current_
         "ai_calls_24h": db.scalar(
             select(func.count()).select_from(AgentCallLog).where(AgentCallLog.created_at >= since)
         ) or 0,
+        # 含 status=="empty"（模型返回空正文）：这类静默失败不表现为异常，
+        # 只记 failed 会让"AI 补题一个都补不出来"在运维看板上长期为零。
         "ai_failed_24h": db.scalar(
             select(func.count()).select_from(AgentCallLog).where(
-                AgentCallLog.created_at >= since, AgentCallLog.status == "failed"
+                AgentCallLog.created_at >= since,
+                AgentCallLog.status.in_(("failed", "empty"))
             )
         ) or 0,
         "api_error_24h": db.scalar(

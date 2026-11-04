@@ -367,6 +367,10 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
             "total": len(items),
             "saved": 0,
             "reused": len(items),
+            # 原始失败原因单独回传：`tip` 是给人看的整句（且文案假定"已匹配到
+            # 相似题目"），复用为 0 条时那句文案是误导。上层（组卷补题）需要
+            # 按真实原因决定「是否值得减半批次重试」，只能靠这个字段判断。
+            "reason": reason,
             "tip": tip,
             "knowledge_point_missing": subject_kp_missing(db, subject_id),
         }

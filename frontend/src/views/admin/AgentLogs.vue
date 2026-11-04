@@ -26,8 +26,9 @@
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="query.status" placeholder="全部" clearable style="width:110px">
+          <el-select v-model="query.status" placeholder="全部" clearable style="width:130px">
             <el-option label="成功" value="success" />
+            <el-option label="空正文" value="empty" />
             <el-option label="失败" value="failed" />
           </el-select>
         </el-form-item>
@@ -62,8 +63,10 @@
         <el-table-column prop="token_usage" label="Token" width="100" />
         <el-table-column label="结果" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="small">
-              {{ row.status === 'success' ? '成功' : '失败' }}
+            <!-- empty = 模型 200 返回但正文为空（推理 token 把 max_tokens 吃光）。
+                 单独一种状态：既不是成功，也不是网络/鉴权失败，最容易被漏看。 -->
+            <el-tag :type="statusMeta(row.status).type" size="small">
+              {{ statusMeta(row.status).label }}
             </el-tag>
             <el-tag v-if="row.is_fallback" type="warning" size="small" class="ml4">降级</el-tag>
           </template>
@@ -153,12 +156,24 @@ const dateRange = ref([])
 
 const query = reactive({ page: 1, page_size: 20, agent_name: '', status: '', is_fallback: null })
 
+// 状态 → 标签样式。empty 必须单列出来：模型 200 返回但正文为空是**静默失败**，
+// 混进「成功」会让"AI 补题补不出来"永远查不到原因。
+const STATUS_META = {
+  success: { label: '成功', type: 'success' },
+  empty: { label: '空正文', type: 'warning' },
+  failed: { label: '失败', type: 'danger' },
+}
+function statusMeta(s) {
+  return STATUS_META[s] || { label: s || '失败', type: 'danger' }
+}
+
 const cards = computed(() => {
   if (!list.value.length) return []
   return [
     { label: '本页调用数', value: list.value.length, color: '#2f6fd0' },
     { label: '成功数', value: list.value.filter(r => r.status === 'success').length, color: '#67c23a' },
-    { label: '失败数', value: list.value.filter(r => r.status !== 'success').length, color: '#f56c6c' },
+    { label: '空正文', value: list.value.filter(r => r.status === 'empty').length, color: '#e6a23c' },
+    { label: '失败数', value: list.value.filter(r => r.status !== 'success' && r.status !== 'empty').length, color: '#f56c6c' },
     { label: '规则降级', value: list.value.filter(r => r.is_fallback).length, color: '#e6a23c' }
   ]
 })

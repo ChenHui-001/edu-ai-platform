@@ -314,14 +314,19 @@
         </div>
       </el-alert>
 
-      <!-- 缺口提示 -->
+      <!-- 缺口提示：逐条给出真实原因与下一步动作 -->
       <el-alert v-if="gaps.length" type="warning" :closable="false" show-icon class="gap-alert">
         <template #title>题库题目不足，以下大题存在缺口</template>
-        <div v-for="g in gaps" :key="g.code">
-          {{ g.name }}：需要 {{ g.need }} 题，题库仅有 {{ g.got }} 题
+        <div v-for="g in gaps" :key="g.code" class="gap-item">
+          <div class="gap-line">
+            <strong>{{ g.name }}</strong>：需要 {{ g.need }} 题，题库仅有 {{ g.got }} 题，
+            缺 {{ g.miss != null ? g.miss : g.need - g.got }} 题
+          </div>
+          <div v-if="g.reason" class="gap-reason">原因：{{ g.reason }}</div>
+          <div v-if="g.action" class="gap-action">建议：{{ g.action }}</div>
         </div>
-        <div class="gap-hint">
-          可切换到「题库优先 + AI 补充」由 AI 补题，或补充题库后重新生成。
+        <div v-if="gaps.some(g => !g.ai_tried)" class="gap-hint">
+          未启用 AI 补充的大题可切换到「题库优先 + AI 补充」由 AI 补题。
         </div>
       </el-alert>
       <el-alert v-if="aiMessage" type="info" :closable="false" show-icon
@@ -1103,6 +1108,10 @@ function goBack() { router.push('/teacher/papers') }
 .adv-collapse { margin-top: 16px; }
 .unit-hint { margin-left: 8px; color: var(--el-text-color-secondary); font-size: 13px; }
 .gap-alert { margin-bottom: 14px; }
+.gap-item { margin-bottom: 6px; }
+.gap-line { line-height: 1.7; }
+.gap-reason { font-size: 12.5px; color: var(--el-color-danger); line-height: 1.6; }
+.gap-action { font-size: 12.5px; color: var(--el-text-color-regular); line-height: 1.6; }
 .gap-hint { margin-top: 6px; font-size: 12.5px; color: var(--el-text-color-secondary); }
 .report-row { margin-bottom: 14px; }
 .report-card { height: 100%; }

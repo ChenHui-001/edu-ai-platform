@@ -62,6 +62,78 @@ router = APIRouter(prefix="/question/papers", tags=["标准组卷"])
 
 TYPE_LABEL = compose_svc.TYPE_LABEL
 
+# AI 补题的单批题量上限，**按题型分档**。
+#
+# 推理模型（生产用 MiniMax-M3.1-Flash 一类）的 thinking token 与正文**共享**
+# `LLM_MAX_TOKENS`（默认 8192），批次越大，推理阶段越容易先把预算烧光、正文
+# 返回空串——HTTP 200、无异常，只有 content 是空字符串。
+#
+# 生产实测（2026-11-04 15:24，初中数学三个大题并发补题，`sys_agent_call_log`）：
+#   5 道填空  → out=4689，正文 1995 字符 → 成功
+#   10 道单选 → out=8192（打满），正文 0 字符 → 失败
+#   9 道解答  → out=8192（打满），正文 0 字符 → 失败
+#
+# 所以「统一 10 道」对重题型必然撞墙。单题正文量越大的题型，单批越小：
+# 作文一题就上千字、解答题要完整解题过程、材料题自带长材料 + 多小问。
+FILL_BATCH_BY_TYPE: Dict[str, int] = {
+    "composition": 2,
+    "calc": 3,
+    "material": 3,
+    "multiple": 4,
+    "short": 4,
+}
+FILL_BATCH_DEFAULT = 5
+
+# 判据用词：命中即视为「输出预算被推理吃光」，值得减半重试（换别的失败原因
+# 重试纯属浪费一次 60~90s 的模型往返）。
+_BUDGET_FAILURE_HINTS = ("正文为空", "max_tokens", "截断", "tokens")
+
+
+def _fill_fail_hint(data: Dict[str, Any]) -> str:
+    """把补题失败翻译成一句教师能懂的原因（供缺口卡片逐条展示）。"""
+    reason = str(data.get("reason") or "").strip()
+    tip = str(data.get("tip") or "").strip()
+    raw = reason or tip
+    if not raw:
+        return "模型未返回题目，题库也没有可复用的同题型题"
+    if any(k in raw for k in ("未配置", "API_KEY", "鉴权", "熔断")):
+        return f"AI 不可用：{raw}"
+    if _is_budget_failure(raw):
+        return "模型输出预算被推理过程耗尽，返回正文为空"
+    return f"模型未返回可用题目：{raw}"
+
+
+def _is_budget_failure(text: str) -> bool:
+    """是否为「输出预算被推理 token 吃光」这一类可重试失败。"""
+    return any(k in str(text or "") for k in _BUDGET_FAILURE_HINTS)
+
+
+def _gap_action(reason: str, *, ai_tried: bool) -> str:
+    """缺口卡片上的「下一步怎么办」——按真实原因给动作，别一句通用文案打发。
+
+    旧实现无论什么原因都写「可切换到『题库优先 + AI 补充』」，而教师**很可能
+    已经在这个策略下**（AI 也确实调用过、失败了），照着提示点来点去还是补不上。
+    """
+    r = str(reason or "")
+    if not ai_tried:
+        return "可切换到「题库优先 + AI 补充」由 AI 补题，或先在题库补充该题型的已发布题目。"
+    if "预算" in r or "正文为空" in r:
+        return ("AI 因单批题量过大未能返回题目。可稍后重试，或把该大题题量调小 / "
+                "分两次组卷；也可改用「仅使用题库」。")
+    if "不可用" in r or "鉴权" in r or "熔断" in r or "配额" in r:
+        return "AI 当前不可用，请联系管理员检查模型密钥与配额，或改用「仅使用题库」。"
+    return ("请先在题库补充该题型的**已发布**题目；若「待审核库」里已有 AI 生成的草稿题，"
+            "审核通过后即可直接用于组卷。")
+
+
+def _mark_gaps_reason(gaps: List[Dict[str, Any]], reason: str) -> None:
+    """给整批缺口统一挂上失败原因（熔断/冷却这类"一个都没补"的早退路径用）。"""
+    for g in gaps:
+        g["miss"] = int(g["need"]) - int(g.get("got", 0))
+        g["reason"] = reason
+        g["ai_tried"] = True
+        g["action"] = _gap_action(reason, ai_tried=True)
+
 
 # ---------------------------------------------------------------- 权限 helpers
 def _is_sys_admin(user: User) -> bool:
@@ -436,9 +508,10 @@ def _fill_one_gap(
     session 泄漏到另一个线程。
 
     不抛异常：单个大题失败（模型超时、无同题型题）不该拖垮整卷，原因通过
-    `notes` 回传给调用方拼进 message。
+    `notes` 回传给调用方拼进 message，同时写进 `out["reason"]` 供缺口卡片
+    逐条展示（P1：教师不必再从一长串 message 里找原因）。
 
-    返回 `{"gap", "items", "notes", "filled"}`，`items` 已是可直接追加进 plan 的字典。
+    返回 `{"gap", "items", "notes", "filled", "reason"}`，`items` 已是可直接追加进 plan 的字典。
     """
     from app.agents.question_agent import QuestionGeneratorAgent
     # 函数内导入：question.py 与本模块互相引用，放模块顶层会形成循环导入
@@ -447,7 +520,8 @@ def _fill_one_gap(
     from app.services.question_access import question_usable_error
 
     name = str(gap.get("name") or "未知大题")
-    out: Dict[str, Any] = {"gap": gap, "items": [], "notes": [], "filled": 0}
+    out: Dict[str, Any] = {"gap": gap, "items": [], "notes": [], "filled": 0,
+                           "reason": "", "ai_tried": True}
     take = max(0, int(gap["need"]) - int(gap.get("got", 0)))
     if take <= 0:
         return out
@@ -455,9 +529,10 @@ def _fill_one_gap(
     gtype = str(gap.get("code") or "single")
     gdiff = str(gap.get("difficulty") or default_diff)
 
-    # 单次生成上限（与 QuestionGeneratorAgent 内部一致）。缺口 20 题时一次
-    # 调用会撞 LLM_MAX_TOKENS 导致 JSON 截断，必须拆成多批循环。
-    BATCH_MAX = 10
+    # 单批题量上限按题型分档（见 FILL_BATCH_BY_TYPE 的实测依据）。缺口 20 题时
+    # 一次调用会撞 LLM_MAX_TOKENS 导致 JSON 截断，必须拆成多批循环；而不同题型
+    # 的单题正文量差一个量级，统一 10 道必然让重题型先撞墙。
+    batch_cap = FILL_BATCH_BY_TYPE.get(gtype, FILL_BATCH_DEFAULT)
 
     db = SessionLocal()
     try:
@@ -467,10 +542,11 @@ def _fill_one_gap(
         existing_keys = _existing_stem_keys(db, grade_id, subject_id, gtype)
         new_keys: List[str] = []
         skipped_dup = 0
-        empty_retry = 0
+        stall_retry = 0   # 返回了题但全被过滤（重复/无权/题型不符）
+        budget_retried = False  # 模型返回空正文（输出预算被推理耗尽）已减半重试过
 
         while out["filled"] < take:
-            batch = min(BATCH_MAX, take - out["filled"])
+            batch = max(1, min(batch_cap, take - out["filled"]))
             try:
                 res = QuestionGeneratorAgent().run(
                     db, user_id=user_id, grade_id=grade_id, subject_id=subject_id,
@@ -485,17 +561,36 @@ def _fill_one_gap(
                 logger.warning(
                     "AI 补题失败（grade=%s subject=%s type=%s need=%s）: %s",
                     grade_id, subject_id, gtype, take - out["filled"], exc)
+                out["reason"] = f"补题调用异常：{exc}"
                 out["notes"].append(f"{name}补题失败：{exc}")
                 break
 
             if not (res or {}).get("success", True):
-                out["notes"].append(res.get("message") or f"{name}补题执行失败")
+                out["reason"] = str(res.get("message") or "补题执行失败")
+                out["notes"].append(f"{name}补题失败：{out['reason']}")
                 break
             data = (res or {}).get("data") or {}
             got = data.get("questions") or []
             if not got:
-                out["notes"].append(
-                    data.get("tip") or f"{name}未生成题目（模型未启用或返回为空）")
+                # 模型返回空正文，或规则引擎降级后题库里也没有可复用的同题型题。
+                # 判据必须用**原始原因**：翻译后的文案会带「已重试」字样。
+                raw_reason = str(data.get("reason") or data.get("tip") or "")
+                # **只对「预算被推理吃光」这一类重试，且批次减半**：同一提示词
+                # 原样重发几乎必然再撞同一个上限（生产实测 10 道单选的两次
+                # 调用都是 out=8192 / 正文 0）；减半才有意义（10 → 5）。
+                # 未配置 Key / 鉴权失败属于确定性失败，重试纯浪费时间。
+                if not budget_retried and _is_budget_failure(raw_reason):
+                    budget_retried = True
+                    batch_cap = max(1, batch // 2)
+                    logger.info(
+                        "AI 补题空正文（type=%s count=%s），批次减半为 %s 重试",
+                        gtype, batch, batch_cap)
+                    continue
+                hint = _fill_fail_hint(data)
+                if budget_retried:
+                    hint += "（已缩小批次重试仍失败）"
+                out["reason"] = hint
+                out["notes"].append(f"{name}补题失败：{hint}")
                 break
 
             progressed = 0
@@ -567,12 +662,13 @@ def _fill_one_gap(
                 })
 
             if progressed == 0:
-                # 这一批全被过滤（重复/无权/题型不符）或模型没出题。
+                # 这一批全被过滤（重复/无权/题型不符）。
                 # 允许再换一批试一次：模型偶发把同一道题换个说法再出一遍很常见，
                 # 直接放弃会让缺口变成"明明能补却报缺"。但最多重试一次，
                 # 避免模型持续输出重复题时空转。
-                empty_retry += 1
-                if empty_retry > 1:
+                stall_retry += 1
+                if stall_retry > 1:
+                    out["reason"] = "模型生成的题目与题库重复，未能选出可用题"
                     break
                 continue
 
@@ -638,12 +734,16 @@ def _ai_fill_gaps(
     # 直接把原因写进 message 让教师改用题库（比"转圈 5 分钟后报错"好）。
     state = llm_breaker.snapshot()
     if state.get("breaker") == "auth":
-        return ("AI 补题已跳过：模型鉴权失败处于熔断状态"
-                f"（{state.get('reason') or '密钥无效'}），请先修复密钥或改用「仅使用题库」")
+        msg = ("AI 补题已跳过：模型鉴权失败处于熔断状态"
+               f"（{state.get('reason') or '密钥无效'}），请先修复密钥或改用「仅使用题库」")
+        _mark_gaps_reason(pending, "AI 鉴权失败处于熔断状态")
+        return msg
     remaining = int(state.get("cooldown_remaining") or 0)
     if remaining > 0:
-        return (f"AI 补题已跳过：模型限流冷却中（剩余 {remaining}s），"
-                "请改用「仅使用题库」或稍后重试")
+        msg = (f"AI 补题已跳过：模型限流冷却中（剩余 {remaining}s），"
+               "请改用「仅使用题库」或稍后重试")
+        _mark_gaps_reason(pending, f"模型限流冷却中（剩余 {remaining}s）")
+        return msg
 
     workers = max(1, min(int(settings.AI_FILL_CONCURRENCY or 1), len(pending), 4))
     # 本卷已抽到的题：补题时用于拦住"复用题库时把同一道题再补一遍"。
@@ -695,10 +795,21 @@ def _ai_fill_gaps(
             filled_total += res["filled"]
             g["got"] = int(g.get("got", 0)) + res["filled"]
         if int(g.get("got", 0)) < int(g["need"]):
+            miss = int(g["need"]) - int(g.get("got", 0))
+            # 逐条把原因挂到 gap 上：前端缺口卡片直接展示，教师不必再从下面
+            # 那条又长又混的 message 里翻「到底为什么 AI 没补上」。
+            g["miss"] = miss
+            g["reason"] = str(res.get("reason") or "")
+            g["ai_tried"] = bool(res.get("ai_tried"))
+            g["action"] = _gap_action(g["reason"], ai_tried=g["ai_tried"])
             kept_gaps.append(g)
+            # 原因可能已由 res["notes"] 带出去（补题失败 / 跳过重复题），这里只补
+            # "还差几题"。不去重的话同一条原因会在 message 里原样出现两次。
+            already = any(str(n).startswith(f"{g['name']}补题失败") for n in res["notes"])
             notes.append(
-                f"{g['name']}仍缺 {int(g['need']) - int(g.get('got', 0))} 题"
-                "（题库/模型可提供的同题型题目不足）")
+                f"{g['name']}仍缺 {miss} 题"
+                + ("" if already else
+                   (f"：{g['reason']}" if g["reason"] else "（题库无同题型已发布题）")))
 
     if plan.items:
         plan.gaps = kept_gaps

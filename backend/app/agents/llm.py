@@ -348,16 +348,30 @@ class LLMClient:
             self._reset_rate_limit()
             duration = int((time.perf_counter() - start) * 1000)
             usage = getattr(resp, "usage_metadata", None) or {}
+            content = str(resp.content or "")
+            # 空正文 ≠ 成功。推理模型的 thinking token 与正文**共享** max_tokens，
+            # 批量稍大就会把 8192 全部烧在推理上、正文返回空串；此时 HTTP 是 200、
+            # 没有任何异常，旧实现无条件记 success，日志页/告警完全看不见
+            # 「模型一个字都没输出」（生产实测：10 道单选、9 道解答各撞满 8192
+            # 且 output_text 为空，日志却全是成功，排查只能靠猜）。
+            # 单列一个 empty 状态，让运维一眼能筛出这类静默失败。
+            empty = not content.strip()
             log_agent_call(
                 agent_name=agent_name, user_id=user_id, input_text=user_prompt[:2000],
-                output_text=str(resp.content)[:2000],
+                output_text=content[:2000],
                 input_tokens=usage.get("input_tokens", 0),
                 output_tokens=usage.get("output_tokens", 0),
-                duration_ms=duration, status="success", biz_type=biz_type, biz_id=biz_id,
+                duration_ms=duration,
+                status="empty" if empty else "success",
+                error_msg=("模型返回正文为空（通常是 max_tokens 预算被推理 token 耗尽，"
+                           f"本次输出 {usage.get('output_tokens', 0)} tokens）"
+                           if empty else None),
+                biz_type=biz_type, biz_id=biz_id,
             )
             return {
                 "success": True,
-                "content": str(resp.content),
+                "content": content,
+                "empty": empty,
                 "is_fallback": False,
                 "duration_ms": duration,
                 "usage": usage,
