@@ -304,7 +304,10 @@ export const agentApi = {
   list: () => request.get('/agent/list'),
   status: () => request.get('/agent/status'),
   chat: (data) => request.post('/agent/chat', data),
-  questionGenerator: (data) => request.post('/agent/question-generator', data),
+  // 与组卷同一类长任务：单次出题实测平均 100.7s、最长 241s（生产日志），
+  // 而 LLM_TIMEOUT=120 + 重试一次最坏 240s，全局 120s 只留了 20 秒余量。
+  // 不放宽的话「模型稍慢就超时」，用户重试一次会多生成一批重复草稿题。
+  questionGenerator: (data) => request.post('/agent/question-generator', data, { timeout: 300000 }),
   paperComposer: (data) => request.post('/agent/paper-composer', data),
   grading: (data) => request.post('/agent/grading', data),
   studyPlanner: (data) => request.post('/agent/study-planner', data),
