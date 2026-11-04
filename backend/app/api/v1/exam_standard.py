@@ -486,7 +486,8 @@ def generate_missing_standards(
             # 结果「最后一题不难、前面反而难」，与卷面梯度矛盾。
             # 初中各科取规范的分科难度区间（化学 70/20/10、数学 50/30/20…）。
             difficulty_ratio=json.dumps(
-                difficulty_gradient(sections, subject_name), ensure_ascii=False),
+                difficulty_gradient(sections, subject_name, stage=stage),
+                ensure_ascii=False),
             description="系统按通用结构自动生成的草案：题量/分值请按教研要求修订。"
                         + (f"（{note}）" if note else ""),
             is_active=True, is_default=True,

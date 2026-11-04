@@ -181,7 +181,8 @@ def upgrade_draft_standards_to_spec(db: Session) -> List[str]:
             continue
 
         new_diff = json.dumps(
-            difficulty_gradient(new_sections, row.subject_name), ensure_ascii=False)
+            difficulty_gradient(new_sections, row.subject_name, stage=row.stage),
+            ensure_ascii=False)
         new_duration = int(meta["duration"]) if meta else int(row.duration or 90)
         db.execute(
             text("UPDATE edu_exam_standard SET sections=:s, difficulty_ratio=:d,"
@@ -247,7 +248,7 @@ def upgrade_generic_standards(db: Session) -> List[str]:
             {
                 "s": json.dumps(new_sections, ensure_ascii=False),
                 "d": json.dumps(
-                    difficulty_gradient(new_sections, row.subject_name),
+                    difficulty_gradient(new_sections, row.subject_name, stage=row.stage),
                     ensure_ascii=False),
                 "i": row.id,
             },
