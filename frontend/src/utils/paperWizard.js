@@ -65,6 +65,37 @@ export function requiresGradeSubject(mode) {
 export const AI_MODE_SOURCE = 'bank_first'
 
 /**
+ * 一个大题的分值小计。
+ *
+ * 有 `score_pattern`（同一大题内每题分值不同）时以序列之和为准。
+ * 真实卷面大量存在这种结构：数学解答题 6/6/6/8/8/8/10/11/12、
+ * 化学选择题 8 题×1 分 + 5 题×2 分、语文各板块小题 2~8 分不等。
+ * 只算 `count * score_per` 会用平均值×题量，把梯度抹平且合计对不上。
+ */
+export function sectionScoreTotal(sec) {
+  const pattern = Array.isArray(sec?.score_pattern) ? sec.score_pattern : null
+  if (pattern && pattern.length) {
+    return round2(pattern.reduce((sum, v) => sum + (Number(v) || 0), 0))
+  }
+  return round2((Number(sec?.count) || 0) * (Number(sec?.score_per) || 0))
+}
+
+/**
+ * 大题分值的展示文案：均分时「10题×3分」，阶梯时「9题 6/6/6/8/8/8/10/11/12」。
+ */
+export function sectionScoreLabel(sec) {
+  const pattern = Array.isArray(sec?.score_pattern) ? sec.score_pattern : null
+  if (pattern && pattern.length) {
+    return `${sec.count}题 ${pattern.join('/')}`
+  }
+  return `${sec?.count ?? 0}题×${sec?.score_per ?? 0}分`
+}
+
+function round2(v) {
+  return Math.round((Number(v) || 0) * 100) / 100
+}
+
+/**
  * 组装组卷请求参数。
  *
  * AI 模式下**不发送** `difficulty_ratio`：界面上的难度滑块此时是禁用的，

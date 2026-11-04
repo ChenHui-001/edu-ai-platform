@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   composeBlockReason, requiresGradeSubject, buildComposePayload,
-  isComposeButtonDisabled, AI_MODE_SOURCE,
+  isComposeButtonDisabled, sectionScoreTotal, sectionScoreLabel, AI_MODE_SOURCE,
 } from '../paperWizard'
 
 /**
@@ -144,5 +144,54 @@ describe('buildComposePayload（提交参数）', () => {
     const p = buildComposePayload(
       { ...base, mode: 'custom', source: 'ai_only' }, { sections: [] })
     expect(p.source).toBe('ai_only')
+  })
+})
+
+/**
+ * 阶梯分值：真实卷面同一大题内每题分值不同。
+ *
+ * 数学解答题 6/6/6/8/8/8/10/11/12（合计 75）、化学选择题 8 题×1 分 +
+ * 5 题×2 分（合计 18）。若只按 `count * score_per` 算小计，会用平均值×题量，
+ * 与规则合计对不上（9×8.33=74.97 ≠ 75），卷面总分校验随之误报。
+ */
+describe('sectionScoreTotal（大题小计）', () => {
+  it('均分结构用 count × score_per', () => {
+    expect(sectionScoreTotal({ count: 10, score_per: 3 })).toBe(30)
+  })
+
+  it('阶梯结构以分值序列之和为准', () => {
+    expect(sectionScoreTotal({
+      count: 9, score_per: 8.33,
+      score_pattern: [6, 6, 6, 8, 8, 8, 10, 11, 12],
+    })).toBe(75)
+  })
+
+  it('化学选择分段计分 8×1 + 5×2 = 18', () => {
+    expect(sectionScoreTotal({
+      count: 13, score_per: 1.38,
+      score_pattern: [1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2],
+    })).toBe(18)
+  })
+
+  it('空/缺字段不抛异常（试卷还在编辑中）', () => {
+    expect(sectionScoreTotal({})).toBe(0)
+    expect(sectionScoreTotal(null)).toBe(0)
+    expect(sectionScoreTotal({ count: 5 })).toBe(0)
+  })
+
+  it('分值序列为空数组时退回均分（不能算出 0 分）', () => {
+    expect(sectionScoreTotal({ count: 5, score_per: 2, score_pattern: [] })).toBe(10)
+  })
+})
+
+describe('sectionScoreLabel（大题结构文案）', () => {
+  it('均分显示「N题×M分」', () => {
+    expect(sectionScoreLabel({ count: 10, score_per: 3 })).toBe('10题×3分')
+  })
+
+  it('阶梯显示完整分值序列，便于教师核对卷面', () => {
+    expect(sectionScoreLabel({
+      count: 3, score_per: 7, score_pattern: [6, 7, 8],
+    })).toBe('3题 6/7/8')
   })
 })

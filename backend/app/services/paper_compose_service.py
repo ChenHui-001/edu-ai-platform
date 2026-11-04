@@ -33,6 +33,8 @@ from app.models import (
     ExamStandard, KnowledgePoint, PaperItem, Question, QuestionStatus,
     Task,
 )
+# 大题小计一律走 section_total：阶梯分值下 `count * score_per` 会算错
+from app.services.exam_structures import section_total
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +139,39 @@ def split_by_difficulty(count: int, ratio: Dict[str, int]) -> Dict[str, int]:
     return result
 
 
+def parse_score_pattern(raw: Any, count: int) -> Optional[List[float]]:
+    """解析「同一大题内每题分值不同」的分值序列（阶梯分值）。
+
+    真实卷面大量存在这种结构：数学解答题 6/6/6/8/8/8/10/11/12、
+    化学选择题 8 题×1 分 + 5 题×2 分、语文各板块小题 2~8 分不等。
+    早期只有单一 `score_per`，这些梯度会被抹平成均分，卷面失去区分度。
+
+    校验不通过一律返回 None（退化为均分），**不抛异常** —— 结构里一个字段
+    写错不该让整条组卷链路 500，退化成"分值略平"是可接受的降级。
+    """
+    if not isinstance(raw, (list, tuple)) or not count:
+        return None
+    try:
+        vals = [round(float(x), 2) for x in raw]
+    except (TypeError, ValueError):
+        return None
+    if len(vals) != count or any(v <= 0 for v in vals):
+        return None
+    return vals
+
+
+def _section_scores(sec: Dict[str, Any], count: int) -> List[float]:
+    """把一个大题展开成「每道题各自的分值」列表，长度恒为 count。
+
+    有 `score_pattern` 且长度匹配时直接用，否则用 `score_per` 均分补齐。
+    调用方按位置取分即可，不需要再判断有没有阶梯。
+    """
+    pattern = sec.get("score_pattern")
+    if isinstance(pattern, (list, tuple)) and len(pattern) == count:
+        return [round(float(x), 2) for x in pattern]
+    return [round(float(sec.get("score_per") or 0), 2)] * max(0, count)
+
+
 def parse_sections(standard: Optional[ExamStandard]) -> List[Dict[str, Any]]:
     """读取标准的题型结构（含防御式校验）。"""
     if not standard or not standard.sections:
@@ -161,6 +196,11 @@ def parse_sections(standard: Optional[ExamStandard]) -> List[Dict[str, Any]]:
             score_per = float(raw.get("score_per") or 0)
         except (TypeError, ValueError):
             continue
+        pattern = parse_score_pattern(raw.get("score_pattern"), count)
+        # 只给了分值序列、没给 score_per 时按平均值补上：下游多处只读
+        # score_per（报告展示、补题默认分值），缺了会变成 0 分。
+        if pattern and score_per <= 0:
+            score_per = round(sum(pattern) / count, 2)
         if count <= 0 or score_per <= 0:
             continue
         result.append({
@@ -168,6 +208,7 @@ def parse_sections(standard: Optional[ExamStandard]) -> List[Dict[str, Any]]:
             "name": str(raw.get("name") or TYPE_LABEL[code])[:64],
             "count": count,
             "score_per": score_per,
+            **({"score_pattern": pattern} if pattern else {}),
             "difficulty": str(raw.get("difficulty") or "medium"),
             "sort": int(raw.get("sort") or idx),
         })
@@ -196,18 +237,28 @@ def type_rank(code: Any) -> int:
 
 
 def normalize_section_order(sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """按题型规范重排大题并重赋 sort（1..n）。
+    """按卷面规范重排大题并重赋 sort（1..n）。
 
-    **稳定排序**：同一题型保持原有相对顺序。英语卷常有两个 `single` 大题
-    （听力理解、单项选择），它们之间的先后是教师刻意安排的，不能被互换。
+    **只钉一条硬规则：作文/写作必须是最后一题。** 其余大题保持原有相对顺序，
+    因为真实卷面的板块顺序由学科决定，不是由题型码决定 —— 语文卷是
+    「积累与运用(填空) → 阅读与鉴赏(材料/简答) → 整本书阅读(材料) → 写作」，
+    若按题型码排序，`material` 会被整体挪到 `short` 后面，古诗文阅读就跑到
+    现代文阅读之后了，与卷面板块完全错乱。
 
-    作文/写作（composition）在表里排最后，因此任何来源的 sections 排完后
-    它都落在末位 —— 这是用户明确要求的卷面规范。
+    早期实现按 `type_rank` 全量排序，目的是修「AI 解析出的作文夹在中间」
+    （AI 输出是 dict，键序不定）。只钉作文即可达到同样效果，且不破坏板块。
+
+    **稳定排序**：同一题型保持原有相对顺序。英语卷有两个 `blank` 大题
+    （阅读还原、选词填空）、语文卷有两个 `material` 大题（古诗文阅读、
+    整本书阅读），它们的先后是教师刻意安排的，不能被互换。
     """
     if not sections:
         return sections
     indexed = list(enumerate(sections))
-    indexed.sort(key=lambda p: (type_rank(p[1].get("code")), p[0]))
+    indexed.sort(key=lambda p: (
+        1 if str(p[1].get("code") or "").strip().lower() == "composition" else 0,
+        p[0],
+    ))
     return [
         {**sec, "sort": new_sort}
         for new_sort, (_, sec) in enumerate(indexed, start=1)
@@ -399,10 +450,15 @@ def compose(
     if source_strategy == SOURCE_AI_ONLY:
         # 全 AI：不需要抽题，只把结构换算成缺口清单
         for sec in sections:
+            want = int(sec["count"])
+            sec_scores = _section_scores(sec, want)
             plan.gaps.append({
                 "code": sec["code"], "name": sec["name"],
-                "need": int(sec["count"]), "got": 0,
+                "need": want, "got": 0,
                 "score_per": sec["score_per"],
+                # 缺口必须带上完整分值序列：补题是按位置逐题给分的，
+                # 只留平均值会让数学解答题 6/6/6/8… 的梯度在补题后消失。
+                "score_pattern": sec_scores,
                 "difficulty": sec.get("difficulty", "medium"),
                 # sort 必须带上：上层调 AI 补题后要按它定大题顺序，
                 # 缺了会全部落到默认 0，`_renumber` 只能改按题号排，
@@ -434,7 +490,8 @@ def compose(
     for sec in sections:
         code = sec["code"]
         want = int(sec["count"])
-        score_per = float(sec["score_per"])
+        # 逐题分值：有阶梯分值序列就按位置取，否则整段均分
+        sec_scores = _section_scores(sec, want)
         sec_difficulty = sec.get("difficulty") or "medium"
 
         picked = _pick_for_section(
@@ -443,8 +500,8 @@ def compose(
             prefer_difficulty=sec_difficulty, exclude=exclude,
             kp_used=kp_used, kp_cap=kp_cap,
             viewer_id=viewer_id, allow_all_banks=allow_all_banks,
-            # 跨大题共享已用题目：两个同题型大题（如英语「听力理解」与
-            # 「单项选择」）各自去重会抽到同一道题，整卷出现重复题。
+            # 跨大题共享已用题目：两个同题型大题（如语文「古诗文阅读」与
+            # 「整本书阅读」都是材料题）各自去重会抽到同一道题，整卷出现重复题。
             # 用 plan 级的集合做全局互斥。
             global_used=plan.used_question_ids,
         )
@@ -454,7 +511,7 @@ def compose(
         if exclude:
             plan.relaxed_count += sum(1 for q in picked if q.id in exclude)
 
-        for q in picked:
+        for pos, q in enumerate(picked):
             kp_name = plan.kp_coverage
             kp = db.get(KnowledgePoint, q.knowledge_point_id) if q.knowledge_point_id else None
             label = kp.name if kp else "综合"
@@ -466,7 +523,13 @@ def compose(
                 "type_label": TYPE_LABEL.get(q.type, q.type),
                 "stem": q.stem,
                 "difficulty": q.difficulty,
-                "score": round(score_per, 2),
+                # 按题序取分：抽题是按题库顺序 append 的，pos 即该题在本大题内
+                # 的第几题，与规范「第 22 题 10 分、第 24 题 12 分」一一对应
+                "score": round(sec_scores[pos], 2),
+                # 卷面槽位：`_renumber` 必须按它排，不能按 question_id 排 ——
+                # 分值是按槽位给的，题号重排后分值就与题目错位了
+                # （实测 6/8/10/6/8/11/6/8/12 这种乱序）
+                "section_pos": pos,
                 "section_code": code,
                 "section_name": sec["name"],
                 "section_sort": sec["sort"],
@@ -478,7 +541,8 @@ def compose(
             plan.gaps.append({
                 "code": code, "name": sec["name"],
                 "need": want, "got": len(picked),
-                "score_per": score_per,
+                "score_per": sec["score_per"],
+                "score_pattern": sec_scores,
                 "difficulty": sec_difficulty,
                 # 同上：缺口要记住自己属于第几大题，补题时才能排回原位
                 "sort": sec.get("sort", 0),
@@ -650,28 +714,53 @@ def _renumber(items: List[Dict[str, Any]]) -> None:
     取中文序号，同时把大题名里可能已带的「一、」前缀剥掉再拼，
     避免出现「一、一、单选题」。
     """
-    # 排序键：先大题序，再题型规范位次，最后题号。
-    # 第三键从 `question_id` 换到 `type_rank` 是为了兜住一种现实情况——
-    # 前端保存题项列表时可能不传 section_sort（全为 0），旧实现退化成
-    # 「按 question_id 排」，作文题会按题型自增 id 散落到卷子中间。
+    # 排序键：先大题序，再**大题内槽位**，最后题型位次与题号。
+    #
+    # `section_pos` 是组卷时记下的卷面位置（第几题），必须优先于 question_id：
+    # 分值是按槽位分配的（数学解答题第 9 题 12 分、第 1 题 6 分），一旦按
+    # question_id 重排，题目与分值就错位了 —— 实测算出 6/8/10/6/8/11/6/8/12
+    # 这种乱序，压轴题的 12 分挂在了中间的题上。
+    #
+    # 缺 `section_pos` 时（前端保存的老数据、手改卷）退到题号排，保持旧行为。
+    # 那时第三键从 `question_id` 换到 `type_rank` 是为了兜住「前端保存题项列表
+    # 时不传 section_sort（全为 0）」——旧实现会「按 question_id 排」，
+    # 作文题按题型自增 id 散落到卷子中间。
     has_section_sort = any(int(i.get("section_sort") or 0) > 0 for i in items)
+    has_pos = bool(items) and all(i.get("section_pos") is not None for i in items)
     if has_section_sort:
-        items.sort(key=lambda i: (
-            int(i.get("section_sort") or 0),
-            type_rank(i.get("section_code") or i.get("type")),
-            int(i.get("question_id") or 0),
-        ))
+        if has_pos:
+            items.sort(key=lambda i: (
+                int(i.get("section_sort") or 0),
+                int(i.get("section_pos") or 0),
+            ))
+        else:
+            items.sort(key=lambda i: (
+                int(i.get("section_sort") or 0),
+                type_rank(i.get("section_code") or i.get("type")),
+                int(i.get("question_id") or 0),
+            ))
     else:
         items.sort(key=lambda i: (
             type_rank(i.get("section_code") or i.get("type")),
             int(i.get("question_id") or 0),
         ))
-    section_index: Dict[str, int] = {}
+    # 分组键：优先用大题序号，其次才退到题型码。
+    #
+    # **不能只用题型码分组**：真实卷面同一题型会被拆成多个板块 ——
+    # 语文「阅读与鉴赏（古诗文）」与「整本书阅读」都是材料题，英语「阅读还原」
+    # 与「选词填空」都是填空题。只按 code 分组会把两个板块合并成同一个大题号，
+    # 卷面出现「三、阅读与鉴赏（古诗文）」下面跟着整本书阅读的题。
+    section_index: Dict[Any, int] = {}
     for it in items:
         code = it.get("section_code") or it.get("type")
-        if code not in section_index:
-            section_index[code] = len(section_index) + 1
-        idx = section_index[code]
+        key: Any = code
+        if has_section_sort:
+            sort_val = int(it.get("section_sort") or 0)
+            if sort_val > 0:
+                key = ("s", sort_val)
+        if key not in section_index:
+            section_index[key] = len(section_index) + 1
+        idx = section_index[key]
         prefix = CN_NUM[idx - 1] if idx <= len(CN_NUM) else str(idx)
         raw_name = str(it.get("section_name") or TYPE_LABEL.get(code, "综合题"))
         # 剥掉旧前缀（一、/1、/（一）等）
@@ -744,8 +833,7 @@ def build_reports(
 
     if sections_plan:
         planned = {s["code"]: int(s["count"]) for s in sections_plan}
-        planned_score = {s["code"]: round(int(s["count"]) * float(s["score_per"]), 2)
-                         for s in sections_plan}
+        planned_score = {s["code"]: section_total(s) for s in sections_plan}
     else:
         planned = {}
         planned_score = {}
@@ -834,12 +922,17 @@ def audit_paper(
             "message": "作文题不是最后一题，不符合卷面规范",
         })
 
-    # 3) 大题顺序与常规试卷不一致（选择→判断→填空→简答→作文）
-    ranks = [type_rank(c) for c in codes]
-    if any(ranks[i] > ranks[i + 1] for i in range(len(ranks) - 1)):
+    # 3) 卷首应为客观题（选择/判断/填空）。
+    #
+    # 早期这里检查「全卷题型位次必须单调递增」，在板块化卷面上是错的：
+    # 语文卷是 积累与运用(填空) → 古诗文阅读(材料) → 现代文阅读(简答) →
+    # 整本书阅读(材料) → 写作，材料题必然出现在简答题之后，单调性不成立。
+    # 真正有卷面意义的是「开卷不能是作文或材料分析题」。
+    if codes and type_rank(codes[0]) > SECTION_TYPE_ORDER.index("blank"):
         issues.append({
             "level": "warn", "code": "section_order",
-            "message": "大题顺序与常规试卷不一致（应为 单选→多选→判断→填空→简答→计算→材料→作文）",
+            "message": f"试卷第一大题是「{TYPE_LABEL.get(codes[0], codes[0])}」，"
+                       "常规试卷应以选择/判断/填空题开卷",
         })
 
     # 4) 题号连续（打印后跳号会被当成漏题）

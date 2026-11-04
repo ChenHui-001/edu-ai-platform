@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import ExamStandard, SysConfig
+from app.services.exam_structures import section_total
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +202,10 @@ def _validate_standard(raw: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
             return False, f"题型 {code} 的 count/score_per 非数值"
         if count <= 0 or score_per <= 0:
             return False, f"题型 {code} 的题量与单题分值必须为正"
-        subtotal += count * score_per
+        # 小计走 section_total：有阶梯分值序列时以序列之和为准，
+        # `count * score_per` 在 6/6/6/8/8/8/10/11/12 这类结构下算的是
+        # 平均值×题量，与总分对不上
+        subtotal += section_total(s)
     total = float(raw.get("total_score") or 0)
     if abs(round(subtotal, 2) - total) > 0.01:
         return False, f"小计 {round(subtotal, 2)} ≠ 总分 {total}"

@@ -132,6 +132,72 @@ def run_index_migrations(db: Session) -> List[str]:
     return applied
 
 
+def upgrade_draft_standards_to_spec(db: Session) -> List[str]:
+    """把「系统自动生成的命题标准草案」刷新为最新的分学科规范结构。
+
+    与 `upgrade_generic_standards` 的分工：
+    - 上一个函数认的是**更老的一版**（单选/填空/解答 10/5/5），精确匹配题型序列；
+    - 本函数认的是「一键生成草案」产出的记录，以
+      **description 里的固定文案**为标识（`系统按通用结构自动生成的草案`），
+      并在结构真的变化时才更新。
+
+    为什么需要它：模板从「按题库题型配额凑结构」改成「逐科对齐
+    《初中毕业学业水平考试试卷结构规范》」后，生产库里已有的草案仍是旧结构，
+    组卷继续按旧结构出卷 —— 代码改了但线上完全看不到效果。
+
+    为什么按 description 而非 source：`source='manual'` 既包含系统草案也包含
+    管理员手建的标准；只有草案带这句固定文案（见 `exam_standard.create_generic_standards`）。
+    管理员手工新建/编辑过的标准不会被误改。
+
+    幂等：结构一致即跳过（第二次启动不再命中）。
+    """
+    import json
+
+    from app.services.exam_structures import (
+        difficulty_gradient, exam_meta, sections_for,
+    )
+
+    marker = "系统按通用结构自动生成的草案"
+    try:
+        rows = db.execute(text(
+            "SELECT id, stage, subject_name, total_score, duration, sections,"
+            " difficulty_ratio, description FROM edu_exam_standard"
+        )).fetchall()
+    except Exception as exc:  # noqa: BLE001 表不存在（全新库）时跳过
+        logger.debug(f"草案结构刷新跳过：{exc}")
+        return []
+
+    refreshed: List[str] = []
+    for row in rows:
+        if marker not in str(row.description or ""):
+            continue
+        meta = exam_meta(row.stage, row.subject_name)
+        # 目标总分：有规范元信息时用「笔试卷面分」（英语 90，其余同卷面分），
+        # 否则沿用原值 —— 学科不在规范内（如体育）不该被改成 100/90。
+        target_score = float(meta["written_score"]) if meta else float(row.total_score or 100)
+        new_sections = sections_for(row.stage, row.subject_name, target_score)
+        new_json = json.dumps(new_sections, ensure_ascii=False)
+        if new_json == json.dumps(json.loads(row.sections or "[]"), ensure_ascii=False):
+            continue
+
+        new_diff = json.dumps(
+            difficulty_gradient(new_sections, row.subject_name), ensure_ascii=False)
+        new_duration = int(meta["duration"]) if meta else int(row.duration or 90)
+        db.execute(
+            text("UPDATE edu_exam_standard SET sections=:s, difficulty_ratio=:d,"
+                 " total_score=:t, duration=:u WHERE id=:i"),
+            {"s": new_json, "d": new_diff, "t": target_score,
+             "u": new_duration, "i": row.id},
+        )
+        refreshed.append(
+            f"{row.stage}/{row.subject_name}({row.total_score}→{target_score:g}分)")
+
+    if refreshed:
+        db.commit()
+        logger.warning(f"命题标准草案已刷新为规范结构（{len(refreshed)} 条）：{refreshed}")
+    return refreshed
+
+
 def upgrade_generic_standards(db: Session) -> List[str]:
     """把「旧通用结构」生成的命题标准草案，升级为分学段学科的真实考试结构。
 
@@ -180,7 +246,9 @@ def upgrade_generic_standards(db: Session) -> List[str]:
             text("UPDATE edu_exam_standard SET sections=:s, difficulty_ratio=:d WHERE id=:i"),
             {
                 "s": json.dumps(new_sections, ensure_ascii=False),
-                "d": json.dumps(difficulty_gradient(new_sections), ensure_ascii=False),
+                "d": json.dumps(
+                    difficulty_gradient(new_sections, row.subject_name),
+                    ensure_ascii=False),
                 "i": row.id,
             },
         )

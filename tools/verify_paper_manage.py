@@ -411,9 +411,17 @@ def main():
             fd = data_of(rf.json())
             check("返回 standard_fallback=true 明确标注结构来源",
                   fd.get("standard_fallback") is True, str(fd.get("standard_fallback")))
-            check("兜底结构含三类大题（单选/填空/解答）",
-                  len(fd.get("sections") or []) == 3,
-                  str([s.get("code") for s in (fd.get("sections") or [])]))
+            # 兜底结构 = 该学科的真实考试结构（初中生物：选择 10 + 非选择 4），
+            # 不再是早期的「单选/填空/解答」三题型近似结构。
+            # 断言同时校验题型种类与题量，避免退化成"只要有几类题就行"。
+            fallback_codes = [s.get("code") for s in (fd.get("sections") or [])]
+            fallback_count = sum(int(s.get("count") or 0)
+                                 for s in (fd.get("sections") or []))
+            check("兜底结构用学科真实结构（生物：单选+材料，14 题）",
+                  fallback_codes == ["single", "material"] and fallback_count == 14,
+                  f"{fallback_codes} 共 {fallback_count} 题")
+            check("兜底结构不含判断题（初中生物规范未设）",
+                  "judge" not in fallback_codes, str(fallback_codes))
             check("提示语说明用的是通用结构",
                   "通用结构" in str(fd.get("message") or ""), str(fd.get("message"))[:120])
             check("提示语不自相矛盾（不能既说按命题标准又说没有标准）",

@@ -48,6 +48,7 @@ from app.models import (
 )
 from app.services import paper_compose_service as compose_svc
 from app.services import llm_breaker
+from app.services.exam_structures import section_total, sections_for
 from app.services.question_access import question_usable_error
 from app.services.paper_export_service import (
     build_answer_sheet, build_docx, build_pdf,
@@ -237,7 +238,12 @@ def _resolve_standard(
 
 # ---------------------------------------------------------------- 参数解析
 def _parse_sections_input(raw: Any) -> Optional[List[Dict[str, Any]]]:
-    """前端自定义题型结构：允许只给 code/count/score_per。"""
+    """前端自定义题型结构：允许给 code/count/score_per，或 code/count/score_pattern。
+
+    `score_pattern` 是「同一大题内每题分值不同」的分值序列（数学解答题
+    6/6/6/8·、化学选择 8×1+5×2）。只给序列不给 score_per 时按平均值补上，
+    因为下游多处只读 score_per（报告展示、补题默认分值）。
+    """
     if raw in (None, "", []):
         return None
     if not isinstance(raw, list):
@@ -256,13 +262,18 @@ def _parse_sections_input(raw: Any) -> Optional[List[Dict[str, Any]]]:
             raise BusinessException("题型题量/分值必须为数字")
         if count <= 0:
             continue  # 题量 0 视为不需要该题型，忽略而非报错
-        if score_per <= 0:
+        pattern = compose_svc.parse_score_pattern(item.get("score_pattern"), count)
+        if pattern:
+            if score_per <= 0:
+                score_per = round(sum(pattern) / count, 2)
+        elif score_per <= 0:
             raise BusinessException(f"题型「{TYPE_LABEL[code]}」单题分值必须大于 0")
         result.append({
             "code": code,
             "name": str(item.get("name") or TYPE_LABEL[code])[:64],
             "count": count,
             "score_per": round(score_per, 2),
+            **({"score_pattern": pattern} if pattern else {}),
             "difficulty": str(item.get("difficulty") or "medium"),
             "sort": idx,
         })
@@ -415,6 +426,7 @@ def _fill_one_gap(
     gap: Dict[str, Any], *,
     user_id: int, is_admin: bool, grade_id: int, subject_id: int,
     default_diff: str,
+    used_ids: Optional[set] = None,
 ) -> Dict[str, Any]:
     """为**单个大题**补题，跑在自己的 Session 里（因此可并行）。
 
@@ -493,7 +505,8 @@ def _fill_one_gap(
                 qid = q.get("id") or q.get("question_id")
                 if not qid:
                     continue
-                qrow = db.get(Question, int(qid))
+                qid_int = int(qid)
+                qrow = db.get(Question, qid_int)
                 if not qrow:
                     continue
                 # 1) 只接受当前用户可用的题：规则引擎 fallback 会复用「任意已发布题」，
@@ -508,12 +521,33 @@ def _fill_one_gap(
                 # 3) 题干近似去重：与题库已有题、本批已采纳的题都不能撞。
                 #    跳过重复会让缺口补不满，但比把 10 道同义题塞进卷子好 ——
                 #    缺题会如实上报，重复题打印出来是事故。
-                stem_key = _stem_key(qrow.stem)
-                if any(_is_similar_stem(stem_key, k) for k in existing_keys) \
-                        or any(_is_similar_stem(stem_key, k) for k in new_keys):
-                    skipped_dup += 1
-                    continue
-                new_keys.append(stem_key)
+                #
+                #    **只对 AI 新造的题（draft）做去重**：无 LLM 时
+                #    `QuestionGeneratorAgent` 走 `fallback()`，它是从题库
+                #    检索复用（只取 published），与题库必然 100% 相似 ——
+                #    一律去重会让"AI 补题"在降级路径上永远补不到题，
+                #    表现为"模型未启用 → 整卷缺口补不上"。
+                #    published 的题由本卷已用集合（plan 级全局互斥）拦重复。
+                if qrow.status != "draft":
+                    if qid_int in (used_ids or ()):
+                        continue
+                else:
+                    stem_key = _stem_key(qrow.stem)
+                    if any(_is_similar_stem(stem_key, k) for k in existing_keys) \
+                            or any(_is_similar_stem(stem_key, k) for k in new_keys):
+                        skipped_dup += 1
+                        continue
+                    new_keys.append(stem_key)
+                # 按位置取分：该大题在本题库中已抽到 got 道，本次补的是第
+                # got+filled 道。阶梯分值（数学解答题 6/6/6/8…、化学选择
+                # 8×1+5×2）靠这一步才能保住，否则补出来的题全是平均分，
+                # 压轴题的 11、12 分会被抹成 8 分。
+                pos = int(gap.get("got", 0)) + out["filled"]
+                pattern = gap.get("score_pattern") or []
+                if isinstance(pattern, (list, tuple)) and pos < len(pattern):
+                    score_one = float(pattern[pos])
+                else:
+                    score_one = float(gap.get("score_per") or 0)
                 out["filled"] += 1
                 progressed += 1
                 out["items"].append({
@@ -522,7 +556,9 @@ def _fill_one_gap(
                     "type_label": TYPE_LABEL.get(qrow.type, qrow.type),
                     "stem": qrow.stem,
                     "difficulty": qrow.difficulty or gdiff,
-                    "score": round(float(gap.get("score_per") or 0), 2),
+                    "score": round(score_one, 2),
+                    # 卷面槽位：_renumber 按它排序，保证「第 N 题拿第 N 档分值」
+                    "section_pos": pos,
                     "section_code": gtype,
                     "section_name": name,
                     "section_sort": gap.get("sort", 0),
@@ -610,9 +646,13 @@ def _ai_fill_gaps(
                 "请改用「仅使用题库」或稍后重试")
 
     workers = max(1, min(int(settings.AI_FILL_CONCURRENCY or 1), len(pending), 4))
+    # 本卷已抽到的题：补题时用于拦住"复用题库时把同一道题再补一遍"。
+    # 转成 set 是为了在子线程里做 O(1) 判断（只传标量/容器，不传 ORM 对象）。
+    used_ids = set(plan.used_question_ids)
     tasks = [
         (g, dict(user_id=user_id, is_admin=is_admin, grade_id=grade_id,
-                 subject_id=subject_id, default_diff=default_diff))
+                 subject_id=subject_id, default_diff=default_diff,
+                 used_ids=used_ids))
         for g in pending
     ]
     total_gaps = len(tasks)
@@ -785,8 +825,7 @@ def _plan_response(ctx: Dict[str, Any], *, ai_message: str = "") -> Dict[str, An
     # 卷面体检：期望总分按 sections 算（plan.total_score 是"已抽到题目之和"，
     # 用它当基准永远相等，等于没检查）。有缺口时合计天然小于总分，跳过该检查。
     expected_total = round(sum(
-        float(s["count"]) * float(s["score_per"])
-        for s in (ctx.get("sections") or [])
+        section_total(s) for s in (ctx.get("sections") or [])
     ), 2) or None
     body = {
         "grade_id": ctx["grade"].id, "grade_name": ctx["grade"].name,
@@ -932,7 +971,10 @@ def compose_ai(
     # 题型分布（type_ratio）→ sections：AI 常用 {"single":10} 形式
     if not merged.get("sections") and parsed.get("type_ratio"):
         merged["sections"] = _type_ratio_to_sections(
-            parsed["type_ratio"], merged.get("total_score") or 100)
+            parsed["type_ratio"], merged.get("total_score") or 100,
+            stage=getattr(anchor_grade, "stage", None),
+            subject_name=getattr(anchor_subject, "name", None),
+        )
 
     if not merged.get("grade_id") or not merged.get("subject_id"):
         raise BusinessException(
@@ -951,12 +993,21 @@ def compose_ai(
     return ok(_plan_response(ctx, ai_message=message))
 
 
-def _type_ratio_to_sections(type_ratio: Any, total_score: float) -> List[Dict[str, Any]]:
-    """把 {"single":10,"blank":5} 转成 sections（分值按题量均摊。
+def _type_ratio_to_sections(
+    type_ratio: Any, total_score: float, *,
+    stage: Optional[str] = None, subject_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """把 {"single":10,"blank":5} 转成 sections。
 
     **非法题型直接丢弃并记日志**——旧实现把 `fill`/`solve` 这类不在枚举里的
     key 静默忽略，导致"要求 10 题只出 4 题"且毫无提示。
     这里至少把丢弃行为写进日志，并在 sections 为空时由上层报错。
+
+    分值分配优先沿用**学科标准模板的阶梯形状**（数学解答题 6/6/6/8/8/8/10/11/12、
+    化学选择题 8×1+5×2）：AI 只解析出题型比例，没有每题分值，若一律均摊，
+    真实卷面的难度梯度会被抹平，压轴题和送分题同分。
+    只在「AI 给的题量与该大题模板题量一致」时套用形状，否则均摊
+    —— 题量对不上还硬套形状会算出「第 9 题 11 分但只有 6 题」这类错位。
     """
     if not isinstance(type_ratio, dict):
         return []
@@ -990,9 +1041,40 @@ def _type_ratio_to_sections(type_ratio: Any, total_score: float) -> List[Dict[st
         logger.warning("AI 只给出 1 种题型（%s），已忽略并改用命题标准结构",
                        [s["code"] for s in result])
         return []
-    score_per = round(float(total_score) / total_count, 2)
-    for s in result:
-        s["score_per"] = score_per
+
+    try:
+        ref = {s["code"]: s for s in sections_for(
+            stage=stage, subject_name=subject_name, total_score=float(total_score or 100))}
+    except Exception:  # noqa: BLE001 - 模板不可用不该阻断组卷
+        logger.warning("取学科结构模板失败，分值按均摊处理", exc_info=True)
+        ref = {}
+
+    base = round(float(total_score or 100) / total_count, 2)
+    acc = 0.0
+    for pos, s in enumerate(result):
+        count = int(s["count"])
+        # 末档吸收舍入误差，保证合计精确等于试卷总分
+        if pos == len(result) - 1:
+            sec_total = round(float(total_score or 100) - acc, 2)
+        else:
+            sec_total = round(base * count, 2)
+        pat = (ref.get(s["code"]) or {}).get("score_pattern")
+        if isinstance(pat, (list, tuple)) and len(pat) == count:
+            old = sum(float(x) for x in pat)
+            if old > 0:
+                ratio = sec_total / old
+                new_pat = [round(float(x) * ratio, 2) for x in pat]
+                drift = round(sec_total - sum(new_pat), 2)
+                if drift:
+                    new_pat[-1] = round(new_pat[-1] + drift, 2)
+                s["score_pattern"] = new_pat
+                s["score_per"] = round(sec_total / count, 2)
+                acc = round(acc + sum(new_pat), 2)
+                continue
+        sec_total = round(sec_total / count, 2) * count
+        sec_total = round(sec_total, 2)
+        s["score_per"] = round(sec_total / count, 2)
+        acc = round(acc + sec_total, 2)
     return result
 
 
@@ -1148,6 +1230,10 @@ def _normalize_items(
             "section_code": str(raw.get("section_code") or q.type)[:32],
             "section_name": str(raw.get("section_name") or TYPE_LABEL.get(q.type, "综合题"))[:64],
             "section_sort": int(raw.get("section_sort") or 0),
+            # 传入顺序即教师看到的卷面顺序，记成槽位。`_renumber` 优先按它排，
+            # 否则保存时会按 question_id 重排 —— 阶梯分值（第 9 题 12 分）
+            # 会和题目错位，教师改完卷一保存分值就乱了。
+            "section_pos": idx - 1,
             "score_override": bool(raw.get("score_override", False)),
         })
     return result
@@ -1667,6 +1753,9 @@ def restructure_paper(
         "section_name": it.section_name
         or TYPE_LABEL.get(it.question.type if it.question else "single", "综合题"),
         "section_sort": it.section_sort or 0,
+        # 沿用已落库的题序：本接口只重建大题名/大题号，不应顺手重排题目，
+        # 否则阶梯分值（第 9 题 12 分）会换到别的题上
+        "section_pos": it.sort_order or 0,
         "score_override": it.score_override,
     } for it in paper.items]
 

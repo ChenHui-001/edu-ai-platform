@@ -111,9 +111,11 @@
           </template>
           <div class="std-sections">
             题型结构：
-            <el-tag v-for="s in currentStandard.sections" :key="s.code" size="small"
+            <!-- key 不能用 code：真实卷面同一题型会拆成多个板块（语文的
+                 「古诗文阅读」与「整本书阅读」都是材料题），code 会重复 -->
+            <el-tag v-for="(s, si) in currentStandard.sections" :key="si" size="small"
                     style="margin-right:6px">
-              {{ typeLabel[s.code] || s.code }} {{ s.count }}题×{{ s.score_per }}分
+              {{ typeLabel[s.code] || s.code }} {{ sectionScoreLabel(s) }}
             </el-tag>
           </div>
         </el-alert>
@@ -161,19 +163,29 @@
             <el-table-column label="题量" width="100">
               <template #default="{ row }">
                 <el-input-number v-model="row.count" :min="0" :max="100" size="small"
-                                 controls-position="right" style="width:100%" />
+                                 controls-position="right" style="width:100%"
+                                 @change="onSectionCountChange(row)" />
               </template>
             </el-table-column>
-            <el-table-column label="单题分值" width="110">
+            <el-table-column label="单题分值" width="150">
               <template #default="{ row }">
-                <el-input-number v-model="row.score_per" :min="0.5" :max="100" :step="0.5"
-                                 :precision="1" size="small" controls-position="right"
-                                 style="width:100%" />
+                <!-- 阶梯分值（数学解答题 6/6/6/8…、化学选择 8×1+5×2）不能
+                     用单个数字表示，显示为一个可查看序列的标签；要改回均分
+                     得显式确认，避免误点把梯度抹平 -->
+                <el-tooltip v-if="hasScorePattern(row)" placement="top"
+                            :content="'每题分值：' + row.score_pattern.join(' / ') +
+                                      '（点击改为统一分值）'">
+                  <el-tag size="small" type="info" style="cursor:pointer"
+                          @click="flattenPattern(row)">分段</el-tag>
+                </el-tooltip>
+                <el-input-number v-else v-model="row.score_per" :min="0.5" :max="100"
+                                 :step="0.5" :precision="1" size="small"
+                                 controls-position="right" style="width:100%" />
               </template>
             </el-table-column>
             <el-table-column label="小计" width="90" align="center">
               <template #default="{ row }">
-                {{ round2((row.count || 0) * (row.score_per || 0)) }}
+                {{ sectionScoreTotal(row) }}
               </template>
             </el-table-column>
             <el-table-column width="70" align="center">
@@ -491,7 +503,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Back, Delete, Edit, MagicStick, Plus, Refresh, Sort, Tickets
 } from '@element-plus/icons-vue'
@@ -502,6 +514,8 @@ import {
   buildComposePayload as wizardBuildComposePayload,
   requiresGradeSubject,
   isComposeButtonDisabled,
+  sectionScoreTotal,
+  sectionScoreLabel,
   AI_MODE_SOURCE,
 } from '@/utils/paperWizard'
 
@@ -604,11 +618,42 @@ const difficultySum = computed(() =>
   (form.difficulty_ratio.hard || 0))
 
 const sectionsTotal = computed(() =>
-  round2(form.sections.reduce(
-    (sum, s) => sum + (s.count || 0) * (s.score_per || 0), 0)))
+  round2(form.sections.reduce((sum, s) => sum + sectionScoreTotal(s), 0)))
 
 const scoreMismatch = computed(() =>
   form.sections.length > 0 && Math.abs(sectionsTotal.value - form.total_score) > 0.01)
+
+function hasScorePattern(row) {
+  return Array.isArray(row?.score_pattern) && row.score_pattern.length > 0
+}
+
+/**
+ * 题量变化后校验阶梯分值序列长度：改题量会让序列长度对不上，
+ * 后端会静默退化成均分。这里直接清掉并提示，避免"改了题量分值悄悄变成均分"。
+ */
+function onSectionCountChange(row) {
+  if (!hasScorePattern(row)) return
+  if (row.score_pattern.length === (row.count || 0)) return
+  delete row.score_pattern
+  ElMessage.info(`「${row.name}」题量已改，原先的分段分值不适用，已改为统一 ${row.score_per} 分`)
+}
+
+/** 分段分值 → 统一分值（需确认：梯度一旦抹平就找不回来了） */
+function flattenPattern(row) {
+  if (!hasScorePattern(row)) return
+  const pattern = [...row.score_pattern]
+  ElMessageBox.confirm(
+    `「${row.name}」当前每题分值为 ${pattern.join(' / ')}，` +
+    '改为统一分值会失去难度梯度（压轴题与送分题同分）。确定要改吗？',
+    '改为统一分值',
+    { type: 'warning', confirmButtonText: '确定改', cancelButtonText: '保留分段' }
+  ).then(() => {
+    const avg = Math.round((pattern.reduce((a, b) => a + b, 0) / pattern.length) * 100) / 100
+    delete row.score_pattern
+    row.score_per = avg
+    ElMessage.success(`已改为每题 ${avg} 分`)
+  }).catch(() => {})
+}
 
 /**
  * 按钮禁用原因（空串 = 可提交）。判定实体在 `utils/paperWizard.js`，
@@ -818,7 +863,11 @@ function onStandardChange() {
   form.duration = std.duration
   saveForm.duration = std.duration
   form.sections = std.sections.map(s => ({
-    code: s.code, name: s.name, count: s.count, score_per: s.score_per
+    code: s.code, name: s.name, count: s.count, score_per: s.score_per,
+    // 阶梯分值必须一起带过来，否则数学解答题 6/6/6/8/8/8/10/11/12、
+    // 化学选择 8×1+5×2 会在点「选择标准」的瞬间退化成均分
+    ...(Array.isArray(s.score_pattern) && s.score_pattern.length
+      ? { score_pattern: [...s.score_pattern] } : {})
   }))
   if (std.difficulty_ratio) {
     form.difficulty_ratio = { ...std.difficulty_ratio }

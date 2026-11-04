@@ -23,6 +23,10 @@ from app.models import ExamStandard, Grade, Paper, Subject, User
 from app.services.exam_standard_seed import (
     DEFAULT_DIFFICULTY, VALID_TYPES, seed_exam_standards,
 )
+from app.services.exam_structures import (
+    exam_meta, section_total,
+)
+from app.services.paper_compose_service import parse_score_pattern
 from app.utils.common import PageParams, dictify, ok
 
 router = APIRouter(prefix="/question/standards", tags=["命题标准"])
@@ -59,6 +63,10 @@ def _validate_sections(sections: Any, total_score: float) -> List[Dict[str, Any]
 
     小计必须等于总分：否则卷面分与「总分 100」自相矛盾，
     发布任务时及格线（总分×60%）会算错，且导出卷面分数加不平。
+
+    支持 `score_pattern`（同一大题内每题分值不同）：传了序列就按序列求和，
+    此时 `score_per` 只是平均值、**不参与小计**——否则数学解答题
+    6/6/6/8/8/8/10/11/12 会被算成 9×8.33=75 以外的数，与总分对不上。
     """
     if not isinstance(sections, list) or not sections:
         raise BusinessException("题型结构不能为空")
@@ -78,7 +86,11 @@ def _validate_sections(sections: Any, total_score: float) -> List[Dict[str, Any]
             raise BusinessException(f"第 {idx} 个大题的题量/分值必须为数字")
         if count <= 0:
             raise BusinessException(f"第 {idx} 个大题题量必须大于 0")
-        if score_per <= 0:
+        pattern = parse_score_pattern(raw.get("score_pattern"), count)
+        if pattern:
+            if score_per <= 0:
+                score_per = round(sum(pattern) / count, 2)
+        elif score_per <= 0:
             raise BusinessException(f"第 {idx} 个大题单题分值必须大于 0")
         difficulty = str(raw.get("difficulty") or "medium").strip()
         if difficulty not in ("easy", "medium", "hard"):
@@ -88,10 +100,11 @@ def _validate_sections(sections: Any, total_score: float) -> List[Dict[str, Any]
             "name": str(raw.get("name") or "").strip()[:64] or f"第{idx}大题",
             "count": count,
             "score_per": round(score_per, 2),
+            **({"score_pattern": pattern} if pattern else {}),
             "difficulty": difficulty,
             "sort": idx,
         })
-        subtotal += count * score_per
+        subtotal += section_total(cleaned[-1])
     if abs(round(subtotal, 2) - round(float(total_score), 2)) > 0.01:
         raise BusinessException(
             f"题型分值小计 {round(subtotal, 2)} 与总分 {total_score} 不一致，请调整题量或单题分值")
@@ -416,9 +429,10 @@ def generate_missing_standards(
     草案口径（全部可编辑，**不是权威结构**）：
     - 学段：由 edu_grade.stage 推导（primary/junior）
     - 考试类型：小学 final（期末）、初中 hsee（学业水平考试），与内置种子一致
-    - 总分：初中语数英 120，物理 70、化学 50、道法/历史 60、地理/生物 50，
-      其余 100；小学统一 100
-    - 时长：小学 90 分钟；初中 120 分卷 120 分钟、其余 60 分钟
+    - 总分与时长：初中取 `exam_structures.EXAM_META`（规范值：语文 120 分/150 分钟、
+      物理 70 分/70 分钟、地理 50 分/45 分钟…），小学沿用 100 分/90 分钟。
+      **英语按笔试 90 分建**：规范卷面 120 = 笔试 90 + 听说 30，听说机考另行组织，
+      系统只能组纸笔卷，按 120 建会多出 30 分无处落地。
     - 题型结构：与组卷兜底**同一实现**（paper_compose_service.generic_sections）
     """
     from app.services.exam_structures import difficulty_gradient
@@ -440,8 +454,6 @@ def generate_missing_standards(
         ).all()
     }
 
-    junior_score = {"物理": 70, "化学": 50, "道德与法治": 60,
-                    "历史": 60, "地理": 50, "生物": 50}
     stage_label = {"primary": "小学", "junior": "初中"}
 
     created: List[Dict[str, Any]] = []
@@ -453,13 +465,15 @@ def generate_missing_standards(
         if (stage, subject_name, exam_type) in existing:
             skipped += 1
             continue
-        if stage == "primary":
+        meta = exam_meta(stage, subject_name)
+        if meta:
+            total = float(meta["written_score"])
+            duration = int(meta["duration"])
+            note = str(meta.get("note") or "")
+        else:
             total = 100.0
             duration = 90
-        else:
-            total = float(120 if subject_name in ("语文", "数学", "英语")
-                          else junior_score.get(subject_name, 100))
-            duration = 120 if total >= 120 else 60
+            note = ""
         sections = generic_sections(total, stage=stage, subject_name=subject_name)
         std = ExamStandard(
             name=f"湖北省{stage_label.get(stage, '')}{subject_name}"
@@ -470,8 +484,11 @@ def generate_missing_standards(
             # 难度分布由题型结构反推（每道大题自带难度，前面易后面难），
             # 不再一律套 30/50/20 —— 结构与难度不匹配时，组卷会先按比例抽，
             # 结果「最后一题不难、前面反而难」，与卷面梯度矛盾。
-            difficulty_ratio=json.dumps(difficulty_gradient(sections), ensure_ascii=False),
-            description="系统按通用结构自动生成的草案：题量/分值请按教研要求修订。",
+            # 初中各科取规范的分科难度区间（化学 70/20/10、数学 50/30/20…）。
+            difficulty_ratio=json.dumps(
+                difficulty_gradient(sections, subject_name), ensure_ascii=False),
+            description="系统按通用结构自动生成的草案：题量/分值请按教研要求修订。"
+                        + (f"（{note}）" if note else ""),
             is_active=True, is_default=True,
             # 用 manual 而不是新造 source 值：reset 只认 seed，
             # 草案本就不该有"恢复内置值"的语义（它没有内置值）。

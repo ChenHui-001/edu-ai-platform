@@ -111,7 +111,7 @@ async def lifespan(app: FastAPI):
         from app.core.db_migrations import (
             run_column_migrations, run_index_migrations,
             run_knowledge_v2_migration, run_question_v2_migration,
-            upgrade_generic_standards,
+            upgrade_generic_standards, upgrade_draft_standards_to_spec,
         )
 
         _mig_db = SessionLocal()
@@ -129,6 +129,11 @@ async def lifespan(app: FastAPI):
             upgraded_std = upgrade_generic_standards(_mig_db)
             if upgraded_std:
                 logger.warning(f"已升级命题标准结构: {upgraded_std}")
+            # 草案刷新必须在上一行之后：先把最老的 3 题型草案升级上来，
+            # 再统一对齐到分学科规范结构（新版模板逐科对齐了中考卷规范）。
+            refreshed_std = upgrade_draft_standards_to_spec(_mig_db)
+            if refreshed_std:
+                logger.warning(f"已按规范刷新命题标准草案: {refreshed_std}")
             run_knowledge_v2_migration(_mig_db)
             # 题库 V2：首次启动清空历史题库（用户已确认可删；放在知识库迁移之后）
             run_question_v2_migration(_mig_db)
