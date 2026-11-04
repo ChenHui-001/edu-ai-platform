@@ -644,6 +644,12 @@ def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict
 def _plan_response(ctx: Dict[str, Any], *, ai_message: str = "") -> Dict[str, Any]:
     plan = ctx["plan"]
     std = ctx["standard"]
+    # 卷面体检：期望总分按 sections 算（plan.total_score 是"已抽到题目之和"，
+    # 用它当基准永远相等，等于没检查）。有缺口时合计天然小于总分，跳过该检查。
+    expected_total = round(sum(
+        float(s["count"]) * float(s["score_per"])
+        for s in (ctx.get("sections") or [])
+    ), 2) or None
     body = {
         "grade_id": ctx["grade"].id, "grade_name": ctx["grade"].name,
         "subject_id": ctx["subject"].id, "subject_name": ctx["subject"].name,
@@ -664,6 +670,10 @@ def _plan_response(ctx: Dict[str, Any], *, ai_message: str = "") -> Dict[str, An
         # 掌握度图谱与复习计划在这门课上必然失效。让前端能明确提示，
         # 而不是让教师以为"AI 没识别出考点"。
         "knowledge_point_missing": bool(ctx.get("kp_missing")),
+        # 卷面体检结果（空数组 = 通过）。前端在预览页顶部按 level 显示，
+        # error 用红色（打印会出错），warn 用黄色（不合常规但可用）。
+        "issues": compose_svc.audit_paper(
+            plan.items, total_score=expected_total, has_gaps=bool(plan.gaps)),
     }
     if ai_message:
         body["message"] = ai_message
@@ -922,6 +932,19 @@ def compose_save(
         "id": paper.id, "name": paper.name, "total_score": paper.total_score,
         "item_count": len(normalized), "version": paper.current_version,
         "gaps": ctx["plan"].gaps,
+        # 保存后的体检用**落库后的真实题项**（_write_items 已重排题号），
+        # 而不是入参 normalized —— 入参顺序可能被重排，按它检查会误报题号不连续。
+        "issues": compose_svc.audit_paper(
+            [{
+                "question_id": it.question_id,
+                "type": it.question.type if it.question else None,
+                "section_code": it.section_code,
+                "section_name": it.section_name,
+                "score": float(it.score or 0),
+                "sort_order": it.sort_order,
+            } for it in sorted(paper.items, key=lambda x: x.sort_order or 0)],
+            total_score=float(paper.total_score or 0) or None,
+        ),
     }, message="试卷已保存")
 
 
@@ -1183,6 +1206,22 @@ def _build_preview(db: Session, paper: Paper, *, mode: str = "teacher") -> Dict[
         "generation_params": _load_json(paper.generation_params),
         "creator_name": db.scalar(select(User.real_name).where(User.id == paper.creator_id)),
     })
+    # 卷面体检：把 sections 摊平后复核一遍，让教师在打印前看到缺陷。
+    # 这里检查的是**已落库的真实数据**，能暴露历史试卷的问题
+    # （早期生成器留下的重复题、作文错位），不只是新生成的卷子。
+    flat: List[Dict[str, Any]] = []
+    for sec in sections:
+        for it in sec["items"]:
+            flat.append({
+                "question_id": it.get("question_id"),
+                "type": it.get("type"),
+                "section_code": sec.get("code"),
+                "section_name": sec.get("name"),
+                "score": it.get("score"),
+                "sort_order": it.get("sort_order"),
+            })
+    d["issues"] = compose_svc.audit_paper(
+        flat, total_score=float(paper.total_score or 0) or None)
     return d
 
 
@@ -1248,6 +1287,19 @@ def update_items(
         "id": paper.id, "total_score": paper.total_score,
         "item_count": len(items), "version": paper.current_version,
         "dropped_answers": write_stat.get("dropped", 0),
+        # 保存后体检：编辑页保存完就能看到"这份卷子还能不能直接打印"。
+        # 用落库后的题项（已重排题号），不用入参 items。
+        "issues": compose_svc.audit_paper(
+            [{
+                "question_id": it.question_id,
+                "type": it.question.type if it.question else None,
+                "section_code": it.section_code,
+                "section_name": it.section_name,
+                "score": float(it.score or 0),
+                "sort_order": it.sort_order,
+            } for it in sorted(paper.items, key=lambda x: x.sort_order or 0)],
+            total_score=float(paper.total_score or 0) or None,
+        ),
         **affected,
     }, message=msg)
 

@@ -779,3 +779,102 @@ def _balance_text(coverage: Dict[str, int]) -> str:
     if spread <= 2:
         return "知识点分布基本均衡"
     return "知识点分布不均，建议人工调整部分题目"
+
+
+# ---------------------------------------------------------------- 卷面体检
+def audit_paper(
+    items: List[Dict[str, Any]],
+    *,
+    total_score: Optional[float] = None,
+    has_gaps: bool = False,
+) -> List[Dict[str, str]]:
+    """检查卷面是否符合「可直接打印」的规范，返回问题列表（空 = 通过）。
+
+    **只报告、不阻断**。组卷过程里已经有硬校验（跨大题去重、题型与大题
+    一致），这一层是兜底复核，作用有三：
+      1. 防以后新增的组卷入口绕过那些校验（新增路径最容易漏）；
+      2. 暴露历史数据问题（早期生成的卷子可能已有重复题）；
+      3. 让教师在打印前看到卷面缺陷，而不是发给学生后才发现。
+
+    level 语义：
+      error —— 打印出来会出错（重复题、总分对不上、作文不在末位）
+      warn  —— 不影响正确性但不合常规（大题顺序、题号跳号、大题混排题型）
+    """
+    issues: List[Dict[str, str]] = []
+    if not items:
+        return [{"level": "warn", "code": "empty", "message": "试卷还没有题目"}]
+
+    def _code(it: Dict[str, Any]) -> str:
+        return str(it.get("section_code") or it.get("type") or "").strip().lower()
+
+    codes = [_code(it) for it in items]
+
+    # 1) 重复题：一卷之内同一 question_id 只能出现一次
+    seen: set = set()
+    dups: List[Any] = []
+    for it in items:
+        qid = it.get("question_id")
+        if qid in seen:
+            dups.append(qid)
+        else:
+            seen.add(qid)
+    if dups:
+        sample = "、".join(str(d) for d in dups[:5])
+        more = f" 等 {len(dups)} 道" if len(dups) > 5 else ""
+        issues.append({
+            "level": "error", "code": "duplicate",
+            "message": f"有题目被重复收录（question_id={sample}{more}），打印后会出现两张相同的题目",
+        })
+
+    # 2) 作文必须是最后一题（语文/英语卷的硬性卷面规范）
+    comp_idx = [i for i, c in enumerate(codes) if c == "composition"]
+    if comp_idx and max(comp_idx) != len(codes) - 1:
+        issues.append({
+            "level": "error", "code": "composition_not_last",
+            "message": "作文题不是最后一题，不符合卷面规范",
+        })
+
+    # 3) 大题顺序与常规试卷不一致（选择→判断→填空→简答→作文）
+    ranks = [type_rank(c) for c in codes]
+    if any(ranks[i] > ranks[i + 1] for i in range(len(ranks) - 1)):
+        issues.append({
+            "level": "warn", "code": "section_order",
+            "message": "大题顺序与常规试卷不一致（应为 单选→多选→判断→填空→简答→计算→材料→作文）",
+        })
+
+    # 4) 题号连续（打印后跳号会被当成漏题）
+    sorts = [it.get("sort_order") for it in items]
+    if all(isinstance(s, int) for s in sorts) and sorts != list(range(1, len(sorts) + 1)):
+        issues.append({
+            "level": "warn", "code": "numbering",
+            "message": "题号不连续，打印后会出现跳号",
+        })
+
+    # 5) 分项合计与试卷总分一致。
+    # **有缺口时不检查**：题库不足导致的「计划 25 题只抽到 18 题」本来就会让
+    # 合计小于总分，那是缺口问题，已经由 gaps 单独上报；这里再报一次
+    # 「总分不一致」只会让教师以为是数据错误。
+    if total_score is not None and not has_gaps:
+        try:
+            subtotal = round(sum(float(it.get("score") or 0) for it in items), 2)
+            if abs(subtotal - float(total_score)) > 0.01:
+                issues.append({
+                    "level": "error", "code": "score_mismatch",
+                    "message": f"题目分值合计 {subtotal:g} 分，与试卷总分 {float(total_score):g} 分不一致",
+                })
+        except (TypeError, ValueError):
+            pass
+
+    # 6) 同一大题内不应混排多种题型
+    by_section: Dict[str, set] = {}
+    for it in items:
+        sec = str(it.get("section_name") or it.get("section_code") or "")
+        by_section.setdefault(sec, set()).add(_code(it))
+    mixed = [sec for sec, types in by_section.items() if len(types) > 1]
+    if mixed:
+        issues.append({
+            "level": "warn", "code": "section_mixed_types",
+            "message": f"以下大题混排了多种题型：{'、'.join(mixed[:3])}",
+        })
+
+    return issues

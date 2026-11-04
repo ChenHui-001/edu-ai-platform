@@ -285,6 +285,18 @@
 
     <!-- ============ Step 3：预览调整 ============ -->
     <div v-if="step === 2">
+      <!-- 卷面体检：error 会直接影响打印（重复题/总分不符/作文不在末位） -->
+      <el-alert v-for="(iss, i) in issues.filter(x => x.level === 'error')" :key="'ie' + i"
+                type="error" :closable="false" show-icon class="gap-alert"
+                :title="iss.message" />
+      <el-alert v-if="issues.some(x => x.level === 'warn')" type="warning"
+                :closable="false" show-icon class="gap-alert">
+        <template #title>卷面提示（不影响使用，建议调整后再打印）</template>
+        <div v-for="(iss, i) in issues.filter(x => x.level === 'warn')" :key="'iw' + i">
+          {{ iss.message }}
+        </div>
+      </el-alert>
+
       <!-- 缺口提示 -->
       <el-alert v-if="gaps.length" type="warning" :closable="false" show-icon class="gap-alert">
         <template #title>题库题目不足，以下大题存在缺口</template>
@@ -542,6 +554,7 @@ watch(() => form.mode, (mode) => {
 const previewItems = ref([])
 const gaps = ref([])
 const aiMessage = ref('')
+const issues = ref([])
 const reports = ref({})
 const composedCtx = ref(null)
 
@@ -856,6 +869,7 @@ async function doCompose() {
     previewItems.value = data.items || []
     gaps.value = data.gaps || []
     aiMessage.value = data.message || ''
+    issues.value = data.issues || []
     reports.value = {
       difficulty_report: data.difficulty_report,
       knowledge_report: data.knowledge_report,
