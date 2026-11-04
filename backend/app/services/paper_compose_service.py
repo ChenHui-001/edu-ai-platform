@@ -175,6 +175,45 @@ def parse_sections(standard: Optional[ExamStandard]) -> List[Dict[str, Any]]:
     return result
 
 
+# 标准试卷的题型顺序。真实卷面的先后由**题型本身**决定，而不是「谁先传进来」：
+#   - AI 解析出的 type_ratio 是 dict，顺序取决于模型输出的键序；
+#   - 用户自定义 sections 时也可能把作文放前面；
+#   - `_parse_sections_input` 按入参顺序赋 sort（1..n）。
+# 三种来源都可能让作文不落在末位（用户实测：语文卷作文夹在中间）。
+# 因此 sections 一经确定就必须按这张表重排，这是「试卷规范」的一部分。
+SECTION_TYPE_ORDER: List[str] = [
+    "single", "multiple", "judge", "blank",
+    "short", "calc", "material", "composition",
+]
+
+
+def type_rank(code: Any) -> int:
+    """题型的规范位次（未知题型排最后，不会插到作文后面）。"""
+    try:
+        return SECTION_TYPE_ORDER.index(str(code or "").strip().lower())
+    except ValueError:
+        return len(SECTION_TYPE_ORDER)
+
+
+def normalize_section_order(sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按题型规范重排大题并重赋 sort（1..n）。
+
+    **稳定排序**：同一题型保持原有相对顺序。英语卷常有两个 `single` 大题
+    （听力理解、单项选择），它们之间的先后是教师刻意安排的，不能被互换。
+
+    作文/写作（composition）在表里排最后，因此任何来源的 sections 排完后
+    它都落在末位 —— 这是用户明确要求的卷面规范。
+    """
+    if not sections:
+        return sections
+    indexed = list(enumerate(sections))
+    indexed.sort(key=lambda p: (type_rank(p[1].get("code")), p[0]))
+    return [
+        {**sec, "sort": new_sort}
+        for new_sort, (_, sec) in enumerate(indexed, start=1)
+    ]
+
+
 def default_sections(total_score: float = 100, count: int = 20) -> List[Dict[str, Any]]:
     """无标准可用时的兜底结构：单选题为主，分值均摊后补齐总分。"""
     count = max(1, count)
@@ -351,7 +390,11 @@ def compose(
     plan = ComposePlan()
     kp_ids = [int(k) for k in (kp_ids or []) if k]
     ratio = normalize_difficulty(difficulty_ratio)
-    sections = sections or parse_sections(standard) or default_sections()
+    # 结构确定后立刻按题型规范重排：作文必须落在末位，这是卷面规范。
+    # 三条来源（用户手填 / 命题标准 / 学段兜底）都过这里，避免某个入口漏掉。
+    sections = normalize_section_order(
+        sections or parse_sections(standard) or default_sections()
+    )
 
     if source_strategy == SOURCE_AI_ONLY:
         # 全 AI：不需要抽题，只把结构换算成缺口清单
@@ -400,6 +443,10 @@ def compose(
             prefer_difficulty=sec_difficulty, exclude=exclude,
             kp_used=kp_used, kp_cap=kp_cap,
             viewer_id=viewer_id, allow_all_banks=allow_all_banks,
+            # 跨大题共享已用题目：两个同题型大题（如英语「听力理解」与
+            # 「单项选择」）各自去重会抽到同一道题，整卷出现重复题。
+            # 用 plan 级的集合做全局互斥。
+            global_used=plan.used_question_ids,
         )
         # 「忽略近 N 次去重」的兜底在 `_pick_for_section` 第三级内完成；
         # 这里只统计「本应被去重排除、但为了不出白卷而复用」的题量，
@@ -451,6 +498,7 @@ def _pick_for_section(
     prefer_difficulty: str, exclude: set,
     kp_used: Dict[int, int], kp_cap: int,
     viewer_id: Optional[int] = None, allow_all_banks: bool = False,
+    global_used: Optional[set] = None,
 ) -> List[Question]:
     """单个大题抽题：先按难度配额抽，不够再放宽难度（**保留**知识点过滤）。
 
@@ -473,12 +521,19 @@ def _pick_for_section(
             # 整卷 0 题，且 gaps 显示"题库仅有 0 题"，实际有题只是全被排除）。
             if q.id in picked_ids or (not ignore_exclude and q.id in exclude):
                 continue
+            # 全局互斥：同一道题不能在两个大题里各出现一次。
+            # 第三级兜底（ignore_exclude）也不能突破这一条——重复题比缺题更糟，
+            # 卷面上会出现一模一样的题目，打印出来就是事故。
+            if global_used is not None and q.id in global_used:
+                continue
             # 知识点限流
             kp_id = q.knowledge_point_id
             if kp_id and kp_used.get(kp_id, 0) >= kp_cap:
                 continue
             picked.append(q)
             picked_ids.add(q.id)
+            if global_used is not None:
+                global_used.add(q.id)
             if kp_id:
                 kp_used[kp_id] = kp_used.get(kp_id, 0) + 1
 
@@ -595,7 +650,22 @@ def _renumber(items: List[Dict[str, Any]]) -> None:
     取中文序号，同时把大题名里可能已带的「一、」前缀剥掉再拼，
     避免出现「一、一、单选题」。
     """
-    items.sort(key=lambda i: (i.get("section_sort", 0), i.get("question_id", 0)))
+    # 排序键：先大题序，再题型规范位次，最后题号。
+    # 第三键从 `question_id` 换到 `type_rank` 是为了兜住一种现实情况——
+    # 前端保存题项列表时可能不传 section_sort（全为 0），旧实现退化成
+    # 「按 question_id 排」，作文题会按题型自增 id 散落到卷子中间。
+    has_section_sort = any(int(i.get("section_sort") or 0) > 0 for i in items)
+    if has_section_sort:
+        items.sort(key=lambda i: (
+            int(i.get("section_sort") or 0),
+            type_rank(i.get("section_code") or i.get("type")),
+            int(i.get("question_id") or 0),
+        ))
+    else:
+        items.sort(key=lambda i: (
+            type_rank(i.get("section_code") or i.get("type")),
+            int(i.get("question_id") or 0),
+        ))
     section_index: Dict[str, int] = {}
     for it in items:
         code = it.get("section_code") or it.get("type")

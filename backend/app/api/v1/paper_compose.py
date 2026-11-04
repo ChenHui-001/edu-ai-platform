@@ -963,6 +963,16 @@ def _normalize_items(
         if q.grade_id != grade_id or q.subject_id != subject_id:
             raise BusinessException(f"题目年级/学科与试卷不一致（id={qid}）")
 
+        # 题型必须与所在大题一致：把填空题塞进「一、选择题」，
+        # 卷面上会出现「选择题」下面是填空题的错版，打印出来即事故。
+        # 组卷引擎按 qtype 抽题天然一致，这条拦的是手动保存 / 前端构造的入参。
+        raw_code = str(raw.get("section_code") or "").strip().lower()
+        if raw_code and raw_code in TYPE_LABEL and raw_code != q.type:
+            raise BusinessException(
+                f"第 {idx} 题是「{TYPE_LABEL.get(q.type, q.type)}」，"
+                f"不能放进「{TYPE_LABEL[raw_code]}」大题（id={qid}）"
+            )
+
         try:
             score = float(raw.get("score") if raw.get("score") is not None else (q.score or 5))
         except (TypeError, ValueError):
@@ -1005,6 +1015,28 @@ def _write_items(db: Session, paper: Paper, items: List[Dict[str, Any]],
     决定题序、原样保留大题名，若套用 `_renumber` 会按 question_id 重排题目
     并把大题名改写成「一、…」，属于破坏既有契约的副作用。
     """
+    # 0) 按 question_id 去重（保留首次出现）。
+    # 同一道题在一份卷子里出现两次，打印出来就是两张一模一样的题目，
+    # 学生和阅卷老师都会当成事故。来源可能是：前端编辑时重复添加、
+    # AI 补题后重复插入、或历史组卷的两个同题型大题各抽中一次
+    # （引擎侧已改为全局互斥，这里再兜一层，保证任何入口写库都不重复）。
+    deduped: List[Dict[str, Any]] = []
+    _seen_qids: set = set()
+    for it in items:
+        try:
+            qid = int(it.get("question_id") or 0)
+        except (TypeError, ValueError):
+            qid = 0
+        if qid and qid in _seen_qids:
+            continue
+        if qid:
+            _seen_qids.add(qid)
+        deduped.append(it)
+    deduped_count = len(items) - len(deduped)
+    if deduped_count:
+        logger.warning(f"试卷 {paper.id} 写入前去除 {deduped_count} 道重复题目")
+    items = deduped
+
     # 1) 旧题项快照：question_id → 旧 item id 列表
     old_rows = db.execute(
         select(PaperItem.id, PaperItem.question_id).where(
@@ -1071,7 +1103,7 @@ def _write_items(db: Session, paper: Paper, items: List[Dict[str, Any]],
         db.flush()
 
     paper.total_score = round(sum(float(i["score"]) for i in items), 2)
-    return {"migrated": migrated, "dropped": dropped}
+    return {"migrated": migrated, "dropped": dropped, "deduped": deduped_count}
 
 
 # ---------------------------------------------------------------- 预览 / 编辑
