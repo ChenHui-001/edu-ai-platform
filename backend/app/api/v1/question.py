@@ -264,7 +264,10 @@ def _filtered_question_stmt(
     if status:
         stmt = stmt.where(Question.status == status)
     if source:
-        stmt = stmt.where(Question.source == source)
+        # 前缀匹配而不是精确匹配：组卷补题落库时标的是 "ai_fill"，
+        # 精确匹配会让这些题在「来源=AI」筛选下凭空消失，而统计侧
+        # （下面的 `source like 'ai%'`）偏偏算进去了 —— 两处口径必须一致。
+        stmt = stmt.where(Question.source.like(f"{source}%"))
     return stmt
 
 

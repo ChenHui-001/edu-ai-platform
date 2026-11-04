@@ -26,6 +26,7 @@
 """
 import io
 import json
+import re
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
@@ -347,6 +348,68 @@ def _resolve_ai_subject(
     return None
 
 
+# ---------------------------------------------------------------- 补题去重
+def _stem_key(text: Any) -> str:
+    """题干归一化：去 HTML 标签、空白、标点，只留中文/字母/数字。
+
+    模型每次生成的题干措辞都不同（「下列关于…的说法正确的是」vs
+    「以下关于…说法正确」），按 fingerprint 精确匹配完全拦不住，
+    必须先归一化再做近似比较。
+    """
+    plain = re.sub(r"<[^>]+>", "", str(text or ""))
+    return re.sub(r"[^\w\u4e00-\u9fff]", "", plain).lower()
+
+
+def _is_similar_stem(a: str, b: str, threshold: float = 0.80) -> bool:
+    """题干近似判重：**单字与二元组 Jaccard 取较大值**。
+
+    为什么不能只用二元组：实测「下列关于声现象的说法，正确的是」与
+    「以下关于声现象说法正确的是」的 bigram 相似度只有 0.56 —— 换了两个词
+    就掉到阈值以下，而人一眼就知道是同一道题。单字集合对这种改写更敏感
+    （0.857），但单字对长题干会因常用字大量重叠而误判。
+
+    两者取 max 正好互补：短题改写靠单字识别，长题精确保留靠二元组。
+    阈值 0.80：实测同考点不同题目在 0.6 以下，改写题在 0.85 以上。
+
+    性能：集合运算，400 条对照 × 10 题 ≈ 几十毫秒，远快于编辑距离。
+    """
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    # 长度差超过一半基本不可能是同一道题的改写，先短路省掉集合运算
+    if abs(len(a) - len(b)) > max(len(a), len(b)) * 0.5:
+        return False
+
+    uni_a, uni_b = set(a), set(b)
+    uni = len(uni_a & uni_b) / len(uni_a | uni_b) if uni_a and uni_b else 0.0
+    if uni >= threshold:
+        return True
+
+    bi_a = {a[i:i + 2] for i in range(len(a) - 1)}
+    bi_b = {b[i:i + 2] for i in range(len(b) - 1)}
+    bi = len(bi_a & bi_b) / len(bi_a | bi_b) if bi_a and bi_b else 0.0
+    return bi >= threshold
+
+
+def _existing_stem_keys(
+    db: Session, grade_id: int, subject_id: int, qtype: str, limit: int = 400,
+) -> List[str]:
+    """取该学科该题型的既有题干（归一化后）作为对照集合。
+
+    只取最近 N 条：更老的题与新生成题重合的概率很低，而全量扫描会随题库
+    增长线性变慢（每次补题都要读一遍）。
+    """
+    rows = db.scalars(
+        select(Question.stem).where(
+            Question.grade_id == grade_id,
+            Question.subject_id == subject_id,
+            Question.type == qtype,
+        ).order_by(Question.id.desc()).limit(limit)
+    ).all()
+    return [k for k in (_stem_key(x) for x in rows) if k]
+
+
 def _fill_one_gap(
     gap: Dict[str, Any], *,
     user_id: int, is_admin: bool, grade_id: int, subject_id: int,
@@ -385,20 +448,30 @@ def _fill_one_gap(
 
     db = SessionLocal()
     try:
-        qs: List[Dict[str, Any]] = []
-        remaining = take
-        while remaining > 0:
-            batch = min(BATCH_MAX, remaining)
+        # 补题去重：先把该学科该题型的既有题干取出来做对照。
+        # 反复预览 / 反复组卷会把题库堆成几百道「考同一个点、只换了说法」的题，
+        # 而 fingerprint 是精确哈希，拦不住改写。
+        existing_keys = _existing_stem_keys(db, grade_id, subject_id, gtype)
+        new_keys: List[str] = []
+        skipped_dup = 0
+        empty_retry = 0
+
+        while out["filled"] < take:
+            batch = min(BATCH_MAX, take - out["filled"])
             try:
                 res = QuestionGeneratorAgent().run(
                     db, user_id=user_id, grade_id=grade_id, subject_id=subject_id,
                     question_type=gtype, count=batch, difficulty=gdiff, save=True,
                     allow_all_banks=is_admin,
+                    # 来源标记与「题库页主动出题」的 ai 区分开：
+                    # 组卷补题是副产物，预览一次就会落一批 draft 题，
+                    # 混在一起以后没法批量清理。
+                    source="ai_fill",
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "AI 补题失败（grade=%s subject=%s type=%s need=%s）: %s",
-                    grade_id, subject_id, gtype, remaining, exc)
+                    grade_id, subject_id, gtype, take - out["filled"], exc)
                 out["notes"].append(f"{name}补题失败：{exc}")
                 break
 
@@ -411,49 +484,66 @@ def _fill_one_gap(
                 out["notes"].append(
                     data.get("tip") or f"{name}未生成题目（模型未启用或返回为空）")
                 break
-            qs.extend(got)
-            remaining -= len(got)
-            # 模型实际出的比要求少时（题库复用/模型偷懒），下一批会继续要，
-            # 但它一次都没出就说明这条路走不通，直接退出避免空转。
-            if not got:
-                break
 
-        if not qs:
-            return out
+            progressed = 0
+            for q in got:
+                if out["filled"] >= take:
+                    break
+                qid = q.get("id") or q.get("question_id")
+                if not qid:
+                    continue
+                qrow = db.get(Question, int(qid))
+                if not qrow:
+                    continue
+                # 1) 只接受当前用户可用的题：规则引擎 fallback 会复用「任意已发布题」，
+                #    其中可能含他人私有题——若放进来，预览看得到、保存时却被
+                #    `_normalize_items` 拒（"无权使用题目"），必须提前过滤。
+                if question_usable_error(qrow, user_id=user_id, is_admin=is_admin):
+                    continue
+                # 2) 题型必须与本大题一致：fallback 不按题型筛选，混进来会让
+                #    "填空题"大题里出现单选题。
+                if normalize_question_type(qrow.type, strict=False) != gtype:
+                    continue
+                # 3) 题干近似去重：与题库已有题、本批已采纳的题都不能撞。
+                #    跳过重复会让缺口补不满，但比把 10 道同义题塞进卷子好 ——
+                #    缺题会如实上报，重复题打印出来是事故。
+                stem_key = _stem_key(qrow.stem)
+                if any(_is_similar_stem(stem_key, k) for k in existing_keys) \
+                        or any(_is_similar_stem(stem_key, k) for k in new_keys):
+                    skipped_dup += 1
+                    continue
+                new_keys.append(stem_key)
+                out["filled"] += 1
+                progressed += 1
+                out["items"].append({
+                    "question_id": int(qid),
+                    "type": qrow.type,
+                    "type_label": TYPE_LABEL.get(qrow.type, qrow.type),
+                    "stem": qrow.stem,
+                    "difficulty": qrow.difficulty or gdiff,
+                    "score": round(float(gap.get("score_per") or 0), 2),
+                    "section_code": gtype,
+                    "section_name": name,
+                    "section_sort": gap.get("sort", 0),
+                    "knowledge_point_id": qrow.knowledge_point_id,
+                    "knowledge_point_name": "AI 生成",
+                })
 
-        for q in qs:
-            if out["filled"] >= take:
-                break
-            qid = q.get("id") or q.get("question_id")
-            if not qid:
+            if progressed == 0:
+                # 这一批全被过滤（重复/无权/题型不符）或模型没出题。
+                # 允许再换一批试一次：模型偶发把同一道题换个说法再出一遍很常见，
+                # 直接放弃会让缺口变成"明明能补却报缺"。但最多重试一次，
+                # 避免模型持续输出重复题时空转。
+                empty_retry += 1
+                if empty_retry > 1:
+                    break
                 continue
-            qrow = db.get(Question, int(qid))
-            if not qrow:
-                continue
-            # 1) 只接受当前用户可用的题：规则引擎 fallback 会复用「任意已发布题」，
-            #    其中可能含他人私有题——若放进来，预览看得到、保存时却被
-            #    `_normalize_items` 拒（"无权使用题目"），必须提前过滤。
-            #    与保存侧共用 question_access 判定，保证"补进来的一定存得下"。
-            # 2) 题型必须与本大题一致：fallback 不按题型筛选，混进来会让
-            #    "填空题"大题里出现单选题。
-            if question_usable_error(qrow, user_id=user_id, is_admin=is_admin):
-                continue
-            if normalize_question_type(qrow.type, strict=False) != gtype:
-                continue
-            out["filled"] += 1
-            out["items"].append({
-                "question_id": int(qid),
-                "type": qrow.type,
-                "type_label": TYPE_LABEL.get(qrow.type, qrow.type),
-                "stem": qrow.stem,
-                "difficulty": qrow.difficulty or gdiff,
-                "score": round(float(gap.get("score_per") or 0), 2),
-                "section_code": gtype,
-                "section_name": name,
-                "section_sort": gap.get("sort", 0),
-                "knowledge_point_id": qrow.knowledge_point_id,
-                "knowledge_point_name": "AI 生成",
-            })
+
+        if skipped_dup:
+            # 说明「仍留在题库」：agent 落库发生在采纳之前，这里是事后过滤，
+            # 重复题已经在库里（draft 态）。不说明的话老师会以为题没生成。
+            out["notes"].append(
+                f"{name}跳过 {skipped_dup} 道与题库重复的题（未选入试卷，仍留在题库待审核）")
         return out
     finally:
         db.close()

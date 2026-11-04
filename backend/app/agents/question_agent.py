@@ -80,6 +80,7 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
         count: int = 5,
         difficulty: str = "medium",
         save: bool = False,
+        source: str = "ai",
         **kwargs,
     ) -> Dict[str, Any]:
         if not subject_id:
@@ -257,7 +258,9 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
                 owner_id=owner_id,
                 status="draft",  # AI 生成题目先进待审核库
                 fingerprint=self._fingerprint(it["stem"]),
-                source="ai",
+                # 来源标记由调用方决定：题库页主动出题是 "ai"，组卷补题传
+                # "ai_fill" —— 后者是预览副产物，需要能单独筛出来清理。
+                source=(source or "ai")[:16],
             )
             questions.append({"stem": q.stem, "type": q.type, "difficulty": q.difficulty,
                               "score": q.score, "answer": it.get("answer"), "analysis": q.analysis,
