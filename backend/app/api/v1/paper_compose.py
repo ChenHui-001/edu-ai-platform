@@ -27,9 +27,10 @@
 import io
 import json
 import re
+import threading
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -52,7 +53,7 @@ from app.services.paper_export_service import (
     build_answer_sheet, build_docx, build_pdf,
 )
 from app.services import paper_version_service as version_svc
-from app.utils.common import PageParams, dictify, ok
+from app.utils.common import PageParams, dictify, now_local, ok
 
 logger = logging.getLogger(__name__)
 
@@ -552,6 +553,7 @@ def _fill_one_gap(
 def _ai_fill_gaps(
     db: Session, user: User, *, plan, grade: Grade, subject: Subject,
     difficulty_norm: Dict[str, int],
+    on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> str:
     """题库缺口 / 全 AI：调出题 Agent 生成缺失题目并追加进 plan。
 
@@ -587,6 +589,12 @@ def _ai_fill_gaps(
     if not pending:
         return ""
 
+    # 结束主 Session 的只读事务：异步任务里 on_progress 会用独立连接写
+    # sys_agent_job，SQLite 下主连接持有的读事务会让那次写入等锁（5s 后
+    # 报 database is locked）。组卷引擎此前只有 SELECT，commit 无副作用。
+    if on_progress:
+        db.commit()
+
     # 熔断/冷却期直接跳过，不发请求。
     # 并行的意义是把 N 次串行调用压成 1 次等待，但**在限流冷却里并发只会
     # 加速熔断升级**：3 个线程同时撞 429，streak 一次涨 3，退避从 30s 跳到
@@ -607,14 +615,30 @@ def _ai_fill_gaps(
                  subject_id=subject_id, default_diff=default_diff))
         for g in pending
     ]
+    total_gaps = len(tasks)
     if workers == 1:
-        results = [_fill_one_gap(g, **kw) for g, kw in tasks]
+        results = []
+        for idx, (g, kw) in enumerate(tasks):
+            results.append(_fill_one_gap(g, **kw))
+            if on_progress:
+                on_progress(idx + 1, total_gaps)
     else:
         with ThreadPoolExecutor(max_workers=workers,
                                 thread_name_prefix="ai-fill") as pool:
-            futures = [pool.submit(_fill_one_gap, g, **kw) for g, kw in tasks]
-            # 按提交顺序取结果 → 合并顺序确定，重复调用结果一致
-            results = [f.result() for f in futures]
+            future_index = {
+                pool.submit(_fill_one_gap, g, **kw): idx
+                for idx, (g, kw) in enumerate(tasks)
+            }
+            # **用 as_completed 收结果才能实时报进度**：一批补题要等 1~2 分钟，
+            # 等到全部完成才更新等于没有进度条。
+            # 但合并时仍按 gap 原始顺序（done 字典按 idx 回填），否则大题顺序
+            # 会随线程完成先后漂移，重复调用结果也不一致。
+            done: Dict[int, Dict[str, Any]] = {}
+            for fut in as_completed(future_index):
+                done[future_index[fut]] = fut.result()
+                if on_progress:
+                    on_progress(len(done), total_gaps)
+            results = [done[i] for i in range(total_gaps)]
 
     # 补题线程各自 commit（新题已落库），但主 Session 此时很可能还开着事务：
     # SQLite/PostgreSQL 的读快照在事务开始时确定，主 Session 看不到其他连接
@@ -644,8 +668,15 @@ def _ai_fill_gaps(
     return "；".join(n for n in notes if n)
 
 
-def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict[str, Any]:
-    """两种组卷模式共用的参数解析与引擎调用。"""
+def _compose_from_payload(
+    db: Session, user: User, data: Dict[str, Any],
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> Dict[str, Any]:
+    """两种组卷模式共用的参数解析与引擎调用。
+
+    `on_progress(done, total)` 只在 AI 补题阶段回调，用于异步任务的进度条。
+    同步调用（HTTP 请求内）不传即无副作用。
+    """
     grade, subject = _grade_subject(db, data.get("grade_id"), data.get("subject_id"))
     standard = _resolve_standard(
         db, grade=grade, subject=subject, standard_id=data.get("standard_id"))
@@ -716,7 +747,7 @@ def _compose_from_payload(db: Session, user: User, data: Dict[str, Any]) -> Dict
             and plan.gaps and not data.get("items")):
         ai_note = _ai_fill_gaps(
             db, user, plan=plan, grade=grade, subject=subject,
-            difficulty_norm=difficulty_norm)
+            difficulty_norm=difficulty_norm, on_progress=on_progress)
         if data.get("total_score") and plan.items:
             compose_svc._rescale_scores(plan.items, float(data["total_score"]))
     if source_strategy == compose_svc.SOURCE_AI_ONLY and not plan.items:
@@ -2117,3 +2148,146 @@ def export_html(
         io.BytesIO(html.encode("utf-8")), media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": f"inline; filename=paper_{paper_id}.html"},
     )
+
+
+# ---------------------------------------------------------------- 异步组卷
+# 为什么要异步：一组标准卷（5 个大题）在题库空时要并发补 5~6 批题，
+# 实测单批 60~100s（生产 sys_agent_call_log 平均 100.7s），最坏 2 轮 ×240s
+# 远超浏览器/网关的耐心。同步接口只会在前端等到超时、后端还在跑，
+# 用户重试一次就多一份卷子。
+#
+# 复用 sys_agent_job（与 AI 出题/教案同一张表）：
+#   POST /compose/ai/async  → {job_id}
+#   GET  /compose/jobs/{id} → {status, progress, stage, result}
+# 进度条只有补题阶段有意义（那里占 90% 的时间），其余阶段粗粒度推进。
+COMPOSE_JOB_AGENT = "paper_compose"
+
+
+def _touch_job(job_id: int, **fields: Any) -> None:
+    """用独立 Session 更新任务状态（后台线程 / 请求线程不能共用 Session）。
+
+    进度写失败不影响组卷本身 —— 只是前端看不到最新百分比，不该让整个任务
+    因此失败，所以异常只记日志。
+    """
+    from app.core.database import SessionLocal
+    from app.models import AgentJob
+
+    db = SessionLocal()
+    try:
+        job = db.get(AgentJob, job_id)
+        if not job:
+            return
+        for key, value in fields.items():
+            setattr(job, key, value)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"更新组卷任务 {job_id} 状态失败: {exc}")
+    finally:
+        db.close()
+
+
+def _fail_job(job_id: int, message: str) -> None:
+    _touch_job(job_id, status="failed", error=message[:2000], finished_at=now_local())
+
+
+def _run_compose_job(job_id: int) -> None:
+    """后台执行组卷。独立 Session —— 请求结束 Session 就关了。"""
+    from app.core.database import SessionLocal
+    from app.models import AgentJob, User
+
+    db = SessionLocal()
+    try:
+        job = db.get(AgentJob, job_id)
+        if not job:
+            return
+        job.status = "running"
+        job.started_at = now_local()
+        job.progress = 5
+        job.stage = "解析参数"
+        db.commit()
+
+        params = json.loads(job.params or "{}")
+        user = db.get(User, job.user_id)
+        if not user:
+            raise BusinessException("任务发起人不存在")
+
+        def on_progress(done: int, total: int) -> None:
+            # 补题占 15%~90%：那里是大头，其余阶段（解析/报告/落库）都很快
+            pct = 15 + int(75 * done / max(1, total))
+            _touch_job(job_id, progress=pct, stage=f"AI 补题 {done}/{total} 个大题")
+
+        ctx = _compose_from_payload(db, user, params, on_progress=on_progress)
+        _touch_job(job_id, progress=92, stage="生成报告")
+
+        body = _plan_response(ctx)
+        payload = json.dumps(body, ensure_ascii=False, default=str)
+
+        # 重新取一次：期间 on_progress 用别的连接改过这一行（旧对象可能过期）
+        db.expire_all()
+        job = db.get(AgentJob, job_id)
+        if job:
+            job.result = payload
+            job.status = "succeeded"
+            job.progress = 100
+            job.stage = "完成"
+            job.finished_at = now_local()
+            db.commit()
+    except BusinessException as exc:
+        _fail_job(job_id, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"异步组卷失败（job={job_id}）")
+        _fail_job(job_id, f"{type(exc).__name__}: {exc}")
+    finally:
+        db.close()
+
+
+@router.post("/compose/ai/async", summary="AI 一键组卷（异步任务，推荐）")
+def compose_ai_async(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:ai")),
+):
+    """提交组卷任务，立即返回 job_id；轮询 `/compose/jobs/{id}` 取结果。
+
+    入参与同步接口 `/compose/ai` 完全一致，只是把等待从 HTTP 请求里挪走。
+    """
+    from app.models import AgentJob
+
+    request = str(data.get("request") or "").strip()
+    if not request and not (data.get("grade_id") and data.get("subject_id")):
+        raise BusinessException("请填写组卷需求描述，或至少选择年级与学科")
+    if len(request) > 2000:
+        raise BusinessException("组卷需求描述过长（上限 2000 字）")
+
+    job = AgentJob(
+        user_id=user.id, agent=COMPOSE_JOB_AGENT, status="pending",
+        progress=0, stage="排队中",
+        params=json.dumps(data, ensure_ascii=False),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    threading.Thread(target=_run_compose_job, args=(job.id,), daemon=True).start()
+    return ok({"job_id": job.id, "status": job.status},
+              message=f"已提交，请轮询 /question/papers/compose/jobs/{job.id}")
+
+
+@router.get("/compose/jobs/{job_id}", summary="查询组卷任务状态与结果")
+def get_compose_job(
+    job_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:ai")),
+):
+    from app.models import AgentJob
+    from app.services import agent_job_state
+
+    job = db.get(AgentJob, job_id)
+    if not job or job.agent != COMPOSE_JOB_AGENT:
+        raise NotFoundException("任务不存在")
+    if job.user_id != user.id and "sys_admin" not in user.role_codes:
+        raise PermissionException("无权查看该任务")
+
+    d = dictify(job)
+    d["result"] = json.loads(job.result) if job.result else None
+    # 僵尸任务判定：进程重启会丢后台线程，status 永停 running。
+    # 判据单点定义在 agent_job_state（与 /agent/jobs 同一套）。
+    return ok(agent_job_state.apply_timeout(job, d))

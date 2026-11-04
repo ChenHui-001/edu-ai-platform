@@ -276,6 +276,11 @@
         <span v-if="composeBlockReason && composeDisabled" class="block-reason">
           {{ composeBlockReason }}
         </span>
+        <div v-if="composing && form.mode === 'ai'" class="compose-progress">
+          <el-progress :percentage="composeProgress" :stroke-width="8"
+                       :striped="true" :striped-flow="true" style="width:260px" />
+          <span class="muted">{{ composeStage || '正在生成…' }}（预计 1~3 分钟，可先切到其他页面）</span>
+        </div>
         <el-button type="primary" size="large" :loading="composing"
                    :disabled="composeDisabled" @click="doCompose">
           {{ form.mode === 'ai' ? 'AI 一键组卷' : '生成试卷预览' }}
@@ -513,6 +518,25 @@ const diffLabel = { easy: '简单', medium: '中等', hard: '困难' }
 const step = ref(0)
 const metaLoading = ref(false)
 const composing = ref(false)
+// 异步组卷进度（只有 AI 模式走任务队列，自定义组卷是纯题库抽题、很快）
+const composeProgress = ref(0)
+const composeStage = ref('')
+
+async function pollComposeJob(jobId) {
+  // 10 分钟上限：正常 1~3 分钟，超时基本是模型侧挂了或任务线程丢失
+  // （进程重启会让 daemon 线程消失，后端 apply_timeout 会把它判成 failed）
+  const deadline = Date.now() + 10 * 60 * 1000
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    const res = await questionApi.composeJob(jobId)
+    const d = res.data || {}
+    composeProgress.value = Number(d.progress) || 0
+    composeStage.value = d.stage || ''
+    if (d.status === 'succeeded') return d.result || {}
+    if (d.status === 'failed') throw new Error(d.error || '组卷任务失败')
+  }
+  throw new Error('组卷超时（超过 10 分钟），请稍后重试')
+}
 const saving = ref(false)
 
 const grades = ref([])
@@ -858,13 +882,20 @@ async function doCompose() {
   }
 
   composing.value = true
+  composeProgress.value = 0
+  composeStage.value = ''
   try {
     const payload = buildPayload()
-    const res = form.mode === 'ai'
-      ? await questionApi.composeAi({ ...payload, request: form.request })
-      : await questionApi.composePreview(payload)
-
-    const data = res.data || {}
+    let data
+    if (form.mode === 'ai') {
+      // AI 模式走异步任务：提交后立即拿到 job_id，再每 2 秒轮询进度。
+      // 用户可以切走、刷新页面也不影响（任务在后端跑，状态在 sys_agent_job）。
+      const submit = await questionApi.composeAiAsync({ ...payload, request: form.request })
+      composeStage.value = '排队中'
+      data = await pollComposeJob((submit.data || {}).job_id)
+    } else {
+      data = (await questionApi.composePreview(payload)).data || {}
+    }
     composedCtx.value = data
     previewItems.value = data.items || []
     gaps.value = data.gaps || []
@@ -1062,4 +1093,7 @@ function goBack() { router.push('/teacher/papers') }
 .save-summary div { text-align: center; }
 .save-summary span { display: block; font-size: 12.5px; color: var(--el-text-color-secondary); margin-bottom: 4px; }
 .save-summary b { font-size: 20px; color: var(--el-color-primary); }
+
+.compose-progress { display: flex; align-items: center; gap: 10px; margin-right: 12px; }
+.compose-progress .muted { font-size: 12px; color: var(--el-text-color-secondary); }
 </style>
