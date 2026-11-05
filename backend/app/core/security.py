@@ -24,6 +24,7 @@ import io
 import random
 import secrets
 import string
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -34,7 +35,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.models.security_cache import Captcha, ResetCode, RevokedToken
+from app.models.security_cache import (
+    Captcha, ResetCode, RevokedToken, UserTokenRevocation,
+)
 from app.utils.common import now_local
 
 logger = get_logger("security")
@@ -71,6 +74,10 @@ def create_access_token(subject: str | int, role: str = "", extra: Optional[Dict
         "role": role,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
+        # JWT 标准 iat 由 datetime 编码后只剩整秒精度，而改密水位是浮点秒。
+        # 额外带一个浮点签发时刻，供 is_user_token_revoked 精确区分
+        # 「改密前 0.1 秒」与「改密后 0.1 秒」签发的令牌。
+        "iat_precise": time.time(),
         "type": "access",
         "jti": secrets.token_hex(8),
     }
@@ -90,6 +97,7 @@ def create_refresh_token(subject: str | int) -> str:
         "sub": str(subject),
         "exp": expire,
         "iat": datetime.now(timezone.utc),
+        "iat_precise": time.time(),
         "type": "refresh",
         "jti": secrets.token_hex(8),
     }
@@ -177,6 +185,66 @@ def revoke_token(payload: Optional[Dict[str, Any]], db: Optional[Session] = None
     db.commit()
     _maybe_purge(db, RevokedToken)
     return True
+
+
+def revoke_user_tokens(db: Session, user_id: int) -> None:
+    """吊销该用户的**全部**已签发令牌（改密 / 管理员重置 / 找回密码时调用）。
+
+    水位 = 当前 Unix 秒（UTC epoch），与 JWT 的 `iat` 同源同单位，直接数值比较，
+    不经过 `now_local()` —— 本项目踩过「本地 naive 时间 vs UTC 时间戳差 8 小时」
+    的坑，这里刻意避开时区换算。
+
+    覆盖写而非追加：一个用户一行，重复改密只留最新水位。
+    """
+    ts = time.time()
+    # 记录自身 TTL 要覆盖最长寿命令牌（refresh 默认 7 天），
+    # 之后旧令牌本身也已 exp 失效，清掉水位不影响正确性。
+    ttl_days = int(settings.REFRESH_TOKEN_EXPIRE_DAYS) + 1
+    db.execute(delete(UserTokenRevocation).where(
+        UserTokenRevocation.user_id == int(user_id)))
+    db.add(UserTokenRevocation(
+        user_id=int(user_id),
+        invalid_before_ts=ts,
+        expire_at=now_local() + timedelta(days=ttl_days),
+    ))
+    # 只 flush 不 commit：调用方（改密/重置）会把「改哈希」与「写水位」
+    # 一起提交，保证原子性。这里若自己 commit，中途失败会留下
+    # 「密码已改、旧令牌却没吊销」的窗口。
+    db.flush()
+
+
+def is_user_token_revoked(db: Optional[Session], payload: Dict[str, Any]) -> bool:
+    """该令牌是否签发于用户最近一次改密之前。
+
+    读不到水位记录（用户从未改密）→ False，行为与改动前完全一致。
+    水位记录已过期 → False（旧 token 自己也早过期了）。
+    `iat` 缺失或非法 → 保守视为已吊销：无签发时刻的令牌无法自证新鲜，
+    而正常签发的 token 一定带 iat。
+    """
+    if db is None:
+        return False
+    try:
+        uid = int(payload.get("sub"))
+    except (TypeError, ValueError):
+        return True
+    row = db.scalar(
+        select(UserTokenRevocation).where(
+            UserTokenRevocation.user_id == uid,
+            UserTokenRevocation.expire_at >= now_local(),
+        ))
+    if not row:
+        return False
+    iat = payload.get("iat")
+    if not isinstance(iat, (int, float)):
+        return True
+    # JWT 标准 `iat` 由 datetime 编码后只有整秒精度，水位却是 time.time()
+    # 浮点秒。直接比较会把「改密后同一秒内新签发的令牌」误杀：
+    # iat = floor(t) < W 恒成立（改密后立即重登 / 自动重签必失败）。
+    # 新格式令牌带浮点 `iat_precise`，优先用它；旧格式令牌回落到整秒
+    # iat —— 它们必然早于水位，仍会被正确拦下，向后兼容无空窗。
+    precise = payload.get("iat_precise")
+    issued = float(precise) if isinstance(precise, (int, float)) else float(iat)
+    return issued < float(row.invalid_before_ts)
 
 
 def _token_expiry(payload: Dict[str, Any]) -> datetime:

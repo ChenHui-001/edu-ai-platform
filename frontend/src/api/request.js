@@ -89,10 +89,29 @@ function markHandled(err) {
 }
 
 // 响应拦截：统一错误处理
+// 非 JSON 响应类型：这些接口返回的不是统一信封，而是原始内容。
+// 只豁免 blob 会让 `responseType: 'text'` 的 HTML 打印视图 100% 失败：
+// HTML 字符串被当成信封读 `res.code` → undefined ≠ 200 → 弹「请求失败」
+// 并 reject，PaperEdit 拿到的永远是异常而不是页面内容。
+const RAW_RESPONSE_TYPES = new Set(['blob', 'text', 'arraybuffer', 'document', 'stream'])
+
+function isRawResponse(response) {
+  const declared = response?.config?.responseType
+  if (declared && RAW_RESPONSE_TYPES.has(declared)) return true
+  // 兜底：后端返回 text/html、application/pdf、text/markdown 等但调用方
+  // 没声明 responseType 时，axios 会给出字符串；不能拿它当 JSON 信封解析。
+  const ct = String(response?.headers?.['content-type'] || '').toLowerCase()
+  if (ct && !ct.includes('application/json') && !ct.includes('+json')) return true
+  // 已成功解析成对象才有资格走信封判定；字符串一律视为原始内容。
+  return typeof response?.data === 'string'
+}
+
 service.interceptors.response.use(
   (response) => {
-    // 文件下载直接返回
-    if (response.config.responseType === 'blob') return response
+    // 文件下载 / HTML 打印视图直接返回**整个 axios response**，不套用统一信封。
+    // 必须保留 headers：downloadBlob 靠 content-disposition 取文件名；
+    // 调用方按需取 res.data（Blob 或 HTML 字符串）。
+    if (isRawResponse(response)) return response
     const res = response.data
     if (res.code !== 200) {
       ElMessage.error(res.message || '请求失败')

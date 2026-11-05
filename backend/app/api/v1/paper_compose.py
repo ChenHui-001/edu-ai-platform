@@ -2181,9 +2181,24 @@ def regenerate_item(
 
 @router.delete("/{paper_id}/items/{item_id}", summary="移除单题")
 def remove_item(
-    paper_id: int, item_id: int, db: Session = Depends(get_db),
+    paper_id: int, item_id: int,
+    force: bool = Query(False, description="确认作废该题已有学生作答"),
+    db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
+    """移除单题。**有学生作答时默认拒绝**，避免级联删除静默毁掉作答记录。
+
+    `Answer.paper_item_id` 是 `ON DELETE CASCADE` 且非空：删掉 PaperItem
+    会把该题项下所有 `edu_answer` 一起清掉，成绩、批注、错题记录全部归零。
+    `_write_items` 已经用 `dropped` 如实上报这条代价，但这个单题删除入口
+    此前直接 `db.delete(item)` 且只回「题目已移除」——教师点一下，
+    学生做过的题就没了，界面上还看不出发生了什么（实测 1 行 → 0 行）。
+
+    口径与 `_write_items` 对齐：
+      * 删前统计作答数；有作答且未带 `force=true` → 400 并写明后果，
+        前端据此弹二次确认；
+      * 带 `force=true` 才允许删，并在响应里回传 `dropped`（作废条数）。
+    """
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -2193,6 +2208,15 @@ def remove_item(
         raise NotFoundException("题目项不存在")
     if len(paper.items) <= 1:
         raise BusinessException("试卷至少保留一道题目")
+
+    # 必须在 db.delete 之前数：删除会级联清空，事后再查就是 0。
+    dropped = int(db.scalar(
+        select(func.count()).select_from(Answer)
+        .where(Answer.paper_item_id == item_id)) or 0)
+    if dropped and not force:
+        raise BusinessException(
+            f"该题已有 {dropped} 条学生作答，移除会将其永久删除"
+            "（成绩/批注/错题一并作废）。确认请带 force=true 重试。")
 
     version_svc.snapshot(db, paper, user.id, change_note="移除题目")
     removed_qid = int(item.question_id)
@@ -2216,7 +2240,9 @@ def remove_item(
     version_svc.snapshot(db, paper, user.id, change_note="移除题目完成")
     db.commit()
     return ok({"id": paper.id, "total_score": paper.total_score,
-               "item_count": len(items)}, message="题目已移除")
+               "item_count": len(items), "dropped": dropped},
+              message=("题目已移除" if not dropped else
+                       f"题目已移除，同时作废 {dropped} 条学生作答"))
 
 
 @router.post("/{paper_id}/sections/rename", summary="大题改名")

@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exception import AuthException, BusinessException
 from app.core.security import (
-    create_access_token, create_refresh_token, hash_password, verify_password,
+    create_access_token, create_refresh_token, hash_password,
+    revoke_user_tokens, verify_password,
 )
 from app.core.logger import get_logger
 from app.models import (
@@ -269,6 +270,10 @@ def change_password(db: Session, user: User, old_password: str, new_password: st
     validate_password_strength(new_password, min_length=settings.PASSWORD_MIN_LENGTH)
     user.password = hash_password(new_password)
     user.must_change_password = False
+    # 改密必须能止损：吊销该用户改密前签发的全部 access / refresh。
+    # 只改哈希的话，已泄露/其它设备上的旧 token 仍可用满 12h，
+    # 旧 refresh 还能再续 7 天（本次修复的核心）。
+    revoke_user_tokens(db, user.id)
     db.commit()
 
 
@@ -281,6 +286,8 @@ def reset_password_by_admin(db: Session, user_id: int, new_password: str) -> Non
     user.must_change_password = True
     user.login_fail_count = 0
     user.locked_until = None
+    # 管理员重置通常就是「账号疑似失陷」的处置动作，更要立刻掐断所有旧会话。
+    revoke_user_tokens(db, user.id)
     db.commit()
 
 

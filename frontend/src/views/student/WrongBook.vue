@@ -248,7 +248,13 @@ async function markMastered(w) {
 }
 
 async function exportWrong() {
-  const res = await fetch(`/api/v1/learning/wrong-questions/export?${new URLSearchParams(query)}`, {
+  // URLSearchParams 会把 null 序列化成字符串 "null"、空串变成 "k="：
+  // 后端 `subject_id: Optional[int]` 收到 "null" 直接 422，导出必失败。
+  // 只把「用户真正设了值」的筛选项带上去，其余让后端用默认值。
+  const params = new URLSearchParams(
+    Object.entries(query).filter(([, v]) => v !== null && v !== undefined && v !== '')
+  )
+  const res = await fetch(`/api/v1/learning/wrong-questions/export?${params}`, {
     headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
   })
   if (!res.ok) return ElMessage.error('导出失败')

@@ -1192,9 +1192,13 @@ async function runAI() {
       request: aiReq.value, save: true,
       subject_id: aiForm.subject_id, grade_id: aiForm.grade_id
     })
-    const envelope = res?.data || {}
+    // request.js 的响应拦截器已经 `return res`（即 response.data），拿到的
+    // **就是**统一信封 `{code, message, success, data}`。此前又取了一次
+    // `res?.data`，等于解到 payload 层，再读 `envelope.success` 恒为 undefined
+    // → 试卷明明已落库却恒弹「组卷请求失败」，诱导教师重复点、重复建卷。
+    const envelope = res || {}
     const payload = envelope.data || {}
-    if (!envelope.success) {
+    if (envelope.code !== 200 || envelope.success === false) {
       ElMessage.error(envelope.message || '组卷请求失败')
     } else if (!payload.paper?.id) {
       ElMessage.warning(payload.tip || envelope.message

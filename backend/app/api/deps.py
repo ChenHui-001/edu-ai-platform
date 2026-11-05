@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import AuthException, PermissionException
-from app.core.security import decode_token
+from app.core.security import decode_token, is_user_token_revoked
 from app.models import Role, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -56,6 +56,10 @@ def get_current_user(
     payload = decode_token(token, db)
     if not payload or payload.get("type") != "access":
         raise AuthException("令牌无效或已过期")
+    # 改密 / 管理员重置密码后，该用户改密前签发的所有令牌必须立刻失效。
+    # 只靠 jti 吊销名单做不到：改密时拿不到其它设备/会话上那些 token 的 jti。
+    if is_user_token_revoked(db, payload):
+        raise AuthException("密码已变更，请重新登录")
 
     # 过期判断必须两侧都用**显式 UTC**：
     # 原写法把 JWT 的 UTC 时间戳与本地时间 now_local() 比较，

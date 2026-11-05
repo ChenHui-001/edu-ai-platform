@@ -110,6 +110,24 @@
           <template v-else-if="active === 'paper_composer'">
             <el-alert type="info" :closable="false" class="mb12"
                       title="用自然语言描述组卷需求，AI 自动解析题型、难度、数量并完成抽题" />
+            <!-- 学科兜底：自然语言解析不出学科时后端直接报「无法识别学科」，
+                 此前本页没有任何输入能自救，功能等于不可用。这里给一组
+                 年级/学科下拉，选了就直接作为 grade_id/subject_id 传给后端，
+                 Agent 不再依赖文本解析猜学科。 -->
+            <el-form :inline="true" class="mb8">
+              <el-form-item label="年级">
+                <el-select v-model="paperGradeId" clearable placeholder="按需求文本自动识别"
+                           style="width:180px" @change="onPaperGradeChange">
+                  <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="学科">
+                <el-select v-model="paperSubjectId" clearable filterable
+                           placeholder="按需求文本自动识别" style="width:180px">
+                  <el-option v-for="s in paperSubjects" :key="s.id" :label="s.name" :value="s.id" />
+                </el-select>
+              </el-form-item>
+            </el-form>
             <el-input v-model="paperReq" type="textarea" :rows="3"
                       placeholder="如：生成七年级数学一元一次方程试卷，10 题，选择题 6 道 + 填空 4 道，难度中等，限时 30 分钟" />
             <div class="mt8">
@@ -323,6 +341,27 @@ const jobId = ref(null)
 const saving = ref(false)
 const statusDrawer = ref(false)
 const paperReq = ref('')
+// 组卷页的学科兜底：不填就靠 AI 从需求文本解析，填了直接传给后端。
+// 注意 Subject 唯一键是 (grade_id, name)，同名多条，必须按年级过滤，
+// 否则选中代表记录会把卷子挂到最低年级（与出题页同样的坑）。
+const paperGradeId = ref(null)
+const paperSubjectId = ref(null)
+const paperSubjects = computed(() => {
+  if (!paperGradeId.value) return subjects.value
+  return subjects.value.filter(s => s.grade_id === paperGradeId.value)
+})
+function onPaperGradeChange() {
+  const keep = subjects.value.some(
+    s => s.id === paperSubjectId.value && s.grade_id === paperGradeId.value)
+  if (!keep) paperSubjectId.value = null
+}
+function paperParams() {
+  return {
+    request: paperReq.value,           // 后端契约是 request，不是 requirement
+    grade_id: paperGradeId.value || undefined,
+    subject_id: paperSubjectId.value || undefined,
+  }
+}
 
 const qForm = reactive({
   subject_id: null, grade_id: null, knowledge_point_ids: [], question_types: ['single'],
@@ -435,7 +474,7 @@ async function run() {
               type: qForm.question_types?.[0] || 'single',
               knowledge_point_id: qForm.knowledge_point_ids?.[0] || undefined
             }
-          : { requirement: paperReq.value }
+          : paperParams()
         const res = await agentApi.createJob({ agent, params })
         jobId.value = res.data?.job_id
         ElMessage.success(`任务已提交（#${jobId.value}），正在后台生成…`)
@@ -464,8 +503,13 @@ async function run() {
         knowledge_point_id: qForm.knowledge_point_ids?.[0] || undefined,
       })
     } else if (active.value === 'paper_composer') {
-      if (!paperReq.value) { ElMessage.warning('请输入组卷需求'); return }
-      res = await agentApi.paperComposer({ requirement: paperReq.value })
+      // 二选一即可：写了需求文本让 AI 解析，或直接选学科走规则组卷。
+      // 只认文本会把「已选学科」的用户也挡在门外，正是「无学科选择框可自救」
+      // 的另一半原因（后端其实只要 subject_id 有值就能出卷）。
+      if (!paperReq.value && !paperSubjectId.value) {
+        ElMessage.warning('请输入组卷需求，或选择年级与学科'); return
+      }
+      res = await agentApi.paperComposer(paperParams())
     } else if (active.value === 'note_organizer') {
       if (!genericForm.note_id) { ElMessage.warning('请输入笔记 ID'); return }
       res = await agentApi.noteOrganizer({ note_id: genericForm.note_id })

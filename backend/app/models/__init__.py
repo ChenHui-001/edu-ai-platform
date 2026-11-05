@@ -22,7 +22,7 @@ from app.models.paper_ext import (  # noqa: F401
     ExamStandard, PaperFavorite, PaperVersion,
 )
 from app.models.security_cache import (  # noqa: F401
-    Captcha, ResetCode, RevokedToken,
+    Captcha, ResetCode, RevokedToken, UserTokenRevocation,
 )
 from app.models.system import (  # noqa: F401
     IdentityType, Permission, PermissionType, Registration, Role,
@@ -58,5 +58,5 @@ __all__ = [
     "JobLock", "LlmBreakerState",
     "Attachment", "AgentCallLog", "Notification", "AgentJob", "AgentRate",
     # security_cache（跨进程共享的安全 TTL 缓存，多 worker 前置）
-    "Captcha", "RevokedToken", "ResetCode",
+    "Captcha", "RevokedToken", "ResetCode", "UserTokenRevocation",
 ]

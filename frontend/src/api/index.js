@@ -200,7 +200,10 @@ export const questionApi = {
   updatePaperItems: (id, data) => request.post(`/question/papers/${id}/items`, data),
   regenerateItem: (id, itemId, data) => request.post(
     `/question/papers/${id}/items/${itemId}/regenerate`, data || {}),
-  removePaperItem: (id, itemId) => request.delete(`/question/papers/${id}/items/${itemId}`),
+  // force=true 仅在教师已确认「该题已有学生作答将被永久删除」后才传；
+  // 后端默认拒绝带作答的删除（详见 remove_item 的 CASCADE 说明）。
+  removePaperItem: (id, itemId, force = false) => request.delete(
+    `/question/papers/${id}/items/${itemId}`, { params: { force } }),
   renameSection: (id, data) => request.post(`/question/papers/${id}/sections/rename`, data),
   restructurePaper: (id, data) => request.post(`/question/papers/${id}/restructure`, data || {}),
 

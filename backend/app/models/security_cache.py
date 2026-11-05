@@ -33,7 +33,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -70,6 +70,41 @@ class RevokedToken(Base):
     __tablename__ = "sys_revoked_token"
 
     jti: Mapped[str] = mapped_column(String(32), primary_key=True)
+    expire_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+
+
+class UserTokenRevocation(Base):
+    """用户级令牌失效水位：改密 / 管理员重置后，让该用户**所有**旧令牌立刻失效。
+
+    ## 为什么 `sys_revoked_token` 不够用
+
+    `revoke_token` 按 `jti` 逐条吊销，登出时知道当前 access + refresh 两个 jti，
+    够用。但改密码时**拿不到该用户在其它设备/会话上已签发的 token 的 jti** ——
+    没有一个地方记录了「某用户一共签过哪些 token」。结果：改密后旧 access
+    还能用满 12h，旧 refresh 甚至能再续 7 天，改密完全无法止损。
+
+    ## 水位语义
+
+    `invalid_before_ts` 是**改密时刻的 Unix 秒（UTC epoch，float）**。
+    JWT 里的 `iat` 同样是 UTC epoch（PyJWT 编码 datetime → int 秒），
+    二者都与时区无关，直接数值比较即可，不需要 `now_local()` 的时区换算
+    （这是本项目反复踩过的坑：把本地 naive 时间与 UTC 时间戳混比会差 8 小时）。
+
+    判据 `iat < invalid_before_ts` → 该令牌签发于改密之前，拒绝。
+    新登录签发的 token `iat > invalid_before_ts`，正常放行。
+
+    `expire_at` 是这条水位记录自身的 TTL：只要覆盖该用户可能持有的
+    最长寿命令牌（refresh 默认 7 天）即可。过期后清理掉不影响正确性，
+    因为那些旧令牌本身也早已 `exp` 失效。
+
+    每个用户只有一行（主键 user_id），重复改密覆盖写。
+    """
+
+    __tablename__ = "sys_user_token_revocation"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    invalid_before_ts: Mapped[float] = mapped_column(Float)
     expire_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 

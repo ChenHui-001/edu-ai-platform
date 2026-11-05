@@ -18,7 +18,8 @@ from app.core.database import get_db
 from app.core.exception import AuthException, BusinessException
 from app.core.security import (
     create_access_token, decode_token, generate_captcha, hash_password,
-    revoke_token, store_captcha, store_reset_code, validate_password_strength,
+    is_user_token_revoked, revoke_token, revoke_user_tokens,
+    store_captcha, store_reset_code, validate_password_strength,
     verify_captcha, verify_reset_code,
 )
 from app.core.logger import get_logger
@@ -349,6 +350,10 @@ def refresh_token(body: Dict[str, str] = Body(...), db: Session = Depends(get_db
     payload = decode_token(token, db)
     if not payload or payload.get("type") != "refresh":
         raise BusinessException("刷新令牌无效或已过期")
+    # 这一处比 access 更关键：改密后旧 refresh 若还能用，可以再续 7 天，
+    # 改密等于没做。水位校验必须在签发新 access 之前。
+    if is_user_token_revoked(db, payload):
+        raise BusinessException("密码已变更，请重新登录")
     user = db.get(User, int(payload["sub"]))
     if not user or not user.is_active:
         raise BusinessException("账号不可用")
@@ -556,5 +561,7 @@ def reset_password(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
     user.must_change_password = False  # 已在此处改密
     user.login_fail_count = 0
     user.locked_until = None
+    # 找回密码同样意味着旧凭据可能已失陷，必须掐断全部旧会话
+    revoke_user_tokens(db, user.id)
     db.commit()
     return ok(message="密码已重置，请使用新密码登录")
