@@ -65,6 +65,11 @@ class QuestionGeneratorAgent(BaseAgent):
 
 type 取值：single(单选) multiple(多选) judge(判断) blank(填空) short(简答) calc(计算) material(材料分析) composition(作文)
 difficulty 取值：easy / medium / hard
+score：按**该题型的常规分值**给，不要所有题都写 5。参考（与各地中考/小学
+  学业质量监测的通行分值一致，只是题库里的建议值，组卷时会按卷面结构重新赋分）：
+    single 3 ／ multiple 3 ／ judge 2 ／ blank 3 ／
+    short 6 ／ calc 8 ／ material 9 ／ composition 50
+  同一批题里题型相同就都给同一个值，不要抖动。
 answer_min_words：仅作文题(composition)填建议最少字数（小学 400、初中 600），
   其他题型一律填 0。学生端会据此提示字数，填 0 表示不限。"""
 
@@ -250,7 +255,13 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
                 score=float(it.get("score", 5)),
                 answer_min_words=self._min_words(it.get("answer_min_words"),
                                                  it.get("type") or question_type),
-                difficulty=it.get("difficulty", difficulty),
+                # 难度以**调用方要求**为准，不信模型自报：
+                # 生产实测（2026-11-04 补 198 道题）模型 100% 返回 easy，
+                # 提示词里的「难度要求：中等/困难」被完全无视 —— 补出来的
+                # 198 道题难度全是 easy，难度分布彻底失效。教师的意图是
+                # "出 5 道中等题"，不是"出 5 道模型觉得是中等的题"。
+                # 这里保留模型给的值仅作为**未指定难度时**的补充。
+                difficulty=difficulty or it.get("difficulty") or "medium",
                 grade_id=grade_id,
                 subject_id=subject_id,
                 knowledge_point_id=kp_id,
