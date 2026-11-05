@@ -71,7 +71,12 @@ score：按**该题型的常规分值**给，不要所有题都写 5。参考（
     short 6 ／ calc 8 ／ material 9 ／ composition 50
   同一批题里题型相同就都给同一个值，不要抖动。
 answer_min_words：仅作文题(composition)填建议最少字数（小学 400、初中 600），
-  其他题型一律填 0。学生端会据此提示字数，填 0 表示不限。"""
+  其他题型一律填 0。学生端会据此提示字数，填 0 表示不限。
+
+【输出纪律】直接输出 JSON，不要长篇推演。你能动用的输出预算由推理 token 与
+  正文**共享**，实测「困难」题上推理会把 8192 全部吃掉、正文为空 → 整批作废。
+  所以：想清楚就写，不要反复自我检查；不要把草稿写进正文；不要在 JSON 前后
+  加任何解释、Markdown 代码块或前后缀。"""
 
     def execute(
         self,
@@ -358,7 +363,30 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
             stmt = stmt.where(Question.type == str(want_type))
         if kp_id:
             stmt = stmt.where(Question.knowledge_point_id == kp_id)
-        rows = db.scalars(stmt.limit(count)).all()
+
+        # 难度必须尽量匹配调用方的要求，并且如实告知不匹配的数量。
+        #
+        # 生产实测（2026-11-05 验收 2.5.4）：请求「2 道困难题」时模型生成失败
+        # 走到这里，旧实现只按题型取前 2 道已发布题，取回的是 easy/medium，
+        # 却照样回「已从公共题库匹配相似题目」—— 教师以为拿到了困难题，
+        # 实际难度完全不符，且没有任何提示。这与「难度要求被模型自报覆盖」
+        # 是同一类问题：**调用方的要求必须被尊重，做不到就要说出来**。
+        #
+        # 策略：先只取要求难度的题；不足时才放宽到全难度补足，并把补上的
+        # 数量单独回传（`difficulty_mismatch`），由调用方决定是否提示/重试。
+        want_diff = str(kwargs.get("difficulty") or "").strip() or None
+        rows = []
+        if want_diff:
+            rows = list(db.scalars(
+                stmt.where(Question.difficulty == want_diff).limit(count)).all())
+        if len(rows) < count:
+            got_ids = {q.id for q in rows}
+            extra_stmt = stmt if not got_ids else stmt.where(
+                Question.id.notin_(got_ids))
+            rows.extend(db.scalars(
+                extra_stmt.limit(count - len(rows))).all())
+
+        mismatch = sum(1 for q in rows if want_diff and q.difficulty != want_diff)
 
         items = [
             # 必须带上 id：下游智能组卷依赖 question_id 建立 PaperItem，
@@ -373,6 +401,12 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
             tip = "模型不可用，已从公共题库匹配相似题目。请配置 LLM_API_KEY 启用 AI 生成。"
         else:
             tip = f"AI 生成未成功（{reason}），已从公共题库匹配相似题目。"
+        # 难度不符必须显式说出来：教师点「困难」拿到简单题、界面上却写
+        # 「已匹配相似题目」，等于把降级伪装成成功。
+        if mismatch:
+            tip += (f"其中 {mismatch} 道题的难度不是要求的"
+                    f"{self._difficulty_name(want_diff)}（题库暂无足量该难度题目），"
+                    "请人工复核难度。")
         return {
             "questions": items,
             "total": len(items),
@@ -383,6 +417,7 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
             # 按真实原因决定「是否值得减半批次重试」，只能靠这个字段判断。
             "reason": reason,
             "tip": tip,
+            "difficulty_mismatch": mismatch,
             "knowledge_point_missing": subject_kp_missing(db, subject_id),
         }
 

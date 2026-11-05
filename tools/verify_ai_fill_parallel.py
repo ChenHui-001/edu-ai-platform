@@ -326,6 +326,54 @@ def main() -> int:
                       difficulty_norm={"easy": 30, "medium": 50, "hard": 20})
         check("解答题单批上限 = 3", calls_c[0][1] == 3, str(calls_c[:2]))
 
+        # 6c-2. 困难题的批量必须比同题型的中等题更小。
+        # 生产实测（2026-11-05 验收 2.5.4）：同一提示词下 easy 的 reasoning 只占
+        # 80 token、正文 494 字正常；hard 直接 output=8192 / reasoning=8191 /
+        # 正文 0 字，整批作废。难度是独立于题型的第三个变量，只按题型分档时
+        # 困难题单批仍按 5 道发 → 必然 100% 失败再靠「减半重试」兜底，
+        # 白烧一次 60~90s 的模型往返。
+        hard_calls = []
+
+        def install_hard_agent(calls):
+            def fake_run(self, db, user_id=None, grade_id=None, subject_id=None,
+                         question_type="single", count=5, difficulty="medium",
+                         save=False, **kwargs):
+                calls.append((question_type, count, difficulty))
+                q = Question(
+                    type="single", stem=f"困难题批量验证 {len(calls)}",
+                    options='[{"key":"A","text":"甲"},{"key":"B","text":"乙"}]',
+                    answer="A", analysis="验证", score=3, difficulty="hard",
+                    grade_id=grade.id, subject_id=subject.id, bank_type="public",
+                    owner_id=teacher.id, status="draft", source="ai_fill",
+                    fingerprint=f"hard-{len(calls)}",
+                )
+                db.add(q)
+                db.commit()
+                db.refresh(q)
+                return {"success": True, "data": {"questions": [
+                    {"id": q.id, "question_id": q.id, "stem": q.stem,
+                     "type": "single", "difficulty": "hard", "score": 3,
+                     "answer": "A", "analysis": "验证",
+                     "options": [{"key": "A", "text": "甲"}]}]}}
+            return fake_run
+
+        orig_run = qa_mod.QuestionGeneratorAgent.run
+        qa_mod.QuestionGeneratorAgent.run = install_hard_agent(hard_calls)
+        try:
+            plan_h = build_plan_one(db, grade, subject, teacher, code="single",
+                                    count=4, name="困难单选题")
+            for g in plan_h.gaps:
+                g["difficulty"] = "hard"
+            _ai_fill_gaps(db, teacher, plan=plan_h, grade=grade, subject=subject,
+                          difficulty_norm={"easy": 0, "medium": 0, "hard": 100})
+        finally:
+            qa_mod.QuestionGeneratorAgent.run = orig_run
+        hard_batches = [c[1] for c in hard_calls if c[2] == "hard"]
+        check("困难题单批上限 = 2（同一题型中等题为 5）",
+              bool(hard_batches) and hard_batches[0] == 2, str(hard_calls[:3]))
+        check("困难题补题时确实把 difficulty=hard 传下去",
+              any(c[2] == "hard" for c in hard_calls), str(hard_calls[:3]))
+
         # 6d. 同一大题补多批：published 题不得跨批次重复采纳。
         # 会把 `used_ids` 当快照传进来、补题过程中不回写，第一批选中的 published
         # 题在第二批还能被再选一次（卷内出现两道同样的题）。假 agent 用「每批都

@@ -84,6 +84,23 @@ FILL_BATCH_BY_TYPE: Dict[str, int] = {
 }
 FILL_BATCH_DEFAULT = 5
 
+# 难度对批量的影响：**困难题比简单题更吃推理 token**。
+# 生产实测（2026-11-05 验收 2.5.4，MiniMax-M3.1-Flash）同一提示词下：
+#   easy   → output_tokens=277，其中 reasoning=80，正文 494 字，正常；
+#   hard   → output_tokens=8192，其中 reasoning=**8191**，正文 **0 字**，整批作废。
+# 即「困难」这个要求本身会把推理拉长到撞满预算，与题型无关（都是单选）。
+# 只按题型分档时 hard 单批仍按 5 道发，必然 100% 失败并退回「减半重试」，
+# 白白浪费一次 60~90s 往返。这里对困难档再打对折，让它一次就命中。
+FILL_BATCH_HARD_DIVISOR = 2
+
+
+def _fill_batch_cap(qtype: str, difficulty: str = "") -> int:
+    """单批题量上限 = 题型分档，困难题再对折（推理 token 更贵）。"""
+    cap = FILL_BATCH_BY_TYPE.get(qtype, FILL_BATCH_DEFAULT)
+    if str(difficulty or "").strip() == "hard":
+        cap = max(1, cap // FILL_BATCH_HARD_DIVISOR)
+    return cap
+
 # 判据用词：命中即视为「输出预算被推理吃光」，值得减半重试（换别的失败原因
 # 重试纯属浪费一次 60~90s 的模型往返）。
 _BUDGET_FAILURE_HINTS = ("正文为空", "max_tokens", "截断", "tokens")
@@ -539,10 +556,11 @@ def _fill_one_gap(
     gtype = str(gap.get("code") or "single")
     gdiff = str(gap.get("difficulty") or default_diff)
 
-    # 单批题量上限按题型分档（见 FILL_BATCH_BY_TYPE 的实测依据）。缺口 20 题时
-    # 一次调用会撞 LLM_MAX_TOKENS 导致 JSON 截断，必须拆成多批循环；而不同题型
-    # 的单题正文量差一个量级，统一 10 道必然让重题型先撞墙。
-    batch_cap = FILL_BATCH_BY_TYPE.get(gtype, FILL_BATCH_DEFAULT)
+    # 单批题量上限按题型分档、困难题再对折（见 _fill_batch_cap 的实测依据）。
+    # 缺口 20 题时一次调用会撞 LLM_MAX_TOKENS 导致 JSON 截断，必须拆成多批循环；
+    # 而不同题型的单题正文量差一个量级，统一 10 道必然让重题型先撞墙。
+    # 难度是**独立于题型**的第三个变量：困难题的推理开销会把预算吃光（正文 0 字）。
+    batch_cap = _fill_batch_cap(gtype, gdiff)
 
     db = SessionLocal()
     try:
@@ -774,9 +792,10 @@ def _regen_one(
     out: Dict[str, Any] = {"items": [], "reason": "", "skipped_dup": 0}
     forbid_ids = set(forbid_ids or ())
     keys = list(forbid_keys or [])
-    # 单批上限与补题共用同一张表：作文一题上千字、解答题要完整解题过程，
-    # 一次 10 道必然把 max_tokens 烧在推理阶段（见 FILL_BATCH_BY_TYPE 注释）。
-    cap = max(1, FILL_BATCH_BY_TYPE.get(qtype, FILL_BATCH_DEFAULT))
+    # 单批上限与补题共用同一个函数：作文一题上千字、解答题要完整解题过程，
+    # 一次 10 道必然把 max_tokens 烧在推理阶段（见 _fill_batch_cap 的实测依据）。
+    # 重生时也要把**目标难度**带进来：困难题单批必须更小，否则一次都拿不到。
+    cap = _fill_batch_cap(qtype, difficulty or "")
     # 空转保护：连续两轮"一点没多拿到"就停（模型持续给重复题 / 难度不符时
     # 单纯加轮次只会白烧 60~90s）。轮数上限按 need 动态算，否则 need=9、
     # cap=3 时 2 轮最多只拿到 6 题，剩下 3 题会被误报成"模型生成不了"。

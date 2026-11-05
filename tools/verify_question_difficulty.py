@@ -124,14 +124,86 @@ def main() -> int:
     check("三轮不同要求产出三种难度（难度真的可区分）",
           all_diffs == {"easy", "medium", "hard"}, str(sorted(all_diffs)))
 
+    verify_fallback_difficulty(db, teacher, grade, subject)
+
     print("\n" + "=" * 58)
     if FAILED:
         print(f"失败 {len(FAILED)} 项：")
         for f in FAILED:
             print("  -", f)
         return 1
-    print("全部通过：难度以调用方要求为准，模型自报不再覆盖")
+    print("全部通过：难度以调用方要求为准，模型自报不再覆盖；"
+          "降级复用也不再把难度不符伪装成成功")
     return 0
+
+
+def verify_fallback_difficulty(db, teacher, grade, subject) -> None:
+    """降级复用（fallback）也必须尊重难度要求。
+
+    生产实测（2026-11-05 验收 2.5.4）：请求「2 道困难题」时模型生成失败，
+    走到 `fallback`（从题库复用已发布题）。旧实现只按题型取前 N 道，
+    取回 easy/medium 却照样回「已从公共题库匹配相似题目」——教师以为
+    拿到了困难题。这里构造「题库只有 easy 题、却要求 hard」的场景，
+    断言：① 先按难度取；② 取不到才放宽；③ 必须如实上报不符数量。
+    """
+    from app.models import Question
+    from app.agents.question_agent import QuestionGeneratorAgent
+
+    print("\n=== 降级复用（fallback）不得把难度不符伪装成成功 ===")
+
+    # 题库里只放 4 道 published 的 easy 单选（不给任何 hard）
+    for i in range(4):
+        db.add(Question(
+            type="single", stem=f"[fb-easy] 降级难度验证题 {i}",
+            options='[{"key":"A","text":"甲"},{"key":"B","text":"乙"}]',
+            answer="A", analysis="验证用", score=3, difficulty="easy",
+            grade_id=grade.id, subject_id=subject.id, bank_type="public",
+            owner_id=teacher.id, status="published",
+            fingerprint=f"fb-easy-{i}", source="manual",
+        ))
+    db.commit()
+
+    agent = QuestionGeneratorAgent()
+
+    # 1) 要求 hard：题库没有 hard → 应放宽取到 easy，但必须报 mismatch=4
+    res = agent.fallback(
+        db, subject_id=subject.id, count=2, question_type="single",
+        difficulty="hard", allow_all_banks=True, reason="模拟生成失败",
+    )
+    got = res.get("questions") or []
+    check("要求 hard 且题库无 hard → 放宽补足（不交白卷）",
+          len(got) == 2, f"取到 {len(got)} 道")
+    check("放宽补足时如实上报难度不符数量",
+          res.get("difficulty_mismatch") == 2,
+          f"mismatch={res.get('difficulty_mismatch')}")
+    check("提示文案明确写出难度不符（不伪装成成功）",
+          "难度不是要求的" in str(res.get("tip") or ""),
+          str(res.get("tip") or "")[:90])
+
+    # 2) 要求 easy：题库有 easy → 全部命中，mismatch 必须为 0
+    res2 = agent.fallback(
+        db, subject_id=subject.id, count=2, question_type="single",
+        difficulty="easy", allow_all_banks=True, reason="模拟生成失败",
+    )
+    got2 = res2.get("questions") or []
+    check("要求 easy 且题库有 easy → 全部命中该难度",
+          len(got2) == 2 and all(
+              (q.get("difficulty") == "easy") for q in got2),
+          str([q.get("difficulty") for q in got2]))
+    check("全部命中时 mismatch 为 0、文案不提难度问题",
+          res2.get("difficulty_mismatch") == 0
+          and "难度不是要求的" not in str(res2.get("tip") or ""),
+          f"mismatch={res2.get('difficulty_mismatch')}")
+
+    # 3) 未指定难度：行为与改动前一致（不筛选、不报警）
+    res3 = agent.fallback(
+        db, subject_id=subject.id, count=2, question_type="single",
+        allow_all_banks=True, reason="模拟生成失败",
+    )
+    check("未指定难度时不筛选、不误报 mismatch",
+          len(res3.get("questions") or []) == 2
+          and res3.get("difficulty_mismatch") == 0,
+          f"mismatch={res3.get('difficulty_mismatch')}")
 
 
 if __name__ == "__main__":
