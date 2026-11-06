@@ -1,0 +1,50 @@
+[
+  {
+    "id": "FUNC-WRITE-001",
+    "role": "teacher",
+    "method": "POST",
+    "path": "/question/papers/compose/preview",
+    "body": {},
+    "note": "组卷预览（纯内存态，不落库）：验证路由/鉴权/参数校验链"
+  },
+  {
+    "id": "FUNC-WRITE-002",
+    "role": "teacher",
+    "method": "POST",
+    "path": "/question/questions/batch",
+    "body": {},
+    "note": "题库批量操作入口：缺 action 应在校验层被拒，不得 500"
+  },
+  {
+    "id": "FUNC-WRITE-003",
+    "role": "teacher",
+    "method": "POST",
+    "path": "/agent/paper-composer",
+    "body": {},
+    "note": "AI 组卷入口：空需求应给可读提示，不得静默丢弃或 500"
+  },
+  {
+    "id": "FUNC-WRITE-004",
+    "role": "student",
+    "method": "POST",
+    "path": "/learning/notes",
+    "body": {},
+    "note": "学习笔记写入入口：仅学生本人，缺字段应在校验层被拒"
+  },
+  {
+    "id": "FUNC-WRITE-005",
+    "role": "teacher",
+    "method": "POST",
+    "path": "/grading/batch/grade",
+    "body": {},
+    "note": "批量批改入口：最易出事故的写路径之一"
+  },
+  {
+    "id": "FUNC-WRITE-006",
+    "role": "admin",
+    "method": "POST",
+    "path": "/edu/subjects",
+    "body": {},
+    "note": "学科创建入口：缺 name/grade_id 应在校验层被拒"
+  }
+]
