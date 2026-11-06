@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">错题本</h2>
       <div>
-        <el-button :icon="Download" @click="exportWrong">导出</el-button>
+        <ExportButton @click="exportWrong" />
         <el-button :icon="Refresh" @click="load">刷新</el-button>
       </div>
     </div>
@@ -117,7 +117,8 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, MagicStick, RefreshRight, ArrowDown, Download } from '@element-plus/icons-vue'
+import { Search, Refresh, MagicStick, RefreshRight, ArrowDown } from '@element-plus/icons-vue'
+import ExportButton from '@/components/ExportButton.vue'
 import TYPES from '@/constants/question'
 import { learningApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
