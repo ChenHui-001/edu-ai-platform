@@ -67,6 +67,31 @@ def is_available() -> bool:
 # 保证 DB 残留值不能突破当前代码允许的上限（与 ai_config_service.get_ai_config 保持一致）。
 _CAPS: Dict[str, int] = {"llm_max_tokens": int(settings.LLM_MAX_TOKENS or 0)}
 
+# ---------------------------------------------------------------- 场景路由
+# 结构化题目生成不需要长链推理，按 biz_type 把这类调用分流到独立客户端。
+SCENARIO_DEFAULT = "default"
+SCENARIO_FAST = "fast"
+
+
+def resolve_scenario(biz_type: Optional[str]) -> str:
+    """按业务类型选 LLM 客户端场景。
+
+    只认 `biz_type`（所有 Agent 的 call_llm 都会显式传），不按 agent 名猜：
+    QuestionGeneratorAgent 同时服务出题、组卷补题与单题重生，三者都标
+    `question_generate`，天然收敛到同一个场景。未标 biz_type 的调用一律走
+    默认场景，避免把教案、学情分析这类长文本任务误降到低推理档。
+
+    清空 `llm_fast_biz_types` 即可整体关闭路由（生产行为回到改动前）。
+    """
+    if not biz_type:
+        return SCENARIO_DEFAULT
+    raw = _get_db_value("llm_fast_biz_types", "string",
+                        settings.LLM_FAST_BIZ_TYPES)
+    allowed = {x.strip() for x in str(raw or "").split(",") if x.strip()}
+    if not allowed:
+        return SCENARIO_DEFAULT
+    return SCENARIO_FAST if str(biz_type).strip() in allowed else SCENARIO_DEFAULT
+
 # 进程级单例，声明必须在 is_available() 之前：函数体在调用时才求值，
 # 但保持在定义前声明可避免「先使用后声明」的阅读困惑与静态工具告警。
 _llm_singleton: Optional["LLMClient"] = None
@@ -152,7 +177,10 @@ class LLMClient:
     _COOLDOWN_MAX_SECONDS = 300
 
     def __init__(self):
-        self._client = None
+        # 每个场景一份独立的 ChatOpenAI 实例（连接池 + 参数快照）。
+        # 不能只留一个 `_client`：快场景要带 reasoning_effort、可能还要换
+        # 模型/地址，共用一个实例会让「改一次配置、两种调用互相串味」。
+        self._clients: Dict[str, Any] = {}
         self._fallback_reason = ""
         # 熔断/冷却状态**不在实例上**了（B1）。它曾经是：
         #     self._disabled_reason = ""     # 鉴权熔断（401/403，永久）
@@ -242,12 +270,13 @@ class LLMClient:
             logger.info("LLM 调用成功，限流冷却与退避计数已清零")
             llm_breaker.clear_rate_limit_async()
 
-    def get_client(self):
-        """获取 LangChain ChatOpenAI 实例（失败返回 None）。
+    def get_client(self, scenario: str = SCENARIO_DEFAULT):
+        """按场景获取 LangChain ChatOpenAI 实例（失败返回 None）。
 
         检查顺序很重要：**熔断/冷却判断必须在返回缓存客户端之前**。
-        反过来的话，进程里已有 `_client` 时永远查不到熔断标记，
+        反过来的话，进程里已有缓存客户端时永远查不到熔断标记，
         熔断形同虚设（实测：写入无效密钥后交卷仍耗时 105s）。
+        双场景缓存后这条更要紧——两个场景都必须被熔断短路。
         """
         # 鉴权熔断优先级最高：已确认配置无效，连缓存客户端也不能用。
         # B1：状态来自共享层（本地镜像立刻生效 + DB 跨进程生效），
@@ -265,8 +294,9 @@ class LLMClient:
                     f"（连续第 {state['streak']} 次退避，期间使用规则引擎）")
                 logger.warning(self._fallback_reason)
                 return None
-        if self._client is not None:
-            return self._client
+        cached = self._clients.get(scenario)
+        if cached is not None:
+            return cached
         if not is_available():
             self._fallback_reason = "未配置 LLM_API_KEY，使用规则引擎降级"
             return None
@@ -281,7 +311,32 @@ class LLMClient:
             temperature = _get_db_value("llm_temperature", "float", settings.LLM_TEMPERATURE)
             max_tokens = _get_db_value("llm_max_tokens", "int", settings.LLM_MAX_TOKENS)
             timeout = _get_db_value("llm_timeout", "int", settings.LLM_TIMEOUT)
-            self._client = ChatOpenAI(
+
+            # 快场景覆盖：可独立指定模型 / API 地址（留空则复用主配置），
+            # 并固定带低推理档。实测同模型 low 档把 reasoning 从 325
+            # 压到 24、耗时 5.1s→2.7s，正文与 JSON 契约完全不变。
+            effort = ""
+            if scenario == SCENARIO_FAST:
+                fast_model = _get_db_value(
+                    "llm_model_fast", "string", settings.LLM_MODEL_FAST)
+                fast_base = _get_db_value(
+                    "llm_base_url_fast", "string", settings.LLM_BASE_URL_FAST)
+                effort = str(_get_db_value(
+                    "llm_fast_reasoning_effort", "string",
+                    settings.LLM_FAST_REASONING_EFFORT) or "").strip()
+                if str(fast_model or "").strip():
+                    model = str(fast_model).strip()
+                if str(fast_base or "").strip():
+                    base_url = str(fast_base).strip()
+
+            kwargs: Dict[str, Any] = {}
+            if effort:
+                # langchain-openai 0.2.14 已把 reasoning_effort 收为显式参数，
+                # 实测同样进请求体且不产生 model_kwargs 的 UserWarning。
+                # 换成不支持该字段的网关时把 llm_fast_reasoning_effort 留空即可。
+                kwargs["reasoning_effort"] = effort
+
+            client = ChatOpenAI(
                 api_key=api_key or "ollama",
                 base_url=base_url,
                 model=model,
@@ -291,9 +346,13 @@ class LLMClient:
                 # 显式限制重试：langchain-openai 默认 max_retries=2，
                 # 配合 60s 超时会把单次交卷放大到最坏 180s。
                 max_retries=1,
+                **kwargs,
             )
-            logger.info(f"LLM 客户端就绪: {provider} / {model}")
-            return self._client
+            self._clients[scenario] = client
+            logger.info(
+                f"LLM 客户端就绪: {scenario} / {provider} / {model}"
+                + (f" / reasoning_effort={effort}" if effort else ""))
+            return client
         except ImportError as exc:
             self._fallback_reason = f"langchain-openai 未安装: {exc}"
             logger.warning(self._fallback_reason)
@@ -302,6 +361,15 @@ class LLMClient:
             self._fallback_reason = f"LLM 初始化失败: {exc}"
             logger.error(self._fallback_reason)
             return None
+
+    def reset_clients(self) -> None:
+        """清空所有场景的客户端缓存（AI 配置保存后由配置服务调用）。
+
+        只清一个场景会出现「题目类用新模型、教案类还连着旧连接池」的
+        鬼现象；统一 clear 才能保证一次配置变更对所有调用同时生效。
+        """
+        self._clients.clear()
+        self._fallback_reason = ""
 
     def chat(
         self,
@@ -314,7 +382,8 @@ class LLMClient:
         biz_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """调用大模型，返回 {success, content, is_fallback, reason, usage}。"""
-        client = self.get_client()
+        scenario = resolve_scenario(biz_type)
+        client = self.get_client(scenario)
         if client is None:
             # 客户端不可用（未配置 key / 初始化失败）时同样要写日志，
             # 否则「AI 调用日志」页面在降级期间完全空白，
@@ -338,6 +407,9 @@ class LLMClient:
 
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        # 路由可观测：模型名在「客户端就绪」日志里，这里记录每次调用
+        # 实际落到哪个场景，否则运维只能靠猜「我的配置到底生效没有」。
+        logger.info(f"LLM 路由: scenario={scenario} biz={biz_type or '-'} agent={agent_name}")
         start = time.perf_counter()
         try:
             resp = client.invoke(

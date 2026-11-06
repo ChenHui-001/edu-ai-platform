@@ -59,6 +59,30 @@ _FIELDS: Dict[str, Dict[str, Any]] = {
         "label": "超时时间(秒)", "description": "单次请求超时时间",
         "category": "ai", "is_public": True,
     },
+    # 场景级模型路由：题目类调用走「快场景」独立客户端。
+    # 四项都允许为空（= 复用主模型 / 不传参数），保证可随时清空回滚。
+    "llm_model_fast": {
+        "key": "llm_model_fast", "type": "string", "default": settings.LLM_MODEL_FAST,
+        "label": "快场景模型", "description": "出题/变式题等结构化生成专用模型；留空则复用主模型",
+        "category": "ai", "is_public": True,
+    },
+    "llm_base_url_fast": {
+        "key": "llm_base_url_fast", "type": "string", "default": settings.LLM_BASE_URL_FAST,
+        "label": "快场景 API 地址", "description": "跨厂商时填写；留空则复用主 API 地址",
+        "category": "ai", "is_public": True,
+    },
+    "llm_fast_biz_types": {
+        "key": "llm_fast_biz_types", "type": "string",
+        "default": settings.LLM_FAST_BIZ_TYPES,
+        "label": "快场景业务类型", "description": "逗号分隔的 biz_type；清空即关闭路由",
+        "category": "ai", "is_public": True,
+    },
+    "llm_fast_reasoning_effort": {
+        "key": "llm_fast_reasoning_effort", "type": "string",
+        "default": settings.LLM_FAST_REASONING_EFFORT,
+        "label": "快场景推理档", "description": "low/medium/high 等；留空则不传该参数",
+        "category": "ai", "is_public": True,
+    },
 }
 
 # 提供商预设
@@ -270,8 +294,9 @@ def _reload_llm_client() -> None:
         if while_single is not None and while_single is not _llm_mod.llm_client:
             targets.append(while_single)
         for c in targets:
-            c._client = None
-            c._fallback_reason = ""
+            # 场景级路由后每个实例持有多份客户端缓存，统一清空，
+            # 不能只置 `_client = None`（那样快场景会一直用旧参数）。
+            c.reset_clients()
         logger.info(f"LLM 客户端已重载（{len(targets)} 个实例，熔断/冷却已跨进程复位）")
     except Exception as exc:
         logger.warning(f"重载 LLM 客户端失败: {exc}")

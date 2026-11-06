@@ -179,6 +179,23 @@ class Settings(BaseSettings):
     AGENT_RATE_LIMIT_PER_MIN: int = 12
     LLM_TIMEOUT: int = 60
     LLM_ENABLED: bool = True  # 未配置 Key 时自动降级为规则引擎
+
+    # ---------------- 场景级模型路由（方案 C）----------------
+    # 结构化题目生成不需要长链推理。按 biz_type 把这类调用路由到独立的
+    # 「快场景」客户端：模型可独立配置，并固定带低推理档参数。
+    #
+    # 生产实测（2026-11-06，MiniMax-M3.1-Flash，单题紧凑 JSON，max_tokens=2048）：
+    #   默认(max 推理档)        5.1s / 454 output token / reasoning 325
+    #   reasoning_effort=low   2.7s / 142 output token / reasoning  24
+    # 正文长度与 JSON 可解析性完全一致，故快场景默认「同模型 + 低推理档」。
+    # 同账号下其它候选（MiniMax-M3 / M2.5-highspeed / M2.7-highspeed）都会把
+    # <think> 塞进正文，虽然 extract_json 的括号配对扫描能兜住，但更慢且
+    # 白占 max_tokens 预算；找到合适的非推理模型后改 llm_model_fast 即可切换，
+    # 无需再动代码。
+    LLM_MODEL_FAST: str = ""            # 空 = 复用主模型
+    LLM_BASE_URL_FAST: str = ""         # 空 = 复用主 base_url（跨厂商时填）
+    LLM_FAST_BIZ_TYPES: str = "question_generate,question_variants"
+    LLM_FAST_REASONING_EFFORT: str = "low"  # 空 = 不传该参数（兼容不认识的网关）
     # AI 组卷「缺口补题」的并发度（按大题并行）。
     #
     # 每大题单独调一次模型是题型正确性的前提（混着补会把单选题塞进填空题），
