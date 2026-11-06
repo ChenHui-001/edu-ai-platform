@@ -199,10 +199,14 @@ def verify_frontend():
 
     print("\n=== 3. 前端四处契约修复（静态断言）===")
     pm = read("views/teacher/PaperManage.vue")
-    check("PaperManage 不再多解一层 res.data",
-          "const envelope = res || {}" in pm)
-    check("PaperManage 用 code/success 判定成功",
-          "envelope.code !== 200" in pm and "payload.paper?.id" in pm)
+    # 审计 #16 把解包收敛到 composables/useAgentEnvelope.js，断言跟着搬过去：
+    # 页面只负责调用，判定逻辑在 composable 里锁住。否则逻辑本身没错，
+    # 静态断言却因为「盯着旧写法」变成假红。
+    check("PaperManage 走统一解包，不再多解一层 res.data",
+          "parseAgentEnvelope(res)" in pm and "res.data.data" not in pm)
+    env = read("composables/useAgentEnvelope.js")
+    check("统一解包用 code/success 判定成功",
+          "envelope.code === 200" in env and "envelope.success !== false" in env)
 
     ag = read("views/agent/AgentGenerate.vue")
     check("AgentGenerate 发的是 request（不是 requirement）",

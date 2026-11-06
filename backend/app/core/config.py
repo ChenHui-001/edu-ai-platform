@@ -74,10 +74,10 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     # 允许的前端来源（CORS）。生产是同源反代（Caddy → 8081），根本不需要
     # 放开跨域；默认通配会让任意站点带着浏览器里的凭据调用本 API。
-    # 只给本地 Vite 开发源，其它部署形态请用 .env 的 CORS_ORIGINS 显式配置。
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:5173", "http://127.0.0.1:5173",
-    ]
+    # 默认**不放开任何来源**：本地开发用 Vite 的 /api 代理（不走 CORS），
+    # 有独立前端域的部署形态请在 .env 里显式配置 CORS_ORIGINS。
+    # 这里不写死任何主机+端口字面量，避免触发 check_hardcoded_host 门禁。
+    CORS_ORIGINS: List[str] = []
 
     # ---------------- 数据库 ----------------
     # 默认为 SQLite，切换 PostgreSQL 只需改 DATABASE_URL
