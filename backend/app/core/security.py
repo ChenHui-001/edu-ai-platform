@@ -12,11 +12,10 @@
 （见 `app/models/security_cache.py`），语义仍是「带 TTL 的一次性缓存」，
 但写入与读取共享同一个 SQLite。
 
-**未迁移**的 `_RESET_RATE_STORE`（`api/v1/auth.py`）与
-`_PUBLIC_UPLOAD_HITS`（`api/v1/attachment.py`）是滥用频率计数器，
-不是认证正确性状态：多 worker 下限额变 N 倍仍远低于可用爆破量级，
-而落库会给匿名端点引入无鉴权的写放大面。保留内存是权衡后的选择，
-不是遗漏。
+滥用频率计数器（找回密码 / 匿名上传）也已于 2026-11-06 迁移到
+`sys_rate_limit` 单行表（见 `services/rate_limit.py`）：它们不是认证
+正确性状态，但多 worker 下进程内计数会把限额放大 N 倍。现在每次
+请求只 UPDATE 一行，兼顾跨进程一致与写放大。
 """
 import base64
 import hashlib
@@ -46,20 +45,41 @@ ALGORITHM = settings.ALGORITHM
 
 
 # ---------------------------------------------------------------- 密码
+# OWASP 对 PBKDF2-HMAC-SHA256 的建议下限是 600,000 次迭代，旧值是 100,000。
+# 直接全局改常量会让**库里所有现存哈希永远验证不过**（旧哈希是按 10 万次
+# 算出来的），等于一次发布把全部用户锁在门外。因此采用双读兼容：
+#   * 新哈希写入 4 段格式，自带迭代数；
+#   * 旧 3 段格式回落到 100,000 次验证，用户下次改密时自然升到新强度。
+PBKDF2_ITERATIONS = 600_000
+LEGACY_PBKDF2_ITERATIONS = 100_000
+
+
 def hash_password(password: str) -> str:
-    """PBKDF2-SHA256 加盐哈希（无需额外依赖，适合轻量化部署）。"""
+    """PBKDF2-SHA256 加盐哈希（新哈希带迭代数，便于平滑升级）。"""
     salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 100_000)
-    return f"pbkdf2_sha256${salt}${dk.hex()}"
+    dk = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), bytes.fromhex(salt), PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt}${dk.hex()}"
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    """校验密码。"""
+    """校验密码：同时接受新旧两种格式，按哈希自带的迭代数计算。"""
     try:
-        algo, salt, digest = hashed.split("$")
-        if algo != "pbkdf2_sha256":
+        parts = hashed.split("$")
+        if parts[0] != "pbkdf2_sha256":
             return False
-        dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), bytes.fromhex(salt), 100_000)
+        if len(parts) == 4:
+            iterations, salt, digest = int(parts[1]), parts[2], parts[3]
+        elif len(parts) == 3:  # 旧格式：pbkdf2_sha256$<salt>$<digest>
+            iterations, salt, digest = LEGACY_PBKDF2_ITERATIONS, parts[1], parts[2]
+        else:
+            return False
+        # 哈希串来自数据库，但被篡改成一个荒谬大的迭代数会拖死进程；
+        # 上限 200 万足够覆盖未来十年的强度升级。
+        if not 0 < iterations <= 2_000_000:
+            return False
+        dk = hashlib.pbkdf2_hmac(
+            "sha256", plain.encode(), bytes.fromhex(salt), iterations)
         return secrets.compare_digest(dk.hex(), digest)
     except (ValueError, AttributeError):
         return False
