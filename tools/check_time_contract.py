@@ -54,12 +54,23 @@ SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "dist", "data",
 TIME_FUNC_FILES = [LEGACY_DEF_FILE, os.path.join("backend", "app", "core", "security.py")]
 
 
+# 只扫「会被部署/会被发版门禁执行」的 Python 源码。
+# 旧实现 os.walk(ROOT) 扫全仓：任何临时审计目录、笔记、一次性脚本里
+# 出现 `utcnow` 字样就会让整个门禁假红，运维很快对红灯脱敏。
+# backend/app（运行时）+ tools（门禁脚本自身）已覆盖全部需要守的调用点。
+SCAN_ROOTS = [
+    os.path.join(ROOT, "backend", "app"),
+    os.path.join(ROOT, "tools"),
+]
+
+
 def iter_py_files():
-    for root, dirs, files in os.walk(ROOT):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        for fn in files:
-            if fn.endswith(".py"):
-                yield os.path.join(root, fn)
+    for base in SCAN_ROOTS:
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            for fn in files:
+                if fn.endswith(".py"):
+                    yield os.path.join(root, fn)
 
 
 def rel(path):
