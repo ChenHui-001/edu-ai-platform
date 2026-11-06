@@ -40,6 +40,20 @@ def _post(url, body, token=None, timeout=20):
         return -1, {"error": str(e)}
 
 
+def _read_json(resp):
+    """解析响应体；导出端点是二进制/HTML，不是 JSON 也不能丢掉状态码。
+
+    旧实现把 `json.loads` 抛出的 ValueError 当成「连接失败」返回 -1，
+    于是导出端点无论 200 还是 500 都被记成 -1，再被 `st != 404` 判 PASS
+    —— 服务端错误被完全掩盖。这里保留真实 HTTP 状态码。
+    """
+    try:
+        raw = resp.read().decode("utf-8", "replace")
+        return json.loads(raw or "{}")
+    except (ValueError, TypeError, OSError):
+        return {"_non_json": True}
+
+
 def _get(url, token, timeout=20):
     last = (-1, {})
     for _ in range(2):  # 单次重试，规避单 worker 连接抖动
@@ -48,12 +62,9 @@ def _get(url, token, timeout=20):
             req.add_header("Authorization", f"Bearer {token}")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.status, json.loads(r.read().decode("utf-8") or "{}")
+                return r.status, _read_json(r)
         except urllib.error.HTTPError as e:
-            try:
-                last = e.code, json.loads(e.read().decode("utf-8") or "{}")
-            except Exception:
-                last = e.code, {}
+            last = e.code, _read_json(e)
         except Exception as e:  # noqa
             last = -1, {"error": str(e)}
     return last
@@ -82,6 +93,21 @@ def _put(url, body, token=None, timeout=20):
 # 端点可达即算通过：服务端已路由并响应（200/鉴权/需参均非缺陷）。
 # 仅 404(路径错)/500(服务端错误)/持续 -1(连接失败) 判 FAIL。
 REACHABLE = {200, 400, 401, 403, 422, 429}
+
+# 按用例 id 显式声明跨角色期望码（P1-3）。此前 cross_status 只写进报告、
+# 从不参与判定，实测 8 条跨角色 200 全部记 PASS，越权探测形同虚设。
+#  - 列在这里的：管理端专属端点必须被其它角色拒绝；学生端按
+#    get_current_student 的「学生及以上」设计允许教师/管理员代查，期望 200。
+#  - 未列出的：多角色共享端点，只断言「没被服务端打挂」（状态码落在
+#    REACHABLE），但 cross_status 同样参与 PASS/FAIL，不再只记录。
+CROSS_EXPECT = {
+    "FUNC-ADM-041": (403,),  # /logs/login
+    "FUNC-ADM-042": (403,),  # /logs/export
+    "FUNC-ADM-043": (403,),  # /auth/registrations
+    "FUNC-ADM-049": (403,),  # /system/users
+    "FUNC-STU-028": (200,),  # /learning/practice/history
+    "FUNC-STU-030": (200,),  # /learning/wrong-questions/export
+}
 
 
 # 受保护接口探活：用于检测种子账号是否被强制改密（must_change_password）
@@ -143,32 +169,61 @@ def main():
                  and "{" not in c["automation"]["path"]
                  and c["role"] in ("admin", "teacher", "student")]
 
-    # 导出/blob 类端点需 report_type/参数且返回二进制，纯 200 不可达性不适用：
-    # 只要路由存在(非 404)即视为可达。
-    def _is_export(path):
-        return path.rstrip("/").endswith("/export") or "export/excel" in path
     for c in get_cases:
         role = c["role"]
         path = c["automation"]["path"]
         own = tokens.get(role)
         st, _ = _get(f"{base}{path}", own)
-        if _is_export(path):
-            reached = st != 404  # 导出端点需参数/鉴权，路由存在即可达
-        else:
-            reached = st in REACHABLE
-        # 越权：用另一个角色令牌访问（仅当对方角色存在）
-        other = next((r for r in ("admin", "teacher", "student") if r != role), None)
-        cross_st = None
-        if tokens.get(other):
+        # 旧实现对导出端点用 `st != 404`：非 JSON body 被记成 -1 后，
+        # 500 也照样 PASS。_get 已保留真实状态码，所有端点统一判定，
+        # 404 / 500 / -1 一律 FAIL。
+        reached = st in REACHABLE
+
+        # 角色配对按用例显式遍历**所有**其它角色：旧实现只取第一个不同
+        # 角色，方向单一，高权→低权与低权→高权无法同时覆盖。
+        cross_detail, cross_ok = [], True
+        for other in ("admin", "teacher", "student"):
+            if other == role or not tokens.get(other):
+                continue
             cross_st, _ = _get(f"{base}{path}", tokens[other])
+            expected = CROSS_EXPECT.get(c["id"])
+            ok_cross = (cross_st in expected) if expected else (cross_st in REACHABLE)
+            cross_ok = cross_ok and ok_cross
+            cross_detail.append(f"{other}={cross_st}{'' if ok_cross else '(!)'}")
         results.append({
             "id": c["id"], "kind": "reach", "role": role, "path": path,
-            "own_status": st, "status": "PASS" if reached else "FAIL",
-            "cross_role": other, "cross_status": cross_st,
-            "detail": f"本角色 {st}; 越权 {other}={cross_st}",
+            "own_status": st, "status": "PASS" if (reached and cross_ok) else "FAIL",
+            "cross_role": "all-others", "cross_status": "; ".join(cross_detail),
+            "detail": f"本角色 {st}; 跨角色 {'; '.join(cross_detail) or '无其它角色令牌'}",
         })
 
-    # 3) 版本信息接口（公开）
+    # 3) 核心写路径（P1-5）：旧筛选条件只挑「无路径占位符的 GET」，
+    #    POST/PUT/DELETE 一条都不执行，组卷/交卷/批改这类最易出事故的
+    #    改动完全落在覆盖之外。这里用**校验层形态**的幂等请求真实打到
+    #    写端点：body 故意缺参，不写任何业务数据，但会走完整
+    #    「路由 → 鉴权 → 参数校验」链，足以抓出 404 / 500 / 漏挂鉴权。
+    write_path = os.path.join(HERE, "WRITE_CASES.json")
+    if os.path.exists(write_path):
+        with open(write_path, encoding="utf-8") as f:
+            write_cases = json.load(f)
+        for c in write_cases:
+            token = tokens.get(c["role"])
+            url = f"{base}{c['path']}"
+            body = c.get("body") or {}
+            if c["method"] == "POST":
+                st, _ = _post(url, body, token)
+            elif c["method"] == "PUT":
+                st, _ = _put(url, body, token)
+            else:
+                st, _ = _get(url, token)
+            results.append({
+                "id": c["id"], "kind": "write", "role": c["role"],
+                "path": c["path"], "own_status": st,
+                "status": "PASS" if st in REACHABLE else "FAIL",
+                "detail": f"{c['method']} {c['path']} -> {st}; {c.get('note', '')}",
+            })
+
+    # 4) 版本信息接口（公开）
     st, body = _get(f"{base}/system/version", None)
     results.append({"id": "FUNC-VER", "kind": "public", "path": "/system/version",
                     "own_status": st, "status": "PASS" if st == 200 else "FAIL",
