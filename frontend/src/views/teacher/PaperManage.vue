@@ -519,6 +519,7 @@ import { useUserStore } from '@/store/user'
 import TYPE_LABEL from '@/constants/question'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { downloadBlob } from '@/utils/download'
+import { parseAgentEnvelope } from '@/composables/useAgentEnvelope'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 function safeStem(s) { return sanitizeHtml(s) }
@@ -1196,15 +1197,14 @@ async function runAI() {
     // **就是**统一信封 `{code, message, success, data}`。此前又取了一次
     // `res?.data`，等于解到 payload 层，再读 `envelope.success` 恒为 undefined
     // → 试卷明明已落库却恒弹「组卷请求失败」，诱导教师重复点、重复建卷。
-    const envelope = res || {}
-    const payload = envelope.data || {}
-    if (envelope.code !== 200 || envelope.success === false) {
-      ElMessage.error(envelope.message || '组卷请求失败')
+    const { ok: succeeded, message, data: payload } = parseAgentEnvelope(res)
+    if (!succeeded) {
+      ElMessage.error(message || '组卷请求失败')
     } else if (!payload.paper?.id) {
-      ElMessage.warning(payload.tip || envelope.message
+      ElMessage.warning(payload.tip || message
         || '未生成试卷：题库可用题目不足，请先补充题目')
     } else {
-      ElMessage.success(payload.tip || envelope.message || '组卷完成')
+      ElMessage.success(payload.tip || message || '组卷完成')
     }
     aiResult.value = payload
     await refreshAll()
