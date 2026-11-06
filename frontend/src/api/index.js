@@ -134,6 +134,8 @@ export const questionApi = {
   aiEnrich: (ids) => request.post('/question/questions/ai/enrich', { ids }),
   aiQuality: (ids) => request.post('/question/questions/ai/quality', { ids }),
   create: (data) => request.post('/question/questions', data),
+  // 批量新增：AI 出题结果一次性落库（逐条校验、部分成功，失败项在 skipped 里）
+  batchCreate: (items) => request.post('/question/questions/batch-create', { items }),
   update: (id, data) => request.put(`/question/questions/${id}`, data),
   remove: (id) => request.delete(`/question/questions/${id}`),
   changeStatus: (id, data) => request.put(`/question/questions/${id}/status`, data),

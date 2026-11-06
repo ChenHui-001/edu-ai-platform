@@ -688,6 +688,9 @@ function buildQuestionPayload(q) {
   return payload
 }
 
+// 单请求最多带多少道（与后端 BATCH_CREATE_LIMIT=50 对齐），超出分片提交
+const BATCH_SAVE_CHUNK = 50
+
 async function saveAll() {
   const qs = result.value.questions || []
   if (!qs.length) return
@@ -701,21 +704,39 @@ async function saveAll() {
   let okCount = 0
   const failures = []
   try {
-    for (let i = 0; i < qs.length; i++) {
+    const payloads = qs.map(buildQuestionPayload)
+    // 走批量新增接口：一次请求建多题。此前是逐题串行 POST，
+    // 20 道题要 20 次往返，且每道都要重新校验年级/学科/知识点。
+    for (let start = 0; start < payloads.length; start += BATCH_SAVE_CHUNK) {
+      const chunk = payloads.slice(start, start + BATCH_SAVE_CHUNK)
       try {
-        await questionApi.create(buildQuestionPayload(qs[i]))
-        okCount++
-      } catch (e) {
-        // 响应拦截器 reject 的是 Error（错误文案已写进 e.message），
-        // 没有 axios response；优先取 e.message 才能显示后端的真实原因。
-        failures.push({
-          index: i + 1,
-          reason: e?.message || e?.response?.data?.message || String(e)
+        const res = await questionApi.batchCreate(chunk)
+        const body = res?.data || {}
+        const done = Array.isArray(body.done) ? body.done.length : 0
+        const skipped = Array.isArray(body.skipped) ? body.skipped : []
+        okCount += done
+        skipped.forEach((s) => {
+          failures.push({
+            // 后端 index 是分片内 1 起的序号，换算成整批的序号
+            index: start + Number(s.index || 0),
+            reason: s.reason || '未通过校验'
+          })
         })
+      } catch (e) {
+        // 拦截器 reject 的是 Error（错误文案已写进 e.message），没有 axios response
+        const reason = e?.message || e?.response?.data?.message || String(e)
+        for (let i = 0; i < chunk.length; i++) {
+          failures.push({ index: start + i + 1, reason })
+        }
       }
     }
   } finally {
     saving.value = false
+  }
+  // 成功数 + 失败数对不上总数，说明后端漏回了结果：必须提示，不能当成全成功
+  const missing = qs.length - okCount - failures.length
+  if (missing > 0) {
+    failures.push({ index: null, reason: `${missing} 道题未收到后端结果，请刷新题库核对` })
   }
   if (!failures.length) {
     ElMessage.success(`已全部保存 ${okCount} 道题到你的私有题库`)
@@ -725,7 +746,9 @@ async function saveAll() {
   // 「另有 N 条失败」永远算不出来。单独记实际展示条数。
   const limit = Math.min(failures.length, 10)
   const shown = failures.slice(0, limit)
-    .map(f => `第 ${f.index} 题：${escapeHtml(f.reason)}`).join('<br/>')
+    .map(f => (f.index == null
+      ? escapeHtml(f.reason)
+      : `第 ${f.index} 题：${escapeHtml(f.reason)}`)).join('<br/>')
   const more = failures.length > limit
     ? `<br/>…另有 ${failures.length - limit} 条失败` : ''
   ElMessageBox.alert(

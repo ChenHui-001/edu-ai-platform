@@ -463,5 +463,113 @@ def test_update_config_rejects_system_marker(db_session):
     assert row.value == "1"
 
 
+# ===================== 题库 V2：批量新增（B9 批量保存） =====================
+def _call_batch_create(session, user, items):
+    """直接调路由函数绕过 Depends，并屏蔽 chroma 向量化副作用。"""
+    from app.api.v1 import question as qmod
+    from app.schemas.question import QuestionBatchCreateIn
+
+    indexed = []
+    original = qmod.index_question
+    qmod.index_question = lambda q: indexed.append(q.id)
+    try:
+        res = qmod.batch_create_questions(
+            data=QuestionBatchCreateIn(items=items), db=session, user=user)
+    finally:
+        qmod.index_question = original
+    return res, indexed
+
+
+def test_batch_create_partial_success_and_in_batch_dedup(db_session):
+    """B9：批量新增逐条校验，非法项进 skipped（带 1 起 index），合法项一次提交。
+
+    同一批里题干只差空白的重复题必须去重 —— AI 出题一轮常给出近似重复题，
+    重复入库会污染「少用优先」排序。
+    """
+    from app.models import Question
+
+    s = db_session
+    g, subj, u = _seed_basic(s)
+    res, indexed = _call_batch_create(s, u, [
+        {"stem": "1+1=?", "grade_id": g.id, "subject_id": subj.id, "type": "single"},
+        {"stem": "   ", "grade_id": g.id, "subject_id": subj.id},
+        {"stem": "1 + 1 = ?", "grade_id": g.id, "subject_id": subj.id},
+        {"stem": "2+2=?", "grade_id": g.id, "subject_id": subj.id},
+    ])
+
+    body = res["data"]
+    assert len(body["done"]) == 2
+    reasons = {item["index"]: item["reason"] for item in body["skipped"]}
+    assert reasons[2] == "题干不能为空"
+    assert "重复" in reasons[3]
+
+    rows = s.scalars(select(Question).where(Question.owner_id == u.id)).all()
+    assert len(rows) == 2
+    # 向量化只对真正落库的题执行，且用对象自身 id（不回查、不串号）
+    assert sorted(indexed) == sorted(r.id for r in rows)
+
+
+def test_batch_create_public_question_waits_for_audit(db_session):
+    """批量入口必须复用单题审核口径：非审核角色建公共题一律落 draft。"""
+    from app.models import Question
+
+    s = db_session
+    g, subj, u = _seed_basic(s)
+    res, _ = _call_batch_create(s, u, [
+        {"stem": "公共题上架尝试", "grade_id": g.id, "subject_id": subj.id,
+         "bank_type": "public", "status": "published"},
+    ])
+    assert len(res["data"]["done"]) == 1
+    q = s.get(Question, res["data"]["done"][0])
+    assert q.bank_type == "public"
+    assert q.status == "draft"
+
+
+def test_batch_create_grade_subject_mismatch_is_skipped(db_session):
+    """学科与年级不匹配是「该条不合法」，不能整批 500/400。"""
+    from app.models import Grade, Subject
+
+    s = db_session
+    g, subj, u = _seed_basic(s)
+    other = Grade(name="审计测试年级2", stage="junior", grade_num=8)
+    s.add(other)
+    s.flush()
+    other_subj = Subject(name="物理", grade_id=other.id)
+    s.add(other_subj)
+    s.flush()
+
+    res, _ = _call_batch_create(s, u, [
+        {"stem": "合法题", "grade_id": g.id, "subject_id": subj.id},
+        {"stem": "跨年级题", "grade_id": g.id, "subject_id": other_subj.id},
+    ])
+    body = res["data"]
+    assert len(body["done"]) == 1
+    assert body["skipped"][0]["index"] == 2
+    assert "不匹配" in body["skipped"][0]["reason"]
+
+
+def test_batch_create_rejects_empty_and_oversized(db_session):
+    from pydantic import ValidationError
+
+    from app.api.v1 import question as qmod
+    from app.core.exception import BusinessException
+    from app.schemas.question import QuestionBatchCreateIn
+
+    s = db_session
+    g, subj, u = _seed_basic(s)
+    with pytest.raises(BusinessException):
+        qmod.batch_create_questions(data=QuestionBatchCreateIn(items=[]), db=s, user=u)
+    # 非数组由 Pydantic 在 422 阶段挡住，路由层无需重复判断
+    with pytest.raises(ValidationError):
+        QuestionBatchCreateIn(items="not-a-list")
+    with pytest.raises(BusinessException):
+        qmod.batch_create_questions(
+            data=QuestionBatchCreateIn(items=[
+                {"stem": "x", "grade_id": g.id, "subject_id": subj.id}
+            ] * (qmod.BATCH_CREATE_LIMIT + 1)),
+            db=s, user=u,
+        )
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

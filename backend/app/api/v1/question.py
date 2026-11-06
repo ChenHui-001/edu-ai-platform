@@ -20,6 +20,7 @@ from app.models import (
     Question, QuestionBankType, QuestionStatus, ShareScope, Subject, Task, TaskStatus,
     User,
 )
+from app.schemas.question import QuestionBatchCreateIn
 from app.services.question_access import question_usable_error
 from app.services.question_usage import (
     question_ids_of_paper, question_ids_of_papers, recount_usage as _recount_usage,
@@ -45,6 +46,9 @@ DIFFICULTY_LABEL = {"easy": "简单", "medium": "中等", "hard": "困难"}
 # 但答题页提交的是选项 key（A/B）。建题/导题时补齐标准选项，
 # 避免导入的判断题没有可点选项；判分侧由 app.utils.answer 做等价映射。
 DEFAULT_JUDGE_OPTIONS = [{"key": "A", "text": "正确"}, {"key": "B", "text": "错误"}]
+
+# 批量新增单次上限：AI 出题一轮最多 30 道左右，留出余量；再大只会拖长单请求耗时
+BATCH_CREATE_LIMIT = 50
 
 
 def normalize_question_type(raw: Any, *, strict: bool = True) -> str:
@@ -435,11 +439,14 @@ def question_stats(
     })
 
 
-@router.post("/questions", summary="新增题目")
-def create_question(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
-    user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
-):
+def _prepare_question(
+    data: Dict[str, Any], db: Session, user: User
+) -> Question:
+    """校验并构造（尚未入库的）Question 对象。
+
+    单题新增与批量新增共用同一套校验，避免两条路径对「题干/年级学科/知识点归属」
+    的口径漂移；本函数只读不写，失败一律抛 BusinessException。
+    """
     stem = str(data.get("stem") or "").strip()
     if not stem:
         raise BusinessException("题干不能为空")
@@ -462,7 +469,7 @@ def create_question(
     options = data.get("options")
     if qtype == "judge" and not options:
         options = DEFAULT_JUDGE_OPTIONS
-    q = Question(
+    return Question(
         type=qtype,
         stem=stem,
         options=_dump(options), answer=_dump(data.get("answer")),
@@ -475,11 +482,92 @@ def create_question(
         owner_id=user.id, status=status,
         fingerprint=_fingerprint(stem), source="manual",
     )
+
+
+@router.post("/questions", summary="新增题目")
+def create_question(
+    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
+):
+    q = _prepare_question(data, db, user)
     db.add(q)
     db.commit()
     db.refresh(q)
     index_question(q)
     return ok(_question_out(q, _kp_name_map(db, [q])), message="题目创建成功")
+
+
+@router.post("/questions/batch-create", summary="批量新增题目")
+def batch_create_questions(
+    data: QuestionBatchCreateIn = Body(...), db: Session = Depends(get_db),
+    user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
+):
+    """批量新增题目（AI 出题结果一次性落库）。
+
+    与 `/questions/batch` 的区别：那边按 `ids` 操作已有题目，这边按 `items` 新建。
+    语义是**逐条校验、部分成功**：AI 出的题常有个别不合法（题干空、知识点被删、
+    学科年级不匹配），整体回滚会让用户反复重试整批。因此不合法项进 `skipped`
+    （带 1 起的 `index` 与可读原因），合法项一次提交。
+    """
+    raw_items = list(data.items or [])
+    if not raw_items:
+        raise BusinessException("请提供要保存的题目列表")
+    if len(raw_items) > BATCH_CREATE_LIMIT:
+        raise BusinessException(f"单次最多保存 {BATCH_CREATE_LIMIT} 道题")
+
+    skipped: List[Dict[str, Any]] = []
+    prepared: List[Tuple[int, Dict[str, Any], Question]] = []
+    seen_fp: Dict[str, int] = {}
+    for idx, item in enumerate(raw_items, start=1):
+        try:
+            q = _prepare_question(item, db, user)
+        except BusinessException as exc:
+            skipped.append({"index": idx, "reason": str(exc)})
+            continue
+        # 批内去重：同一轮 AI 出题常出现题干只差空白的重复题，重复入库会污染
+        # 「少用优先」排序。只做批内去重（跨批由用户自行判断），且如实回 skipped。
+        first = seen_fp.get(q.fingerprint)
+        if first is not None:
+            skipped.append({"index": idx, "reason": f"与本批第 {first} 题题干重复"})
+            continue
+        seen_fp[q.fingerprint] = idx
+        prepared.append((idx, item, q))
+
+    created: List[Question] = []
+    if prepared:
+        db.add_all([q for _, _, q in prepared])
+        try:
+            db.commit()
+            created = [q for _, _, q in prepared]
+        except Exception:
+            # 极少数真实约束冲突（如并发删掉了知识点）：退化为逐条提交，
+            # 只牺牲出错的那一条，其余照常入库。
+            db.rollback()
+            for idx, item, _ in prepared:
+                try:
+                    q = _prepare_question(item, db, user)
+                    db.add(q)
+                    db.commit()
+                except BusinessException as exc:
+                    db.rollback()
+                    skipped.append({"index": idx, "reason": str(exc)})
+                except Exception:
+                    db.rollback()
+                    skipped.append({
+                        "index": idx, "reason": "入库失败，请检查年级/学科/知识点"})
+                else:
+                    created.append(q)
+            skipped.sort(key=lambda s: s["index"])
+
+    # RAG 生命周期：入库成功后建向量（失败仅告警，不阻断整批）
+    for q in created:
+        index_question(q)
+
+    done = [q.id for q in created]
+    return ok(
+        {"done": done, "skipped": skipped},
+        message=f"批量新增完成 {len(done)} 道，跳过 {len(skipped)} 道",
+    )
 
 
 @router.post("/questions/batch", summary="批量操作题目")

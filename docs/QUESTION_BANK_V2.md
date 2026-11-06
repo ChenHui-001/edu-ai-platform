@@ -37,6 +37,18 @@ body `{action, ids, payload}`：
 返回 `{done:[ids], skipped:[{id,reason}]}`；同批无权限整体 403；部分业务失败进 skipped。
 兼容旧 E2E：单条 CRUD/status/duplicates/import/export 行为不变。
 
+#### 3.3.1 批量新增（B9，2.5.10）
+`POST /question/questions/batch-create`
+body `{items:[{...同单题新增字段}]}`，单次 ≤ 50 道（`BATCH_CREATE_LIMIT`）。
+- 与 `batch` 的区别：`batch` 按 `ids` 操作**已有**题目，本接口按 `items` **新建**。
+- 语义是**逐条校验、部分成功**：任一条不合法（题干空、年级学科不匹配、知识点归属不符）
+  只进 `skipped`，其余照常入库 —— AI 出的题常有个别不合法，整体回滚会让用户反复重试整批。
+- 批内去重：题干指纹（去空白/去括号内容后 md5）相同视为重复，后者进 `skipped`
+  并注明「与本批第 N 题题干重复」。跨批不去重。
+- 校验与单题新增**共用** `_prepare_question`，公共题库非 audit 角色仍强制 draft。
+- 返回 `{done:[ids], skipped:[{index,reason}]}`，`index` 为请求内 1 起的序号。
+- 向量化在提交后逐题执行，失败仅告警不阻断。
+
 ### 3.4 校验
 - create/update：stem 非空；grade_id/subject_id 必填且 subject.grade_id==grade_id；kp 存在且同 subject/grade；难度/题型/分值/状态合法；缺 grade 不再默认 0。
 - 编辑仅 owner / sys_admin；grade_admin 可编辑公共题（审核场景）；删除按权限。
