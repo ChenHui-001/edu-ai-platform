@@ -200,7 +200,7 @@ def clean_old_logs() -> Dict[str, Any]:
     """
     from app.models import (
         AgentCallLog, Captcha, ErrorLog, JobExecutionLog, LoginLog, Notification,
-        OperationLog, ResetCode, RevokedToken, UserTokenRevocation,
+        OperationLog, RateLimit, ResetCode, RevokedToken, UserTokenRevocation,
     )
 
     db = SessionLocal()
@@ -223,6 +223,7 @@ def clean_old_logs() -> Dict[str, Any]:
             ("reset_code", ResetCode, ResetCode.expire_at, now),
             ("user_token_revocation", UserTokenRevocation,
              UserTokenRevocation.expire_at, now),
+            ("rate_limit", RateLimit, RateLimit.expire_at, now),
         ):
             count = db.query(model).filter(column < cutoff).delete(
                 synchronize_session=False

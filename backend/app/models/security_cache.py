@@ -109,6 +109,23 @@ class UserTokenRevocation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
 
+class RateLimit(Base):
+    """跨进程共享的滥用频率计数器（固定窗口）。
+
+    找回密码 / 匿名上传的限流原先是进程内 dict：uvicorn --workers N 下
+    额度被放大 N 倍。这两处只是**频率**计数器（正确性无关的验证码本身
+    已落 sys_reset_code），用单行固定窗口计数即可，不需要存每次请求时间。
+    """
+
+    __tablename__ = "sys_rate_limit"
+
+    key: Mapped[str] = mapped_column(String(160), primary_key=True)
+    window_start: Mapped[float] = mapped_column(Float)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    expire_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+
+
 class ResetCode(Base):
     """找回密码验证码：一次性。
 

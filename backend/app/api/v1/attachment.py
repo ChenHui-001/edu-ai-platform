@@ -1,7 +1,6 @@
 """附件管理接口：上传、预览、下载、删除。"""
 import hashlib
 import os
-import threading
 import uuid
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
@@ -20,9 +19,8 @@ from app.utils.common import PageParams, dictify, now_local, ok
 
 router = APIRouter(prefix="/attachments", tags=["附件管理"])
 
-# 匿名上传限流桶：{ip: [时间戳]}，仅用于注册证明材料，进程内即可
-_PUBLIC_UPLOAD_HITS: Dict[str, List] = {}
-_PUBLIC_UPLOAD_LOCK = threading.Lock()
+# 匿名上传限流已迁移到 services/rate_limit（sys_rate_limit 单行计数）：
+# 进程内 dict 在 uvicorn --workers N 下会把 10 次/10min 放大成 10×N 次。
 
 PREVIEW_TYPES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"}
 OFFICE_TYPES = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
@@ -98,13 +96,10 @@ def public_upload(
       - 同一 IP 10 分钟内最多 10 次
     """
     ip = get_client_ip(request) if request is not None else "unknown"
-    now = now_local()
-    with _PUBLIC_UPLOAD_LOCK:
-        bucket = _PUBLIC_UPLOAD_HITS.setdefault(ip, [])
-        bucket[:] = [t for t in bucket if (now - t).total_seconds() < 600]
-        if len(bucket) >= 10:
-            raise BusinessException("上传过于频繁，请 10 分钟后再试")
-        bucket.append(now)
+    from app.services.rate_limit import check_and_hit
+
+    if not check_and_hit(db, f"pubupload:{ip}", 10, 600):
+        raise BusinessException("上传过于频繁，请 10 分钟后再试")
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
