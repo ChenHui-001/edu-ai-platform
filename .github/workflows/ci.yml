@@ -51,6 +51,7 @@ jobs:
           python tools/check_model_fk.py
           python tools/check_migration_columns.py
           python tools/check_schema_bodies.py
+          python tools/check_api_sql.py
           pip install -q ruff
           python tools/lint_gate.py
 

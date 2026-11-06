@@ -75,31 +75,12 @@ TYPE_LABEL = compose_svc.TYPE_LABEL
 #
 # 所以「统一 10 道」对重题型必然撞墙。单题正文量越大的题型，单批越小：
 # 作文一题就上千字、解答题要完整解题过程、材料题自带长材料 + 多小问。
-FILL_BATCH_BY_TYPE: Dict[str, int] = {
-    "composition": 2,
-    "calc": 3,
-    "material": 3,
-    "multiple": 4,
-    "short": 4,
-}
-FILL_BATCH_DEFAULT = 5
-
-# 难度对批量的影响：**困难题比简单题更吃推理 token**。
-# 生产实测（2026-11-05 验收 2.5.4，MiniMax-M3.1-Flash）同一提示词下：
-#   easy   → output_tokens=277，其中 reasoning=80，正文 494 字，正常；
-#   hard   → output_tokens=8192，其中 reasoning=**8191**，正文 **0 字**，整批作废。
-# 即「困难」这个要求本身会把推理拉长到撞满预算，与题型无关（都是单选）。
-# 只按题型分档时 hard 单批仍按 5 道发，必然 100% 失败并退回「减半重试」，
-# 白白浪费一次 60~90s 往返。这里对困难档再打对折，让它一次就命中。
-FILL_BATCH_HARD_DIVISOR = 2
-
-
-def _fill_batch_cap(qtype: str, difficulty: str = "") -> int:
-    """单批题量上限 = 题型分档，困难题再对折（推理 token 更贵）。"""
-    cap = FILL_BATCH_BY_TYPE.get(qtype, FILL_BATCH_DEFAULT)
-    if str(difficulty or "").strip() == "hard":
-        cap = max(1, cap // FILL_BATCH_HARD_DIVISOR)
-    return cap
+# 批量策略已抽到 services/ai_fill_batch.py（与 HTTP 路由无关）。
+# 这里 re-import 保留模块级名字，兼容既有调用点与验证脚本。
+from app.services.ai_fill_batch import (  # noqa: E402,F401
+    FILL_BATCH_BY_TYPE, FILL_BATCH_DEFAULT, FILL_BATCH_HARD_DIVISOR,
+    _fill_batch_cap,
+)
 
 # 判据用词：命中即视为「输出预算被推理吃光」，值得减半重试（换别的失败原因
 # 重试纯属浪费一次 60~90s 的模型往返）。
