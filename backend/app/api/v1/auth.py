@@ -17,7 +17,8 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import AuthException, BusinessException
 from app.core.security import (
-    create_access_token, decode_token, generate_captcha, hash_password,
+    create_access_token, create_refresh_token, decode_token, generate_captcha,
+    hash_password,
     is_user_token_revoked, revoke_token, revoke_user_tokens,
     store_captcha, store_reset_code, validate_password_strength,
     verify_captcha, verify_reset_code,
@@ -358,7 +359,18 @@ def refresh_token(body: Dict[str, str] = Body(...), db: Session = Depends(get_db
     if not user or not user.is_active:
         raise BusinessException("账号不可用")
     new_token = create_access_token(user.id, role=",".join(user.role_codes))
-    return ok({"access_token": new_token, "token_type": "Bearer"})
+    data = {"access_token": new_token, "token_type": "Bearer"}
+    # 刷新令牌轮换 + 重放检测：旧实现同一个 refresh 7 天内可无限换新
+    # access，且没有任何「已使用」痕迹，泄露后无法察觉也无法单点止损。
+    # 现在签发新 refresh 并立刻吊销旧 jti：旧令牌二次使用会被
+    # decode_token 的 fail-closed 吊销检查拦下（即重放检测）。
+    # 前端 request.js 已支持读取 data.refresh_token 覆盖本地存储；
+    # 老调用方可显式传 rotate=false 保持「只换 access」的旧行为。
+    rotate = str(body.get("rotate", "true")).lower() not in ("false", "0", "no")
+    if rotate:
+        data["refresh_token"] = create_refresh_token(user.id)
+        revoke_token(payload, db)
+    return ok(data)
 
 
 @router.get("/profile", summary="获取当前用户信息")
@@ -445,19 +457,18 @@ def logout(
 # N 倍（5×N 次/10min），仍远低于 6 位码 10^6 的可用爆破量级；若落库，
 # 等于给一个匿名端点引入无鉴权的写放大面（每次请求都写一行），
 # 与"防刷"的初衷相反。验证码本身（正确性相关）已落 `sys_reset_code`。
-_RESET_RATE_LOCK = threading.Lock()
-_RESET_RATE_STORE: Dict[str, list] = {}  # {target: [request_time, ...]}
+def _check_reset_request_rate(db: Session, target: str) -> None:
+    """按目标账号限制找回密码请求频率（10 分钟最多 5 次）。
 
+    2026-11-06 起不再用进程内 dict：多 worker 下额度会被放大 N 倍。
+    改走 services/rate_limit 的 DB 固定窗口计数（跨进程共享）。
+    上面旧注释里「若落库会引入无鉴权写放大面」的权衡因此作废：
+    现在每次请求只 UPDATE 一行，且只在真正发起找回时写一次。
+    """
+    from app.services.rate_limit import check_and_hit
 
-def _check_reset_request_rate(target: str) -> None:
-    """按目标账号限制找回密码请求频率（10 分钟最多 5 次）。"""
-    now = datetime.now()
-    with _RESET_RATE_LOCK:
-        bucket = _RESET_RATE_STORE.setdefault(target, [])
-        bucket[:] = [t for t in bucket if (now - t).total_seconds() < 600]
-        if len(bucket) >= 5:
-            raise BusinessException("请求过于频繁，请 10 分钟后再试")
-        bucket.append(now)
+    if not check_and_hit(db, f"reset:{target}", 5, 600):
+        raise BusinessException("请求过于频繁，请 10 分钟后再试")
 
 
 def _send_reset_code_email(db: Session, target: str, code: str) -> bool:
@@ -514,7 +525,7 @@ def forgot_password(payload: Dict[str, Any] = Body(...), db: Session = Depends(g
     target = (payload.get("email") or payload.get("phone") or "").strip()
     if not target:
         raise BusinessException("请提供邮箱或手机号")
-    _check_reset_request_rate(target)
+    _check_reset_request_rate(db, target)
     user = db.scalar(
         select(User).where((User.email == target) | (User.phone == target))
     )
