@@ -46,13 +46,13 @@ const routes = [
       { path: 'admin/attachments', name: 'AttachmentManage', component: () => import('@/views/admin/AttachmentManage.vue'),
         meta: { title: '附件管理', icon: 'Paperclip', roles: ['sys_admin', 'grade_admin'] } },
       { path: 'admin/reports', name: 'AdminReport', component: () => import('@/views/admin/AdminReport.vue'),
-        meta: { title: '系统报表', icon: 'DataAnalysis', roles: ['sys_admin', 'grade_admin'] } },
+        meta: { title: '系统报表', icon: 'DataAnalysis', roles: ['sys_admin', 'grade_admin'], perm: 'report:admin' } },
       { path: 'admin/settings', name: 'SystemSetting', component: () => import('@/views/admin/SystemSetting.vue'),
         meta: { title: '系统配置', icon: 'Setting', roles: ['sys_admin'] } },
       { path: 'admin/ai-config', name: 'AiConfig', component: () => import('@/views/admin/AiConfig.vue'),
         meta: { title: 'AI 大模型配置', icon: 'Cpu', roles: ['sys_admin'] } },
       { path: 'admin/agent-logs', name: 'AgentLogs', component: () => import('@/views/admin/AgentLogs.vue'),
-        meta: { title: 'AI 调用日志', icon: 'Cpu', roles: ['sys_admin', 'grade_admin'] } },
+        meta: { title: 'AI 调用日志', icon: 'Cpu', roles: ['sys_admin', 'grade_admin'], perm: 'agent:logs' } },
 
       // 教师
       { path: 'teacher/questions', name: 'QuestionBank', component: () => import('@/views/teacher/QuestionBank.vue'),
@@ -104,7 +104,7 @@ const routes = [
       { path: 'student/goals', name: 'StudyGoals', component: () => import('@/views/student/StudyGoals.vue'),
         meta: { title: '学习打卡', icon: 'Calendar', perm: 'student:goals' } },
       { path: 'student/path', name: 'LearningPath', component: () => import('@/views/student/LearningPath.vue'),
-        meta: { title: '学习路径', icon: 'Guide', perm: 'student:path' } },
+        meta: { title: '学习路径', icon: 'Guide', perms: ['student:path', 'agent:plan'] } },
       { path: 'student/flashcard', name: 'Flashcards', component: () => import('@/views/student/Flashcards.vue'),
         meta: { title: '闪卡速记', icon: 'Box', perm: 'student:flashcard' } },
       { path: 'student/knowledge', name: 'KnowledgeLibrary', component: () => import('@/views/student/KnowledgeLibrary.vue'),
@@ -114,7 +114,7 @@ const routes = [
       { path: 'agent/chat', name: 'AgentChat', component: () => import('@/views/agent/AgentChat.vue'),
         meta: { title: 'AI 智能助手', icon: 'MagicStick', perm: 'agent:chat' } },
       { path: 'agent/generate', name: 'AgentGenerate', component: () => import('@/views/agent/AgentGenerate.vue'),
-        meta: { title: 'AI 出题组卷', icon: 'Cpu', roles: ['sys_admin', 'grade_admin', 'teacher'] } },
+        meta: { title: 'AI 出题组卷', icon: 'Cpu', roles: ['sys_admin', 'grade_admin', 'teacher'], perm: 'agent:generate' } },
 
       { path: 'profile', name: 'Profile', component: () => import('@/views/Profile.vue'),
         meta: { title: '个人中心', hidden: true } }
@@ -167,10 +167,16 @@ router.beforeEach((to, from, next) => {
   if (to.meta.roles && !to.meta.roles.some((r) => roles.includes(r))) {
     return next('/403')
   }
-  if (to.meta.perm) {
-    if (!perms.includes('*') && !perms.includes(to.meta.perm)) {
-      return next('/403')
-    }
+  // meta.perm（单码）与 meta.perms（任一命中）统一走同一判定。
+  // 后端下发的 agent:generate / agent:logs / agent:plan / report:admin
+  // 四个权限码此前没有任何前端消费点，管理员勾选后毫无效果；
+  // 现由对应路由显式声明。
+  const permList = Array.isArray(to.meta.perms)
+    ? to.meta.perms
+    : (to.meta.perm ? [to.meta.perm] : [])
+  if (permList.length && !perms.includes('*')
+      && !permList.some((p) => perms.includes(p))) {
+    return next('/403')
   }
   next()
 })
