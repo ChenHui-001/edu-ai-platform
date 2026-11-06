@@ -7,7 +7,10 @@ pydantic-settings==2.7.0
 
 # ===== 数据库 =====
 SQLAlchemy==2.0.36
-alembic==1.14.0
+# alembic 曾是「已内置但从未初始化」的僵尸依赖（无 alembic.ini / versions/），
+# 非 SQLite 路径还提示用户「改用 Alembic」，切库时必然踩空。当前结构演进由
+# db_migrations.MIGRATION_COLUMNS + tools/check_migration_columns.py 守护，
+# 故移除以免误导；真正需要版本化迁移时再连同初始化一并引入。
 psycopg2-binary==2.9.10
 
 # ===== 安全 =====

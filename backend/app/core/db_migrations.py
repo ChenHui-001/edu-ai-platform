@@ -358,7 +358,8 @@ def run_column_migrations(db: Session) -> List[str]:
     if not settings.DATABASE_URL.startswith("sqlite"):
         logger.warning(
             "当前数据库非 SQLite，已跳过轻量补列迁移；"
-            "请使用 Alembic（requirements 已内置）管理结构变更"
+            "请先执行等价 DDL 或引入版本化迁移工具补齐结构再启动，"
+            "否则模型列缺失会在运行时随机 500"
         )
         return applied
     for table, column, ddl in MIGRATION_COLUMNS:
@@ -377,5 +378,12 @@ def run_column_migrations(db: Session) -> List[str]:
             logger.warning("结构迁移：已为 %s 补充列 %s", table, column)
         except Exception as exc:  # noqa: BLE001
             db.rollback()
+            # 旧实现「记日志继续下一条」：启动照常完成，进程带着缺失列
+            # 对外服务，之后任何涉及该列的读写随机 500，且日志里只有一行
+            # error 很容易被忽略。结构迁移失败必须阻断启动——带病上线
+            # 比启动失败危险得多。静态一致性由 tools/check_migration_columns.py
+            # 在 CI 里提前拦住拼错的清单项。
             logger.error("结构迁移失败 %s.%s: %s", table, column, exc)
+            raise RuntimeError(
+                f"结构迁移失败：{table}.{column}: {exc}") from exc
     return applied
