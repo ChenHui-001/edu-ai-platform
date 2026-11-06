@@ -434,10 +434,18 @@ def paper_composer(
     from app.agents.paper_agent import PaperComposerAgent
 
     request = _limited_text(data.get("request"), "组卷要求")
+    grade_id = data.get("grade_id")
+    subject_id = data.get("subject_id")
+    # 需求文本与「年级+学科」二选一即可组卷。两者都缺时，旧实现会把
+    # 空串需求静默丢给 Agent、再把 subject_id=0 传下去，最终抛
+    # 「无法识别学科」——真实原因（没给任何组卷输入）被完全掩盖，
+    # 直接调 API 的调用方无法自救。这里前置给出可读提示。
+    if not request and not (grade_id and subject_id):
+        raise BusinessException("请填写组卷需求，或选择年级与学科")
     check_agent_rate(db, user.id)
     res = PaperComposerAgent().run(
         db, user_id=user.id, request=request,
-        grade_id=data.get("grade_id"), subject_id=data.get("subject_id"),
+        grade_id=grade_id, subject_id=subject_id,
         total_score=float(data.get("total_score", 100)),
         difficulty_ratio=data.get("difficulty_ratio"),
         type_ratio=data.get("type_ratio"),
