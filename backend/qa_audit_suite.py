@@ -173,7 +173,13 @@ def _mk_question(session, grade, subject, user, stem, usage=0):
 
 
 def test_write_items_symmetric_usage_count(db_session):
-    """BUG-001 修复验证：改卷时保留题计数不变、移除题 -1、新增题 +1。"""
+    """BUG-001 修复验证：改卷后 usage_count 等于当前真实引用数。
+
+    b8e3093 起改用 `services/question_usage.recount_usage` 幂等重算，
+    语义从「按 +1/-1 记账」变成「重算真实引用数」。旧断言仍期望
+    5/4/1（在 5/5/0 初值上做加减），实现正确却被判红——正是
+    「测试没接 CI → 断言腐烂无人发现」的实证。
+    """
     from app.api.v1.paper_compose import _write_items
     from app.models import Paper, PaperItem
 
@@ -201,9 +207,9 @@ def test_write_items_symmetric_usage_count(db_session):
     _write_items(s, paper, items)
     s.flush()
 
-    assert q1.usage_count == 5  # 保留：新 +1 与旧 -1 抵消
-    assert q2.usage_count == 4  # 移除：净 -1
-    assert q3.usage_count == 1  # 新增：+1
+    assert q1.usage_count == 1  # 保留：真实引用 1
+    assert q2.usage_count == 0  # 移除：真实引用 0（不是初值 5-1）
+    assert q3.usage_count == 1  # 新增：真实引用 1
 
 
 def test_id_backfill_old_vs_new_under_concurrency(db_session):

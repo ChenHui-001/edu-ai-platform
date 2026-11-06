@@ -49,6 +49,8 @@ jobs:
           python tools/check_weak_assertion.py
           python tools/check_time_contract.py
           python tools/check_model_fk.py
+          python tools/check_migration_columns.py
+          python tools/check_schema_bodies.py
           pip install -q ruff
           python tools/lint_gate.py
 
@@ -59,6 +61,20 @@ jobs:
         # 本门禁连续生成两次比对指纹，并对每个库断言行数契约与结构不变式
         # （班主任互异 / 不跨学段 / 每师带班≤2 / (班级,学科) 全覆盖）。
         run: python tools/check_gen_data_determinism.py
+
+      - name: 后端断言套件（qa_audit_suite）
+        # 后端 e2e 移除后这是唯一幸存的 pytest 套件，此前从未接入 CI：
+        # 实现从 usage_count 记账改成幂等重算后，过期断言烂在仓库里
+        # 无人发现（1 failed / 29 passed）。接进来才能守住这条底线。
+        # pytest 只在这里装，不进 requirements.txt，避免生产镜像带测试依赖。
+        working-directory: backend
+        env:
+          DATABASE_URL: sqlite:///./data/ci_test.db
+          LLM_ENABLED: 'false'
+        run: |
+          mkdir -p data
+          pip install -q pytest
+          python -m pytest qa_audit_suite.py -q
 
       - name: 应用导入与建表检查
         # ⚠️ 这一步曾经**靠一个无关的副作用**才能通过：`core/logger.py` 默认
