@@ -1,4 +1,5 @@
 """初始化种子数据：角色权限、年级学科、知识点、默认管理员、默认定时任务。"""
+import secrets
 from typing import Dict, List, Tuple
 
 from sqlalchemy import func, select
@@ -433,11 +434,33 @@ def init_jobs(db: Session) -> None:
     logger.info(f"默认定时任务初始化完成（{len(DEFAULT_JOBS)} 个）")
 
 
+def _demo_is_production_shape() -> bool:
+    """是否为「生产形态」：DEBUG=false 且 APP_ENV=production。
+
+    config.APP_ENV 的注释说清了为什么不能只看 DEBUG：CI 也是 DEBUG=false
+    且 SEED_DEMO_DATA=true，回归脚本要用固定口令登录演示账号。
+    """
+    return not settings.DEBUG and settings.APP_ENV == "production"
+
+
+def _demo_password(public_default: str) -> str:
+    """生产形态下不使用 README 里公开的硬编码口令。
+
+    16 个演示账号的 Teacher@123 / Student@123 写在 README 里、真实可登录。
+    只设 must_change_password 不够——拿到公开口令的攻击者自己改一次密
+    就能进。生产形态改为随机口令 + 强制首次改密；CI/本地保持原样，
+    既有回归脚本不受影响。
+    """
+    if _demo_is_production_shape():
+        return secrets.token_urlsafe(18)
+    return public_default
+
+
 def init_demo_data(db: Session) -> None:
     """创建演示用班级、教师、学生，便于快速体验。
 
-    生产部署可通过 SEED_DEMO_DATA=false 关闭，避免空库自动生成
-    teacher1/Teacher@123、stu731/Student@123 等已知口令账号。
+    生产部署可通过 SEED_DEMO_DATA=false 关闭，避免空库自动生成演示账号；
+    万一漏配该开关，生产形态下账号口令也是随机的且强制首次改密。
     """
     from app.models import Class, TeachingAssignment
 
@@ -464,9 +487,11 @@ def init_demo_data(db: Session) -> None:
 
     for i, (k, g) in enumerate(demo_classes):
         teacher = User(
-            username=f"teacher{i + 1}", password=hash_password("Teacher@123"),
+            username=f"teacher{i + 1}",
+            password=hash_password(_demo_password("Teacher@123")),
             real_name=f"教师{i + 1}", identity="teacher", status="active",
             school_name="示范学校", grade_id=g.id, class_id=k.id,
+            must_change_password=_demo_is_production_shape(),
         )
         db.add(teacher)
         db.flush()
@@ -485,16 +510,23 @@ def init_demo_data(db: Session) -> None:
 
         for j in range(1, 4):
             stu = User(
-                username=f"stu{g.grade_num}{i}{j}", password=hash_password("Student@123"),
+                username=f"stu{g.grade_num}{i}{j}",
+                password=hash_password(_demo_password("Student@123")),
                 real_name=f"学生{g.grade_num}{i}{j}", identity="student",
                 status="active", school_name="示范学校",
                 grade_id=g.id, class_id=k.id,
+                must_change_password=_demo_is_production_shape(),
             )
             db.add(stu)
             db.flush()
             if student_role:
                 db.add(UserRole(user_id=stu.id, role_id=student_role.id))
     db.commit()
+    if _demo_is_production_shape():
+        logger.warning(
+            "生产形态下演示账号已使用随机口令并强制首次改密；"
+            "如需使用请在管理端 /system/users 重置密码，"
+            "或设置 SEED_DEMO_DATA=false 后重建数据卷")
     logger.info("演示数据初始化完成（4 个班级 / 4 名教师 / 12 名学生）")
 
 

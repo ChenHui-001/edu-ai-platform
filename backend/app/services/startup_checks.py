@@ -111,6 +111,8 @@ def _check_demo_data(db: Session) -> Optional[str]:
         "这些口令写在 README 里、是公开的，且是真实可登录的账号。"
         "修复：在 .env 设置 SEED_DEMO_DATA=false 并重启；"
         "已创建的账号请用管理端 /system/users 停用或改密。"
+        "（当前版本在生产形态下已改为随机口令 + 强制首次改密，"
+        "但开关本身仍应关闭，避免空库凭空多出 16 个账号。）"
     )
 
 
