@@ -278,6 +278,7 @@ DEFAULT_JOBS = [
     ("周报生成", "app.services.task_jobs.generate_weekly_report", "0 8 * * 1", "生成上周学情周报"),
     ("定时发布任务", "app.services.task_jobs.publish_scheduled_tasks", "* * * * *", "激活 publish_at 到期的草稿任务并补发学生通知"),
     ("清理过期运维日志", "app.services.task_jobs.clean_old_logs", "30 4 * * *", "清理过期日志/任务执行记录/已读通知，防止数据库无界增长"),
+    ("清理 AI 草稿题", "app.services.task_jobs.clean_ai_draft_questions", "0 5 * * *", "清理 7 天前无人引用的 AI 补题/重生草稿，防止题库无界增长"),
 ]
 
 

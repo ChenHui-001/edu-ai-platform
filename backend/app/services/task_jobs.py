@@ -38,6 +38,31 @@ def clean_expired_exams() -> Dict[str, Any]:
         db.close()
 
 
+def clean_ai_draft_questions() -> Dict[str, Any]:
+    """清理 AI 组卷预览 / 重生产生的过期草稿题（P2-13）。
+
+    每次组卷预览、单题或整题型重生都会落一批 source=ai_fill / ai_regen
+    的草稿题，此前没有任何清理任务，题库只增不减。只删「7 天前 +
+    没有被任何试卷题项引用」的，避免误删已被采用的题目。
+    """
+    from app.models import PaperItem, Question
+
+    db = SessionLocal()
+    try:
+        cutoff = now_local() - timedelta(days=7)
+        referenced = select(PaperItem.question_id)
+        count = db.query(Question).filter(
+            Question.source.in_(["ai_fill", "ai_regen"]),
+            Question.status == "draft",
+            Question.created_at < cutoff,
+            Question.id.notin_(referenced),
+        ).delete(synchronize_session=False)
+        db.commit()
+        return {"deleted": int(count or 0)}
+    finally:
+        db.close()
+
+
 def generate_daily_report() -> Dict[str, Any]:
     """生成学习日报：统计前一日学习数据。"""
     db = SessionLocal()
