@@ -61,7 +61,13 @@
           </el-form-item>
 
           <div class="login-footer">
-            <router-link to="/register" class="link">注册账号</router-link>
+            <div>
+              <router-link to="/register" class="link">注册账号</router-link>
+              <!-- /auth/forgot-password 与 /auth/reset-password 后端早已实现，
+                   但登录页没有任何入口，学生忘记密码只能找管理员。 -->
+              <el-link type="primary" :underline="false" class="link"
+                       style="margin-left:12px" @click="forgotPassword">忘记密码</el-link>
+            </div>
             <!-- 演示账号默认不展示：登录页公网可达，明文列出 admin 口令等于公开
                  默认管理员凭据。仅在显式设置 VITE_SHOW_DEMO_ACCOUNTS=true 时显示
                  （本地体验/演示环境），生产构建保持隐藏。 -->
@@ -90,7 +96,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   School, MagicStick, Notebook, EditPen, Refresh, DataLine, User, Lock, Key, ArrowDown
 } from '@element-plus/icons-vue'
@@ -118,6 +124,38 @@ const rules = {
   username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
   captcha: [{ required: true, message: '请输入验证码', trigger: 'blur' }]
+}
+
+// 找回密码：后端 /auth/forgot-password + /auth/reset-password 早已实现，
+// 但页面上没有入口。用三步 prompt 走完「发码 → 验码 → 设新密码」，
+// 不新增路由/弹窗组件，避免为了一个低频入口扩大改动面。
+async function forgotPassword() {
+  try {
+    const { value: target } = await ElMessageBox.prompt(
+      '请输入注册时使用的邮箱或手机号', '找回密码', {
+        confirmButtonText: '发送验证码', cancelButtonText: '取消',
+        inputPattern: /\S+/, inputErrorMessage: '请输入邮箱或手机号'
+      })
+    const field = String(target).includes('@') ? 'email' : 'phone'
+    await authApi.forgotPassword({ [field]: target })
+    ElMessage.success('若该账号存在，验证码已发送')
+    const { value: code } = await ElMessageBox.prompt(
+      '请输入收到的 6 位验证码', '找回密码', {
+        confirmButtonText: '下一步', cancelButtonText: '取消',
+        inputPattern: /^\d{6}$/, inputErrorMessage: '验证码为 6 位数字'
+      })
+    const { value: newPwd } = await ElMessageBox.prompt(
+      '请设置新密码（至少 8 位，含字母和数字）', '找回密码', {
+        confirmButtonText: '提交', cancelButtonText: '取消',
+        inputType: 'password', inputPattern: /^.{8,}$/,
+        inputErrorMessage: '密码至少 8 位'
+      })
+    await authApi.resetPasswordByCode({ [field]: target, code, new_password: newPwd })
+    ElMessage.success('密码已重置，请用新密码登录')
+    loadCaptcha()
+  } catch {
+    // 用户点「取消」或接口失败：拦截器已统一提示，这里不重复弹窗
+  }
 }
 
 async function loadCaptcha() {
