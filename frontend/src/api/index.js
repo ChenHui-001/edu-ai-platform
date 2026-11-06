@@ -141,8 +141,6 @@ export const questionApi = {
   import: (formData) => request.post('/question/questions/import', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
-  templateUrl: () => '/api/v1/question/questions/template',
-  exportUrl: (params) => `/api/v1/question/questions/export?${new URLSearchParams(params)}`,
   // blob 导出（window.open 无法携带 Authorization，get_current_teacher 必 401）
   exportExcel: (params) => request.get('/question/questions/export',
     { params, responseType: 'blob' }),
@@ -221,7 +219,6 @@ export const questionApi = {
   setShareScope: (id, scope) => request.post(`/question/papers/${id}/share-scope`, { scope }),
   shareInfo: (id) => request.get(`/question/papers/${id}/share-info`),
 
-  exportDocxUrl: (id, params) => `/api/v1/question/papers/${id}/export/docx`,
   exportPdf: (id, params) => request.get(`/question/papers/${id}/export/pdf`,
     { params, responseType: 'blob' }),
   exportDocx: (id, params) => request.get(`/question/papers/${id}/export/docx`,
@@ -229,11 +226,9 @@ export const questionApi = {
   // 答题卡是 PDF 流，同样必须走 blob 请求（window.open 不带 Authorization → 401）
   exportAnswerSheet: (id, params) => request.get(`/question/papers/${id}/export/answer-sheet`,
     { params, responseType: 'blob' }),
-  exportAnswerSheetUrl: (id, params) => `/api/v1/question/papers/${id}/export/answer-sheet`,
   // 打印 HTML：取文本后在浏览器新窗口渲染（避免 window.open 直连 401）
   exportPrintHtml: (id, params) => request.get(`/question/papers/${id}/export/html`,
     { params, responseType: 'text' }),
-  exportPrintHtmlUrl: (id, params) => `/api/v1/question/papers/${id}/export/html`
 }
 
 // ---------------- 作业与考试 ----------------
@@ -353,7 +348,6 @@ export const reportApi = {
   gradeComparison: () => request.get('/report/admin/grade-comparison'),
   subjectComparison: () => request.get('/report/admin/subject-comparison'),
   systemRuntime: () => request.get('/report/admin/system-runtime'),
-  exportUrl: (params) => `/api/v1/report/export/excel?${new URLSearchParams(params)}`,
   // blob 下载：带 token 的 axios 请求。window.open 无法携带 Authorization，
   // 学生端此前导出必 401；report_type 未传时后端 422（Query 必填）。
   exportExcel: (params) => request.get('/report/export/excel', { params, responseType: 'blob' }),
@@ -364,7 +358,6 @@ export const logApi = {
   login: (params) => request.get('/logs/login', { params }),
   operation: (params) => request.get('/logs/operation', { params }),
   error: (params) => request.get('/logs/error', { params }),
-  exportUrl: (type) => `/api/v1/logs/export?log_type=${type}`,
   // blob 下载：window.open 无法携带 Authorization，导出会 401
   exportExcel: (logType) => request.get('/logs/export',
     { params: { log_type: logType }, responseType: 'blob' }),
@@ -394,8 +387,6 @@ export const attachmentApi = {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
   list: (params) => request.get('/attachments', { params }),
-  previewUrl: (id) => `/api/v1/attachments/${id}/preview`,
-  downloadUrl: (id) => `/api/v1/attachments/${id}/download`,
   // 鉴权预览 / 下载：裸 URL 放 iframe、window.open 都不带 Authorization，必然 401
   preview: (id) => request.get(`/attachments/${id}/preview`, { responseType: 'blob' }),
   download: (id) => request.get(`/attachments/${id}/download`, { responseType: 'blob' }),
@@ -435,7 +426,6 @@ export const lessonAiApi = {
   jobs: (limit) => request.get('/lesson/ai/jobs', { params: { limit: limit || 20 } }),
   save: (id, data) => request.post(`/lesson/ai/jobs/${id}/save`, data || {}),
   // 导出是二进制下载，不走统一的 JSON 拦截器，直接用 blob
-  exportUrl: (id) => `/api/v1/lesson/ai/jobs/${id}/export`,
   // 带 token 的 blob 导出（裸 URL 打开 / 前端 fetch 手拼 token 都不可靠）
   exportBlob: (id) => request.get(`/lesson/ai/jobs/${id}/export`,
     { responseType: 'blob' })
