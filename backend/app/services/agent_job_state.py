@@ -60,6 +60,23 @@ from app.utils.common import now_local
 # 该常量现在从这里导入，不要再在接口里各自定义。
 JOB_TIMEOUT_SECONDS = 300
 
+# 个别 agent 的正常耗时远超通用标定值，必须单独放宽：否则任务「还在正常跑」
+# 就被判 failed，前端立即中断，后台线程随后又写 succeeded —— 状态来回翻转，
+# 教师看到失败后重试，卷子与草稿题双双重复生成。
+# key = AgentJob.agent，与 api/v1/paper_compose.py:COMPOSE_JOB_AGENT 一致。
+AGENT_TIMEOUT_SECONDS: Dict[str, int] = {
+    # 标准卷题库空时要并发补 5~6 批题，实测单批 60~100s、最坏
+    # 2 轮 ×240s ≈ 400s+；300s 是旧同步组卷时代标定的。
+    # 与 PaperWizard 的 15 分钟轮询上限对齐（前端略宽于后端）。
+    "paper_compose": 900,
+}
+
+
+def timeout_for(agent: Any, default: int = JOB_TIMEOUT_SECONDS) -> int:
+    """按任务类型取超时阈值；未登记的类型沿用通用 300s。"""
+    return AGENT_TIMEOUT_SECONDS.get(str(agent or ""), default)
+
+
 # 启动收割的**额外**宽限：在 JOB_TIMEOUT_SECONDS 之上再留一段时间。
 # 理由见 `reap_orphan_jobs`：多 worker 场景下，别的 worker 可能刚接到任务。
 REAP_GRACE_SECONDS = 600
@@ -125,13 +142,19 @@ def timeout_message(timeout_seconds: int = JOB_TIMEOUT_SECONDS) -> str:
 
 
 def apply_timeout(job: Any, data: Dict[str, Any],
-                  *, timeout_seconds: int = JOB_TIMEOUT_SECONDS,
+                  *, timeout_seconds: Optional[int] = None,
                   now: Optional[datetime] = None) -> Dict[str, Any]:
     """把超时判定写进已 dict 化的任务响应（原地修改并返回）。
 
     只在真的超时时才覆盖 `status`/`error` —— 正常任务的自有 error
     （如"知识点不存在"）必须原样保留，不能被一句"超时"盖掉。
+
+    `timeout_seconds=None`（默认）时按 `job.agent` 自动取阈值：所有任务
+    查询入口无需各自记得传参，也不会出现「详情放宽了、列表没放宽」的
+    半吊子修复。显式传值仍优先，便于测试注入。
     """
+    if timeout_seconds is None:
+        timeout_seconds = timeout_for(getattr(job, "agent", None))
     if is_timed_out(getattr(job, "status", None),
                     getattr(job, "created_at", None),
                     timeout_seconds=timeout_seconds, now=now):

@@ -557,9 +557,10 @@ const composeProgress = ref(0)
 const composeStage = ref('')
 
 async function pollComposeJob(jobId) {
-  // 10 分钟上限：正常 1~3 分钟，超时基本是模型侧挂了或任务线程丢失
-  // （进程重启会让 daemon 线程消失，后端 apply_timeout 会把它判成 failed）
-  const deadline = Date.now() + 10 * 60 * 1000
+  // 15 分钟上限，与后端 agent_job_state.AGENT_TIMEOUT_SECONDS.paper_compose
+  // (900s) 对齐。题库空时并发补题最坏 2 轮 ×240s ≈ 400s+，旧值 10 分钟
+  // 会在后端 900s 判定之前先弹错，教师重试后卷子/草稿题重复生成。
+  const deadline = Date.now() + 15 * 60 * 1000
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 2000))
     const res = await questionApi.composeJob(jobId)
@@ -569,7 +570,7 @@ async function pollComposeJob(jobId) {
     if (d.status === 'succeeded') return d.result || {}
     if (d.status === 'failed') throw new Error(d.error || '组卷任务失败')
   }
-  throw new Error('组卷超时（超过 10 分钟），请稍后重试')
+  throw new Error('组卷超时（超过 15 分钟），请稍后重试')
 }
 const saving = ref(false)
 
