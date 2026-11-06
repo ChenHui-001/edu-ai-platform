@@ -612,6 +612,8 @@ def _run_job(job_id: int) -> None:
                 grade_id=params.get("grade_id"),
                 subject_id=int(params.get("subject_id", 0)),
                 knowledge_point_id=params.get("knowledge_point_id"),
+                # 与同步入口一致：数组优先，后台任务的多选知识点不再只生效第一个
+                knowledge_point_ids=params.get("knowledge_point_ids"),
                 question_type=params.get("type", "single"),
                 count=int(params.get("count", 5)),
                 difficulty=params.get("difficulty", "medium"),

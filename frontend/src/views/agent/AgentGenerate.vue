@@ -23,11 +23,11 @@
 
     <el-row :gutter="16">
       <!-- 左：功能选择 -->
-      <el-col :span="6">
+      <el-col :xs="24" :sm="24" :md="7" :lg="6">
         <el-card shadow="never">
           <template #header><b>选择能力</b></template>
           <el-menu :default-active="active" @select="onSelect" class="agent-menu">
-            <el-menu-item v-for="a in agents" :key="a.name" :index="a.name">
+            <el-menu-item v-for="a in visibleAgents" :key="a.name" :index="a.name">
               <el-icon><component :is="iconOf(a.name)" /></el-icon>
               <span>{{ a.display_name || a.name }}</span>
             </el-menu-item>
@@ -42,24 +42,33 @@
       </el-col>
 
       <!-- 右：输入 + 结果 -->
-      <el-col :span="18">
+      <el-col :xs="24" :sm="24" :md="17" :lg="18">
         <el-card shadow="never">
           <template #header>
-            <b>{{ currentAgent?.name }} 工作台</b>
+            <!-- name 是英文 code（question_generator），中文在 display_name -->
+            <b>{{ currentAgent?.display_name || currentAgent?.name }} 工作台</b>
           </template>
 
           <!-- 出题 Agent -->
           <template v-if="active === 'question_generator'">
             <el-form label-width="100px">
               <el-row :gutter="12">
-                <el-col :span="8">
+                <el-col :xs="24" :sm="12" :md="8">
                   <el-form-item label="学科">
-                    <el-select v-model="qForm.subject_id" style="width:100%" @change="onSubjectChange">
-                      <el-option v-for="s in genSubjects" :key="s.id" :label="s.name" :value="s.id" />
+                    <el-select v-model="qForm.subject_id" filterable style="width:100%" @change="onSubjectChange">
+                      <!-- 未选年级时按年级分组：Subject 同名几十条，平铺无法区分 -->
+                      <template v-if="qForm.grade_id">
+                        <el-option v-for="s in genSubjects" :key="s.id" :label="s.name" :value="s.id" />
+                      </template>
+                      <template v-else>
+                        <el-option-group v-for="g in genSubjectGroups" :key="g.id" :label="g.label">
+                          <el-option v-for="s in g.options" :key="s.id" :label="s.name" :value="s.id" />
+                        </el-option-group>
+                      </template>
                     </el-select>
                   </el-form-item>
                 </el-col>
-                <el-col :span="8">
+                <el-col :xs="24" :sm="12" :md="8">
                   <el-form-item label="年级">
                     <el-select v-model="qForm.grade_id" clearable style="width:100%"
                                @change="onGradeChange">
@@ -67,7 +76,7 @@
                     </el-select>
                   </el-form-item>
                 </el-col>
-                <el-col :span="8">
+                <el-col :xs="24" :sm="12" :md="8">
                   <el-form-item label="知识点">
                     <el-select v-model="qForm.knowledge_point_ids" multiple filterable collapse-tags
                                style="width:100%">
@@ -77,25 +86,31 @@
                 </el-col>
               </el-row>
               <el-row :gutter="12">
-                <el-col :span="8">
+                <el-col :xs="24" :sm="12" :md="8">
                   <el-form-item label="题型">
-                    <el-select v-model="qForm.question_types" multiple collapse-tags style="width:100%">
-                      <el-option v-for="(l, v) in TYPES" :key="v" :label="l" :value="v" />
+                    <!-- 后端 question_type 是单值，多选只会取第一个、误导用户；
+                         值必须用后端枚举（constants/question.js 的 key），
+                         不能用 calculate/proof/essay 这类历史别名。 -->
+                    <el-select v-model="qForm.question_type" style="width:100%">
+                      <el-option v-for="(l, v) in QUESTION_TYPE_LABELS" :key="v" :label="l" :value="v" />
                     </el-select>
                   </el-form-item>
                 </el-col>
-                <el-col :span="8">
+                <el-col :xs="24" :sm="12" :md="8">
                   <el-form-item label="难度">
-                    <el-select v-model="qForm.difficulty" clearable style="width:100%">
+                    <!-- 后端 data.get('difficulty', 'medium') 在显式传 null 时拿到 None，
+                         去掉 clearable 保证难度始终有合法值 -->
+                    <el-select v-model="qForm.difficulty" style="width:100%">
                       <el-option label="简单" value="easy" />
                       <el-option label="中等" value="medium" />
                       <el-option label="困难" value="hard" />
                     </el-select>
                   </el-form-item>
                 </el-col>
-                <el-col :span="8">
+                <el-col :xs="24" :sm="12" :md="8">
                   <el-form-item label="数量">
-                    <el-input-number v-model="qForm.count" :min="1" :max="30" style="width:100%" />
+                    <!-- 后端 execute 静默把 count 截到 10，前端不要放开到 30 -->
+                    <el-input-number v-model="qForm.count" :min="1" :max="10" style="width:100%" />
                   </el-form-item>
                 </el-col>
               </el-row>
@@ -131,9 +146,13 @@
             <el-input v-model="paperReq" type="textarea" :rows="3"
                       placeholder="如：生成七年级数学一元一次方程试卷，10 题，选择题 6 道 + 填空 4 道，难度中等，限时 30 分钟" />
             <div class="mt8">
-              <el-button v-for="t in paperTemplates" :key="t" size="small" class="mr4" @click="paperReq = t">
-                {{ t.slice(0, 14) }}…
-              </el-button>
+              <!-- 按钮只放得下摘要，完整需求用 tooltip 给出，避免看不全 -->
+              <el-tooltip v-for="t in paperTemplates" :key="t" :content="t"
+                          placement="top" :show-after="300">
+                <el-button size="small" class="mr4" @click="paperReq = t">
+                  {{ templateLabel(t) }}
+                </el-button>
+              </el-tooltip>
             </div>
           </template>
 
@@ -178,7 +197,7 @@
 
           <div class="action-bar">
             <el-button type="primary" :icon="MagicStick" :loading="running" @click="run">
-              {{ running ? 'AI 生成中（约 20-60 秒，请勿刷新）' : '开始生成' }}
+              {{ running ? 'AI 生成中，请勿刷新页面' : '开始生成' }}
             </el-button>
             <el-tooltip :content="'后台任务：提交后立即返回，页面可关闭，稍后回来查看结果'" placement="top">
               <el-checkbox v-model="asyncMode" :disabled="running || !asyncSupported">后台生成</el-checkbox>
@@ -188,7 +207,7 @@
         </el-card>
 
         <!-- 结果区 -->
-        <el-card shadow="never" class="mt16" v-if="result">
+        <el-card shadow="never" class="mt16" v-if="result && !hasNoOutput(result)">
           <template #header>
             <div class="flex-between">
               <b>生成结果</b>
@@ -205,7 +224,7 @@
                   <p v-if="parse(row.options)" class="opts">
                     <span v-for="o in parse(row.options)" :key="o.key" class="opt">{{ o.key }}. {{ o.text }}</span>
                   </p>
-                  <p class="answer">答案：{{ JSON.stringify(row.answer) }}</p>
+                  <p class="answer">答案：{{ fmtAnswer(row.answer) }}</p>
                   <p v-if="row.analysis" class="analysis">解析：{{ row.analysis }}</p>
                 </template>
               </el-table-column>
@@ -232,16 +251,43 @@
             </div>
           </template>
 
-          <!-- 试卷结果 -->
+          <!-- 试卷结果：字段名必须与 PaperComposerAgent 返回结构对齐。
+               后端是 item_count / difficulty_report / knowledge_coverage{对象}，
+               旧版写 question_count / difficulty_distribution / analysis，
+               导致整屏显示「-」和 [object Object]。 -->
           <template v-else-if="result.paper">
             <el-descriptions :column="2" border>
               <el-descriptions-item label="试卷名称">{{ result.paper.name }}</el-descriptions-item>
-              <el-descriptions-item label="题量">{{ result.paper.question_count || result.items?.length || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="难度分布">{{ fmt(result.difficulty_distribution) }}</el-descriptions-item>
-              <el-descriptions-item label="总分">{{ result.paper.total_score || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="知识点覆盖" :span="2">{{ result.knowledge_coverage || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="难度分析" :span="2">{{ result.analysis || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="题量">{{ result.paper.item_count ?? result.paper.items?.length ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item label="难度分布">{{ difficultyText }}</el-descriptions-item>
+              <el-descriptions-item label="总分">{{ result.paper.total_score ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item label="知识点覆盖" :span="2">{{ coverageText }}</el-descriptions-item>
+              <el-descriptions-item label="难度分析" :span="2">{{ difficultyAnalysisText }}</el-descriptions-item>
             </el-descriptions>
+
+            <div v-if="result.paper.items?.length" class="mt12">
+              <p class="hint-title">题目预览（{{ result.paper.items.length }} 题）</p>
+              <el-table :data="result.paper.items" border size="small" max-height="320">
+                <el-table-column type="index" label="#" width="50" />
+                <el-table-column label="题型" width="120">
+                  <template #default="{ row }">{{ TYPES[row.type] || row.type || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="题干" min-width="260" show-overflow-tooltip>
+                  <template #default="{ row }">{{ strip(row.stem) }}</template>
+                </el-table-column>
+                <el-table-column label="难度" width="90">
+                  <template #default="{ row }">{{ { easy: '简单', medium: '中等', hard: '困难' }[row.difficulty] || row.difficulty || '-' }}</template>
+                </el-table-column>
+                <el-table-column prop="score" label="分值" width="70" align="center" />
+              </el-table>
+            </div>
+
+            <div class="action-bar">
+              <el-button v-if="result.paper.id" type="primary" @click="openPaper(result.paper.id)">
+                查看 / 编辑试卷
+              </el-button>
+              <el-tag v-else type="info" size="small">预览态（未落库）</el-tag>
+            </div>
           </template>
 
           <!-- 通用文本结果 -->
@@ -292,6 +338,8 @@ import { MagicStick, Refresh, Cpu, Notebook, Tickets, EditPen, Calendar, ChatDot
 import { agentApi, eduApi, questionApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { sanitizeHtml } from '@/utils/sanitize'
+// 题型唯一真源：项目规范禁止页面内再定义本地映射。
+import TYPES, { QUESTION_TYPE_LABELS } from '@/constants/question'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
@@ -322,12 +370,17 @@ const engineKeyType = computed(() => {
 function goConfig() { router.push('/admin/ai-config') }
 
 
-const TYPES = {
-  single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题',
-  short: '简答题', calculate: '计算题', proof: '证明题', essay: '论述题'
-}
-
+// 本页有输入表单、后端有对应接口的 Agent。
+// /agent/list 会额外返回 router（内部编排）与 lesson_planner（无前端接口/
+// 无表单）、grading_assistant（需要 items 但本页无输入区）：这几个点进去
+// 右侧一片空白，且 run() 会误调 /agent/grading 空参数，故不下发到菜单。
 const agents = ref([])
+const SUPPORTED_AGENTS = [
+  'question_generator', 'paper_composer', 'study_planner',
+  'tutor', 'note_organizer',
+]
+const visibleAgents = computed(() =>
+  agents.value.filter(a => SUPPORTED_AGENTS.includes(a.name)))
 const engine = ref(null)
 const subjects = ref([])
 const grades = ref([])
@@ -364,7 +417,9 @@ function paperParams() {
 }
 
 const qForm = reactive({
-  subject_id: null, grade_id: null, knowledge_point_ids: [], question_types: ['single'],
+  subject_id: null, grade_id: null, knowledge_point_ids: [],
+  // 后端 question_type 只收单值，原先是数组多选但只取 [0]
+  question_type: 'single',
   difficulty: 'medium', count: 5, requirements: ''
 })
 const genericForm = reactive({ note_id: null, question: '', knowledge_point: '', student_id: null, days: 7, daily_minutes: 90 })
@@ -378,13 +433,42 @@ const paperTemplates = [
 const currentAgent = computed(() => agents.value.find(a => a.name === active.value))
 // 后端异步任务仅支持出题 / 组卷：其余 Agent 勾选后台生成会 400
 const asyncSupported = computed(() => ['question_generator', 'paper_composer'].includes(active.value))
-const isFallback = computed(() => result.value?.is_fallback === true)
+const isFallback = computed(() =>
+  result.value?.is_fallback === true || result.value?.fallback === true)
+
+// 组卷报告是嵌套对象，模板里直接插值会显示 [object Object]。
+// 与 AgentChat / PaperWizard 的消费口径保持一致。
+const DIFF_LABELS = { easy: '简单', medium: '中等', hard: '困难' }
+const difficultyText = computed(() => {
+  const d = result.value?.difficulty_report?.distribution
+  if (!d || typeof d !== 'object') return '-'
+  const parts = Object.entries(d).map(([k, v]) => `${DIFF_LABELS[k] || k} ${v} 题`)
+  return parts.length ? parts.join(' / ') : '-'
+})
+const coverageText = computed(() => {
+  const c = result.value?.knowledge_coverage
+  if (!c) return '-'
+  if (typeof c === 'string') return c
+  return `覆盖 ${c.total_points ?? 0} 个知识点 · ${c.balance || '暂无均衡性数据'}`
+})
+const difficultyAnalysisText = computed(() => {
+  const r = result.value?.difficulty_report
+  if (!r) return result.value?.analysis || '-'
+  const parts = Object.entries(r.ratio || {})
+    .map(([k, v]) => `${DIFF_LABELS[k] || k} 占比 ${v}%`)
+  if (r.avg_score != null) parts.push(`平均每题 ${r.avg_score} 分`)
+  return parts.length ? parts.join(' · ') : '-'
+})
 
 const textResult = computed(() => {
-  if (!result.value) return ''
-  if (result.value.answer) return result.value.answer
-  if (result.value.summary) return JSON.stringify(result.value, null, 2)
-  return JSON.stringify(result.value, null, 2)
+  const r = result.value
+  if (!r) return ''
+  // 优先展示人类可读字段。旧实现命中 summary 时误把「整个结果对象」
+  // JSON.stringify 出来，用户看到的是一大坨调试信息而不是总结文本。
+  for (const k of ['answer', 'summary', 'content', 'text', 'message']) {
+    if (typeof r[k] === 'string' && r[k].trim()) return r[k]
+  }
+  return JSON.stringify(r, null, 2)
 })
 
 function iconOf(code) {
@@ -396,10 +480,14 @@ function iconOf(code) {
 
 function strip(s) { return String(s || '').replace(/<[^>]+>/g, '') }
 function parse(v) { if (!v) return null; try { return typeof v === 'string' ? JSON.parse(v) : v } catch { return null } }
-function fmt(o) {
-  if (!o) return '-'
-  return typeof o === 'object' ? JSON.stringify(o) : String(o)
+function fmtAnswer(v) {
+  if (v === null || v === undefined || v === '') return '-'
+  if (Array.isArray(v)) return v.join('、')
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
 }
+function openPaper(id) { router.push(`/teacher/papers/${id}/edit`) }
+function templateLabel(t) { return t.length > 16 ? `${t.slice(0, 16)}…` : t }
 
 function onSelect(idx) { active.value = idx; result.value = null }
 
@@ -420,6 +508,24 @@ const genSubjects = computed(() => {
   const gid = qForm.grade_id
   if (!gid) return all
   return all.filter(s => s.grade_id === gid)
+})
+
+// 未选年级时按 grade_id 分组展示（旧的注释宣称分组、代码却只平铺，
+// 结果下拉里出现几十条同名「数学」，用户根本选不对年级）。
+const genSubjectGroups = computed(() => {
+  const byGrade = new Map()
+  for (const s of subjects.value) {
+    const gid = s.grade_id || 0
+    if (!byGrade.has(gid)) byGrade.set(gid, [])
+    byGrade.get(gid).push(s)
+  }
+  return [...byGrade.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([gid, options]) => ({
+      id: gid,
+      label: grades.value.find(g => g.id === gid)?.name || '其他年级',
+      options,
+    }))
 })
 
 function onGradeChange() {
@@ -443,8 +549,8 @@ async function onSubjectChange() {
 }
 
 /** 轮询后台任务直到完成（最长 5 分钟，2s 间隔） */
-async function pollJob(id) {
-  const deadline = Date.now() + 5 * 60 * 1000
+async function pollJob(id, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 2000))
     const res = await agentApi.job(id)
@@ -452,7 +558,7 @@ async function pollJob(id) {
     if (j.status === 'success') return j.result
     if (j.status === 'failed') throw new Error(j.error || '生成失败')
   }
-  throw new Error('任务超时（5 分钟），请到任务列表查看')
+  throw new Error(`任务超时（${Math.round(timeoutMs / 60000)} 分钟），请到任务列表查看`)
 }
 
 // 智能批改等 Agent 拿不到 items 时会返回空对象/空列表，旧实现无条件弹
@@ -480,14 +586,17 @@ async function run() {
         const params = isQuestion
           ? {
               ...qForm,
-              type: qForm.question_types?.[0] || 'single',
-              knowledge_point_id: qForm.knowledge_point_ids?.[0] || undefined
+              type: qForm.question_type,
+              knowledge_point_ids: qForm.knowledge_point_ids
             }
           : paperParams()
         const res = await agentApi.createJob({ agent, params })
         jobId.value = res.data?.job_id
         ElMessage.success(`任务已提交（#${jobId.value}），正在后台生成…`)
-        const jobResult = await pollJob(jobId.value)
+        // 后端超时阈值：出题 300s、组卷 900s。前端略宽一点，
+        // 否则前端先放弃而后台线程仍在跑，教师重试会重复生成。
+        const waitMs = isQuestion ? 6 * 60 * 1000 : 15 * 60 * 1000
+        const jobResult = await pollJob(jobId.value, waitMs)
         result.value = jobResult?.data || jobResult || {}
         if (hasNoOutput(result.value)) {
           ElMessage.warning('任务已结束但未产出内容，请调整条件后重试')
@@ -508,12 +617,12 @@ async function run() {
     let res
     if (active.value === 'question_generator') {
       if (!qForm.subject_id) { ElMessage.warning('请选择学科'); return }
-      // 后端契约是单值 type / knowledge_point_id（此前发复数数组被
-      // 静默忽略，所选题型/知识点永远不生效，全部按默认 single 生成）
+      // 题型单值；知识点后端同时认 knowledge_point_ids（数组优先）与
+      // knowledge_point_id，发数组才能让多选真正全部生效。
       res = await agentApi.questionGenerator({
         ...qForm,
-        type: qForm.question_types?.[0] || 'single',
-        knowledge_point_id: qForm.knowledge_point_ids?.[0] || undefined,
+        type: qForm.question_type,
+        knowledge_point_ids: qForm.knowledge_point_ids,
       })
     } else if (active.value === 'paper_composer') {
       // 二选一即可：写了需求文本让 AI 解析，或直接选学科走规则组卷。
@@ -532,13 +641,16 @@ async function run() {
     } else if (active.value === 'study_planner') {
       res = await agentApi.studyPlanner(genericForm)
     } else {
-      res = await agentApi.grading(genericForm)
+      // 菜单已过滤未实现的能力；兜底避免残留入口静默调错接口 / 发空参数
+      ElMessage.warning('该能力暂未开放，请在对应功能页使用')
+      return
     }
     result.value = res.data || {}
     if (hasNoOutput(result.value)) {
       ElMessage.warning('生成结束但未产出内容，请调整条件后重试')
     } else {
-      ElMessage.success(res.data.message || '生成完成')
+      // 拦截器交回的是信封本身，业务文案在 res.message 而不是 res.data.message
+      ElMessage.success(res.message || '生成完成')
     }
   } finally {
     running.value = false
@@ -594,9 +706,11 @@ async function saveAll() {
         await questionApi.create(buildQuestionPayload(qs[i]))
         okCount++
       } catch (e) {
+        // 响应拦截器 reject 的是 Error（错误文案已写进 e.message），
+        // 没有 axios response；优先取 e.message 才能显示后端的真实原因。
         failures.push({
           index: i + 1,
-          reason: e?.response?.data?.message || e?.message || String(e)
+          reason: e?.message || e?.response?.data?.message || String(e)
         })
       }
     }
@@ -607,10 +721,13 @@ async function saveAll() {
     ElMessage.success(`已全部保存 ${okCount} 道题到你的私有题库`)
     return
   }
-  const shown = failures.slice(0, 10)
+  // shown 是 join 后的 HTML 字符串，用它的 .length 和条数比较是错的，
+  // 「另有 N 条失败」永远算不出来。单独记实际展示条数。
+  const limit = Math.min(failures.length, 10)
+  const shown = failures.slice(0, limit)
     .map(f => `第 ${f.index} 题：${escapeHtml(f.reason)}`).join('<br/>')
-  const more = failures.length > shown.length
-    ? `<br/>…另有 ${failures.length - 10} 条失败` : ''
+  const more = failures.length > limit
+    ? `<br/>…另有 ${failures.length - limit} 条失败` : ''
   ElMessageBox.alert(
     `${shown}${more}`,
     `保存结果：成功 ${okCount}/${qs.length} 道，失败 ${failures.length} 道`,
