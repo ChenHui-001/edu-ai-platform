@@ -223,7 +223,10 @@ def class_overview(
     k = db.get(Class, class_id)
     if not k:
         raise NotFoundException("班级不存在")
-    students = db.scalars(select(User).where(User.class_id == class_id)).all()
+    # 与同文件其它班级报表口径一致：class_id 下可能挂着教师/班主任账号，
+    # 不过滤 identity 会把教职工算进「学生人数」和作答分母。
+    students = db.scalars(select(User).where(
+        User.class_id == class_id, User.identity == "student")).all()
 
     stmt = select(Submission).where(
         Submission.student_id.in_([s.id for s in students] or [0]),
