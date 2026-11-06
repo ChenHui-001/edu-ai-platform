@@ -4,7 +4,7 @@
       <h2 class="page-title">用户管理</h2>
       <div>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
-        <el-button type="primary" :icon="Plus" @click="openDialog()">新增用户</el-button>
+        <el-button v-if="isSysAdmin" type="primary" :icon="Plus" @click="openDialog()">新增用户</el-button>
       </div>
     </div>
 
@@ -69,9 +69,9 @@
         <el-table-column prop="last_login_at" label="最后登录" width="160" />
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
-            <el-button link type="warning" @click="openReset(row)">重置密码</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button v-if="isSysAdmin" link type="primary" @click="openDialog(row)">编辑</el-button>
+            <el-button v-if="isSysAdmin" link type="warning" @click="openReset(row)">重置密码</el-button>
+            <el-button v-if="isSysAdmin" link type="danger" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -182,10 +182,17 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { systemApi, eduApi } from '@/api'
+import { useUserStore } from '@/store/user'
+
+// 路由 admin/users 对 grade_admin 放行，但后端新建/改/删/重置密码四处
+// 只认 sys_admin。此前四个写按钮无条件渲染，年级管理员点进去必定 403；
+// 与项目其它管理页一致按角色门控，只读列表仍可用。
+const userStore = useUserStore()
+const isSysAdmin = computed(() => userStore.isAdmin === true)
 
 const IDENTITY = { student: '学生', teacher: '教师', admin: '管理员' }
 const ROLE = { sys_admin: '系统管理员', grade_admin: '年级管理员', teacher: '任课教师', student: '学生', guest: '访客' }

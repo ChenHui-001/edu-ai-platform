@@ -10,7 +10,7 @@ from sqlalchemy import case, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
-    DataScope, get_current_admin, get_current_manager, get_current_teacher,
+    DataScope, get_current_manager, get_current_teacher,
     get_current_user, get_data_scope,
 )
 from app.core.database import get_db
@@ -753,7 +753,11 @@ def subject_comparison(
 
 
 @router.get("/admin/system-runtime", summary="系统运行报表")
-def system_runtime(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+# 路由 admin/reports 放行 grade_admin，而本接口此前只认 sys_admin：
+# AdminReport 用 Promise.all 并行取 4 张报表，其中这一个 403 会把另外 3 张
+# 本可访问的报表一起拖成整页空白。运行报表不含用户隐私，与同文件其它
+# 报表一致放行 get_current_manager。
+def system_runtime(db: Session = Depends(get_db), _: User = Depends(get_current_manager)):
     from app.services.scheduler import scheduler_status
 
     since = now_local() - timedelta(days=1)
