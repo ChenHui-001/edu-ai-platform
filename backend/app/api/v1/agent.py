@@ -16,6 +16,7 @@ from app.api.deps import (
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
+from app.schemas.agent import PaperComposerRequest
 from app.core.rate_limit import check_agent_rate
 from app.models import AgentCallLog, User
 from app.utils.common import PageParams, dictify, fail, now_local, ok
@@ -428,14 +429,14 @@ def question_generator(
 
 @router.post("/paper-composer", summary="智能组卷 Agent")
 def paper_composer(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    data: PaperComposerRequest = Body(...), db: Session = Depends(get_db),
     user: User = Depends(get_current_teacher),
 ):
     from app.agents.paper_agent import PaperComposerAgent
 
-    request = _limited_text(data.get("request"), "组卷要求")
-    grade_id = data.get("grade_id")
-    subject_id = data.get("subject_id")
+    request = _limited_text(data.request, "组卷要求")
+    grade_id = data.grade_id
+    subject_id = data.subject_id
     # 需求文本与「年级+学科」二选一即可组卷。两者都缺时，旧实现会把
     # 空串需求静默丢给 Agent、再把 subject_id=0 传下去，最终抛
     # 「无法识别学科」——真实原因（没给任何组卷输入）被完全掩盖，
@@ -446,19 +447,19 @@ def paper_composer(
     res = PaperComposerAgent().run(
         db, user_id=user.id, request=request,
         grade_id=grade_id, subject_id=subject_id,
-        total_score=float(data.get("total_score", 100)),
-        difficulty_ratio=data.get("difficulty_ratio"),
-        type_ratio=data.get("type_ratio"),
-        knowledge_point_ids=data.get("knowledge_point_ids"),
-        paper_name=data.get("paper_name"),
-        save=bool(data.get("save", False)),
+        total_score=float(data.total_score),
+        difficulty_ratio=data.difficulty_ratio,
+        type_ratio=data.type_ratio,
+        knowledge_point_ids=data.knowledge_point_ids,
+        paper_name=data.paper_name,
+        save=data.save,
     )
     _warn_if_slow(res, "paper_composer")
     if not res.get("success"):
         return fail(res.get("message", "组卷失败"))
-    if data.get("save"):
+    if data.save:
         _audit_write(db, user, "AI 组卷入库",
-                     f"subject={data.get('subject_id')} "
+                     f"subject={subject_id} "
                      f"paper_id={(res.get('data') or {}).get('paper_id')}")
     return ok(res.get("data"), message=res.get("message", "组卷完成"))
 
