@@ -248,23 +248,30 @@ async function markMastered(w) {
 }
 
 async function exportWrong() {
-  // URLSearchParams 会把 null 序列化成字符串 "null"、空串变成 "k="：
-  // 后端 `subject_id: Optional[int]` 收到 "null" 直接 422，导出必失败。
-  // 只把「用户真正设了值」的筛选项带上去，其余让后端用默认值。
-  const params = new URLSearchParams(
-    Object.entries(query).filter(([, v]) => v !== null && v !== undefined && v !== '')
+  // 下拉里是去重后的代表 id（指向最低年级），与列表 load() 一样必须还原成
+  // 当前年级那条，否则「选数学」导出的是别的年级学科，且不会报任何错。
+  // 后端返回的是统一信封 { data: { content, format } } 而非文件流：
+  // 早先 fetch + res.blob() 会把整个 JSON 信封当成 .md 存下来。
+  const sid = resolveSubjectId(subjects.value, query.subject_id, currentGradeId())
+  // axios 会自动丢 null，但仍显式过滤空串：URL 里 "k=" 同样会让
+  // Optional[int] / Optional[bool] 校验失败。
+  const params = Object.fromEntries(
+    Object.entries({ ...query, subject_id: sid })
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
   )
-  const res = await fetch(`/api/v1/learning/wrong-questions/export?${params}`, {
-    headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
-  })
-  if (!res.ok) return ElMessage.error('导出失败')
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `错题本_${new Date().toISOString().slice(0, 10)}.md`
-  a.click()
-  URL.revokeObjectURL(url)
+  try {
+    const res = await learningApi.exportWrongQuestions(params)
+    const content = res?.data?.content
+    if (typeof content !== 'string') return ElMessage.error('导出失败：返回内容为空')
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `错题本_${new Date().toISOString().slice(0, 10)}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    // 拦截器已统一提示（含 401 刷新），这里不再重复弹窗
+  }
 }
 
 onMounted(async () => {

@@ -278,6 +278,9 @@ export const learningApi = {
   removeNote: (id) => request.delete(`/learning/notes/${id}`),
   organizeNote: (id) => request.post(`/learning/notes/${id}/organize`),
   wrongQuestions: (params) => request.get('/learning/wrong-questions', { params }),
+  // 返回的是统一信封 JSON（data.content 是 markdown 正文），不是文件流；
+  // 走 axios 才能自动丢弃 null 参数、复用 401 刷新与统一错误提示。
+  exportWrongQuestions: (params) => request.get('/learning/wrong-questions/export', { params }),
   updateWrong: (id, data) => request.put(`/learning/wrong-questions/${id}`, data),
   analyzeWrong: (id) => request.post(`/learning/wrong-questions/${id}/analyze`),
   redoWrong: (id) => request.post(`/learning/wrong-questions/${id}/redo`),
