@@ -414,6 +414,8 @@ def question_generator(
         count=count,
         difficulty=data.get("difficulty", "medium"),
         save=bool(data.get("save", False)),
+        # 透传 AI 出题页的「额外要求」，不再静默丢弃用户输入。
+        requirements=_limited_text(data.get("requirements"), "额外要求", limit=200),
     )
     _warn_if_slow(res, "question_generator")
     if data.get("save") and res.get("success"):

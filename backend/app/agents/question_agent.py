@@ -91,6 +91,7 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
         difficulty: str = "medium",
         save: bool = False,
         source: str = "ai",
+        requirements: str = "",
         **kwargs,
     ) -> Dict[str, Any]:
         if not subject_id:
@@ -210,6 +211,12 @@ answer_min_words：仅作文题(composition)填建议最少字数（小学 400�
                     "各知识点的题量比例由你根据知识点的重要性与覆盖度自行决定，"
                     "尽量让每个知识点都有题，不要全部集中在某一个上。"
                 )
+
+        # AI 出题页的「额外要求」输入框此前被前端发出、后端整段丢弃
+        # （P2-15）：用户填了情境/字数/禁用题型等约束却完全不生效，
+        # 输入框等于摆设。这里把它拼进提示词，长度由调用方先截断。
+        if requirements and str(requirements).strip():
+            prompt += f"\n额外命题要求：{str(requirements).strip()[:200]}。"
 
         result = self.call_llm(prompt, db=db, user_id=user_id, context=context,
                                biz_type="question_generate", json_mode=True)
