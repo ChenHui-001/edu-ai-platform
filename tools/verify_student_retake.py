@@ -71,6 +71,14 @@ def main():
         "DATABASE_URL": f"sqlite:///{db_path}",
         "SECRET_KEY": "retake-test-key-0123456789abcdef",
         "TZ": "Asia/Shanghai",
+        # 脚本化登录必须关掉图形验证码（CAPTCHA_ENFORCED 默认 True），
+        # 否则登录直接被拒，根本走不到强制改密那一步。
+        # APP_ENV=test 让演示账号保持固定口令（生产形态会随机化）；
+        # 与 audit-reports/qa 的功能回归环境保持一致。
+        "CAPTCHA_ENFORCED": "false",
+        "APP_ENV": "test", "DEBUG": "true",
+        "SEED_DEMO_DATA": "true", "SEED_BASE_DATA": "true",
+        "SCHEDULER_ENABLED": "false",
     })
     logf = open(log_path, "w", encoding="utf-8")
     proc = subprocess.Popen(
@@ -89,11 +97,40 @@ def main():
         print("\n=== 0. 准备（管理员 + 教师 + 学生 + 试卷 + 任务）===")
 
         def login(u, p):
-            r = httpx.post(f"{api}/auth/login", json={"username": u, "password": p}, timeout=30)
-            if r.status_code != 200:
-                return None
-            d = data_of(r.json())
-            return d.get("access_token") or d.get("token")
+            # init_admin / enforce_default_admin_password 已把 admin 标记
+            # must_change_password=True：登录能成功，但后续业务接口全 403，
+            # 本脚本过去会一路走到 g_items[0] 抛 IndexError，永远复现不了
+            # 重考回归。同目录 CI 脚本都处理了强制改密，唯独它没有。
+            # 脚本每次用全新临时库，改密后可重复运行；同时兼容「库里
+            # 密码已被改成 Xy9! 后缀」的情况。
+            def _auth(pwd):
+                r = httpx.post(f"{api}/auth/login",
+                               json={"username": u, "password": pwd}, timeout=30)
+                if r.status_code != 200:
+                    return None
+                d = data_of(r.json())
+                return d.get("access_token") or d.get("token")
+
+            for pwd in (p, p + "Xy9!"):
+                token = _auth(pwd)
+                if not token:
+                    continue
+                probe = httpx.get(
+                    f"{api}/system/users",
+                    headers={"Authorization": f"Bearer {token}"}, timeout=30)
+                if probe.status_code != 403 or "修改密码" not in str(
+                        (probe.json() or {}).get("message", "")):
+                    return token
+                newpwd = pwd + "Xy9!"
+                rr = httpx.put(
+                    f"{api}/auth/password",
+                    json={"old_password": pwd, "new_password": newpwd},
+                    headers={"Authorization": f"Bearer {token}"}, timeout=30)
+                if rr.status_code == 200:
+                    fresh = _auth(newpwd)
+                    if fresh:
+                        return fresh
+            return None
 
         adm = login("admin", "Admin@123456")
         if not adm:
