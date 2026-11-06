@@ -455,6 +455,15 @@ async function pollJob(id) {
   throw new Error('任务超时（5 分钟），请到任务列表查看')
 }
 
+// 智能批改等 Agent 拿不到 items 时会返回空对象/空列表，旧实现无条件弹
+// 「生成完成」——用户看到成功却一条都没批，是典型的谎报成功。
+function hasNoOutput(payload) {
+  if (!payload || typeof payload !== 'object') return true
+  const items = payload.items
+  if (Array.isArray(items)) return items.length === 0
+  return Object.keys(payload).length === 0
+}
+
 async function run() {
   // 后台模式：提交任务 + 轮询（不占用 HTTP 长连接）。
   // 仅出题/组卷有后端异步任务；此前分支引用不存在的 mode/pForm，
@@ -480,7 +489,11 @@ async function run() {
         ElMessage.success(`任务已提交（#${jobId.value}），正在后台生成…`)
         const jobResult = await pollJob(jobId.value)
         result.value = jobResult?.data || jobResult || {}
-        ElMessage.success('后台生成完成')
+        if (hasNoOutput(result.value)) {
+          ElMessage.warning('任务已结束但未产出内容，请调整条件后重试')
+        } else {
+          ElMessage.success('后台生成完成')
+        }
       } catch (e) {
         ElMessage.error(e.message || '后台任务失败')
       } finally {
@@ -522,7 +535,11 @@ async function run() {
       res = await agentApi.grading(genericForm)
     }
     result.value = res.data || {}
-    ElMessage.success(res.data.message || '生成完成')
+    if (hasNoOutput(result.value)) {
+      ElMessage.warning('生成结束但未产出内容，请调整条件后重试')
+    } else {
+      ElMessage.success(res.data.message || '生成完成')
+    }
   } finally {
     running.value = false
   }
