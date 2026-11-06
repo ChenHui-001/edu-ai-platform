@@ -431,7 +431,9 @@ async function loadPaper() {
     meta.description = data.description || ''
     meta.duration = data.duration || 90
     // 收藏态：preview 不返回，单独由试卷库接口补（失败不影响编辑）
-    questionApi.paperLibrary({ scope: 'favorite', page: 1, size: 200 })
+    // 后端用 PageParams(page / page_size)，传 size 会被当作未声明参数忽略，
+    // 收藏列表只回默认 20 条，靠后的收藏卷显示成「未收藏」。
+    questionApi.paperLibrary({ scope: 'favorite', page: 1, page_size: 200 })
       .then(r => {
         const list = r.data?.items || r.data || []
         paper.value.is_favorite = list.some(x => Number(x.id) === paperId)
