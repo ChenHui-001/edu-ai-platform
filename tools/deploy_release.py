@@ -47,6 +47,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 from check_release_consistency import sh  # noqa: E402
 
+# 输出被重定向到管道时 Python 默认按块缓冲：长步骤（拉镜像）会长时间"没有输出"，
+# 看起来像卡死。改成行缓冲，进度实时可见。
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:  # noqa: BLE001 老版本 Python 无此接口
+    pass
+
+
 HOST = os.environ.get("PROD_HOST", "186.241.77.194")
 PORT = os.environ.get("PROD_PORT", "8081")
 IMAGE_REPO = os.environ.get("GHCR_IMAGE", "ghcr.io/chenhui-001/edu-ai-platform")
@@ -147,12 +156,33 @@ class Remote:
         if self.dry:
             print(f"    $ {cmd}")
             return ""
-        _, out, _ = self.c.exec_command(cmd, timeout=timeout)
+        # ⚠️ stdout / stderr **必须并发读**。
+        # paramiko 的 channel 窗口默认 64KB：只读 stdout 时，若远端往 stderr
+        # 写满窗口就会阻塞在 write() 上，命令永不退出 → 本地 read() 永不返回。
+        # 实测代价：`docker pull` 1.8GB 镜像时卡死 29 分钟，界面无一字输出。
+        # 现在起一个线程专门把 stderr 排空。
+        import threading
+
+        _, out, err = self.c.exec_command(cmd, timeout=timeout)
+        bag = []
+
+        def _drain():
+            try:
+                bag.append(err.read().decode("utf-8", "replace"))
+            except Exception:  # noqa: BLE001 通道关闭即结束
+                bag.append("")
+
+        th = threading.Thread(target=_drain, daemon=True)
+        th.start()
         so = out.read().decode("utf-8", "replace")
+        th.join(timeout=20)
         out.channel.recv_exit_status()
-        if not quiet and so.strip():
-            print("    " + so.strip()[:400].replace("\n", "\n    "))
+        se = bag[0] if bag else ""
+        if not quiet and (so.strip() or se.strip()):
+            text = (so.strip() or se.strip())[:400]
+            print("    " + text.replace("\n", "\n    "))
         return so
+
 
 
 # ---------------------------------------------------------------- 步骤
@@ -332,7 +362,9 @@ def main():
         name = backup(remote, old_version, stamp)
 
         print("== 4/6 拉取镜像 ==")
-        remote.run(f"docker pull {image}", timeout=1800)
+        # -q：只要最终 digest，不要每层进度条。既省带宽噪音，也避免长输出
+        # 在 channel 里堆积（并发读 stderr 已修，但输出越小越不容易出问题）。
+        remote.run(f"docker pull -q {image}", timeout=1800)
         secret = remote.run(f"cat {BASE_DIR}/.secret_key", quiet=True).strip()
         if not secret and not args.dry_run:
             print("  [!!] 服务器缺 .secret_key，中止（重建会让 JWT 全失效）")
@@ -342,6 +374,10 @@ def main():
 
         env, src = collect_env(remote)
         print(f"  环境基线：{src}（{len(env)} 项）")
+        # 空环境 = 重建后 AI/调度/上传上限全部回落到代码默认值，属于静默降级。
+        # 宁可停在旧容器上，也不要起一个"能打开但功能少一半"的新容器。
+        if not env and not args.dry_run:
+            raise SystemExit(_fail(1, "取不到现有容器环境变量，已中止（拒绝以空环境重建）"))
         env_file = write_env_file(remote, env)
 
         print("== 5/6 重建容器 ==")
@@ -369,7 +405,7 @@ def main():
             return 0
 
         print("  [!!] 健康门禁超时，开始回滚")
-        remote.run(f"docker logs --tail 40 {CONTAINER} 2>&1", quiet=True)
+        remote.run(f"docker logs --tail 40 {CONTAINER} 2>&1", quiet=False)
         if old_tag:
             remote.run(f"docker rm -f {CONTAINER} 2>&1 || true", quiet=True)
             remote.run(run_cmd(old_version, env_file, secret, old_tag), timeout=300)
