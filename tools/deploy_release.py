@@ -64,6 +64,16 @@ INJECTED = {"PATH", "HOSTNAME", "HOME", "PWD", "TERM", "LANG", "GPG_KEY",
 
 
 # ---------------------------------------------------------------- 基础
+def _fail(code, msg):
+    """按约定退出码失败。
+
+    坑：`sys.exit("字符串")` 在 Python 里**恒退 1**，并把字符串打到 stderr ——
+    写了 [3] 也拿不到 3。约定退出码必须用整数，所以走这个包装。
+    """
+    print(msg, file=sys.stderr)
+    return code
+
+
 def read_version():
     with open(os.path.join(ROOT, "VERSION"), encoding="utf-8") as fh:
         return fh.read().strip()
@@ -108,11 +118,11 @@ class Remote:
             return self
         pwd = load_pass()
         if not pwd:
-            raise SystemExit("[3] 找不到部署凭据：设 DEPLOY_PASS 或放 deploy_scripts/.deploy_pass")
+            raise SystemExit(_fail(3, "找不到部署凭据：设 DEPLOY_PASS 或放 deploy_scripts/.deploy_pass"))
         try:
             import paramiko
         except ImportError:
-            raise SystemExit("[3] 缺 paramiko：pip install paramiko")
+            raise SystemExit(_fail(3, "缺 paramiko：pip install paramiko"))
         import logging
         logging.getLogger("paramiko").setLevel(logging.CRITICAL)
         paramiko.util.log_to_file(os.devnull)
@@ -122,10 +132,10 @@ class Remote:
             self.c.connect(HOST, username="root", password=pwd, timeout=20,
                            banner_timeout=20, auth_timeout=20)
         except Exception as exc:  # noqa: BLE001
-            raise SystemExit(
-                f"[3] SSH 不可达（{type(exc).__name__}）。\n"
+            raise SystemExit(_fail(3,
+                f"SSH 不可达（{type(exc).__name__}）。\n"
                 f"    先验证选路：PowerShell `Find-NetRoute -RemoteIPAddress {HOST}`\n"
-                f"    若指向 Meta/mihomo TUN 而非 WLAN，说明本机 /32 直连路由失效（见 GOTCHAS）。")
+                f"    若指向 Meta/mihomo TUN 而非 WLAN，说明本机 /32 直连路由失效（见 GOTCHAS）。"))
         return self
 
     def __exit__(self, *exc):
@@ -195,6 +205,18 @@ def backup(remote, old_version, stamp):
           'print("backup ok")')
     remote.run(f"docker exec {CONTAINER} python -c '{py}'")
     remote.run(f"docker exec {CONTAINER} sh -c 'ls -l /app/data/backups/{name}'", quiet=True)
+    # 备份是唯一的安全网，必须先确认它真的落盘再继续。
+    # （容器不存在=首装，此时没有数据可备，跳过校验。）
+    has_container = bool(remote.run(
+        f"docker ps -a --filter name=^/{CONTAINER}$ --format '{{{{.Names}}}}'", quiet=True).strip())
+    if has_container and not remote.dry:
+        size = remote.run(
+            f"docker exec {CONTAINER} sh -c 'wc -c < /app/data/backups/{name}'",
+            quiet=True).strip()
+        if not size.isdigit() or int(size) < 4096:
+            raise SystemExit(_fail(1, f"[!!] 备份文件异常（{size or '空'} 字节），已中止："
+                                      f"没有备份就不重建容器"))
+        print(f"  备份完成：{name}（{int(size) // 1024} KB）")
     # 只留最近 N 份：备份挤满磁盘会连带把容器写挂
     remote.run("docker exec {c} sh -c 'ls -1t /app/data/backups/pre-*.db 2>/dev/null | "
                "tail -n +{n} | xargs -r rm -f'".format(c=CONTAINER, n=KEEP_BACKUPS + 1),
