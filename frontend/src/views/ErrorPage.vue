@@ -45,8 +45,8 @@ function goHome() {
   text-align: center;
 }
 .err-code { font-size: 72px; font-weight: 700; color: #c0c4cc; line-height: 1; }
-.err-title { margin: 8px 0 0; font-size: 20px; color: #303133; }
-.err-desc { margin: 0; color: #606266; font-size: 14px; max-width: 460px; }
-.err-path { margin: 0; color: #909399; font-size: 12px; word-break: break-all; }
+.err-title { margin: 8px 0 0; font-size: 20px; color: var(--el-text-color-primary); }
+.err-desc { margin: 0; color: var(--el-text-color-regular); font-size: 14px; max-width: 460px; }
+.err-path { margin: 0; color: var(--el-text-color-secondary); font-size: 12px; word-break: break-all; }
 .err-actions { margin-top: 16px; display: flex; gap: 12px; }
 </style>

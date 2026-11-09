@@ -85,6 +85,7 @@ import TYPES from '@/constants/question'
 import { learningApi, eduApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
+import { toastIfUnhandled } from '@/utils/notify'
 const router = useRouter()
 const subjects = ref([])
 const grades = ref([])
@@ -144,7 +145,7 @@ async function generate() {
     result.value = res.data
     ElMessage.success(res.message)
   } catch (e) {
-    ElMessage.error(e.response?.data?.message || '组卷失败')
+    toastIfUnhandled(e, '组卷失败')
   } finally {
     generating.value = false
   }

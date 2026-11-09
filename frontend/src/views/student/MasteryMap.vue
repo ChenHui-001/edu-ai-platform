@@ -20,13 +20,13 @@
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color:#f56c6c">{{ data.weak_points?.length || 0 }}</div>
+          <div class="stat-value" style="color:var(--el-color-danger)">{{ data.weak_points?.length || 0 }}</div>
           <div class="stat-label">薄弱知识点</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color:#67c23a">{{ data.strong_points?.length || 0 }}</div>
+          <div class="stat-value" style="color:var(--el-color-success)">{{ data.strong_points?.length || 0 }}</div>
           <div class="stat-label">已精通知识点</div>
         </div>
       </el-col>
@@ -222,11 +222,10 @@ onUnmounted(() => {
 .stat-card {
   text-align: center;
   padding: 16px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 8px;
 }
-.stat-value { font-size: 28px; font-weight: 700; color: var(--el-color-primary); }
-.stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
+.stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .flex-between { display: flex; align-items: center; justify-content: space-between; }
 .weak-list { display: flex; flex-direction: column; gap: 8px; }
 .weak-item {
@@ -238,11 +237,11 @@ onUnmounted(() => {
   cursor: pointer;
   transition: background 0.2s;
 }
-.weak-item:hover { background: #ecf5ff; }
+.weak-item:hover { background: var(--el-color-primary-light-9); }
 .weak-info { flex: 1; min-width: 0; }
 .weak-name { font-weight: 500; font-size: 14px; }
-.weak-stat { font-size: 12px; color: #909399; margin-left: 8px; }
-.weak-bar-wrap { width: 120px; height: 8px; background: #ebeef5; border-radius: 4px; overflow: hidden; }
+.weak-stat { font-size: 12px; color: var(--el-text-color-secondary); margin-left: 8px; }
+.weak-bar-wrap { width: 120px; height: 8px; background: var(--el-border-color-lighter); border-radius: 4px; overflow: hidden; }
 .weak-bar { height: 100%; border-radius: 4px; transition: width 0.3s; }
 .weak-mastery { font-size: 13px; font-weight: 600; width: 40px; text-align: right; }
 .strong-tag { margin: 4px; }

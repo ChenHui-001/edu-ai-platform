@@ -5,7 +5,7 @@
         <el-card shadow="never">
           <template #header><span>个人信息</span></template>
           <div class="profile-header">
-            <el-avatar :size="72" style="background:#2f6fd0;font-size:28px">
+            <el-avatar :size="72" style="background:var(--el-color-primary);font-size:28px">
               {{ userStore.realName.charAt(0) }}
             </el-avatar>
             <div>
@@ -166,7 +166,7 @@ onMounted(loadProfile)
 }
 
 .muted {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 13px;
   margin: 8px 0 0;
 }

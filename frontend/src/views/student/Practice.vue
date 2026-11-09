@@ -151,6 +151,7 @@
     <!-- 历史 -->
     <el-drawer v-model="historyDrawer" title="练习历史" size="55%">
       <el-table v-loading="historyLoading" :data="history" border stripe>
+        <template #empty><TableEmpty text="暂无练习记录" /></template>
         <el-table-column prop="name" label="练习名称" min-width="180" show-overflow-tooltip />
         <el-table-column label="得分" width="130">
           <template #default="{ row }">
@@ -178,13 +179,14 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { MagicStick, Refresh, Clock, Close, Star, StarFilled } from '@element-plus/icons-vue'
 import TYPES from '@/constants/question'
 import { taskApi, learningApi, eduApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 import PomodoroTimer from '@/components/PomodoroTimer.vue'
 import { sanitizeHtml } from '@/utils/sanitize'
+import { confirmAction } from '@/utils/confirm'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
@@ -345,8 +347,8 @@ function onFocusComplete(info) {
 
 async function submitPractice() {
   if (answeredCount.value === 0) return ElMessage.warning('请至少作答一道题')
-  await ElMessageBox.confirm(`已作答 ${answeredCount.value}/${paper.value.items.length} 题，确认提交？`,
-    '提示', { type: 'info' })
+  if (!await confirmAction(`已作答 ${answeredCount.value}/${paper.value.items.length} 题，确认提交？`,
+    '提示', { type: 'info' })) return
   submitting.value = true
   try {
     const answers_ = paper.value.items.map(q => ({
@@ -365,10 +367,9 @@ async function submitPractice() {
   }
 }
 
-function exitPractice() {
-  ElMessageBox.confirm('确认结束本次练习？已作答内容将丢失。', '提示', { type: 'warning' })
-    .then(() => { paper.value = null })
-    .catch(() => {})
+async function exitPractice() {
+  if (!await confirmAction('确认结束本次练习？已作答内容将丢失。')) return
+  paper.value = null
 }
 
 function newPractice() {
@@ -424,7 +425,7 @@ onMounted(() => {
 .mt8 { margin-top: 8px; }
 .ml4 { margin-left: 4px; }
 .ml8 { margin-left: 8px; }
-.tip { font-size: 12px; color: #909399; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); }
 .practice-title { margin: 0 0 4px; font-size: 17px; }
 .q-card { margin-bottom: 14px; }
 .q-head { display: flex; align-items: center; margin-bottom: 10px; }
@@ -437,12 +438,12 @@ onMounted(() => {
   background: #f7f9fc; border-radius: 8px; padding: 12px; margin-top: 12px;
 }
 .result-box p { margin: 5px 0; }
-.text-success { color: #67c23a; }
-.text-danger { color: #f56c6c; }
-.ai-comment { color: #2f6fd0; }
+.text-success { color: var(--el-color-success); }
+.text-danger { color: var(--el-color-danger); }
+.ai-comment { color: var(--el-color-primary); }
 .footer-bar {
   position: sticky; bottom: 0; background: #fff; padding: 14px 0;
-  border-top: 1px solid #ebeef5; display: flex; align-items: center;
+  border-top: 1px solid var(--el-border-color-lighter); display: flex; align-items: center;
   justify-content: space-between; font-size: 15px;
 }
 .total { color: var(--el-color-primary); font-size: 22px; }

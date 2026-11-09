@@ -122,6 +122,7 @@
       </template>
 
       <el-table :data="filteredRows" border :span-method="spanMethod" class="matrix-table">
+        <template #empty><TableEmpty text="暂无任教安排" /></template>
         <el-table-column label="年级" width="110" align="center">
           <template #default="{ row }">
             <div class="grade-cell">
@@ -163,10 +164,11 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import { confirmAction } from '@/utils/confirm'
 
 const userStore = useUserStore()
 const canWrite = computed(() => userStore.can('resource:teaching:write'))
@@ -242,10 +244,10 @@ async function saveAsg() {
 async function removeAsg() {
   if (!currentAsg.value) return
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `确认解除「${currentAsg.value.teacher_name}」在「${currentAsg.value.class_name}」的`
       + `${currentAsg.value.subject_name}任课？解除后该教师将看不到这个班级。`,
-      '提示', { type: 'warning' })
+      '提示', { type: 'warning' })) return
   } catch { return }
   await eduApi.deleteTeachingAssignment(currentAsg.value.id)
   ElMessage.success('已解除任课关系')
@@ -388,11 +390,11 @@ onMounted(load)
   flex-wrap: wrap;
 }
 .table-title { font-size: 15px; font-weight: 700; }
-.table-sub { font-size: 12px; color: #909399; }
+.table-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .matrix-table { font-size: 14px; }
 .grade-cell { font-weight: 700; font-size: 15px; }
 .class-cell { line-height: 1.5; }
 .class-name { font-weight: 600; }
-.head-sub { font-size: 12px; color: #909399; }
-.username { margin-left: 8px; font-size: 12px; color: #909399; }
+.head-sub { font-size: 12px; color: var(--el-text-color-secondary); }
+.username { margin-left: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
 </style>

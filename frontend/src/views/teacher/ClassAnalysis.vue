@@ -38,6 +38,7 @@
       <el-card shadow="never">
         <template #header><b>学生明细</b></template>
         <el-table v-loading="loading" :data="comparison" border stripe>
+          <template #empty><TableEmpty text="暂无学生数据" /></template>
           <el-table-column type="index" label="#" width="50" align="center" />
           <el-table-column prop="name" label="学生" width="110" />
           <el-table-column prop="rank" label="排名" width="70" align="center" />

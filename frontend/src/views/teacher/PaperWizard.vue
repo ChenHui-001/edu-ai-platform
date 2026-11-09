@@ -147,6 +147,7 @@
             </el-button>
           </div>
           <el-table :data="form.sections" size="small" border>
+            <template #empty><TableEmpty text="暂无大题，先按学科与题型配置卷面结构" /></template>
             <el-table-column label="大题名称" min-width="200">
               <template #default="{ row }">
                 <el-input v-model="row.name" size="small" />
@@ -523,12 +524,14 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   Back, Delete, Edit, MagicStick, Plus, Refresh, Sort, Tickets
 } from '@element-plus/icons-vue'
 import { eduApi, knowledgeApi, questionApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import { confirmAction } from '@/utils/confirm'
+import { toastIfUnhandled } from '@/utils/notify'
 import {
   composeBlockReason as wizardComposeBlockReason,
   buildComposePayload as wizardBuildComposePayload,
@@ -660,20 +663,18 @@ function onSectionCountChange(row) {
 }
 
 /** 分段分值 → 统一分值（需确认：梯度一旦抹平就找不回来了） */
-function flattenPattern(row) {
+async function flattenPattern(row) {
   if (!hasScorePattern(row)) return
   const pattern = [...row.score_pattern]
-  ElMessageBox.confirm(
+  if (!await confirmAction(
     `「${row.name}」当前每题分值为 ${pattern.join(' / ')}，` +
     '改为统一分值会失去难度梯度（压轴题与送分题同分）。确定要改吗？',
     '改为统一分值',
-    { type: 'warning', confirmButtonText: '确定改', cancelButtonText: '保留分段' }
-  ).then(() => {
-    const avg = Math.round((pattern.reduce((a, b) => a + b, 0) / pattern.length) * 100) / 100
-    delete row.score_pattern
-    row.score_per = avg
-    ElMessage.success(`已改为每题 ${avg} 分`)
-  }).catch(() => {})
+    { confirmButtonText: '确定改', cancelButtonText: '保留分段' })) return
+  const avg = Math.round((pattern.reduce((a, b) => a + b, 0) / pattern.length) * 100) / 100
+  delete row.score_pattern
+  row.score_per = avg
+  ElMessage.success(`已改为每题 ${avg} 分`)
 }
 
 /**
@@ -716,7 +717,7 @@ async function generateStandards() {
       form.standard_id = matchedStandards.value[0].id
     }
   } catch (e) {
-    ElMessage.error('生成标准草案失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '生成标准草案失败')
   } finally {
     genStdLoading.value = false
   }
@@ -839,7 +840,7 @@ onMounted(async () => {
     grades.value = g.data?.items || g.data || []
     allSubjects.value = s.data?.items || s.data || []
   } catch (e) {
-    ElMessage.error('加载基础数据失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '加载基础数据失败')
   } finally {
     metaLoading.value = false
   }
@@ -984,7 +985,7 @@ async function doCompose() {
       ElMessage.warning('没有抽到题目，请检查题库或调整参数')
     }
   } catch (e) {
-    ElMessage.error(e.message || '组卷失败')
+    toastIfUnhandled(e, '组卷失败')
   } finally {
     composing.value = false
   }
@@ -1098,13 +1099,14 @@ async function callRegen({ mode, index, sectionCode, busyKey }) {
         const gi = first.index
         const cur = previewItems.value[gi] || {}
         const code = cur.section_code || cur.type
-        ElMessageBox.confirm(
+        if (await confirmAction(
           `该题未能重新生成：${reason}。是否再试一次？`,
           '重新生成失败',
-          { type: 'warning', confirmButtonText: '重试', cancelButtonText: '保留原题' }
-        ).then(() => callRegen({
-          mode: 'item', index: gi, busyKey: `${code}|${localIdx(code, gi)}`
-        })).catch(() => {})
+          { confirmButtonText: '重试', cancelButtonText: '保留原题' })) {
+          await callRegen({
+            mode: 'item', index: gi, busyKey: `${code}|${localIdx(code, gi)}`
+          })
+        }
       } else {
         ElMessage.warning(
           `${failed.length} 题未能重新生成（${reason}），可对未换的题单独重试`)
@@ -1128,19 +1130,19 @@ function regenerateItem(secCode, idx) {
   return callRegen({ mode: 'item', index: gi, busyKey: `${secCode}|${idx}` })
 }
 
-function regenerateSection(secCode) {
+async function regenerateSection(secCode) {
   if (regenBusy.value) return
   const sec = previewSections.value.find(s => s.code === secCode)
   if (!sec || !sec.items.length) return ElMessage.warning('该大题没有题目')
   const n = sec.items.length
-  return ElMessageBox.confirm(
+  if (!await confirmAction(
     `将重新生成「${sec.name}」全部 ${n} 道题，沿用原有题型、难度与分值。` +
     '已编辑的其他大题不受影响。确定继续？',
     '重新生成本大题',
-    { type: 'warning', confirmButtonText: '开始生成', cancelButtonText: '取消' }
-  ).then(() => callRegen({
+    { confirmButtonText: '开始生成', cancelButtonText: '取消' })) return
+  return callRegen({
     mode: 'section', sectionCode: secCode, busyKey: `${secCode}|*`
-  })).catch(() => {})
+  })
 }
 
 function restructureLocal() {
@@ -1203,7 +1205,7 @@ async function doSave() {
       router.push('/teacher/papers')
     }
   } catch (e) {
-    ElMessage.error(e.message || '保存失败')
+    toastIfUnhandled(e, '保存失败')
   } finally {
     saving.value = false
   }
@@ -1254,9 +1256,9 @@ function goBack() { router.push('/teacher/papers') }
 .difficulty-row { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
 .diff-item { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 10px; }
 .diff-label { font-size: 13px; width: 36px; flex-shrink: 0; }
-.diff-label.easy { color: #67c23a; }
-.diff-label.medium { color: #e6a23c; }
-.diff-label.hard { color: #f56c6c; }
+.diff-label.easy { color: var(--el-color-success); }
+.diff-label.medium { color: var(--el-color-warning); }
+.diff-label.hard { color: var(--el-color-danger); }
 .kp-tree-wrap { max-height: 240px; overflow: auto; border: 1px solid var(--el-border-color); border-radius: 6px; padding: 10px; }
 .adv-collapse { margin-top: 16px; }
 .unit-hint { margin-left: 8px; color: var(--el-text-color-secondary); font-size: 13px; }

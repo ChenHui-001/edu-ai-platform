@@ -250,9 +250,9 @@ onMounted(async () => {
 
 .header { margin-bottom: 20px; }
 .header h2 { margin: 0 0 6px; }
-.header p { margin: 0; color: #909399; font-size: 13px; }
+.header p { margin: 0; color: var(--el-text-color-secondary); font-size: 13px; }
 
-.tip { font-size: 12px; color: #909399; margin-top: 6px; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 6px; }
 
 .captcha-row { display: flex; gap: 10px; width: 100%; align-items: center; }
 

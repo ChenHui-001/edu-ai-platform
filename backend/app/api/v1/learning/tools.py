@@ -22,6 +22,7 @@ from app.models import (
     WrongQuestion,
 )
 from app.utils.common import PageParams, dictify, load_json, now_local, ok, today_str
+from app.utils.options import normalize_options
 
 router = APIRouter()
 
@@ -70,7 +71,7 @@ def list_favorites(
             "id": f.id, "question_id": f.question_id, "tag": f.tag,
             "note": f.note, "created_at": dictify(f.created_at),
             "stem": q.stem, "type": q.type, "difficulty": q.difficulty,
-            "options": load_json(q.options), "answer": load_json(q.answer),
+            "options": normalize_options(q.options), "answer": load_json(q.answer),
             "analysis": q.analysis, "score": q.score,
             "subject_name": sub.name if sub else None,
             "knowledge_point_name": kp.name if kp else None,

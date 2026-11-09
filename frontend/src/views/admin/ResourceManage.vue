@@ -12,22 +12,22 @@
     <el-row v-if="!isSubject" :gutter="14" class="stats-row">
       <el-col :xs="12" :md="6">
         <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ gradeStats.total }}</div><div class="stat-label">年级总数</div>
+          <div class="stat-value stat-value--sm">{{ gradeStats.total }}</div><div class="stat-label">年级总数</div>
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ gradeStats.primary }}</div><div class="stat-label">小学</div>
+          <div class="stat-value stat-value--sm">{{ gradeStats.primary }}</div><div class="stat-label">小学</div>
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ gradeStats.junior }}</div><div class="stat-label">初中</div>
+          <div class="stat-value stat-value--sm">{{ gradeStats.junior }}</div><div class="stat-label">初中</div>
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ gradeStats.active }}</div><div class="stat-label">启用年级</div>
+          <div class="stat-value stat-value--sm">{{ gradeStats.active }}</div><div class="stat-label">启用年级</div>
         </el-card>
       </el-col>
     </el-row>
@@ -89,6 +89,7 @@
               </div>
             </template>
             <el-table v-if="selectedGrade" v-loading="loading" :data="currentGradeSubjects" border stripe>
+              <template #empty><TableEmpty text="暂无学科" /></template>
               <el-table-column prop="sort" label="排序" width="70" align="center" />
               <el-table-column prop="name" label="学科名称" min-width="160" />
               <el-table-column prop="code" label="代码" width="140" show-overflow-tooltip />
@@ -150,6 +151,7 @@
       <el-card shadow="never">
         <!-- 年级专用列表 -->
         <el-table v-if="!isSubject" v-loading="loading" :data="list" border stripe>
+          <template #empty><TableEmpty text="暂无年级" /></template>
           <el-table-column prop="name" label="年级名称" min-width="150" />
           <el-table-column label="学段" width="90" align="center">
             <template #default="{ row }">
@@ -180,6 +182,7 @@
 
         <!-- 学科平铺列表 -->
         <el-table v-else v-loading="loading" :data="list" border stripe>
+          <template #empty><TableEmpty text="暂无学科" /></template>
           <el-table-column prop="sort" label="排序" width="70" align="center" />
           <el-table-column prop="name" label="学科名称" min-width="150" />
           <el-table-column prop="grade_name" label="所属年级" width="120" />
@@ -288,12 +291,13 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   Plus, Search, Refresh, RefreshLeft, Grid, List,
 } from '@element-plus/icons-vue'
 import { eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import { confirmAction } from '@/utils/confirm'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -488,7 +492,7 @@ async function save() {
 }
 
 async function remove(row) {
-  await ElMessageBox.confirm(`确认删除「${row.name}」？`, '提示', { type: 'warning' })
+  if (!await confirmAction(`确认删除「${row.name}」？`, '提示', { type: 'warning' })) return
   if (isSubject.value) await eduApi.deleteSubject(row.id)
   else await eduApi.deleteGrade(row.id)
   ElMessage.success('已删除')
@@ -521,16 +525,14 @@ watch(viewMode, (m) => {
 .mr4 { margin-right: 4px; }
 .ml12 { margin-left: 12px; }
 .flex-between { display: flex; align-items: center; justify-content: space-between; }
-.tip { color: #909399; font-size: 12px; }
+.tip { color: var(--el-text-color-secondary); font-size: 12px; }
 
 .stats-row { margin-bottom: 14px; }
-.stat-card { border-radius: 10px; }
-.stat-value { font-size: 24px; font-weight: 600; color: var(--el-color-primary); line-height: 1.3; }
-.stat-label { color: #8a94a6; font-size: 13px; margin-top: 2px; }
+.stat-label { color: var(--el-text-color-secondary); font-size: 13px; margin-top: 2px; }
 
 .mode-bar {  display: flex; align-items: center;
   padding: 10px 14px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 4px;
 }
 
@@ -547,7 +549,7 @@ watch(viewMode, (m) => {
   transition: background 0.15s;
 }
 .grade-item:hover { background: #eef3fb; }
-.grade-item.active { background: #2f6fd0; color: #fff; }
+.grade-item.active { background: var(--el-color-primary); color: #fff; }
 .grade-item.active .gname { color: #fff; }
 .grade-item .gname { flex: 1; }
 

@@ -26,16 +26,22 @@
   老库也能建全，不需要迁移，跳过；
 - 基线里有的表 → 新增列必须登记，否则红。
 
-基线只在「确认某批列确实不需要迁移」时用 `--init` 重生成；平时不要动，
-否则等于把门禁调松。
+基线**一旦生成就不可修改**：允许随手改基线等于允许把门禁调松 —— 上一版用
+`--init` 重生成即可把新列吸收进基线、门禁重新变绿，而老库依然缺这一列
+（第三轮复审 P1-3 的"方向性假绿"）。现在基线被钉在引入它的 commit 上，
+运行时用 `git show <rev>:tools/migration_baseline.json` 取指纹快照，与工作区
+文件逐字比对；**文件被改动即红**。确实需要重定基线时，必须同时修改本文件的
+`BASELINE_REV` 常量 —— 那是一次显式、可评审的动作，而不是一条命令。
 
 用法：
     python tools/check_migration_columns.py           # 0=通过 1=不一致
-    python tools/check_migration_columns.py --init    # 重新生成基线快照
+    python tools/check_migration_columns.py --init    # 重生成基线（须同步改 BASELINE_REV）
 """
 import json
 import os
+import subprocess
 import sys
+from typing import Optional
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
@@ -46,6 +52,46 @@ from app.core.database import Base  # noqa: E402
 from app.core.db_migrations import MIGRATION_COLUMNS  # noqa: E402
 
 BASELINE_PATH = os.path.join(ROOT, "tools", "migration_baseline.json")
+# 基线的"锚点版本"：指引入本门禁时的提交。改基线必须同时改这里。
+BASELINE_REV = "c1f6878"
+
+
+def _git_baseline() -> Optional[str]:
+    """取锚点版本里的基线快照原文；取不到（浅克隆 / 无 git）返回 None。"""
+    try:
+        out = subprocess.run(
+            ["git", "show", f"{BASELINE_REV}:tools/migration_baseline.json"],
+            cwd=ROOT, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+    except Exception:  # noqa: BLE001 无 git 环境
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def _baseline_guard() -> int:
+    """基线只读校验：工作区文件必须与锚点版本逐字一致。"""
+    pinned = _git_baseline()
+    if pinned is None:
+        print(f"[SKIP] 取不到锚点基线（{BASELINE_REV}），跳过只读校验")
+        return 0
+    try:
+        with open(BASELINE_PATH, encoding="utf-8") as fh:
+            current = fh.read()
+    except OSError:
+        return 0
+    try:
+        same = json.loads(pinned) == json.loads(current)
+    except json.JSONDecodeError:
+        same = pinned == current
+    if same:
+        return 0
+    print("[FAIL] 迁移基线快照被修改：tools/migration_baseline.json")
+    print(f"       锚点版本 {BASELINE_REV} 的快照与之不一致。基线是历史事实，")
+    print("       修改它等于把门禁调松（新列会被吸收进基线，而老库仍缺该列）。")
+    print("       正确做法：把新列登记进 MIGRATION_COLUMNS。")
+    print("       确需重定基线时，同时修改本文件顶部的 BASELINE_REV 常量。")
+    return 1
 
 
 def _load_baseline():
@@ -73,7 +119,13 @@ def _write_baseline() -> int:
 
 def main() -> int:
     if "--init" in sys.argv:
+        print("[WARN] --init 会重写基线。若不同时修改 BASELINE_REV，CI 会因")
+        print("       「基线被修改」直接红 —— 这是刻意设计，防顺手调松门禁。")
         return _write_baseline()
+
+    # ⓪ 基线只读：防止"改基线让门禁变绿"这条捷径
+    if _baseline_guard():
+        return 1
 
     errors = []
     seen = set()

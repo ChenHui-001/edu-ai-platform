@@ -141,7 +141,8 @@
                     :closable="false" class="mb8" show-icon
                     :title="`各环节合计 ${timeTotal} 分钟，与设定的 ${cond.duration_minutes} 分钟不一致`" />
           <div class="stage-table">
-            <el-table :data="edit.stages" border size="small">
+            <el-table v-loading="submitting" :data="edit.stages" border size="small">
+              <template #empty><TableEmpty text="暂无教学环节" /></template>
               <el-table-column label="环节" width="140">
                 <template #default="{ row }">
                   <el-input v-model="row.name" size="small" maxlength="32" />
@@ -238,6 +239,7 @@ import { Plus, MagicStick, Download, Check } from '@element-plus/icons-vue'
 import { lessonAiApi } from '@/api'
 import { downloadBlob } from '@/utils/download'
 
+import { toastIfUnhandled } from '@/utils/notify'
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   // 从筛选栏带入的默认年级/学科，避免用户再选一遍
@@ -507,7 +509,7 @@ async function doSave() {
     step.value = 3
     emit('saved', r.data)
   } catch (e) {
-    ElMessage.error(e?.response?.data?.message || e?.message || '保存失败')
+    toastIfUnhandled(e, '保存失败')
   } finally {
     savingToLib.value = false
   }
@@ -565,7 +567,7 @@ watch(() => props.modelValue, async (open) => {
         ElMessage.warning(d.error || '该任务结果不可用')
       }
     } catch (e) {
-      ElMessage.error(e?.response?.data?.message || '读取结果失败')
+      toastIfUnhandled(e, '读取结果失败')
     }
   }
 })

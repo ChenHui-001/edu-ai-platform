@@ -22,22 +22,22 @@
     <el-row :gutter="14" class="stats-row">
       <el-col :xs="12" :md="6">
         <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ stats.total }}</div><div class="stat-label">班级总数</div>
+          <div class="stat-value stat-value--sm">{{ stats.total }}</div><div class="stat-label">班级总数</div>
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ stats.students }}</div><div class="stat-label">学生总数</div>
+          <div class="stat-value stat-value--sm">{{ stats.students }}</div><div class="stat-label">学生总数</div>
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ stats.active }}</div><div class="stat-label">启用班级</div>
+          <div class="stat-value stat-value--sm">{{ stats.active }}</div><div class="stat-label">启用班级</div>
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ stats.head_teacher_coverage }}%</div>
+          <div class="stat-value stat-value--sm">{{ stats.head_teacher_coverage }}%</div>
           <div class="stat-label">班主任覆盖率</div>
         </el-card>
       </el-col>
@@ -84,6 +84,7 @@
 
       <el-table v-loading="loading" :data="list" border stripe
                 @selection-change="onSelectionChange">
+        <template #empty><TableEmpty text="暂无班级，点击「新建班级」开始" /></template>
         <el-table-column v-if="canWrite" type="selection" width="44" />
         <el-table-column prop="name" label="班级名称" min-width="150" show-overflow-tooltip />
         <el-table-column prop="grade_name" label="所属年级" width="110" />
@@ -188,6 +189,7 @@
 
       <el-table v-loading="studentLoading" :data="students" border stripe
                 @selection-change="onStudentSelection">
+        <template #empty><TableEmpty text="该班暂无学生" /></template>
         <el-table-column v-if="canWrite" type="selection" width="44" />
         <el-table-column prop="username" label="学号" width="140" />
         <el-table-column prop="real_name" label="姓名" width="120" />
@@ -254,6 +256,7 @@
 
     <el-drawer v-model="myReqDlg" title="我的建班申请" size="420px">
       <el-table :data="myRequests" size="small" v-loading="myReqLoading">
+        <template #empty><TableEmpty text="暂无待审核记录" /></template>
         <el-table-column label="班级" min-width="110">
           <template #default="{ row }">{{ row.name }}<div class="tip">{{ row.grade_name }}</div></template>
         </el-table-column>
@@ -278,6 +281,7 @@
 
     <el-drawer v-model="reviewDlg" title="建班申请审核" size="560px">
       <el-table :data="requests" size="small" v-loading="reqLoading">
+        <template #empty><TableEmpty text="暂无申请记录" /></template>
         <el-table-column label="申请人" width="100">
           <template #default="{ row }">{{ row.teacher_name }}<div class="tip">{{ row.username }}</div></template>
         </el-table-column>
@@ -307,7 +311,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   Bell, Download, Plus, Refresh, Search, Tickets, Upload,
 } from '@element-plus/icons-vue'
@@ -315,6 +319,7 @@ import { useUserStore } from '@/store/user'
 import { eduApi } from '@/api'
 import { downloadBlob } from '@/utils/download'
 import { formatLocalDate } from '@/utils/date'
+import { confirmAction, promptAction } from '@/utils/confirm'
 
 const { can } = useUserStore()
 const canWrite = computed(() => can('resource:class:write'))
@@ -500,8 +505,8 @@ async function save() {
 }
 
 async function remove(row) {
-  await ElMessageBox.confirm(
-    `确认删除班级「${row.name}」？有学生的班级不能删除。`, '删除确认', { type: 'warning' })
+  if (!await confirmAction(
+    `确认删除班级「${row.name}」？有学生的班级不能删除。`, '删除确认', { type: 'warning' })) return
   await eduApi.deleteClass(row.id)
   ElMessage.success('已删除')
   await load()
@@ -515,9 +520,9 @@ async function toggleActive(row) {
 
 async function batchAction(action) {
   const labels = { enable: '启用', disable: '停用', delete: '删除' }
-  await ElMessageBox.confirm(
+  if (!await confirmAction(
     `确认批量${labels[action]}选中的 ${selection.value.length} 个班级？`,
-    '批量操作', { type: action === 'delete' ? 'warning' : 'info' })
+    '批量操作', { type: action === 'delete' ? 'warning' : 'info' })) return
   const res = await eduApi.batchClasses({
     action, ids: selection.value.map(x => x.id),
   })
@@ -559,7 +564,7 @@ function onStudentSelection(val) {
 }
 
 async function removeStudent(row) {
-  await ElMessageBox.confirm(`确认将「${row.real_name}」移出本班？`, '提示', { type: 'warning' })
+  if (!await confirmAction(`确认将「${row.real_name}」移出本班？`, '提示', { type: 'warning' })) return
   await eduApi.removeStudent(currentClass.value.id, row.id)
   ElMessage.success('已移出')
   await loadStudents()
@@ -567,8 +572,8 @@ async function removeStudent(row) {
 }
 
 async function batchRemoveStudents() {
-  await ElMessageBox.confirm(
-    `确认将选中的 ${studentSelection.value.length} 名学生移出本班？`, '提示', { type: 'warning' })
+  if (!await confirmAction(
+    `确认将选中的 ${studentSelection.value.length} 名学生移出本班？`, '提示', { type: 'warning' })) return
   await eduApi.batchRemoveStudents(currentClass.value.id, {
     ids: studentSelection.value.map(x => x.id),
   })
@@ -660,7 +665,7 @@ async function loadMyRequests() {
 }
 
 async function withdraw(row) {
-  await ElMessageBox.confirm(`撤回「${row.name}」的申请？`, '提示', { type: 'warning' })
+  if (!await confirmAction(`撤回「${row.name}」的申请？`, '提示', { type: 'warning' })) return
   await eduApi.withdrawClassRequest(row.id)
   ElMessage.success('已撤回')
   loadMyRequests()
@@ -680,9 +685,10 @@ async function loadRequests() {
 async function review(row, action) {
   let note = ''
   if (action === 'reject') {
-    const { value } = await ElMessageBox.prompt('请填写拒绝理由', '拒绝申请', {
+    const value = await promptAction('请填写拒绝理由', '拒绝申请', {
       inputValidator: v => (v && v.trim() ? true : '理由不能为空'),
     })
+    if (value === null) return  // 用户取消
     note = value
   }
   await eduApi.reviewClassRequest(row.id, { action, note })
@@ -703,15 +709,13 @@ onMounted(async () => {
 <style scoped>
 .header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .stats-row { margin-bottom: 14px; }
-.stat-card { border-radius: 10px; }
-.stat-value { font-size: 24px; font-weight: 600; color: var(--el-color-primary); line-height: 1.3; }
-.stat-label { color: #8a94a6; font-size: 13px; margin-top: 2px; }
+.stat-label { color: var(--el-text-color-secondary); font-size: 13px; margin-top: 2px; }
 .filter-card :deep(.el-form-item) { margin-bottom: 10px; }
 .mt16 { margin-top: 16px; justify-content: flex-end; }
 .ml4 { margin-left: 4px; }
 .mb12 { margin-bottom: 12px; }
-.tip { color: #8a94a6; font-size: 12px; }
-.muted { color: #8a94a6; font-size: 13px; }
+.tip { color: var(--el-text-color-secondary); font-size: 12px; }
+.muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .batch-bar {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 12px; margin-bottom: 10px;

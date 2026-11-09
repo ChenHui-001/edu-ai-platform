@@ -15,13 +15,16 @@
         <div class="pomodoro-ring" :class="mode">
           <svg viewBox="0 0 120 120" class="ring-svg">
             <circle cx="60" cy="60" r="52" fill="none" stroke="#e4e7ed" stroke-width="6" />
+            <!-- 注意：SVG 的 stroke 作为**呈现属性**不解析 var()，必须走 style -->
             <circle cx="60" cy="60" r="52" fill="none"
-                    :stroke="mode === 'work' ? '#f56c6c' : '#67c23a'"
+                    :style="{
+                      stroke: mode === 'work' ? 'var(--el-color-danger)' : 'var(--el-color-success)',
+                      transition: 'stroke-dashoffset 1s linear'
+                    }"
                     stroke-width="6" stroke-linecap="round"
                     :stroke-dasharray="326.7"
                     :stroke-dashoffset="ringOffset"
-                    transform="rotate(-90 60 60)"
-                    style="transition: stroke-dashoffset 1s linear" />
+                    transform="rotate(-90 60 60)" />
           </svg>
           <div class="ring-center">
             <div class="ring-time">{{ displayTime }}</div>
@@ -175,7 +178,7 @@ onUnmounted(() => {
   gap: 8px;
   padding: 10px 14px;
   cursor: pointer;
-  background: linear-gradient(135deg, #f56c6c 0%, #e6a23c 100%);
+  background: linear-gradient(135deg, var(--el-color-danger) 0%, var(--el-color-warning) 100%);
   color: #fff;
   font-size: 13px;
   font-weight: 500;
@@ -190,7 +193,7 @@ onUnmounted(() => {
 }
 
 .pomodoro-time.working { color: #fff; }
-.pomodoro-time.resting { color: #f0f9eb; }
+.pomodoro-time.resting { color: var(--el-color-success-light-9); }
 
 .expand-icon { margin-left: auto; }
 
@@ -219,15 +222,15 @@ onUnmounted(() => {
   font-size: 22px;
   font-weight: 700;
   font-family: 'Courier New', monospace;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 
-.pomodoro-ring.working .ring-time { color: #f56c6c; }
-.pomodoro-ring.resting .ring-time { color: #67c23a; }
+.pomodoro-ring.working .ring-time { color: var(--el-color-danger); }
+.pomodoro-ring.resting .ring-time { color: var(--el-color-success); }
 
 .ring-label {
   font-size: 11px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-top: 2px;
 }
 
@@ -241,12 +244,12 @@ onUnmounted(() => {
 .stat-val {
   font-size: 18px;
   font-weight: 700;
-  color: #409eff;
+  color: var(--el-color-primary);
 }
 
 .stat-label {
   font-size: 11px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .pomodoro-controls {
@@ -258,7 +261,7 @@ onUnmounted(() => {
 
 .pomodoro-settings {
   font-size: 12px;
-  color: #606266;
+  color: var(--el-text-color-regular);
   display: flex;
   align-items: center;
   justify-content: center;

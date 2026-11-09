@@ -138,11 +138,12 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus, Search, Refresh, MagicStick, StarFilled } from '@element-plus/icons-vue'
 import { learningApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 import { sanitizeHtml } from '@/utils/sanitize'
+import { confirmAction } from '@/utils/confirm'
 
 const list = ref([])
 const subjects = ref([])
@@ -240,7 +241,7 @@ async function fav(n) {
 }
 
 async function remove(n) {
-  await ElMessageBox.confirm(`确认删除笔记「${n.title}」？`, '提示', { type: 'warning' })
+  if (!await confirmAction(`确认删除笔记「${n.title}」？`, '提示', { type: 'warning' })) return
   await learningApi.removeNote(n.id)
   ElMessage.success('已删除')
   load()
@@ -255,7 +256,7 @@ onMounted(async () => {
 <style scoped>
 .mt16 { margin-top: 16px; justify-content: flex-end; }
 .mr4 { margin-right: 4px; }
-.tip { font-size: 12px; color: #909399; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); }
 .note-card { margin-bottom: 16px; min-height: 210px; }
 .note-head { cursor: pointer; }
 .note-title {
@@ -264,7 +265,7 @@ onMounted(async () => {
 }
 .note-meta { display: flex; align-items: center; gap: 8px; }
 .note-preview {
-  color: #606266; font-size: 13px; line-height: 1.7; margin: 10px 0; cursor: pointer;
+  color: var(--el-text-color-regular); font-size: 13px; line-height: 1.7; margin: 10px 0; cursor: pointer;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .note-actions {

@@ -40,7 +40,8 @@
 
             <el-divider content-position="left">资料附件（{{ attachments.length }}）</el-divider>
             <el-table v-loading="attLoading" :data="attachments" size="small" border
-                      empty-text="该知识点暂无资料">
+>
+              <template #empty><TableEmpty text="该知识点暂无资料" /></template>
               <el-table-column prop="filename" label="文件名" min-width="220"
                                show-overflow-tooltip />
               <el-table-column label="大小" width="90" align="center">

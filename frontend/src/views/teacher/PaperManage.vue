@@ -67,8 +67,13 @@
                    @click="batchDelete">批量删除</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" row-key="id" border stripe
+      <!-- 首屏骨架屏（§3.5 试点）：首次进入时用骨架占位，后续翻页/筛选仍用表格内 loading -->
+
+      <el-skeleton v-if="loading && !list.length" :rows="6" animated />
+
+      <el-table v-else v-loading="loading" :data="list" row-key="id" border stripe
                 @selection-change="onSelectionChange">
+        <template #empty><TableEmpty text="暂无试卷，点击「新建试卷」开始" /></template>
         <el-table-column type="selection" width="44" />
         <el-table-column label="试卷名称" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">
@@ -125,8 +130,10 @@
                          @click="toggleArchive(row)">
                 {{ row.status === 'archived' ? '恢复' : '停用' }}
               </el-button>
-              <el-dropdown v-if="canExport" trigger="click" @command="(fmt) => exportPaper(row, fmt)">
-                <el-button link type="warning" size="small">导出</el-button>
+              <el-dropdown v-if="canExport" trigger="click" :disabled="exportingId != null"
+                           @command="(fmt) => exportPaper(row, fmt)">
+                <el-button link type="warning" size="small"
+                           :loading="exportingId === row.id">导出</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="excel">Excel</el-dropdown-item>
@@ -237,6 +244,7 @@
             </div>
             <el-table ref="aiRecommendTableRef" :data="aiRecommendItems" size="small" border
                       max-height="260" @selection-change="onAiRecommendSelectionChange">
+              <template #empty><TableEmpty text="暂无题目" /></template>
               <el-table-column type="selection" width="42" />
               <el-table-column label="题型" width="90">
                 <template #default="{ row }">{{ typeLabel(row.type) }}</template>
@@ -352,6 +360,7 @@
         <el-table ref="pickTableRef" v-loading="pickerLoading" :data="pickerQuestions"
                   size="small" border max-height="240" class="mt8"
                   @selection-change="onPickChange">
+          <template #empty><TableEmpty text="暂无题目" /></template>
           <el-table-column type="selection" width="42" />
           <el-table-column label="题型" width="90">
             <template #default="{ row }">{{ row.type_label || typeLabel(row.type) }}</template>
@@ -379,6 +388,7 @@
 
         <el-divider content-position="left">已选题目（{{ paperItems.length }}）</el-divider>
         <el-table :data="paperItems" size="small" border max-height="260" class="mt8">
+          <template #empty><TableEmpty text="暂无题目" /></template>
           <el-table-column label="序号" width="60" align="center">
             <template #default="{ $index }">{{ $index + 1 }}</template>
           </el-table-column>
@@ -512,7 +522,7 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus, Search, Refresh, MagicStick } from '@element-plus/icons-vue'
 import { questionApi, eduApi, agentApi } from '@/api'
 import { useUserStore } from '@/store/user'
@@ -520,6 +530,8 @@ import TYPE_LABEL from '@/constants/question'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { downloadBlob } from '@/utils/download'
 import { parseAgentEnvelope } from '@/composables/useAgentEnvelope'
+import { confirmAction, promptAction } from '@/utils/confirm'
+import { toastIfUnhandled } from '@/utils/notify'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 function safeStem(s) { return sanitizeHtml(s) }
@@ -703,10 +715,21 @@ function onSelectionChange(val) { selection.value = val || [] }
 // ---------------- 导出 ----------------
 // word 现在是真正的 .docx（后端用 python-docx 生成，不再是改名的 HTML），
 // 扩展名必须同步，否则 Word 会提示"文件格式与扩展名不符"。
+// 导出是慢请求（大卷 + 服务端渲染），没有 loading 态时用户点一次没反应就会连点，
+// 结果是同一份卷子被并发生成多遍（reaudit3 P2-11）。
 const EXPORT_EXT = { excel: 'xlsx', word: 'docx', pdf: 'pdf', html: 'html' }
+const exportingId = ref(null)
 async function exportPaper(row, fmt = 'excel') {
+  if (exportingId.value != null) return
+  exportingId.value = row.id
   const ext = EXPORT_EXT[fmt] || 'xlsx'
-  await downloadBlob(questionApi.exportPaper(row.id, fmt), `试卷-${row.name}.${ext}`)
+  try {
+    await downloadBlob(questionApi.exportPaper(row.id, fmt), `试卷-${row.name}.${ext}`)
+  } catch (e) {
+    toastIfUnhandled(e, '导出失败')
+  } finally {
+    exportingId.value = null
+  }
 }
 
 // ---------------- 详情抽屉 ----------------
@@ -1000,32 +1023,34 @@ async function save() {
 
 // ---------------- 单行操作 ----------------
 async function copyPaper(row) {
+  const name = await promptAction('请输入新试卷名称', '复制试卷',
+    { inputValue: `${row.name} - 副本` })
+  if (name === null) return                    // 用户取消
+  if (!name.trim()) return ElMessage.warning('试卷名称不能为空')
   try {
-    const { value } = await ElMessageBox.prompt('请输入新试卷名称', '复制试卷',
-      { inputValue: `${row.name} - 副本` })
-    await questionApi.copyPaper(row.id, { name: value })
+    await questionApi.copyPaper(row.id, { name: name.trim() })
     ElMessage.success('复制成功')
     await refreshAll()
   } catch {
-    // 用户取消 / 请求失败由拦截器提示
+    // 请求失败由拦截器提示
   }
 }
 
 async function toggleArchive(row) {
   const archived = row.status !== 'archived'
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       archived
         ? `确认停用试卷「${row.name}」？停用不会影响已结束考试的记录与成绩，可随时恢复。`
         : `确认恢复试卷「${row.name}」？将恢复为草稿，如需进入公共库需重新提交审核。`,
-      archived ? '停用确认' : '恢复确认', { type: 'warning' })
+      archived ? '停用确认' : '恢复确认', { type: 'warning' })) return
   } catch { return }
   try {
     const res = await questionApi.archivePaper(row.id, archived)
     ElMessage.success(res.message || (archived ? '已停用' : '已恢复'))
   } catch (e) {
     // 进行中的考试会拒绝停用，把原因原样带出来（如「有 1 个进行中的作业/考试」）
-    ElMessage.error(e.message || '操作失败')
+    toastIfUnhandled(e, '操作失败')
     return
   }
   await refreshAll()
@@ -1033,9 +1058,9 @@ async function toggleArchive(row) {
 
 async function removePaper(row) {
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `确认删除试卷「${row.name}」？被作业/考试引用的试卷会被拒绝删除。`,
-      '删除确认', { type: 'warning', confirmButtonText: '确认删除' })
+      '删除确认', { type: 'warning', confirmButtonText: '确认删除' })) return
   } catch { return }
   await questionApi.removePaper(row.id)
   ElMessage.success('已删除')
@@ -1077,8 +1102,8 @@ async function runPaperBatch(action, payload, confirmText) {
   if (!ensureSelection()) return false
   const ids = batchIds()
   try {
-    await ElMessageBox.confirm(confirmText || `确认对 ${ids.length} 份试卷执行批量操作？`,
-      '批量操作确认', { type: 'warning' })
+    if (!await confirmAction(confirmText || `确认对 ${ids.length} 份试卷执行批量操作？`,
+      '批量操作确认', { type: 'warning' })) return false
   } catch { return false }
   batchRunning.value = true
   try {
@@ -1213,7 +1238,7 @@ async function runAI() {
     aiResult.value = payload
     await refreshAll()
   } catch (e) {
-    ElMessage.error('组卷请求异常：' + (e?.message || e))
+    toastIfUnhandled(e, '组卷请求异常')
   } finally {
     aiLoading.value = false
   }

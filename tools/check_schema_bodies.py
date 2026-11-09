@@ -22,7 +22,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_DIR = os.path.join(ROOT, "backend", "app", "api", "v1")
 
 # 按新口径（任意 Dict 内层类型 + 出现次数）重测后的基线。
-BASELINE = 98
+# **棘轮语义**：BASELINE 是"当前允许的最大值"，也是"当前实测值"。
+# total < BASELINE 时必须同步下调本常量（否则 CI 红）——这样基线只会单向
+# 收紧，不会出现"迁完存量忘了改常量、门禁永远停在旧上限"的假进步
+# （第三轮复审 §5.3：三道门禁都只锁不增长、没有任何推动下降的机制）。
+BASELINE = 63
+# 目的地：迁到这个数就算还清。CI 会在未达标时提示还差多少。
+TARGET = 40
 PATTERN = re.compile(r"Dict\s*\[[^\[\]]*\]\s*=\s*Body\s*\(")
 
 
@@ -47,7 +53,16 @@ def main() -> int:
         print("新端点请使用 app.schemas 中的 Pydantic 模型；")
         print("迁移存量后请把本脚本 BASELINE 同步减 1。")
         return 1
-    print(f"[OK] 裸 Dict Body = {total}（基线 {BASELINE}，未增长）")
+    if total < BASELINE:
+        print(f"[FAIL] 裸 Dict Body = {total}，低于基线 {BASELINE} —— 请同步收紧基线")
+        print(f"       把 BASELINE 从 {BASELINE} 改成 {total} 后重跑。")
+        print("       棘轮必须单向：迁完不降基线，等于把额度又还回去。")
+        return 1
+    if total > TARGET:
+        print(f"[OK] 裸 Dict Body = {total}（基线 {BASELINE}，未增长）；"
+              f"距目标 {TARGET} 还差 {total - TARGET} 处")
+    else:
+        print(f"[OK] 裸 Dict Body = {total}，已达到目标 {TARGET}")
     return 0
 
 

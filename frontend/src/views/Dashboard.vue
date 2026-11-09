@@ -10,14 +10,29 @@
       </el-button>
     </div>
 
-    <!-- 统计卡片 -->
+    <!-- 统计卡片：首屏加载走骨架屏（§3.5），否则四张卡会先渲染成一片 0 再跳数 -->
     <el-row :gutter="16" style="margin-bottom: 16px">
-      <el-col v-for="s in stats" :key="s.label" :xs="12" :sm="12" :md="6">
-        <div class="stat-card" style="margin-bottom: 16px">
-          <div class="stat-value" :style="{ color: s.color }">{{ s.value }}</div>
-          <div class="stat-label">{{ s.label }}</div>
-        </div>
-      </el-col>
+      <template v-if="loading">
+        <el-col v-for="n in 4" :key="`sk-${n}`" :xs="12" :sm="12" :md="6">
+          <div class="stat-card" style="margin-bottom: 16px">
+            <el-skeleton :rows="1" animated />
+          </div>
+        </el-col>
+      </template>
+      <template v-else>
+        <el-col v-for="s in stats" :key="s.label" :xs="12" :sm="12" :md="6">
+          <div class="stat-card" style="margin-bottom: 16px">
+            <div class="stat-top">
+              <span class="stat-value" :style="{ color: s.color }">{{ s.value }}</span>
+              <!-- 图标是 volume 档的唯一区分手段：三张卡同色时只靠文字读不出差别（P2-20） -->
+              <el-icon class="stat-icon" :style="{ color: s.color }">
+                <component :is="s.icon" />
+              </el-icon>
+            </div>
+            <div class="stat-label">{{ s.label }}</div>
+          </div>
+        </el-col>
+      </template>
     </el-row>
 
     <el-row :gutter="16">
@@ -46,7 +61,8 @@
 
         <el-card shadow="never">
           <template #header><span>我的作业考试</span></template>
-          <el-table :data="tasks" size="small" empty-text="暂无任务">
+          <el-table v-loading="loading" :data="tasks" size="small">
+            <template #empty><TableEmpty text="暂无任务" /></template>
             <el-table-column prop="title" label="名称" />
             <el-table-column prop="type_label" label="类型" width="80" />
             <el-table-column label="截止时间" width="150">
@@ -54,7 +70,7 @@
                 <span v-if="row.remaining_seconds > 0">
                   剩 {{ formatRemain(row.remaining_seconds) }}
                 </span>
-                <span v-else style="color:#f56c6c">已截止</span>
+                <span v-else style="color:var(--el-color-danger)">已截止</span>
               </template>
             </el-table-column>
             <el-table-column label="状态" width="90">
@@ -109,11 +125,12 @@
               </el-link>
             </div>
           </template>
-          <el-table
+          <el-table v-loading="loading"
             :data="pending" size="small" empty-text="暂无待批改"
             row-class-name="clickable-row"
             @row-click="openGrading"
           >
+            <template #empty><TableEmpty text="暂无待批改" /></template>
             <el-table-column prop="student_name" label="学生" width="92" />
             <el-table-column prop="task_title" label="任务" show-overflow-tooltip />
             <el-table-column label="提交时间" width="140">
@@ -123,7 +140,7 @@
             </el-table-column>
             <el-table-column label="得分" width="92">
               <template #default="{ row }">
-                <span :style="{ color: row.is_passed ? '#67c23a' : '#f56c6c', fontWeight: 600 }">
+                <span :style="{ color: row.is_passed ? 'var(--el-color-success)' : 'var(--el-color-danger)', fontWeight: 600 }">
                   {{ row.score ?? '-' }}
                 </span>
                 <span class="muted"> / {{ row.total_score ?? '-' }}</span>
@@ -150,11 +167,12 @@
               <el-link type="primary" :underline="false" @click="$router.push('/teacher/tasks')">任务管理</el-link>
             </div>
           </template>
-          <el-table
+          <el-table v-loading="loading"
             :data="tasks" size="small" empty-text="暂无任务"
             row-class-name="clickable-row"
             @row-click="openTask"
           >
+            <template #empty><TableEmpty text="暂无任务" /></template>
             <el-table-column prop="title" label="名称" show-overflow-tooltip />
             <el-table-column prop="type_label" label="类型" width="80" />
             <el-table-column prop="submission_count" label="提交" width="70" />
@@ -200,14 +218,15 @@
 
         <el-card shadow="never">
           <template #header><span>班级成绩速览</span></template>
-          <el-table v-if="classSummaries.length" :data="classSummaries" size="small" border>
+          <el-table v-if="classSummaries.length" v-loading="loading" :data="classSummaries" size="small" border>
+            <template #empty><TableEmpty text="暂无班级数据" /></template>
             <el-table-column prop="name" label="班级" min-width="110" />
             <el-table-column prop="student_count" label="学生" width="70" align="center" />
             <el-table-column prop="avg_score" label="平均分" width="90" align="center" />
             <el-table-column prop="pass_rate" label="及格率">
               <template #default="{ row }">
                 <el-progress :percentage="Math.min(row.pass_rate || 0, 100)"
-                             :color="row.pass_rate >= 60 ? '#67c23a' : '#e6a23c'" />
+                             :color="row.pass_rate >= 60 ? 'var(--el-color-success)' : 'var(--el-color-warning)'" />
               </template>
             </el-table-column>
           </el-table>
@@ -221,7 +240,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Cpu, Tickets, ChatLineRound, Compass, MagicStick } from '@element-plus/icons-vue'
+import { Cpu, Tickets, ChatLineRound, Compass, MagicStick,
+         Bell, Clock, CircleCheck, Promotion, EditPen, User, Collection } from '@element-plus/icons-vue'
 import EChart from '@/components/EChart.vue'
 import { gradingApi, reportApi, taskApi } from '@/api'
 import { useUserStore } from '@/store/user'
@@ -238,6 +258,9 @@ const radar = ref([])
 const sysStats = ref({})
 const myClasses = ref([])
 const classSummaries = ref([])
+// 首屏加载态：此前 Dashboard 一个 loading 都没有，数据没回来时四张卡先渲染成
+// 「0」，用户看到的是"我有 0 个待批改"，两秒后才跳成真实数字（§3.5）。
+const loading = ref(true)
 
 const today = computed(() => new Date().toLocaleDateString('zh-CN', {
   year: 'numeric', month: 'long', day: 'numeric', weekday: 'long'
@@ -273,25 +296,25 @@ const STAT_TONES = {
 const stats = computed(() => {
   if (userStore.isStudent && !userStore.isTeacher) {
     return [
-      { label: '待复习任务', value: reviewData.value.today_count ?? 0, color: STAT_TONES.todo },
-      { label: '待完成任务', value: tasks.value.filter(t => !t.my_submission).length, color: STAT_TONES.todo },
-      { label: '已完成任务', value: tasks.value.filter(t => t.my_submission).length, color: STAT_TONES.done },
-      { label: '作业考试', value: tasks.value.length, color: STAT_TONES.volume }
+      { label: '待复习任务', value: reviewData.value.today_count ?? 0, color: STAT_TONES.todo, icon: Bell },
+      { label: '待完成任务', value: tasks.value.filter(t => !t.my_submission).length, color: STAT_TONES.todo, icon: Clock },
+      { label: '已完成任务', value: tasks.value.filter(t => t.my_submission).length, color: STAT_TONES.done, icon: CircleCheck },
+      { label: '作业考试', value: tasks.value.length, color: STAT_TONES.volume, icon: Tickets }
     ]
   }
   if (userStore.isTeacher) {
     return [
-      { label: '发布任务', value: tasks.value.length, color: STAT_TONES.volume },
-      { label: '待批改', value: pending.value.length, color: STAT_TONES.todo },
-      { label: '学生人数', value: sysStats.value.user?.student ?? 0, color: STAT_TONES.volume },
-      { label: '题库总量', value: sysStats.value.content?.question ?? 0, color: STAT_TONES.volume }
+      { label: '发布任务', value: tasks.value.length, color: STAT_TONES.volume, icon: Promotion },
+      { label: '待批改', value: pending.value.length, color: STAT_TONES.todo, icon: EditPen },
+      { label: '学生人数', value: sysStats.value.user?.student ?? 0, color: STAT_TONES.volume, icon: User },
+      { label: '题库总量', value: sysStats.value.content?.question ?? 0, color: STAT_TONES.volume, icon: Collection }
     ]
   }
   return [
-    { label: '用户总数', value: sysStats.value.user?.total ?? 0, color: STAT_TONES.volume },
-    { label: '待审批', value: sysStats.value.user?.pending ?? 0, color: STAT_TONES.todo },
-    { label: '题库总量', value: sysStats.value.content?.question ?? 0, color: STAT_TONES.volume },
-    { label: 'AI 调用', value: sysStats.value.ai?.calls ?? 0, color: STAT_TONES.volume }
+    { label: '用户总数', value: sysStats.value.user?.total ?? 0, color: STAT_TONES.volume, icon: User },
+    { label: '待审批', value: sysStats.value.user?.pending ?? 0, color: STAT_TONES.todo, icon: Clock },
+    { label: '题库总量', value: sysStats.value.content?.question ?? 0, color: STAT_TONES.volume, icon: Collection },
+    { label: 'AI 调用', value: sysStats.value.ai?.calls ?? 0, color: STAT_TONES.volume, icon: MagicStick }
   ]
 })
 
@@ -403,13 +426,15 @@ onMounted(async () => {
       }))
       classSummaries.value = summaries
     }
-  } catch (e) { /* 忽略加载错误 */ }
+  } catch (e) { /* 忽略加载错误 */ } finally {
+    loading.value = false
+  }
 })
 </script>
 
 <style scoped>
 .welcome-card {
-  background: linear-gradient(135deg, #2f6fd0, #5a8fd6);
+  background: linear-gradient(135deg, var(--el-color-primary), #5a8fd6);
   color: #fff;
   border-radius: 10px;
   padding: 24px 28px;
@@ -425,6 +450,20 @@ onMounted(async () => {
 .welcome-card p { margin: 0; opacity: 0.9; font-size: 13px; }
 
 .mb { margin-bottom: 16px; }
+
+/* 数字与图标左右对齐：同色卡片靠图标区分含义，图标用 0.5 透明度退到背景层，
+ * 不跟数字抢注意力 */
+.stat-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.stat-icon {
+  font-size: 22px;
+  opacity: 0.5;
+}
 
 .card-header {
   display: flex;
@@ -442,29 +481,29 @@ onMounted(async () => {
   text-align: center;
   padding: 16px 8px;
   border-radius: 8px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   cursor: pointer;
   transition: all 0.2s;
-  color: #2f6fd0;
+  color: var(--el-color-primary);
 }
 
 .ai-card:hover {
-  background: #ecf5ff;
+  background: var(--el-color-primary-light-9);
   transform: translateY(-2px);
 }
 
-.ai-name { margin-top: 8px; font-size: 13px; color: #606266; }
+.ai-name { margin-top: 8px; font-size: 13px; color: var(--el-text-color-regular); }
 
 /* ---- 表格可点击行：提示用户整行都能点 ---- */
 :deep(.clickable-row) {
   cursor: pointer;
 }
 :deep(.clickable-row:hover > td.el-table__cell) {
-  background: #ecf5ff !important;
+  background: var(--el-color-primary-light-9) !important;
 }
 
 .muted {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 
@@ -472,6 +511,6 @@ onMounted(async () => {
   margin-top: 10px;
   text-align: center;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 </style>

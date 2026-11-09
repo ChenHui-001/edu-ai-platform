@@ -20,6 +20,7 @@ from app.models import (
 )
 from app.services import grading_service
 from app.utils.common import PageParams, dictify, now_local, ok
+from app.utils.options import normalize_options
 
 router = APIRouter(prefix="/task", tags=["作业与考试"])
 
@@ -960,7 +961,7 @@ def get_task_paper(
         d = {
             "paper_item_id": it.id, "question_id": q.id, "sort_order": it.sort_order,
             "score": it.score, "section_name": it.section_name, "type": q.type,
-            "stem": q.stem, "options": _load(q.options),
+            "stem": q.stem, "options": normalize_options(q.options),
         }
         if q.type == "composition":
             d["answer_min_words"] = int(q.answer_min_words or default_min_words)
@@ -1168,7 +1169,7 @@ def submission_detail(
             "question_id": a.question_id, "content": a.content,
             "is_correct": a.is_correct, "score": a.score, "full_score": a.full_score,
             "grader_type": a.grader_type, "comment": a.teacher_comment,
-            "stem": q.stem if q else "", "options": _load(q.options) if q else None,
+            "stem": q.stem if q else "", "options": normalize_options(q.options) if q else None,
             "answer": _load(q.answer) if q else None, "analysis": q.analysis if q else None,
         })
 

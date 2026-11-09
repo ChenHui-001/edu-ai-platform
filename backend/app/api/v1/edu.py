@@ -22,6 +22,20 @@ from app.models import (
     Class, ClassRequest, Grade, KnowledgePoint, Notification,
     Subject, TaskAssignment, TeachingAssignment, User,
 )
+from app.schemas.legacy_bodies import (
+    BatchClassesIn,
+    BatchRemoveStudentsIn,
+    CloneSubjectIn,
+    CreateClassIn,
+    CreateClassRequestIn,
+    CreateGradeIn,
+    CreateSubjectIn,
+    CreateTeachingAssignmentIn,
+    ReviewClassRequestIn,
+    UpdateClassIn,
+    UpdateGradeIn,
+    UpdateSubjectIn,
+)
 from app.utils.common import dictify, now_local, ok
 
 router = APIRouter(prefix="/edu", tags=["教学资源"])
@@ -171,9 +185,10 @@ def list_grades(
 
 @router.post("/grades", summary="新增年级")
 def create_grade(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: CreateGradeIn = Body(...), db: Session = Depends(get_db),
     _: User = Depends(require_perm("resource:grade:write")),
 ):
+    data = body.model_dump(exclude_unset=True)
     stage = _assert_stage(data.get("stage", "primary"))
     grade_num = _assert_grade_num(data.get("grade_num", 1))
     auto_name = bool(data.get("auto_name"))
@@ -201,9 +216,10 @@ def create_grade(
 
 @router.put("/grades/{grade_id}", summary="编辑年级")
 def update_grade(
-    grade_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    grade_id: int, body: UpdateGradeIn = Body(...), db: Session = Depends(get_db),
     _: User = Depends(require_perm("resource:grade:write")),
 ):
+    data = body.model_dump(exclude_unset=True)
     grade = db.get(Grade, grade_id)
     if not grade:
         raise NotFoundException("年级不存在")
@@ -345,9 +361,10 @@ def list_subjects(
 
 @router.post("/subjects", summary="新增学科")
 def create_subject(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: CreateSubjectIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm(SUBJECT_WRITE_PERM)),
 ):
+    data = body.model_dump(exclude_unset=True)
     name = (data.get("name") or "").strip()
     grade_id = data.get("grade_id")
     if not name:
@@ -373,9 +390,10 @@ def create_subject(
 
 @router.put("/subjects/{subject_id}", summary="编辑学科")
 def update_subject(
-    subject_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    subject_id: int, body: UpdateSubjectIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm(SUBJECT_WRITE_PERM)),
 ):
+    data = body.model_dump(exclude_unset=True)
     subject = db.get(Subject, subject_id)
     if not subject:
         raise NotFoundException("学科不存在")
@@ -437,7 +455,7 @@ def delete_subject(
 
 @router.post("/subjects/{subject_id}/clone", summary="跨年级复制学科")
 def clone_subject(
-    subject_id: int, data: Dict[str, Any] = Body(...),
+    subject_id: int, body: CloneSubjectIn = Body(...),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm(SUBJECT_WRITE_PERM)),
 ):
@@ -446,6 +464,7 @@ def clone_subject(
     同一 (grade_id, name) 已存在则跳过，不重复创建。常用于把"一年级语文"
     一键铺到 1-9 年级。返回 created / skipped 明细。
     """
+    data = body.model_dump(exclude_unset=True)
     from app.models import Subject as _Sub
 
     src = db.get(_Sub, subject_id)
@@ -644,9 +663,10 @@ def class_stats(
 
 @router.post("/classes", summary="新增班级")
 def create_class(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: CreateClassIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("resource:class:write")),
 ):
+    data = body.model_dump(exclude_unset=True)
     grade_id = data.get("grade_id")
     if not grade_id or not db.get(Grade, grade_id):
         raise BusinessException("请选择年级")
@@ -679,9 +699,10 @@ def create_class(
 
 @router.put("/classes/{class_id}", summary="编辑班级")
 def update_class(
-    class_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    class_id: int, body: UpdateClassIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("resource:class:write")),
 ):
+    data = body.model_dump(exclude_unset=True)
     k = db.get(Class, class_id)
     if not k:
         raise NotFoundException("班级不存在")
@@ -733,9 +754,10 @@ def update_class(
 
 @router.post("/classes/batch", summary="批量启用/停用/删除班级")
 def batch_classes(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: BatchClassesIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("resource:class:write")),
 ):
+    data = body.model_dump(exclude_unset=True)
     action = str(data.get("action") or "").lower()
     if action not in {"enable", "disable", "delete"}:
         raise BusinessException("action 仅支持 enable / disable / delete")
@@ -907,10 +929,11 @@ def export_class_students(
 
 @router.post("/classes/{class_id}/students/batch-remove", summary="批量移出班级")
 def batch_remove_students(
-    class_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    class_id: int, body: BatchRemoveStudentsIn = Body(...), db: Session = Depends(get_db),
     _: User = Depends(require_perm("resource:class:write")),
     scope: DataScope = Depends(get_data_scope),
 ):
+    data = body.model_dump(exclude_unset=True)
     klass = db.get(Class, class_id)
     if not klass:
         raise NotFoundException("班级不存在")
@@ -999,10 +1022,11 @@ CLASS_REQUEST_STATUS = {"pending", "approved", "rejected"}
 
 @router.post("/class-requests", summary="教师提交建班申请")
 def create_class_request(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: CreateClassRequestIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(get_current_teacher),
 ):
     """教师自建班级申请：提交后进入 pending，由年级管理员/超管审核。"""
+    data = body.model_dump(exclude_unset=True)
     name = (data.get("name") or "").strip()
     grade_id = data.get("grade_id")
     if not name:
@@ -1070,11 +1094,12 @@ def list_class_requests(
 
 @router.post("/class-requests/{req_id}/review", summary="审核建班申请")
 def review_class_request(
-    req_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    req_id: int, body: ReviewClassRequestIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(get_current_manager),
 ):
     """approve：真实创建班级并回填，申请教师自动成为班主任；
     reject：需附理由。审核结果均站内通知申请教师。"""
+    data = body.model_dump(exclude_unset=True)
     req = db.get(ClassRequest, req_id)
     if not req:
         raise NotFoundException("申请不存在")
@@ -1288,9 +1313,10 @@ def list_teaching_assignments(
 
 @router.post("/teaching-assignments", summary="新增任课关系")
 def create_teaching_assignment(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: CreateTeachingAssignmentIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("resource:teaching:write")),
 ):
+    data = body.model_dump(exclude_unset=True)
     def _int(v: Any, label: str) -> int:
         try:
             return int(v)

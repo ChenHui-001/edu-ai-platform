@@ -522,11 +522,11 @@
       "2. 批量导入/导出/移出"
     ],
     "expected": "学生名单增删正确；导入按 学号,姓名,密码",
-    "api": "POST /edu/classes/{id}/students/import",
+    "api": "POST /edu/classes/{id}/students",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/edu/classes/{id}/students/import",
+      "path": "/edu/classes/{id}/students",
       "body": null,
       "assert": "200",
       "locator": null
@@ -1592,11 +1592,11 @@
       "2. 点引擎状态"
     ],
     "expected": "展示调用明细与已注册 Agent",
-    "api": "GET /agent/logs/{id}",
+    "api": "GET /agent/status",
     "automation": {
       "type": "api",
       "method": "GET",
-      "path": "/agent/logs/{id}",
+      "path": "/agent/status",
       "body": null,
       "assert": null,
       "locator": null
@@ -1953,11 +1953,11 @@
       "2. 填评语"
     ],
     "expected": "分值与评语写入工作区",
-    "api": "PUT /grading/submissions/{id}",
+    "api": "POST /grading/submissions/{id}/grade",
     "automation": {
       "type": "api",
-      "method": "PUT",
-      "path": "/grading/submissions/{id}",
+      "method": "POST",
+      "path": "/grading/submissions/{id}/grade",
       "body": {
         "scores": {}
       },
@@ -2528,10 +2528,10 @@
       "4. 保存并重算成绩"
     ],
     "expected": "题目项分值更新；移除题作答迁移/计数；CASCADE 不丢学生作答",
-    "api": "PUT /question/papers/{id}/items",
+    "api": "POST /question/papers/{id}/items",
     "automation": {
       "type": "api",
-      "method": "PUT",
+      "method": "POST",
       "path": "/question/papers/{id}/items",
       "body": null,
       "assert": "200",
@@ -2652,10 +2652,10 @@
       "1. 切状态开关"
     ],
     "expected": "题目上/下架即时生效",
-    "api": "POST /question/questions/{id}/status",
+    "api": "PUT /question/questions/{id}/status",
     "automation": {
       "type": "api",
-      "method": "POST",
+      "method": "PUT",
       "path": "/question/questions/{id}/status",
       "body": {
         "status": "published"
@@ -3220,10 +3220,10 @@
       "1. 点完成复习"
     ],
     "expected": "标记完成(quality=good)",
-    "api": "POST /learning/review-plans/{id}/complete",
+    "api": "PUT /learning/review-plans/{id}/complete",
     "automation": {
       "type": "api",
-      "method": "POST",
+      "method": "PUT",
       "path": "/learning/review-plans/{id}/complete",
       "body": null,
       "assert": "200",
@@ -3599,10 +3599,10 @@
       "3. 取消收藏"
     ],
     "expected": "标签更新；取消后移除",
-    "api": "PUT /learning/favorites/{id}",
+    "api": "DELETE /learning/favorites/{id}",
     "automation": {
       "type": "api",
-      "method": "PUT",
+      "method": "DELETE",
       "path": "/learning/favorites/{id}",
       "body": null,
       "assert": "200",

@@ -532,9 +532,11 @@ def verify_reset_code(db: Session, target: str, code: str) -> bool:
         db.commit()
         return False
     # 延迟导入：security 在很早期被导入，避免模块级循环依赖
-    from app.services.rate_limit import check_and_hit
+    from app.services.rate_limit import check_and_hit, key_digest
 
-    if not check_and_hit(db, f"reset_code_try:{target}", 5, 600):
+    # 键必须哈希：这是匿名端点，target 完全由攻击者提供，明文落库等于
+    # 在 sys_rate_limit 里长期留存一份任意人可写的邮箱/手机号清单。
+    if not check_and_hit(db, key_digest("reset_code_try", target), 5, 600):
         # 尝试次数耗尽 → 作废这条码，逼用户重新获取（新码会重置尝试额度）
         db.execute(delete(ResetCode).where(ResetCode.target == target))
         db.commit()
@@ -553,18 +555,36 @@ def _purge_reset_code(db: Session) -> int:
     return result.rowcount or 0
 
 
+def _purge_rate_limit(db: Session) -> int:
+    """清理过期限流行，并把键空间压回软上限。
+
+    实现在 `services/rate_limit.py`（与判限逻辑同文件，避免两处口径漂移）；
+    这里只做延迟导入，因为 security 在很早期就被导入，模块级反向依赖会成环。
+    第三轮复审 P1-B：这张表的键由攻击者控制（任意邮箱 / 任意 IP），此前
+    既不在 `_PURGE_FUNCS` 里、也没有任何其它清理路径，行数无上界。
+    """
+    from app.services.rate_limit import purge_expired_and_cap
+
+    return purge_expired_and_cap(db)
+
+
 # ---------------------------------------------------------------- 机会式清理
 # 过期行不能靠 APScheduler 清：CI 里 SCHEDULER_ENABLED=false，定时任务根本
-# 不跑；而这三张表的写入量都很小（验证码每次登录 1 行、吊销每次登出 1 行），
+# 不跑；而这几张表的写入量都很小（验证码每次登录 1 行、吊销每次登出 1 行），
 # 攒下来的过期行会一直占着主键与索引。改为「写入时按概率顺带清一次」：
 # 写放大只有 5%，却保证无论调度器开没开，过期行都不会无界增长。
-# 项目既有同范式：core/rate_limit.py 每分钟（minute % 5 == 0）顺带清旧窗口。
+#
+# 注意 `RateLimit` 与上面三张表不同：它的键**由匿名调用方控制**（任意邮箱 /
+# 手机号 / 来源 IP），只有"过期清理"不够，还必须压住键空间上界 —— 具体由
+# `services/rate_limit.purge_expired_and_cap()` 负责（清过期 + 超限淘汰），
+# 本表登记在册是为了让「谁写入谁维护」这条不变式覆盖到它。
 _OPPORTUNISTIC_PURGE_RATE = 0.05
 
 _PURGE_FUNCS = {
     "Captcha": lambda db: _purge_captcha(db),
     "RevokedToken": lambda db: _purge_revoked(db),
     "ResetCode": lambda db: _purge_reset_code(db),
+    "RateLimit": lambda db: _purge_rate_limit(db),
 }
 
 

@@ -101,7 +101,7 @@
       </el-card>
     </div>
 
-    <!-- 找回密码：原先用三步 ElMessageBox.prompt 串联，既没有倒计时也不能重发，
+    <!-- 找回密码：原先用三步输入框串联，既没有倒计时也不能重发，
          输错一位就得从头再来（后端还会把验证码作废）。改为一个对话框：
          发码按钮带 60 秒倒计时可重发，错误就地提示，密码强度在前端先拦一次。 -->
     <el-dialog v-model="forgotDlg" title="找回密码" width="420px" append-to-body
@@ -219,7 +219,7 @@ async function sendCode() {
       ElMessage.warning(res?.message || '邮件服务未配置，请联系管理员重置密码')
       return
     }
-    ElMessage.success('若该账号存在，验证码已发送（10 分钟内有效）')
+    ElMessage.success('若该账号存在，验证码已发送（5 分钟内有效）')
     startCountdown(60)
   } finally {
     sendingCode.value = false
@@ -349,7 +349,7 @@ onMounted(loadCaptcha)
 
 .login-left {
   flex: 1;
-  background: linear-gradient(135deg, #2f6fd0 0%, #5a8fd6 50%, #764ba2 100%);
+  background: linear-gradient(135deg, var(--el-color-primary) 0%, #5a8fd6 50%, #764ba2 100%);
   color: #fff;
   display: flex;
   flex-direction: column;
@@ -417,7 +417,7 @@ onMounted(loadCaptcha)
 
 .login-sub {
   margin: 0 0 28px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 14px;
 }
 
@@ -466,7 +466,7 @@ onMounted(loadCaptcha)
   width: 170px;
   border-radius: 4px;
   cursor: pointer;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   flex-shrink: 0;
 }
 
@@ -494,6 +494,6 @@ onMounted(loadCaptcha)
     color: var(--el-color-primary);
   }
   .brand-compact-text strong { display: block; font-size: 20px; line-height: 1.25; }
-  .brand-compact-text span { font-size: 12px; color: #8a94a6; }
+  .brand-compact-text span { font-size: 12px; color: var(--el-text-color-secondary); }
 }
 </style>

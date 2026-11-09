@@ -124,7 +124,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 // 全局图标注册已移除：路由 meta / 菜单分组里存的是图标名字符串，
 // 这里集中 import 并映射成组件；新增菜单图标时补一个 import + ICONS 映射即可。
 import {
@@ -137,6 +137,7 @@ import {
 import { useUserStore } from '@/store/user'
 import { agentApi, systemApi } from '@/api'
 import VersionInfo from '@/components/VersionInfo.vue'
+import { confirmAction } from '@/utils/confirm'
 
 const route = useRoute()
 const router = useRouter()
@@ -291,7 +292,7 @@ async function handleCommand(cmd) {
   if (cmd === 'profile') {
     router.push('/profile')
   } else if (cmd === 'logout') {
-    await ElMessageBox.confirm('确定要退出登录吗？', '提示', { type: 'warning' })
+    if (!await confirmAction('确定要退出登录吗？', '提示', { type: 'warning' })) return
     // 走 store.logout：它会先调用后端 /auth/logout 注销令牌，再清理本地状态与 Pinia
     await userStore.logout()
     ElMessage.success('已退出登录')
@@ -395,27 +396,27 @@ onBeforeUnmount(() => {
   outline: none;
 }
 
-.user-name { font-size: 14px; color: #303133; }
+.user-name { font-size: 14px; color: var(--el-text-color-primary); }
 
 .notif-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid var(--el-border-color-lighter);
   font-weight: 600;
 }
 
 .notif-item {
   padding: 10px 12px;
-  border-bottom: 1px solid #f5f7fa;
+  border-bottom: 1px solid var(--el-fill-color-light);
   cursor: pointer;
 }
 
-.notif-item:hover { background: #f5f7fa; }
-.notif-item.unread { background: #ecf5ff; }
+.notif-item:hover { background: var(--el-fill-color-light); }
+.notif-item.unread { background: var(--el-color-primary-light-9); }
 .notif-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
-.notif-content { font-size: 12px; color: #909399; line-height: 1.5; }
+.notif-content { font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.5; }
 .notif-time { font-size: 11px; color: #c0c4cc; margin-top: 4px; }
 
 .main {
@@ -433,7 +434,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   background: #fff;
-  border-top: 1px solid #ebeef5;
+  border-top: 1px solid var(--el-border-color-lighter);
   flex-shrink: 0;
 }
 

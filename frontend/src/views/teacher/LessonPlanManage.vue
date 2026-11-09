@@ -122,7 +122,7 @@
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty description="暂无教案，点击右上角新建或使用 AI 生成" :image-size="70" />
+          <TableEmpty text="暂无教案，点击右上角新建或使用 AI 生成" />
         </template>
       </el-table>
       <el-pagination class="mt16" background layout="total, sizes, prev, pager, next, jumper"
@@ -298,6 +298,7 @@
     <!-- 生成记录：后台跑的、失败的任务都能在这里找回 -->
     <el-drawer v-model="historyVisible" title="AI 生成记录" size="620px">
       <el-table v-loading="historyLoading" :data="history" size="small" border>
+        <template #empty><TableEmpty text="暂无提交记录" /></template>
         <el-table-column prop="topic" label="教学主题" min-width="160" show-overflow-tooltip />
         <el-table-column label="状态" width="92" align="center">
           <template #default="{ row }">
@@ -326,7 +327,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   Plus, Refresh, RefreshLeft, Search, Delete, UploadFilled,
   MagicStick, Clock, Document
@@ -334,6 +335,8 @@ import {
 import { lessonApi, lessonAiApi, attachmentApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { downloadBlob, fetchBlobUrl } from '@/utils/download'
+import { alertAction, confirmAction } from '@/utils/confirm'
+import { toastIfUnhandled } from '@/utils/notify'
 import AiLessonDialog from './AiLessonDialog.vue'
 
 const userStore = useUserStore()
@@ -447,7 +450,7 @@ async function batchAction(action) {
     ? `确认删除 ${ids.length} 份教案？有引用的教案会被跳过，删除不可恢复。`
     : `确认将 ${ids.length} 份教案${labels[action]}？`
   try {
-    await ElMessageBox.confirm(tip, `批量${labels[action]}确认`, { type: 'warning' })
+    if (!await confirmAction(tip, `批量${labels[action]}确认`, { type: 'warning' })) return
   } catch { return }
   batchLoading.value = true
   try {
@@ -611,7 +614,7 @@ async function doUploadAttachment({ file }) {
     ElMessage.success(`${file.name} 上传成功`)
     loadAttachments()
   } catch (e) {
-    ElMessage.error(`${file.name} 上传失败：${e?.response?.data?.message || e?.message || e}`)
+    toastIfUnhandled(e, `${file.name} 上传失败`)
   }
 }
 
@@ -635,7 +638,7 @@ async function downloadAtt(a) {
   await downloadBlob(attachmentApi.download(a.id), a.filename || '教案附件')
 }
 async function removeAtt(a) {
-  await ElMessageBox.confirm(`确定删除附件「${a.filename}」吗？`, '提示', { type: 'warning' })
+  if (!await confirmAction(`确定删除附件「${a.filename}」吗？`, '提示', { type: 'warning' })) return
   await lessonApi.removeAttachment(form.id, a.id)
   ElMessage.success('附件已删除')
   loadAttachments()
@@ -650,8 +653,8 @@ async function toggleShare(row) {
 
 async function remove(row) {
   if (!canEditRow(row)) return ElMessage.warning('只能删除自己创建的教案')
-  await ElMessageBox.confirm(`确定删除教案「${row.title}」吗？此操作不可恢复。`,
-    '提示', { type: 'warning' })
+  if (!await confirmAction(`确定删除教案「${row.title}」吗？此操作不可恢复。`,
+    '提示', { type: 'warning' })) return
   await lessonApi.remove(row.id)
   ElMessage.success('已删除')
   await refreshAll()
@@ -682,7 +685,7 @@ async function openHistory() {
 }
 
 function showJobError(row) {
-  ElMessageBox.alert(row.error || '生成失败', `任务 #${row.job_id} 失败原因`,
+  alertAction(row.error || '生成失败', `任务 #${row.job_id} 失败原因`,
     { type: 'error' })
 }
 

@@ -1,10 +1,12 @@
 {
   "summary": {
-    "total": 70,
-    "passed": 70,
+    "total": 114,
+    "passed": 114,
     "failed": 0,
+    "skipped": 0,
     "catalog_total": 156,
-    "unexecuted": 88
+    "unexecuted": 44,
+    "api_unexecuted": 0
   },
   "unexecuted": [
     {
@@ -12,6 +14,7 @@
       "menu": "学科管理",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -19,6 +22,7 @@
       "menu": "年级管理",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -26,6 +30,7 @@
       "menu": "班级管理",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -33,6 +38,7 @@
       "menu": "知识点管理",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -40,6 +46,7 @@
       "menu": "工作台",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -47,6 +54,7 @@
       "menu": "日志审计",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -54,6 +62,7 @@
       "menu": "注册审批",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -61,6 +70,7 @@
       "menu": "用户管理",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -68,62 +78,23 @@
       "menu": "系统配置",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-ADM-016",
-      "menu": "角色权限",
-      "role": "admin",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-ADM-017",
       "menu": "角色权限",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-ADM-018",
-      "menu": "学科管理",
-      "role": "admin",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-ADM-019",
-      "menu": "学科管理",
-      "role": "admin",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-ADM-020",
-      "menu": "班级管理",
-      "role": "admin",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-ADM-021",
-      "menu": "班级管理",
-      "role": "admin",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-ADM-028",
-      "menu": "知识点管理",
-      "role": "admin",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-ADM-030",
       "menu": "AI 调用日志",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -131,83 +102,39 @@
       "menu": "AI 大模型配置",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-ADM-035",
-      "menu": "定时任务",
-      "role": "admin",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-ADM-037",
-      "menu": "定时任务",
-      "role": "admin",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-ADM-038",
       "menu": "定时任务",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-ADM-040",
-      "menu": "年级管理",
-      "role": "admin",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-ADM-045",
       "menu": "系统配置-版本卡片",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-ADM-046",
-      "menu": "用户管理",
-      "role": "admin",
-      "method": "DELETE",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-ADM-047",
-      "menu": "用户管理",
-      "role": "admin",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-ADM-050",
-      "menu": "用户管理",
-      "role": "admin",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-ADM-052",
       "menu": "系统报表",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-ADM-054",
-      "menu": "角色权限",
-      "role": "admin",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-ADM-056",
       "menu": "附件管理",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -215,27 +142,15 @@
       "menu": "学科管理",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-ADM-064",
-      "menu": "AI 调用日志",
-      "role": "admin",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-ADM-066",
-      "menu": "定时任务",
-      "role": "admin",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-ADM-068",
       "menu": "注册审批",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -243,6 +158,7 @@
       "menu": "全站页脚",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -250,6 +166,7 @@
       "menu": "用户管理",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -257,20 +174,15 @@
       "menu": "用户管理",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-ADM-073",
-      "menu": "角色权限",
-      "role": "admin",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-ADM-074",
       "menu": "角色权限",
       "role": "admin",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -278,27 +190,15 @@
       "menu": "作业与考试",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-TCH-003",
-      "menu": "批改中心",
-      "role": "teacher",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-TCH-004",
-      "menu": "批改中心",
-      "role": "teacher",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-TCH-005",
       "menu": "批改中心",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -306,6 +206,7 @@
       "menu": "新建试卷(向导)",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -313,6 +214,7 @@
       "menu": "试卷管理",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -320,6 +222,7 @@
       "menu": "试卷管理",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -327,6 +230,7 @@
       "menu": "题库管理",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -334,48 +238,23 @@
       "menu": "AI 出题组卷",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-TCH-016",
-      "menu": "作业与考试",
-      "role": "teacher",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-TCH-017",
-      "menu": "作业与考试",
-      "role": "teacher",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-TCH-019",
       "menu": "班级学情",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-TCH-020",
-      "menu": "批改中心",
-      "role": "teacher",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-TCH-022",
-      "menu": "教案管理",
-      "role": "teacher",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-TCH-024",
       "menu": "教案管理",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -383,132 +262,55 @@
       "menu": "新建试卷(向导)",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-TCH-027",
-      "menu": "编辑试卷",
-      "role": "teacher",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-TCH-028",
       "menu": "试卷管理",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "manual 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-TCH-029",
-      "menu": "试卷管理",
-      "role": "teacher",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-TCH-032",
-      "menu": "题库管理",
-      "role": "teacher",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-TCH-034",
-      "menu": "题库管理",
-      "role": "teacher",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-TCH-037",
-      "menu": "作业与考试",
-      "role": "teacher",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-TCH-038",
       "menu": "批改中心",
       "role": "teacher",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-TCH-042",
-      "menu": "编辑试卷",
-      "role": "teacher",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-TCH-045",
-      "menu": "题库管理",
-      "role": "teacher",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-STU-001",
       "menu": "成绩中心",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-STU-003",
-      "menu": "随机练习",
-      "role": "student",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-STU-004",
-      "menu": "模拟考试",
-      "role": "student",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-STU-005",
       "menu": "模拟考试",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-STU-006",
-      "menu": "答题",
-      "role": "student",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-STU-007",
-      "menu": "答题",
-      "role": "student",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-STU-008",
       "menu": "错题本",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-STU-010",
-      "menu": "智能复习",
-      "role": "student",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-STU-012",
       "menu": "学习报表",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -516,20 +318,15 @@
       "menu": "掌握图谱",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-STU-014",
-      "menu": "学习笔记",
-      "role": "student",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-STU-016",
       "menu": "学习笔记",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -537,55 +334,15 @@
       "menu": "随机练习",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-STU-018",
-      "menu": "模拟考试",
-      "role": "student",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-STU-019",
-      "menu": "答题",
-      "role": "student",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-STU-021",
-      "menu": "错题本",
-      "role": "student",
-      "method": "POST",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-STU-022",
-      "menu": "错题本",
-      "role": "student",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-STU-025",
-      "menu": "题目收藏",
-      "role": "student",
-      "method": "PUT",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
-    },
-    {
-      "id": "FUNC-STU-026",
-      "menu": "知识资料",
-      "role": "student",
-      "method": "GET",
-      "reason": "路径含 {} 占位符：需先构造合法实体 id"
     },
     {
       "id": "FUNC-STU-027",
       "menu": "随机练习",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -593,6 +350,7 @@
       "menu": "学习路径",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
     },
     {
@@ -600,28 +358,8 @@
       "menu": "闪卡速记",
       "role": "student",
       "method": "-",
+      "api": false,
       "reason": "ui 类用例：无接口自动化，需人工/浏览器验证"
-    },
-    {
-      "id": "FUNC-PUB-001",
-      "menu": "越权访问",
-      "role": "public",
-      "method": "GET",
-      "reason": "角色 public 无独立登录令牌"
-    },
-    {
-      "id": "FUNC-PUB-002",
-      "menu": "注册",
-      "role": "public",
-      "method": "POST",
-      "reason": "角色 public 无独立登录令牌"
-    },
-    {
-      "id": "FUNC-PUB-003",
-      "menu": "登出",
-      "role": "public",
-      "method": "POST",
-      "reason": "角色 public 无独立登录令牌"
     }
   ],
   "results": [
@@ -728,6 +466,17 @@
       "detail": "本角色 422; 跨角色 teacher=422; student=422"
     },
     {
+      "id": "FUNC-ADM-064",
+      "kind": "reach",
+      "role": "admin",
+      "path": "/agent/status",
+      "own_status": 200,
+      "status": "PASS",
+      "cross_role": "all-others",
+      "cross_status": "teacher=200; student=200",
+      "detail": "本角色 200; 跨角色 teacher=200; student=200"
+    },
+    {
       "id": "FUNC-ADM-067",
       "kind": "reach",
       "role": "admin",
@@ -825,6 +574,406 @@
       "cross_role": "all-others",
       "cross_status": "admin=200; teacher=200",
       "detail": "本角色 200; 跨角色 admin=200; teacher=200"
+    },
+    {
+      "id": "FUNC-ADM-016",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/system/roles/{id}",
+      "concrete_path": "/system/roles/10",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /system/roles/10 -> 200（临时角色 qa_tmp_role_4207060232#10）"
+    },
+    {
+      "id": "FUNC-ADM-018",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/edu/subjects/{id}",
+      "concrete_path": "/edu/subjects/1",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /edu/subjects/1 -> 200（/edu/subjects 首条 #1）"
+    },
+    {
+      "id": "FUNC-ADM-019",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/edu/subjects/{subject_id}/clone",
+      "concrete_path": "/edu/subjects/1/clone",
+      "own_status": 400,
+      "status": "PASS",
+      "detail": "POST /edu/subjects/1/clone -> 400（/edu/subjects 首条 #1）"
+    },
+    {
+      "id": "FUNC-ADM-020",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/edu/classes/{id}",
+      "concrete_path": "/edu/classes/1",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /edu/classes/1 -> 200（/edu/classes 首条 #1）"
+    },
+    {
+      "id": "FUNC-ADM-021",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/edu/classes/{id}/students",
+      "concrete_path": "/edu/classes/1/students",
+      "own_status": 422,
+      "status": "PASS",
+      "detail": "POST /edu/classes/1/students -> 422（/edu/classes 首条 #1）"
+    },
+    {
+      "id": "FUNC-ADM-028",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/edu/knowledge/{id}",
+      "concrete_path": "/edu/knowledge/2",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /edu/knowledge/2 -> 200（/edu/knowledge 首条 #2）"
+    },
+    {
+      "id": "FUNC-ADM-035",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/jobs/{id}/run",
+      "concrete_path": "/jobs/1/run",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /jobs/1/run -> 200（/jobs 首条 #1）"
+    },
+    {
+      "id": "FUNC-ADM-037",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/jobs/{id}",
+      "concrete_path": "/jobs/1",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /jobs/1 -> 200（/jobs 首条 #1）"
+    },
+    {
+      "id": "FUNC-ADM-040",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/edu/grades/{id}",
+      "concrete_path": "/edu/grades/1",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /edu/grades/1 -> 200（/edu/grades 首条 #1）"
+    },
+    {
+      "id": "FUNC-ADM-046",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/system/users/{id}",
+      "concrete_path": "/system/users/20",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "DELETE /system/users/20 -> 200（临时用户 qa_tmp_4207060806#20）"
+    },
+    {
+      "id": "FUNC-ADM-047",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/system/users/{id}",
+      "concrete_path": "/system/users/20",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /system/users/20 -> 200（临时用户 qa_tmp_4207061527#20）"
+    },
+    {
+      "id": "FUNC-ADM-050",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/system/users/{id}",
+      "concrete_path": "/system/users/21",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /system/users/21 -> 200（临时用户 qa_tmp_4207062240#21）"
+    },
+    {
+      "id": "FUNC-ADM-054",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/system/roles/{id}",
+      "concrete_path": "/system/roles/11",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /system/roles/11 -> 200（临时角色 qa_tmp_role_4207062976#11）"
+    },
+    {
+      "id": "FUNC-ADM-066",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/jobs/{id}/executions",
+      "concrete_path": "/jobs/1/executions",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "GET /jobs/1/executions -> 200（/jobs 首条 #1）"
+    },
+    {
+      "id": "FUNC-ADM-073",
+      "kind": "placeholder",
+      "role": "admin",
+      "path": "/system/roles/{role_id}/copy",
+      "concrete_path": "/system/roles/12/copy",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /system/roles/12/copy -> 200（临时角色 qa_tmp_role_4207063066#12）"
+    },
+    {
+      "id": "FUNC-TCH-003",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/grading/submissions/{id}/grade",
+      "concrete_path": "/grading/submissions/2/grade",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /grading/submissions/2/grade -> 200（/grading/submissions 首条 #2）"
+    },
+    {
+      "id": "FUNC-TCH-004",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/grading/submissions/{id}/grade",
+      "concrete_path": "/grading/submissions/2/grade",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /grading/submissions/2/grade -> 200（/grading/submissions 首条 #2）"
+    },
+    {
+      "id": "FUNC-TCH-016",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/task/tasks/{id}/submissions",
+      "concrete_path": "/task/tasks/1/submissions",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "GET /task/tasks/1/submissions -> 200（/task/tasks 首条 #1）"
+    },
+    {
+      "id": "FUNC-TCH-017",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/task/tasks/{id}",
+      "concrete_path": "/task/tasks/1",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /task/tasks/1 -> 200（/task/tasks 首条 #1）"
+    },
+    {
+      "id": "FUNC-TCH-020",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/grading/submissions/{id}/reject",
+      "concrete_path": "/grading/submissions/2/reject",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /grading/submissions/2/reject -> 200（/grading/submissions 首条 #2）"
+    },
+    {
+      "id": "FUNC-TCH-022",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/lesson/plans/{id}/copy",
+      "concrete_path": "/lesson/plans/1/copy",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /lesson/plans/1/copy -> 200（/lesson/plans 首条 #1）"
+    },
+    {
+      "id": "FUNC-TCH-027",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/question/papers/{id}/items",
+      "concrete_path": "/question/papers/2/items",
+      "own_status": 403,
+      "status": "PASS",
+      "detail": "POST /question/papers/2/items -> 403（/question/papers 首条 #2）"
+    },
+    {
+      "id": "FUNC-TCH-029",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/question/papers/{id}",
+      "concrete_path": "/question/papers/2",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "GET /question/papers/2 -> 200（/question/papers 首条 #2）"
+    },
+    {
+      "id": "FUNC-TCH-032",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/question/questions/{id}/status",
+      "concrete_path": "/question/questions/10/status",
+      "own_status": 400,
+      "status": "PASS",
+      "detail": "PUT /question/questions/10/status -> 400（/question/questions 首条 #10）"
+    },
+    {
+      "id": "FUNC-TCH-034",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/question/questions/{id}",
+      "concrete_path": "/question/questions/10",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /question/questions/10 -> 200（/question/questions 首条 #10）"
+    },
+    {
+      "id": "FUNC-TCH-037",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/grading/submissions/{id}",
+      "concrete_path": "/grading/submissions/2",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "GET /grading/submissions/2 -> 200（/grading/submissions 首条 #2）"
+    },
+    {
+      "id": "FUNC-TCH-042",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/question/papers/{id}/export",
+      "concrete_path": "/question/papers/2/export",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "GET /question/papers/2/export -> 200（/question/papers 首条 #2）"
+    },
+    {
+      "id": "FUNC-TCH-045",
+      "kind": "placeholder",
+      "role": "teacher",
+      "path": "/question/questions/{id}/duplicates",
+      "concrete_path": "/question/questions/10/duplicates",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "GET /question/questions/10/duplicates -> 200（/question/questions 首条 #10）"
+    },
+    {
+      "id": "FUNC-STU-003",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/task/tasks/{task_id}/submit",
+      "concrete_path": "/task/tasks/1/submit",
+      "own_status": 400,
+      "status": "PASS",
+      "detail": "POST /task/tasks/1/submit -> 400（/task/tasks 首条 #1）"
+    },
+    {
+      "id": "FUNC-STU-004",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/task/tasks/{id}/paper",
+      "concrete_path": "/task/tasks/1/paper",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "GET /task/tasks/1/paper -> 200（/task/tasks 首条 #1）"
+    },
+    {
+      "id": "FUNC-STU-006",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/task/tasks/{task_id}/submit",
+      "concrete_path": "/task/tasks/1/submit",
+      "own_status": 400,
+      "status": "PASS",
+      "detail": "POST /task/tasks/1/submit -> 400（/task/tasks 首条 #1）"
+    },
+    {
+      "id": "FUNC-STU-007",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/task/tasks/{task_id}/submit",
+      "concrete_path": "/task/tasks/1/submit",
+      "own_status": 400,
+      "status": "PASS",
+      "detail": "POST /task/tasks/1/submit -> 400（/task/tasks 首条 #1）"
+    },
+    {
+      "id": "FUNC-STU-010",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/learning/review-plans/{id}/complete",
+      "concrete_path": "/learning/review/plans/1/complete",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /learning/review/plans/1/complete -> 200（/learning/review/plans 首条 #1）；路径已按实际路由纠正：/learning/review/plans/{id}/complete"
+    },
+    {
+      "id": "FUNC-STU-014",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/learning/notes/{id}/organize",
+      "concrete_path": "/learning/notes/5/organize",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /learning/notes/5/organize -> 200（/learning/notes 首条 #5）"
+    },
+    {
+      "id": "FUNC-STU-018",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/task/submissions/{id}",
+      "concrete_path": "/task/submissions/2",
+      "own_status": 403,
+      "status": "PASS",
+      "detail": "GET /task/submissions/2 -> 403（/grading/submissions 首条 #2）"
+    },
+    {
+      "id": "FUNC-STU-019",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/task/tasks/{task_id}/heartbeat",
+      "concrete_path": "/task/tasks/1/heartbeat",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /task/tasks/1/heartbeat -> 200（/task/tasks 首条 #1）"
+    },
+    {
+      "id": "FUNC-STU-021",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/learning/wrong-questions/{wid}/analyze",
+      "concrete_path": "/learning/wrong-questions/1/analyze",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /learning/wrong-questions/1/analyze -> 200（/learning/wrong-questions 首条 #1）"
+    },
+    {
+      "id": "FUNC-STU-022",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/learning/wrong-questions/{id}",
+      "concrete_path": "/learning/wrong-questions/1",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "PUT /learning/wrong-questions/1 -> 200（/learning/wrong-questions 首条 #1）"
+    },
+    {
+      "id": "FUNC-STU-025",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/learning/favorites/{id}",
+      "concrete_path": "/learning/favorites/5",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "DELETE /learning/favorites/5 -> 200（临时收藏 #5（question_id=1））"
+    },
+    {
+      "id": "FUNC-STU-026",
+      "kind": "placeholder",
+      "role": "student",
+      "path": "/edu/knowledge/{kp_id}/attachments",
+      "concrete_path": "/edu/knowledge/2/attachments",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "GET /edu/knowledge/2/attachments -> 200（/edu/knowledge 首条 #2）"
     },
     {
       "id": "FUNC-ADM-001",
@@ -1268,12 +1417,39 @@
       "detail": "POST /learning/favorites/practice -> 400（目录派生，空 body 校验链）"
     },
     {
+      "id": "FUNC-PUB-001",
+      "kind": "public",
+      "role": "public",
+      "path": "/system/users",
+      "own_status": 401,
+      "status": "PASS",
+      "detail": "GET /system/users 匿名 -> 401；期望 [401, 403]：管理端接口必须拒绝匿名访问"
+    },
+    {
+      "id": "FUNC-PUB-002",
+      "kind": "public",
+      "role": "public",
+      "path": "/auth/register",
+      "own_status": 422,
+      "status": "PASS",
+      "detail": "POST /auth/register 匿名 -> 422；期望 [200, 400, 401, 403, 422, 429]：注册入口匿名可达（校验/限流均可）"
+    },
+    {
+      "id": "FUNC-PUB-003",
+      "kind": "public",
+      "role": "public",
+      "path": "/auth/logout",
+      "own_status": 200,
+      "status": "PASS",
+      "detail": "POST /auth/logout 匿名 -> 200；期望 [200, 400, 401, 403, 422]：登出入口不得 5xx"
+    },
+    {
       "id": "FUNC-VER",
       "kind": "public",
       "path": "/system/version",
       "own_status": 200,
       "status": "PASS",
-      "detail": "{\"app_name\": \"新芽学堂\", \"version\": \"2.5.11\", \"build_number\": \"\", \"commit\": \"\", \"built_at\": \"\", \"updated_at\": \"2026-11-09 13"
+      "detail": "{\"app_name\": \"新芽学堂\", \"version\": \"2.5.12\", \"build_number\": \"\", \"commit\": \"\", \"built_at\": \"\", \"updated_at\": \"2026-11-09 14"
     },
     {
       "id": "FUNC-CFG",

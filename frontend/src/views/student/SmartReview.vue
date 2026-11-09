@@ -11,7 +11,7 @@
     <el-row :gutter="16" class="mb16">
       <el-col :span="8">
         <div class="stat-card">
-          <div class="stat-value" style="color:#f56c6c">{{ planData.today_count ?? 0 }}</div>
+          <div class="stat-value" style="color:var(--el-color-danger)">{{ planData.today_count ?? 0 }}</div>
           <div class="stat-label">今日待复习</div>
         </div>
       </el-col>
@@ -23,7 +23,7 @@
       </el-col>
       <el-col :span="8">
         <div class="stat-card">
-          <div class="stat-value" style="color:#67c23a">{{ mastery.avg_mastery ?? 0 }}%</div>
+          <div class="stat-value" style="color:var(--el-color-success)">{{ mastery.avg_mastery ?? 0 }}%</div>
           <div class="stat-label">平均掌握度</div>
         </div>
       </el-col>
@@ -89,7 +89,7 @@
                 <span class="tip">{{ w.wrong_count }} 错 / {{ w.total_count }} 题</span>
               </div>
               <el-progress :percentage="Math.min(w.mastery, 100)" :stroke-width="8"
-                           :color="w.mastery >= 60 ? '#67c23a' : '#f56c6c'" />
+                           :color="w.mastery >= 60 ? 'var(--el-color-success)' : 'var(--el-color-danger)'" />
             </div>
             <el-empty v-if="!(mastery.weak_points || []).length" description="暂无薄弱点，很棒！" :image-size="60" />
           </template>
@@ -247,14 +247,14 @@ onMounted(async () => {
 .ml4 { margin-left: 4px; }
 .ml8 { margin-left: 8px; }
 .mb16 { margin-bottom: 16px; }
-.tip { font-size: 12px; color: #909399; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); }
 .plan-list { max-height: 560px; overflow-y: auto; }
 .plan-item {
-  border: 1px solid #ebeef5; border-radius: 8px; margin-bottom: 8px; padding: 10px;
+  border: 1px solid var(--el-border-color-lighter); border-radius: 8px; margin-bottom: 8px; padding: 10px;
 }
 .plan-item.today { border-color: #f7ba2a; background: #fdf6ec; }
 .plan-item.done { opacity: 0.6; }
-.stem { margin: 6px 0 0; color: #606266; font-size: 13px; }
+.stem { margin: 6px 0 0; color: var(--el-text-color-regular); font-size: 13px; }
 .weak-item { margin-bottom: 12px; }
 .weak-item .row-between { margin-bottom: 4px; font-size: 13px; }
 .plan-result { background: #f7f9fc; padding: 12px; border-radius: 8px; max-height: 380px; overflow: auto; }

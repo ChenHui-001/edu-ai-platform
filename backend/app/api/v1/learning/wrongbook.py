@@ -18,6 +18,7 @@ from app.core.database import get_db
 from app.core.exception import NotFoundException
 from app.models import KnowledgePoint, Question, User, WrongQuestion
 from app.utils.common import PageParams, dictify, load_json, now_local, ok
+from app.utils.options import normalize_options
 
 router = APIRouter()
 
@@ -54,7 +55,7 @@ def list_wrong(
         kp = db.get(KnowledgePoint, w.knowledge_point_id) if w.knowledge_point_id else None
         items.append({
             "id": w.id, "question_id": w.question_id,
-            "stem": q.stem if q else "", "options": load_json(q.options) if q else None,
+            "stem": q.stem if q else "", "options": normalize_options(q.options) if q else None,
             "answer": load_json(q.answer) if q else None, "analysis": q.analysis if q else None,
             "type": q.type if q else None, "difficulty": q.difficulty if q else None,
             "wrong_answer": w.wrong_answer, "error_count": w.error_count,
@@ -156,7 +157,7 @@ def export_wrong(
             q = db.get(Question, w.question_id)
             if not q:
                 continue
-            opts = load_json(q.options) or []
+            opts = normalize_options(q.options)
             lines.append(f"## {i}. {q.stem}")
             for o in opts:
                 lines.append(f"- {o.get('key')}. {o.get('text')}")

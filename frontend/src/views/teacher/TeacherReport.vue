@@ -43,6 +43,7 @@
             </div>
           </template>
           <el-table v-loading="loadingEffect" :data="effect" border stripe max-height="400">
+            <template #empty><TableEmpty text="暂无知识点数据" /></template>
             <el-table-column prop="name" label="知识点" min-width="150" show-overflow-tooltip />
             <el-table-column prop="total_count" label="答题数" width="90" align="center" />
             <el-table-column prop="correct_count" label="答对数" width="90" align="center" />
@@ -76,6 +77,7 @@
     <el-card shadow="never">
       <template #header><b>班级横向对比</b></template>
       <el-table v-loading="loading" :data="comparison" border stripe>
+        <template #empty><TableEmpty text="暂无提交记录" /></template>
         <el-table-column type="index" label="排名" width="70" align="center">
           <template #default="{ $index }">
             <el-tag :type="$index < 3 ? 'success' : 'info'" size="small">第 {{ $index + 1 }} 名</el-tag>

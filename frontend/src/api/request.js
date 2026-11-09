@@ -108,7 +108,6 @@ function markHandled(err) {
   } catch { /* 冻结对象等极端情况忽略 */ }
   return err
 }
-
 // 响应拦截：统一错误处理
 // 非 JSON 响应类型：这些接口返回的不是统一信封，而是原始内容。
 // 只豁免 blob 会让 `responseType: 'text'` 的 HTML 打印视图 100% 失败：
@@ -144,6 +143,16 @@ service.interceptors.response.use(
     // 进门先标记：本拦截器所有出口都自带用户提示
     markHandled(error)
     const { response, config } = error
+
+    // 把中文文案**回写进 error.message**（reaudit3 P2-13）。
+    // 只改 toast 不够：组件里 `catch (e) { ElMessage.error(e.message) }` 拿到的
+    // 还是 "Request failed with status code 400"，于是用户先看到一句中文、
+    // 再看到一句英文原文。回写之后组件层即便还留着二次提示也是中文。
+    // 组件侧同时已统一改用 toastIfUnhandled，正常路径只会弹一次。
+    const friendly = humanizeError(error, response)
+    try {
+      if (error && typeof error === 'object') error.message = friendly
+    } catch { /* 只读对象忽略 */ }
 
     // 登录接口自身返回 401 不应触发刷新循环
     const isAuthRequest = (config?.url || '').includes('/auth/login')
@@ -196,7 +205,7 @@ service.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    ElMessage.error(humanizeError(error, response))
+    ElMessage.error(friendly)
     return Promise.reject(error)
   }
 )

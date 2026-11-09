@@ -235,10 +235,12 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Search, Refresh, QuestionFilled } from '@element-plus/icons-vue'
 import { gradingApi, taskApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import { confirmAction, promptAction } from '@/utils/confirm'
+import { toastIfUnhandled } from '@/utils/notify'
 
 const { can } = useUserStore()
 const route = useRoute()
@@ -469,7 +471,7 @@ async function batchGrade() {
       (d.skipped?.length ? `，跳过 ${d.skipped.length} 份` : ''))
     await refreshAll()
   } catch (e) {
-    ElMessage.error(`批量批改失败：${e?.message || e}`)
+    toastIfUnhandled(e, '批量批改失败')
   } finally {
     batching.value = false
   }
@@ -478,8 +480,8 @@ async function batchGrade() {
 /** 批量发布：仅对已批改且未发布的记录生效（未批改的自动跳过） */
 async function batchPublish() {
   try {
-    await ElMessageBox.confirm(
-      `将发布 ${checkedIds.value.length} 份成绩，学生立即可见。确认？`, '批量发布', { type: 'warning' })
+    if (!await confirmAction(
+      `将发布 ${checkedIds.value.length} 份成绩，学生立即可见。确认？`, '批量发布', { type: 'warning' })) return
   } catch { return }
   batching.value = true
   try {
@@ -490,7 +492,7 @@ async function batchPublish() {
       (d.skipped?.length ? `，跳过 ${d.skipped.length} 份（未批改/已发布）` : ''))
     await refreshAll()
   } catch (e) {
-    ElMessage.error(`批量发布失败：${e?.message || e}`)
+    toastIfUnhandled(e, '批量发布失败')
   } finally {
     batching.value = false
   }
@@ -599,7 +601,7 @@ async function saveGrade(silent = false) {
     await refreshAll()
     return true
   } catch (e) {
-    ElMessage.error(`保存失败：${e?.message || e}`)
+    toastIfUnhandled(e, '保存失败')
     return false
   } finally {
     saving.value = false
@@ -616,9 +618,10 @@ async function saveAndNext() {
 }
 
 async function reject() {
-  const { value } = await ElMessageBox.prompt('请输入打回原因', '打回重做', {
+  const value = await promptAction('请输入打回原因', '打回重做', {
     inputPlaceholder: '如：第 3 题计算过程缺失，请重新作答',
   })
+  if (value === null) return  // 用户取消
   await gradingApi.reject(detail.value.submission_id, { reason: value })
   ElMessage.success('已打回，学生可重新提交')
   detail.value = null
@@ -628,7 +631,7 @@ async function reject() {
 }
 
 async function publish() {
-  await ElMessageBox.confirm('发布后学生即可看到最终成绩，确认发布？', '提示', { type: 'info' })
+  if (!await confirmAction('发布后学生即可看到最终成绩，确认发布？', '提示', { type: 'info' })) return
   await gradingApi.publish(detail.value.submission_id)
   ElMessage.success('成绩已发布')
   detail.value = null
@@ -650,9 +653,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .header-actions { display: flex; align-items: center; gap: 12px; }
-.queue-summary { font-size: 13px; color: #606266; }
-.queue-summary b { color: #2f6fd0; }
-.queue-summary b.warn { color: #e6a23c; }
+.queue-summary { font-size: 13px; color: var(--el-text-color-regular); }
+.queue-summary b { color: var(--el-color-primary); }
+.queue-summary b.warn { color: var(--el-color-warning); }
 
 .gc-stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .gc-stat { min-width: 120px; padding: 10px 14px; }
@@ -664,12 +667,12 @@ onBeforeUnmount(() => {
 .flex-between, .row-between { display: flex; align-items: center; justify-content: space-between; }
 .mb10 { margin-bottom: 10px; }
 .ml4 { margin-left: 4px; }
-.tip { color: #909399; font-size: 12px; }
+.tip { color: var(--el-text-color-secondary); font-size: 12px; }
 
 .queue-card :deep(.el-card__body) { padding-top: 12px; }
 .sub-list { max-height: calc(100vh - 300px); min-height: 320px; overflow-y: auto; }
 .sub-item {
-  cursor: pointer; border: 1px solid #ebeef5; border-radius: 8px;
+  cursor: pointer; border: 1px solid var(--el-border-color-lighter); border-radius: 8px;
   margin-bottom: 8px; padding: 10px 12px; transition: all .18s;
 }
 .sub-item:hover { border-color: #a5c4f0; background: #f7fafd; }
@@ -689,7 +692,7 @@ onBeforeUnmount(() => {
 .load-more { text-align: center; padding: 8px 0; }
 .kb-tip { line-height: 1.8; font-size: 12px; }
 .task {
-  margin: 4px 0 6px; color: #606266; font-size: 12px;
+  margin: 4px 0 6px; color: var(--el-text-color-regular); font-size: 12px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .score { color: var(--el-color-primary); font-weight: 600; font-size: 13px; }
@@ -699,7 +702,7 @@ onBeforeUnmount(() => {
 .student-info { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .student-name { font-size: 16px; }
 .task-name {
-  color: #909399; font-size: 13px; overflow: hidden;
+  color: var(--el-text-color-secondary); font-size: 13px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; max-width: 320px;
 }
 .head-tags { display: flex; gap: 6px; flex-shrink: 0; }
@@ -711,18 +714,18 @@ onBeforeUnmount(() => {
 .progress-info { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
 
 .q-item {
-  padding: 12px 14px; border: 1px solid #ebeef5; border-radius: 8px; margin-bottom: 12px;
+  padding: 12px 14px; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; margin-bottom: 12px;
   transition: border-color .2s, background .2s;
 }
-.q-item.scored { border-left: 3px solid #67c23a; background: #fbfefb; }
+.q-item.scored { border-left: 3px solid var(--el-color-success); background: #fbfefb; }
 .q-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
 .q-no {
   width: 24px; height: 24px; line-height: 24px; text-align: center;
-  background: #2f6fd0; color: #fff; border-radius: 50%; font-size: 12px; font-weight: 600;
+  background: var(--el-color-primary); color: #fff; border-radius: 50%; font-size: 12px; font-weight: 600;
   flex-shrink: 0;
 }
 .q-score-panel { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.full-score { font-size: 12px; color: #909399; }
+.full-score { font-size: 12px; color: var(--el-text-color-secondary); }
 
 .q-body { display: flex; gap: 14px; }
 .q-col.q-detail { flex: 1; min-width: 0; }
@@ -731,19 +734,19 @@ onBeforeUnmount(() => {
   margin: 5px 0; line-height: 1.65; font-size: 13px;
 }
 .content .ans {
-  display: inline-block; background: #f5f7fa; padding: 1px 8px; border-radius: 4px;
-  color: #303133;
+  display: inline-block; background: var(--el-fill-color-light); padding: 1px 8px; border-radius: 4px;
+  color: var(--el-text-color-primary);
 }
 .correct .std {
-  display: inline-block; background: #f0f9eb; color: #529b2e;
+  display: inline-block; background: var(--el-color-success-light-9); color: #529b2e;
   padding: 1px 8px; border-radius: 4px; font-weight: 600;
 }
-.ai-comment { color: #2f6fd0; background: #f0f6ff; padding: 6px 10px; border-radius: 6px; }
-.err-points { color: #f56c6c; }
+.ai-comment { color: var(--el-color-primary); background: #f0f6ff; padding: 6px 10px; border-radius: 6px; }
+.err-points { color: var(--el-color-danger); }
 
 .footer-bar {
   position: sticky; bottom: 0; z-index: 3; background: #fff;
-  padding: 12px 0 4px; border-top: 1px solid #ebeef5;
+  padding: 12px 0 4px; border-top: 1px solid var(--el-border-color-lighter);
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   flex-wrap: wrap;
 }

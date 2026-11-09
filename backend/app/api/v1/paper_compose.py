@@ -46,6 +46,21 @@ from app.models import (
     PaperShare, PaperStatus, PaperVersion, Question, SharePermission,
     ShareScope, Subject, Submission, Task, User,
 )
+from app.schemas.legacy_bodies import (
+    ComposeAiAsyncIn,
+    ComposeAiIn,
+    ComposePreviewIn,
+    ComposeRegenerateIn,
+    ComposeSaveIn,
+    RegenerateItemIn,
+    RenameSectionIn,
+    RestoreVersionIn,
+    RestructurePaperIn,
+    ReviewPaperIn,
+    SetShareScopeIn,
+    ToggleFavoriteIn,
+    UpdateItemsIn,
+)
 from app.services import paper_compose_service as compose_svc
 from app.services import llm_breaker
 from app.services.exam_structures import section_total, sections_for
@@ -888,7 +903,7 @@ def _diff_label(diff: str) -> str:
 
 @router.post("/compose/regenerate", summary="组卷预览：重新生成单题或某题型")
 def compose_regenerate(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: ComposeRegenerateIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:ai")),
 ):
     """在**保存之前**替换预览里的某些题目（不写试卷，只把新题返回给前端）。
@@ -917,6 +932,7 @@ def compose_regenerate(
     设计取舍：**沿用原题的分值/槽位/大题归属**，只换题目内容。分值是按槽位给的
     （阶梯分值 6/6/6/8…），换题时若重算分，压轴题的 12 分会被抹成均分。
     """
+    data = body.model_dump(exclude_unset=True)
     from app.core.database import SessionLocal
 
     grade, subject = _grade_subject(db, data.get("grade_id"), data.get("subject_id"))
@@ -1375,20 +1391,21 @@ def _plan_response(ctx: Dict[str, Any], *, ai_message: str = "") -> Dict[str, An
 # ---------------------------------------------------------------- 组卷预览
 @router.post("/compose/preview", summary="自定义参数组卷（预览，不落库）")
 def compose_preview(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: ComposePreviewIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
     """按年级/学科/知识点/题型/分值/难度抽题。
 
     返回完整预览 + 三份报告。**不写库**——教师确认后再调 `/compose/save`。
     """
+    data = body.model_dump(exclude_unset=True)
     ctx = _compose_from_payload(db, user, data)
     return ok(_plan_response(ctx))
 
 
 @router.post("/compose/ai", summary="AI 一键智能组卷")
 def compose_ai(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: ComposeAiIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:ai")),
 ):
     """极简参数 + 自然语言 → 全卷。
@@ -1400,6 +1417,7 @@ def compose_ai(
 
     若 `count` 未指定，自动采用命题标准的题量结构。
     """
+    data = body.model_dump(exclude_unset=True)
     from app.agents.paper_agent import PaperComposerAgent
 
     request = str(data.get("request") or "").strip()
@@ -1578,7 +1596,7 @@ def _type_ratio_to_sections(
 
 @router.post("/compose/save", summary="保存组卷结果为新试卷")
 def compose_save(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: ComposeSaveIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
     """把预览结果落库。
@@ -1589,6 +1607,7 @@ def compose_save(
 
     总分一律由题分求和，**忽略客户端 total_score**（防伪造，与既有口径一致）。
     """
+    data = body.model_dump(exclude_unset=True)
     name = str(data.get("name") or "").strip()
     if not name:
         raise BusinessException("请填写试卷名称")
@@ -1958,7 +1977,7 @@ def _load_json(value: Optional[str]) -> Any:
 
 @router.post("/{paper_id}/items", summary="保存题目列表（增删/排序/改分）")
 def update_items(
-    paper_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    paper_id: int, body: UpdateItemsIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
     """整卷题目覆盖写。
@@ -1969,6 +1988,7 @@ def update_items(
     题目被移除时，其作答随题项级联删除（`paper_item_id` 非空 FK），
     返回值里的 `dropped_answers` 如实上报作废条数，前端需提示教师。
     """
+    data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -2096,7 +2116,7 @@ def _recalculate_after_change(
 
 @router.post("/{paper_id}/items/{item_id}/regenerate", summary="AI 重新生成单题")
 def regenerate_item(
-    paper_id: int, item_id: int, data: Dict[str, Any] = Body(default={}),
+    paper_id: int, item_id: int, body: RegenerateItemIn = Body(default={}),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:ai")),
 ):
@@ -2231,10 +2251,11 @@ def remove_item(
 
 @router.post("/{paper_id}/sections/rename", summary="大题改名")
 def rename_section(
-    paper_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    paper_id: int, body: RenameSectionIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
     """按 section_code 批量改大题名（改名不打散分组）。"""
+    data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -2260,7 +2281,7 @@ def rename_section(
 
 @router.post("/{paper_id}/restructure", summary="一键重构大题结构")
 def restructure_paper(
-    paper_id: int, data: Dict[str, Any] = Body(default={}),
+    paper_id: int, body: RestructurePaperIn = Body(default={}),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
@@ -2357,7 +2378,7 @@ def get_version(
 
 @router.post("/{paper_id}/versions/{version}/restore", summary="回溯到指定版本")
 def restore_version(
-    paper_id: int, version: int, data: Dict[str, Any] = Body(default_factory=dict),
+    paper_id: int, version: int, body: RestoreVersionIn = Body(default_factory=dict),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
@@ -2370,6 +2391,7 @@ def restore_version(
     旧版本里不存在的题目，其实作答无法迁移，只能丢弃 —— 学生的分数会变。
     这类操作不可逆，必须由调用方显式带 force=true 二次确认。
     """
+    data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -2528,10 +2550,11 @@ def paper_library(
 
 @router.post("/{paper_id}/favorite", summary="收藏/取消收藏")
 def toggle_favorite(
-    paper_id: int, data: Dict[str, Any] = Body(default={}),
+    paper_id: int, body: ToggleFavoriteIn = Body(default={}),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:list")),
 ):
+    data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -2557,7 +2580,7 @@ def toggle_favorite(
 # ---------------------------------------------------------------- 共享与审核
 @router.post("/{paper_id}/share-scope", summary="设置共享范围（私有/年级/全校）")
 def set_share_scope(
-    paper_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    paper_id: int, body: SetShareScopeIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
     """设置试卷可见范围。
@@ -2570,6 +2593,7 @@ def set_share_scope(
 
     范围共享一律只读；要给别人编辑权，用显式分享记录（`permission=edit`）。
     """
+    data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -2626,7 +2650,7 @@ def share_info(
 
 @router.post("/{paper_id}/review", summary="提交审核 / 审核通过 / 驳回")
 def review_paper(
-    paper_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    paper_id: int, body: ReviewPaperIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
     """公共库审核流。
@@ -2636,6 +2660,7 @@ def review_paper(
     - approve：管理员通过（pending → published，share_scope=public）
     - reject：管理员驳回（pending → rejected），需给意见
     """
+    data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -2859,13 +2884,14 @@ def _run_compose_job(job_id: int) -> None:
 
 @router.post("/compose/ai/async", summary="AI 一键组卷（异步任务，推荐）")
 def compose_ai_async(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: ComposeAiAsyncIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:ai")),
 ):
     """提交组卷任务，立即返回 job_id；轮询 `/compose/jobs/{id}` 取结果。
 
     入参与同步接口 `/compose/ai` 完全一致，只是把等待从 HTTP 请求里挪走。
     """
+    data = body.model_dump(exclude_unset=True)
     from app.models import AgentJob
 
     request = str(data.get("request") or "").strip()

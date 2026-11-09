@@ -24,12 +24,13 @@
         </div>
       </template>
       <el-table :data="overview" v-loading="overviewLoading" size="small" border>
+        <template #empty><TableEmpty text="暂无知识点数据" /></template>
         <el-table-column type="index" label="#" width="46" align="center" />
         <el-table-column prop="name" label="知识点" min-width="180" show-overflow-tooltip />
         <el-table-column label="平均掌握度" width="200">
           <template #default="{ row }">
             <el-progress :percentage="row.avg_mastery" :stroke-width="10"
-                         :color="row.avg_mastery < 60 ? '#f56c6c' : row.avg_mastery < 80 ? '#e6a23c' : '#67c23a'" />
+                         :color="row.avg_mastery < 60 ? 'var(--el-color-danger)' : row.avg_mastery < 80 ? 'var(--el-color-warning)' : 'var(--el-color-success)'" />
           </template>
         </el-table-column>
         <el-table-column prop="total_count" label="累计做题" width="90" align="center" />
@@ -78,11 +79,12 @@
           <el-card shadow="never">
             <template #header><b>薄弱知识点 Top10</b></template>
             <el-table :data="weakTable" border size="small" max-height="330">
+              <template #empty><TableEmpty text="暂无掌握度数据" /></template>
               <el-table-column prop="name" label="知识点" min-width="150" />
               <el-table-column prop="mastery" label="掌握度" width="110">
                 <template #default="{ row }">
                   <el-progress :percentage="Math.min(row.mastery, 100)"
-                               :color="row.mastery >= 60 ? '#67c23a' : '#f56c6c'" />
+                               :color="row.mastery >= 60 ? 'var(--el-color-success)' : 'var(--el-color-danger)'" />
                 </template>
               </el-table-column>
             </el-table>
@@ -93,6 +95,7 @@
           <el-card shadow="never">
             <template #header><b>历次成绩</b></template>
             <el-table :data="detail.score_trend || []" border size="small" max-height="330">
+              <template #empty><TableEmpty text="暂无作答记录" /></template>
               <el-table-column prop="name" label="任务" min-width="180" show-overflow-tooltip />
               <el-table-column label="得分" width="100" align="center">
                 <template #default="{ row }">{{ row.score }} / {{ row.total_score }}</template>

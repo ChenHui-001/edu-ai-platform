@@ -268,6 +268,7 @@
 
               <el-table v-if="attLoading || attachments.length"
                         v-loading="attLoading" :data="attachments" size="small" border row-key="id">
+                <template #empty><TableEmpty text="暂无资料文件" /></template>
                 <el-table-column label="文件名" min-width="260" show-overflow-tooltip>
                   <template #default="{ row }">
                     <span class="att-name-cell">
@@ -361,6 +362,7 @@
 
       <el-table v-loading="loading" :data="listData" row-key="id" border stripe
                 @selection-change="onSelectionChange">
+        <template #empty><TableEmpty text="暂无知识点" /></template>
         <el-table-column type="selection" width="44" />
         <el-table-column prop="name" label="名称" min-width="200" show-overflow-tooltip />
         <el-table-column label="层级" width="70" align="center">
@@ -567,17 +569,20 @@
         />
         <el-table v-if="importResult.errors.length" :data="importResult.errors" size="small"
                   border max-height="180" class="mt8">
+          <template #empty><TableEmpty text="无错误行" /></template>
           <el-table-column prop="row" label="行号" width="80" />
           <el-table-column prop="message" label="错误原因" show-overflow-tooltip />
         </el-table>
         <el-table v-if="importResult.skipped.length" :data="importResult.skipped" size="small"
                   border max-height="180" class="mt8">
+          <template #empty><TableEmpty text="无跳过行" /></template>
           <el-table-column prop="row" label="行号" width="80" />
           <el-table-column prop="reason" label="跳过原因" show-overflow-tooltip />
         </el-table>
         <el-table v-if="importResult.warnings && importResult.warnings.length"
                   :data="importResult.warnings" size="small"
                   border max-height="180" class="mt8">
+          <template #empty><TableEmpty text="无层级提示" /></template>
           <el-table-column prop="row" label="行号" width="80" />
           <el-table-column prop="message" label="层级提示（不影响导入）" show-overflow-tooltip />
         </el-table>
@@ -657,6 +662,7 @@
         </div>
         <el-table ref="aiGenTableRef" :data="aiGenResult.points" size="small" border
                   max-height="320" @selection-change="onAiGenSelectionChange">
+          <template #empty><TableEmpty text="该学科暂无知识点" /></template>
           <el-table-column type="selection" width="42" />
           <el-table-column prop="name" label="名称" width="180" show-overflow-tooltip />
           <el-table-column prop="description" label="说明" min-width="240" show-overflow-tooltip />
@@ -688,6 +694,7 @@
       </div>
       <el-table ref="aiEnrichTableRef" v-loading="aiEnrichLoading" :data="aiEnrichItems"
                 size="small" border max-height="380" @selection-change="onAiEnrichSelectionChange">
+        <template #empty><TableEmpty text="暂无建议" /></template>
         <el-table-column type="selection" width="42" />
         <el-table-column prop="name" label="名称" width="170" show-overflow-tooltip />
         <el-table-column prop="description" label="建议说明" min-width="280" show-overflow-tooltip />
@@ -709,6 +716,7 @@
     <el-dialog v-model="semanticDlg" title="语义搜索结果" width="780px">
       <div class="muted mb8">查询：{{ semanticQuery }}</div>
       <el-table :data="semanticResults" size="small" border max-height="440">
+        <template #empty><TableEmpty text="暂无匹配目录" /></template>
         <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
         <el-table-column prop="path" label="路径" width="130" show-overflow-tooltip />
         <el-table-column label="得分" width="90" align="center">
@@ -752,6 +760,7 @@
           <b>{{ purgeResult.summary.keep }}</b> 个（已被题目/掌握度/复习计划引用，或有子节点）
         </div>
         <el-table :data="purgeResult?.groups || []" size="small" border max-height="380">
+          <template #empty><TableEmpty text="暂无栏目配置" /></template>
           <el-table-column prop="subject_name" label="学科" width="110" show-overflow-tooltip />
           <el-table-column prop="name" label="栏目名" min-width="180" show-overflow-tooltip />
           <el-table-column prop="count" label="出现次数" width="90" align="center" />
@@ -775,7 +784,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   Refresh, Plus, Upload, Download, Search, MagicStick, UploadFilled, Cpu, View, Delete
 } from '@element-plus/icons-vue'
@@ -783,6 +792,8 @@ import { attachmentApi, eduApi, knowledgeApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { downloadBlob, fetchBlobUrl } from '@/utils/download'
 import { formatLocalDate, parseServerDate } from '@/utils/date'
+import { confirmAction } from '@/utils/confirm'
+import { toastIfUnhandled } from '@/utils/notify'
 
 const userStore = useUserStore()
 const { can } = userStore
@@ -1178,9 +1189,9 @@ async function toggleAttachmentVisible(row) {
 }
 
 async function removeAttachment(row) {
-  await ElMessageBox.confirm(
+  if (!await confirmAction(
     `确认删除附件「${row.filename}」？删除后学生将无法再预览/下载。`,
-    '删除确认', { type: 'warning' })
+    '删除确认', { type: 'warning' })) return
   await knowledgeApi.removeAttachment(detail.value.id, row.id)
   ElMessage.success('附件已删除')
   await Promise.all([loadAttachments(detail.value.id), loadRagStatus()])
@@ -1419,8 +1430,8 @@ async function removeNode(row) {
     ? `${impact.join('，')}；后端会拒绝删除仍有子节点/被引用的知识点。`
     : '删除后不可恢复。'
   try {
-    await ElMessageBox.confirm(`确认删除知识点「${row.name}」？${tip}`, '删除确认',
-      { type: 'warning', confirmButtonText: '确认删除' })
+    if (!await confirmAction(`确认删除知识点「${row.name}」？${tip}`, '删除确认',
+      { type: 'warning', confirmButtonText: '确认删除' })) return
   } catch { return }
   await knowledgeApi.remove(row.id)
   ElMessage.success('已删除')
@@ -1448,9 +1459,9 @@ async function batchDelete() {
   const ids = selection.value.map(n => n.id)
   if (!ids.length) return ElMessage.warning('请先勾选知识点')
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `将尝试删除 ${ids.length} 个知识点；有子节点或被题目/掌握度引用的会被跳过（后端逐个校验），删除不可恢复。`,
-      '批量删除确认', { type: 'warning', confirmButtonText: '确认删除' })
+      '批量删除确认', { type: 'warning', confirmButtonText: '确认删除' })) return
   } catch { return }
   try {
     const res = await knowledgeApi.batch({ action: 'delete', ids, payload: {} })
@@ -1546,9 +1557,9 @@ async function confirmMove() {
   // 移动会改变子树归属（契约暂无 copy），提交前再确认一次
   const target = `${gradeName(moveForm.grade_id) || '-'} / ${subjectName(moveForm.subject_id) || '-'}`
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `确认将 ${ids.length} 个知识点及其所有子级移动到「${target}」${moveForm.parent_id ? '的目标父节点下' : '的根节点'}？此操作不会复制数据，且跨年级/学科移动不可自动回滚。`,
-      '移动确认', { type: 'warning', confirmButtonText: '确认移动' })
+      '移动确认', { type: 'warning', confirmButtonText: '确认移动' })) return
   } catch { return }
   moveLoading.value = true
   try {
@@ -1588,7 +1599,7 @@ async function openPurgeGeneric() {
     const res = await knowledgeApi.purgeGeneric({ dry_run: true })
     purgeResult.value = res.data
   } catch (e) {
-    ElMessage.error(e.message || '预览失败')
+    toastIfUnhandled(e, '预览失败')
     purgeDlg.value = false
   } finally {
     purgeLoading.value = false
@@ -1599,9 +1610,9 @@ async function doPurgeGeneric() {
   const n = purgeResult.value?.summary?.disable || 0
   if (!n) return
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `确认停用 ${n} 个通用栏目节点？停用后可从「已停用」恢复，不会删除任何数据。`,
-      '清理确认', { type: 'warning' })
+      '清理确认', { type: 'warning' })) return
   } catch { return }
   purgeLoading.value = true
   try {
@@ -1610,7 +1621,7 @@ async function doPurgeGeneric() {
     purgeDlg.value = false
     await refreshAll()
   } catch (e) {
-    ElMessage.error(e.message || '清理失败')
+    toastIfUnhandled(e, '清理失败')
   } finally {
     purgeLoading.value = false
   }
@@ -1702,8 +1713,8 @@ async function exportExcel() {
 
 async function reindex() {
   try {
-    await ElMessageBox.confirm(
-      '将重建知识点向量索引，耗时取决于知识点数量，确认继续？', '重建向量索引', { type: 'info' })
+    if (!await confirmAction(
+      '将重建知识点向量索引，耗时取决于知识点数量，确认继续？', '重建向量索引', { type: 'info' })) return
   } catch { return }
   reindexing.value = true
   try {

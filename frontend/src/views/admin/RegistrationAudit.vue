@@ -21,7 +21,8 @@
         <el-button @click="load">刷新</el-button>
         <span class="tip">共 {{ total }} 条</span>
       </div>
-      <el-table v-loading="loading" :data="list" border stripe empty-text="暂无待审批申请">
+      <el-table v-loading="loading" :data="list" border stripe>
+        <template #empty><TableEmpty text="暂无待审批申请" /></template>
         <el-table-column prop="username" label="账号" width="120" />
         <el-table-column prop="real_name" label="姓名" width="100" />
         <el-table-column label="申请身份" width="100">
@@ -85,7 +86,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { authApi } from '@/api'
 
 const list = ref([])
@@ -121,17 +122,14 @@ async function audit(row, action) {
   const approved = action === 'approved'
   let reason = ''
   if (!approved) {
-    try {
-      const { value } = await ElMessageBox.prompt('请填写拒绝理由', '拒绝申请', {
-        inputPlaceholder: '必填，将展示给申请人',
-        inputValidator: (v) => (v && v.trim().length >= 2) || '请填写拒绝理由（至少 2 个字）',
-        confirmButtonText: '确认拒绝',
-        cancelButtonText: '取消',
-      })
-      reason = (value || '').trim()
-    } catch {
-      return  // 用户取消
-    }
+    const value = await promptAction('请填写拒绝理由', '拒绝申请', {
+      inputPlaceholder: '必填，将展示给申请人',
+      inputValidator: (v) => (v && v.trim().length >= 2) || '请填写拒绝理由（至少 2 个字）',
+      confirmButtonText: '确认拒绝',
+      cancelButtonText: '取消',
+    })
+    if (value === null) return  // 用户取消
+    reason = (value || '').trim()
   }
   try {
     await authApi.auditRegistration({

@@ -248,7 +248,8 @@
 
           <!-- 题目列表 -->
           <template v-if="result.questions?.length">
-            <el-table :data="result.questions" border>
+            <el-table v-loading="running" :data="result.questions" border>
+              <template #empty><TableEmpty text="暂无生成的题目" /></template>
               <el-table-column type="expand">
                 <template #default="{ row }">
                   <p class="stem" v-html="safeStem(row.stem)"></p>
@@ -298,7 +299,8 @@
 
             <div v-if="result.paper.items?.length" class="mt12">
               <p class="hint-title">题目预览（{{ result.paper.items.length }} 题）</p>
-              <el-table :data="result.paper.items" border size="small" max-height="320">
+              <el-table v-loading="running" :data="result.paper.items" border size="small" max-height="320">
+                <template #empty><TableEmpty text="暂无生成的题目" /></template>
                 <el-table-column type="index" label="#" width="50" />
                 <el-table-column label="题型" width="120">
                   <template #default="{ row }">{{ TYPES[row.type] || row.type || '-' }}</template>
@@ -364,13 +366,16 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { MagicStick, Refresh, Cpu, Notebook, Tickets, EditPen, Calendar, ChatDotRound, Collection } from '@element-plus/icons-vue'
 import { agentApi, eduApi, learningApi, questionApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { sanitizeHtml } from '@/utils/sanitize'
 // 题型唯一真源：项目规范禁止页面内再定义本地映射。
 import TYPES, { QUESTION_TYPE_LABELS } from '@/constants/question'
+import { alertAction, confirmAction } from '@/utils/confirm'
+import { hasNoOutput } from '@/utils/agentResult'
+import { toastIfUnhandled } from '@/utils/notify'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
@@ -642,31 +647,6 @@ async function pollJob(id, timeoutMs) {
 
 // 智能批改等 Agent 拿不到 items 时会返回空对象/空列表，旧实现无条件弹
 // 「生成完成」——用户看到成功却一条都没批，是典型的谎报成功。
-/**
- * 判断生成结果是否「空产出」。
- *
- * 三个能力的载荷键各不相同：补题/变式是 `items`，AI 出题是 `questions`，
- * 智能组卷是 `paper`。此前只认 `items`，于是出题返回
- * `{questions: [], total: 0, saved: 0, ...}` 时因为「对象非空」被判成有产出，
- * 前端照常显示结果面板并弹绿色「生成完成」—— 后端已经如实返回了 0 条，
- * 前端没接（见 audit-reports/reaudit-2026-11-06.md P1-2）。
- */
-function hasNoOutput(payload) {
-  if (!payload || typeof payload !== 'object') return true
-  // paper 先判：组卷载荷会额外展开 report（distribution/coverage 等），
-  // 将来若 report 里出现同名字段，放前面才不会被误判
-  if ('paper' in payload) {
-    const paper = payload.paper
-    if (!paper || typeof paper !== 'object') return true
-    // 预览态没有 id，但有 items；保存态两者都有
-    if (Array.isArray(paper.items)) return paper.items.length === 0
-    return !paper.id
-  }
-  if (Array.isArray(payload.questions)) return payload.questions.length === 0
-  if (Array.isArray(payload.items)) return payload.items.length === 0
-  return Object.keys(payload).length === 0
-}
-
 async function run() {
   // 后台模式：提交任务 + 轮询（不占用 HTTP 长连接）。
   // 仅出题/组卷有后端异步任务；此前分支引用不存在的 mode/pForm，
@@ -701,7 +681,7 @@ async function run() {
           ElMessage.success('后台生成完成')
         }
       } catch (e) {
-        ElMessage.error(e.message || '后台任务失败')
+        toastIfUnhandled(e, '后台任务失败')
       } finally {
         running.value = false
       }
@@ -797,9 +777,9 @@ async function saveAll() {
   if (!qs.length) return
   // 二次确认：明确保存到「我的私有题库」，避免误解为公共题库
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `将把 ${qs.length} 道 AI 生成题保存到你自己的私有题库（private），保存后仅你本人可见与选用。请先核对题目与答案。`,
-      '确认保存', { type: 'warning', confirmButtonText: '保存到私有题库', cancelButtonText: '再检查一下' })
+      '确认保存', { type: 'warning', confirmButtonText: '保存到私有题库', cancelButtonText: '再检查一下' })) return
   } catch { return }
   saving.value = true
   let okCount = 0
@@ -852,7 +832,7 @@ async function saveAll() {
       : `第 ${f.index} 题：${escapeHtml(f.reason)}`)).join('<br/>')
   const more = failures.length > limit
     ? `<br/>…另有 ${failures.length - limit} 条失败` : ''
-  ElMessageBox.alert(
+  alertAction(
     `${shown}${more}`,
     `保存结果：成功 ${okCount}/${qs.length} 道，失败 ${failures.length} 道`,
     { type: 'warning', dangerouslyUseHTMLString: true }
@@ -889,7 +869,7 @@ onMounted(async () => {
 .mt16 { margin-top: 16px; }
 .ml8 { margin-left: 8px; }
 .mr4 { margin-right: 4px; }
-.tip { font-size: 12px; color: #909399; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); }
 /* 班级 + 学生两级选择同一行 */
 .student-pick { display: flex; gap: 8px; width: 100%; }
 .agent-menu { border-right: none; }
@@ -897,12 +877,12 @@ onMounted(async () => {
 .action-bar { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
 .hint-box { background: #f7f9fc; padding: 10px; border-radius: 8px; }
 .hint-title { margin: 0 0 4px; font-weight: 600; font-size: 13px; }
-.hint-desc { margin: 0; font-size: 12px; color: #909399; line-height: 1.6; }
+.hint-desc { margin: 0; font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; }
 .stem { line-height: 1.7; margin: 6px 0; }
 .opts { margin: 4px 0; }
 .opt { display: inline-block; margin-right: 18px; }
-.answer { color: #67c23a; margin: 4px 0; }
-.analysis { color: #909399; font-size: 13px; margin: 4px 0; }
+.answer { color: var(--el-color-success); margin: 4px 0; }
+.analysis { color: var(--el-text-color-secondary); font-size: 13px; margin: 4px 0; }
 .text-result {
   background: #f7f8fa; padding: 14px; border-radius: 8px; white-space: pre-wrap;
   font-family: inherit; font-size: 13px; line-height: 1.8; margin: 0; max-height: 500px; overflow: auto;

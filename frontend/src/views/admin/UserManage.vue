@@ -43,6 +43,7 @@
 
     <el-card shadow="never">
       <el-table v-loading="loading" :data="list" border stripe>
+        <template #empty><TableEmpty text="暂无用户" /></template>
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column prop="real_name" label="姓名" width="100" />
         <el-table-column label="身份" width="90">
@@ -190,10 +191,11 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { systemApi, eduApi } from '@/api'
 import { confirmAction } from '@/utils/confirm'
+import { toastIfUnhandled } from '@/utils/notify'
 import { useUserStore } from '@/store/user'
 
 // 路由 admin/users 对 grade_admin 放行，但后端新建/改/删/重置密码四处
@@ -300,7 +302,7 @@ async function doReset() {
     newPwd.value = ''
     resetDlg.value = false
   } catch (e) {
-    ElMessage.error(e?.message || '重置失败')
+    toastIfUnhandled(e, '重置失败')
   }
 }
 
@@ -315,15 +317,15 @@ async function doUnlock(row) {
     else ElMessage.success('已解除锁定')
     load()
   } catch (e) {
-    ElMessage.error(e?.message || '解锁失败')
+    toastIfUnhandled(e, '解锁失败')
   }
 }
 
 async function remove(row) {
-  await ElMessageBox.confirm(
+  if (!await confirmAction(
     `确认删除用户「${row.real_name}」？\n` +
     '若该账号已创建题目/试卷/作业/教案，或有作答记录，系统会拒绝删除——请改用「停用」。',
-    '提示', { type: 'warning' })
+    '提示', { type: 'warning' })) return
   await systemApi.deleteUser(row.id)
   ElMessage.success('已删除')
   load()

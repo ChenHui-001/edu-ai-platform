@@ -22,6 +22,7 @@
         <el-card shadow="never">
           <template #header><b>成绩记录</b></template>
           <el-table v-loading="loading" :data="list" border stripe>
+            <template #empty><TableEmpty text="暂无成绩记录" /></template>
             <el-table-column prop="task_title" label="任务名称" min-width="200" show-overflow-tooltip />
             <el-table-column label="类型" width="90">
               <template #default="{ row }">
@@ -212,15 +213,15 @@ onMounted(load)
 .mb16 { margin-bottom: 16px; }
 .mt16 { margin-top: 16px; justify-content: flex-end; }
 .ml4 { margin-left: 4px; }
-.tip { font-size: 12px; color: #909399; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); }
 .score { font-size: 16px; font-weight: 700; }
-.text-success { color: #67c23a; }
-.text-danger { color: #f56c6c; }
-.q-item { padding: 12px 0; border-bottom: 1px dashed #ebeef5; }
+.text-success { color: var(--el-color-success); }
+.text-danger { color: var(--el-color-danger); }
+.q-item { padding: 12px 0; border-bottom: 1px dashed var(--el-border-color-lighter); }
 .q-item:last-child { border-bottom: none; }
 .stem { line-height: 1.7; margin: 6px 0; }
-.mine { color: #f56c6c; margin: 4px 0; }
-.correct { color: #67c23a; margin: 4px 0; }
-.analysis { color: #606266; font-size: 13px; margin: 4px 0; }
-.ai { color: #2f6fd0; background: #f0f6ff; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+.mine { color: var(--el-color-danger); margin: 4px 0; }
+.correct { color: var(--el-color-success); margin: 4px 0; }
+.analysis { color: var(--el-text-color-regular); font-size: 13px; margin: 4px 0; }
+.ai { color: var(--el-color-primary); background: #f0f6ff; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
 </style>

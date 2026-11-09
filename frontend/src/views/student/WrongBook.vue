@@ -116,7 +116,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Search, Refresh, MagicStick, RefreshRight, ArrowDown } from '@element-plus/icons-vue'
 import ExportButton from '@/components/ExportButton.vue'
 import TYPES from '@/constants/question'
@@ -124,6 +124,7 @@ import { learningApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 import { sanitizeHtml } from '@/utils/sanitize'
 
+import { toastIfUnhandled } from '@/utils/notify'
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
 function safeStem(s) { return sanitizeHtml(s) }
@@ -196,7 +197,7 @@ async function analyze(w) {
     const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
     ))
-    ElMessageBox.alert(
+    alertAction(
       `<b>AI 错因分析</b><br/>${esc(d.analysis) || '-'}` +
       (d.error_points?.length ? `<br/><br/><b>失分点：</b>${esc(d.error_points.join('、'))}` : ''),
       'AI 分析', { dangerouslyUseHTMLString: true }
@@ -230,7 +231,7 @@ async function variant(w) {
     ElMessage.success(res.message)
     router.push(`/student/exam/${res.data.task_id}`)
   } catch (e) {
-    ElMessage.error(e.response?.data?.message || '变式练习生成失败')
+    toastIfUnhandled(e, '变式练习生成失败')
   } finally {
     variantLoading.value = null
   }
@@ -294,10 +295,10 @@ onMounted(async () => {
 .stem { line-height: 1.8; margin: 8px 0; font-size: 15px; }
 .opts { margin: 8px 0; line-height: 2; }
 .opts span { display: inline-block; margin-right: 20px; padding: 2px 6px; border-radius: 4px; }
-.opts .wrong { background: #fef0f0; color: #f56c6c; text-decoration: line-through; }
-.opts .right { background: #f0f9eb; color: #67c23a; font-weight: 600; }
-.text-danger { color: #f56c6c; }
-.text-success { color: #67c23a; }
+.opts .wrong { background: #fef0f0; color: var(--el-color-danger); text-decoration: line-through; }
+.opts .right { background: var(--el-color-success-light-9); color: var(--el-color-success); font-weight: 600; }
+.text-danger { color: var(--el-color-danger); }
+.text-success { color: var(--el-color-success); }
 .wrong-actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 .filter-card :deep(.el-form-item) { margin-bottom: 12px; }
 </style>

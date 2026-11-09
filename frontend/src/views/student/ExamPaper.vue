@@ -135,7 +135,7 @@
           <div class="q-stem" v-html="safeStem(it.stem)"></div>
           <div class="r-answers">
             <div><b>你的答案：</b>{{ myAnswer(it) || '未作答' }}</div>
-            <div v-if="it.answer" style="color:#67c23a"><b>正确答案：</b>{{ fmt(it.answer) }}</div>
+            <div v-if="it.answer" style="color:var(--el-color-success)"><b>正确答案：</b>{{ fmt(it.answer) }}</div>
           </div>
           <div v-if="it.analysis" class="r-analysis"><b>解析：</b>{{ it.analysis }}</div>
         </div>
@@ -191,6 +191,7 @@ import { CircleCheck, CircleCheckFilled, CircleCloseFilled, DocumentChecked, Tim
 import { taskApi } from '@/api'
 import { sanitizeHtml } from '@/utils/sanitize'
 
+import { toastIfUnhandled } from '@/utils/notify'
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
 function safeStem(s) { return sanitizeHtml(s) }
@@ -495,7 +496,7 @@ async function doSubmit(auto = false) {
     ElMessage.success(auto ? '已自动交卷' : '交卷成功')
   } catch (e) {
     submitted.value = false
-    ElMessage.error(`交卷失败：${e.message}`)
+    toastIfUnhandled(e, '交卷失败')
   }
 }
 
@@ -520,23 +521,23 @@ onBeforeUnmount(() => {
 }
 .bar-info { display: flex; align-items: center; gap: 10px; }
 .title { font-weight: 600; font-size: 15px; }
-.bar-progress { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #606266; }
+.bar-progress { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--el-text-color-regular); }
 .bar-actions { display: flex; align-items: center; gap: 14px; }
-.countdown { font-size: 18px; font-weight: 600; color: #2f6fd0; font-variant-numeric: tabular-nums; }
-.countdown.warn { color: #f56c6c; }
+.countdown { font-size: 18px; font-weight: 600; color: var(--el-color-primary); font-variant-numeric: tabular-nums; }
+.countdown.warn { color: var(--el-color-danger); }
 .save-indicator {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 12px; color: #67c23a;
+  font-size: 12px; color: var(--el-color-success);
 }
-.save-indicator.saving { color: #909399; }
+.save-indicator.saving { color: var(--el-text-color-secondary); }
 .countdown.urgent { animation: pulse 1s ease-in-out infinite; }
-.cd-label { font-size: 12px; font-weight: 400; color: #909399; margin-right: 2px; }
+.cd-label { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); margin-right: 2px; }
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: .45; }
 }
 .countdown.urgent { animation: pulse 1s ease-in-out infinite; }
-.cd-label { font-size: 12px; font-weight: 400; color: #909399; margin-right: 2px; }
+.cd-label { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); margin-right: 2px; }
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: .45; }
@@ -544,32 +545,32 @@ onBeforeUnmount(() => {
 
 .nav-bar {
   background: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 6px;
-  flex-wrap: wrap; position: sticky; top: 61px; z-index: 9; border-bottom: 1px solid #ebeef5;
+  flex-wrap: wrap; position: sticky; top: 61px; z-index: 9; border-bottom: 1px solid var(--el-border-color-lighter);
 }
-.nav-label { font-size: 13px; color: #909399; margin-right: 4px; }
+.nav-label { font-size: 13px; color: var(--el-text-color-secondary); margin-right: 4px; }
 .nav-item {
   width: 30px; height: 30px; line-height: 30px; text-align: center; border-radius: 4px;
   background: #f0f2f5; font-size: 13px; cursor: pointer; user-select: none;
 }
-.nav-item.done { background: #67c23a; color: #fff; }
+.nav-item.done { background: var(--el-color-success); color: #fff; }
 .nav-item.current {
-  background: #2f6fd0; color: #fff; font-weight: 600;
+  background: var(--el-color-primary); color: #fff; font-weight: 600;
   box-shadow: 0 0 0 2px rgba(47,111,208,.35);
 }
-.nav-item:hover { outline: 2px solid #2f6fd0; }
+.nav-item:hover { outline: 2px solid var(--el-color-primary); }
 
 .body { max-width: 900px; margin: 0 auto; padding: 20px; }
 .q-card {
   background: #fff; border-radius: 8px; padding: 18px 20px; margin-bottom: 16px;
   box-shadow: 0 1px 4px rgba(0,0,0,.05); border-left: 3px solid transparent;
 }
-.q-card.answered { border-left-color: #67c23a; }
+.q-card.answered { border-left-color: var(--el-color-success); }
 .q-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .q-no {
   width: 26px; height: 26px; line-height: 26px; text-align: center;
-  background: #2f6fd0; color: #fff; border-radius: 50%; font-size: 13px; font-weight: 600;
+  background: var(--el-color-primary); color: #fff; border-radius: 50%; font-size: 13px; font-weight: 600;
 }
-.q-score { font-size: 12px; color: #909399; }
+.q-score { font-size: 12px; color: var(--el-text-color-secondary); }
 .q-stem { line-height: 1.8; margin-bottom: 14px; font-size: 15px; }
 .opts { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .opt { width: 100%; height: auto; min-height: 38px; padding: 10px 14px; margin: 0 !important; }
@@ -577,32 +578,32 @@ onBeforeUnmount(() => {
 
 .result-hero {
   text-align: center; padding: 40px 20px; color: #fff;
-  background: linear-gradient(135deg, #67c23a, #95d475);
+  background: linear-gradient(135deg, var(--el-color-success), #95d475);
 }
-.result-hero.fail { background: linear-gradient(135deg, #f56c6c, #f78989); }
+.result-hero.fail { background: linear-gradient(135deg, var(--el-color-danger), #f78989); }
 .hero-score { font-size: 64px; font-weight: 700; line-height: 1; }
 .hero-label { font-size: 16px; opacity: .9; margin-top: 4px; }
 .hero-meta { display: flex; justify-content: center; gap: 20px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
 .hero-actions { margin-top: 24px; display: flex; justify-content: center; gap: 12px; }
 .result-body { max-width: 900px; margin: 20px auto; padding: 0 20px; }
 .summary-bar {
-  background: #ecf5ff; color: #2f6fd0; padding: 10px 16px; border-radius: 6px; margin-bottom: 16px;
+  background: var(--el-color-primary-light-9); color: var(--el-color-primary); padding: 10px 16px; border-radius: 6px; margin-bottom: 16px;
 }
 .r-card {
   background: #fff; border-radius: 8px; padding: 16px 20px; margin-bottom: 14px;
-  border-left: 3px solid #f56c6c;
+  border-left: 3px solid var(--el-color-danger);
 }
-.r-card.ok { border-left-color: #67c23a; }
+.r-card.ok { border-left-color: var(--el-color-success); }
 .r-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.r-no { font-weight: 600; color: #909399; }
+.r-no { font-weight: 600; color: var(--el-text-color-secondary); }
 .r-icon { font-size: 18px; }
-.r-card.ok .r-icon { color: #67c23a; }
-.r-card:not(.ok) .r-icon { color: #f56c6c; }
+.r-card.ok .r-icon { color: var(--el-color-success); }
+.r-card:not(.ok) .r-icon { color: var(--el-color-danger); }
 .r-score { font-weight: 600; }
 .r-answers { margin-top: 10px; line-height: 1.9; font-size: 14px; }
 .r-analysis {
-  margin-top: 10px; padding: 10px; background: #f5f7fa; border-radius: 4px;
-  font-size: 13px; line-height: 1.7; color: #606266;
+  margin-top: 10px; padding: 10px; background: var(--el-fill-color-light); border-radius: 4px;
+  font-size: 13px; line-height: 1.7; color: var(--el-text-color-regular);
 }
 
 /* 作文作答区：字号与行高按"能长时间阅读写作"调，比通用输入框宽松 */

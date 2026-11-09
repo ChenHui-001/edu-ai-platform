@@ -122,6 +122,7 @@ import { ElMessage } from 'element-plus'
 import { Refresh, EditPen } from '@element-plus/icons-vue'
 import { taskApi } from '@/api'
 
+import { toastIfUnhandled } from '@/utils/notify'
 const router = useRouter()
 const tab = ref('pending')
 const list = ref([])
@@ -230,7 +231,7 @@ async function viewResult(t) {
     }))
   } catch (e) {
     detailDlg.value = false
-    ElMessage.error(`加载解析失败：${e.message || '未知错误'}`)
+    toastIfUnhandled(e, '加载解析失败')
   } finally {
     detailLoading.value = false
   }
@@ -262,35 +263,35 @@ onMounted(load)
 .task-head { display: flex; justify-content: space-between; align-items: flex-start; }
 .task-title { margin: 0 0 6px; font-size: 16px; }
 .task-sub { margin: 0; }
-.task-desc { color: #909399; font-size: 13px; margin: 10px 0 0; }
+.task-desc { color: var(--el-text-color-secondary); font-size: 13px; margin: 10px 0 0; }
 .task-actions {
   margin-top: 14px; display: flex; align-items: center; gap: 12px;
 }
-.score-badge { font-size: 14px; color: #606266; }
+.score-badge { font-size: 14px; color: var(--el-text-color-regular); }
 .score-badge b { color: var(--el-color-primary); font-size: 18px; }
-.tip { font-size: 12px; color: #f56c6c; }
+.tip { font-size: 12px; color: var(--el-color-danger); }
 .attempt-info {
-  font-size: 12px; color: #909399; padding: 0 8px;
+  font-size: 12px; color: var(--el-text-color-secondary); padding: 0 8px;
   border-left: 1px solid var(--el-border-color-light);
 }
 
 /* 解析弹窗 */
 .detail-body { min-height: 120px; max-height: 68vh; overflow-y: auto; }
 .hl { color: var(--el-color-primary); font-size: 16px; }
-.p-item { padding: 12px 0; border-bottom: 1px dashed #ebeef5; }
+.p-item { padding: 12px 0; border-bottom: 1px dashed var(--el-border-color-lighter); }
 .p-item:last-child { border-bottom: none; }
 .p-head { display: flex; align-items: center; gap: 8px; }
 .p-no { font-weight: 600; }
-.p-score { font-size: 12px; color: #909399; margin-left: auto; }
+.p-score { font-size: 12px; color: var(--el-text-color-secondary); margin-left: auto; }
 .p-stem { margin: 8px 0; line-height: 1.8; white-space: pre-wrap; }
 .p-opts { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
-.p-opt { font-size: 13px; color: #606266; }
+.p-opt { font-size: 13px; color: var(--el-text-color-regular); }
 .p-answers { font-size: 13px; line-height: 1.9; }
-.mine { color: #f56c6c; }
-.correct { color: #67c23a; }
+.mine { color: var(--el-color-danger); }
+.correct { color: var(--el-color-success); }
 .p-analysis {
-  margin-top: 8px; padding: 8px 10px; background: #f5f7fa; border-radius: 4px;
-  font-size: 13px; line-height: 1.7; color: #606266;
+  margin-top: 8px; padding: 8px 10px; background: var(--el-fill-color-light); border-radius: 4px;
+  font-size: 13px; line-height: 1.7; color: var(--el-text-color-regular);
 }
-.p-comment { margin-top: 6px; font-size: 13px; color: #e6a23c; }
+.p-comment { margin-top: 6px; font-size: 13px; color: var(--el-color-warning); }
 </style>

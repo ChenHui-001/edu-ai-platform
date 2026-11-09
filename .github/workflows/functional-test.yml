@@ -95,6 +95,9 @@ jobs:
       CAPTCHA_ENFORCED: "false"   # 关验证码，允许 CI 无图形码登录
       LLM_ENABLED: "false"        # 关闭大模型，避免真实调用 / 走规则引擎
       SEED_DEMO_DATA: "true"      # 必须开：teacher1 / stu101 等种子账号由演示数据创建
+      # 学习闭环（错题本/复习计划/收藏/笔记）默认不造数（生产形态守卫），
+      # 但本工作流的 41 条占位符用例要靠这些实体编排 id，这里显式打开。
+      DEMO_LEARNING_FLOW: "true"
       SCHEDULER_ENABLED: "false"  # CI 不跑定时任务
       APP_ENV: test
       # 长度 >= 32 的确定性密钥（CI 一次性库，重启即失效无影响）

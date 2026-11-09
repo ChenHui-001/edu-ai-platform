@@ -472,31 +472,64 @@ def logout(
 
 
 # ---------------------------------------------------------------- 找回密码
-# 限流桶保留在内存：守的是**滥用频率**而非认证正确性。多 worker 下限额变
-# N 倍（5×N 次/10min），仍远低于 6 位码 10^6 的可用爆破量级；若落库，
-# 等于给一个匿名端点引入无鉴权的写放大面（每次请求都写一行），
-# 与"防刷"的初衷相反。验证码本身（正确性相关）已落 `sys_reset_code`。
+# 频率计数已于 2026-11-06 从进程内 dict 迁到 `sys_rate_limit`（跨进程共享），
+# 2026-11-09 又把键改成加盐哈希：这张表的键完全由匿名调用方控制（任意邮箱 /
+# 手机号 / 来源 IP），明文入库等于长期留存一份任意人可写的 PII 清单。
 def _check_reset_request_rate(db: Session, target: str) -> None:
-    """按目标账号限制找回密码请求频率（10 分钟最多 5 次）。
+    """按目标账号限制找回密码请求频率（10 分钟最多 5 次）。"""
+    from app.services.rate_limit import check_and_hit, key_digest
 
-    2026-11-06 起不再用进程内 dict：多 worker 下额度会被放大 N 倍。
-    改走 services/rate_limit 的 DB 固定窗口计数（跨进程共享）。
-    上面旧注释里「若落库会引入无鉴权写放大面」的权衡因此作废：
-    现在每次请求只 UPDATE 一行，且只在真正发起找回时写一次。
-    """
-    from app.services.rate_limit import check_and_hit
-
-    if not check_and_hit(db, f"reset:{target}", 5, 600):
+    if not check_and_hit(db, key_digest("reset", target), 5, 600):
         raise BusinessException("请求过于频繁，请 10 分钟后再试")
+
+
+def _check_reset_ip_rate(db: Session, request: Optional[Request]) -> None:
+    """按来源 IP 限制找回密码总量（1 小时最多 20 次，跨 target 累加）。
+
+    为什么必须有这一层：按 target 的限流只保证"同一个邮箱不被连打"，
+    换一个邮箱就从零开始计数 —— 想批量探测"哪些邮箱已注册"，按 target
+    限流完全拦不住。响应文案做到完全一致之后，**唯一**能挡住批量探测的
+    就是这条与 target 无关的配额。正常用户一小时内找回密码不会超过 20 次。
+    """
+    if request is None:
+        return
+    from app.services.rate_limit import check_and_hit, key_digest
+
+    if not check_and_hit(db, key_digest("reset_ip", get_client_ip(request)), 20, 3600):
+        raise BusinessException("请求过于频繁，请稍后再试")
+
+
+def _smtp_config(db: Session) -> Dict[str, str]:
+    from app.models import SysConfig
+
+    return {c.key: (c.value or "") for c in db.scalars(select(SysConfig)).all()}
+
+
+def _smtp_channel_status(db: Session, target: str) -> tuple:
+    """判断该 target 能否收到验证码，**与账号是否存在无关**。
+
+    返回 `(是否可用, 不可用时的统一文案)`。这个判定必须在查用户**之前**
+    完成：一旦"先查用户、再按结果决定文案"，响应就带上了"账号是否存在"
+    的信息 —— 第三轮复审 P1-A 的账号枚举预言机正是这么来的。
+
+    注意这里只回答"通道配没配"，不回答"发送会不会成功"：SMTP 抖动属于
+    系统级故障，对所有 target 一视同仁，不能在响应里单独暴露。
+    """
+    if "@" not in (target or ""):
+        return False, "当前仅支持通过邮箱找回密码，请联系管理员重置"
+    cfg = _smtp_config(db)
+    host = (cfg.get("smtp_host") or "").strip()
+    sender = (cfg.get("smtp_from") or cfg.get("smtp_user") or "").strip()
+    if not host or not sender:
+        return False, "当前未配置可用的邮件服务，请联系管理员重置密码"
+    return True, ""
 
 
 def _send_reset_code_email(db: Session, target: str, code: str) -> bool:
     """通过 sys_config 中配置的 SMTP 发送验证码；未配置或发送失败返回 False。"""
     if "@" not in target:
         return False  # 当前仅支持邮箱通道；短信通道未实现
-    from app.models import SysConfig
-
-    cfg = {c.key: (c.value or "") for c in db.scalars(select(SysConfig)).all()}
+    cfg = _smtp_config(db)
     host = cfg.get("smtp_host", "").strip()
     sender = (cfg.get("smtp_from") or cfg.get("smtp_user") or "").strip()
     if not host or not sender:
@@ -535,36 +568,43 @@ def _send_reset_code_email(db: Session, target: str, code: str) -> bool:
 
 
 @router.post("/forgot-password", summary="找回密码（发送验证码）")
-def forgot_password(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+def forgot_password(payload: Dict[str, Any] = Body(...), request: Request = None,
+                    db: Session = Depends(get_db)):
     """通过邮箱找回密码：
-    - 账号存在且系统配置了 SMTP 时发送 6 位验证码（5 分钟有效）
-    - 未配置邮件通道时明确提示联系管理员，且**不生成/记录验证码**
-    - 响应文案不泄露账号是否存在
+    - 通道可用时发送 6 位验证码（5 分钟有效）
+    - 通道不可用时对**所有 target** 返回同一句"未配置"，且不生成/记录验证码
+    - 响应文案与 `data.sent` 都**不泄露账号是否存在**（见下方顺序约束）
     """
     target = (payload.get("email") or payload.get("phone") or "").strip()
     if not target:
         raise BusinessException("请提供邮箱或手机号")
+    _check_reset_ip_rate(db, request)
     _check_reset_request_rate(db, target)
+    # 顺序约束（安全关键）：通道判定必须在**查用户之前**。
+    # 先查用户、再按"用户存在与否 / 发送成功与否"决定文案或 sent 值，响应就
+    # 成了账号枚举预言机 —— 第三轮复审 P1-A 记录的正是这个回归。
+    available, blocked_message = _smtp_channel_status(db, target)
+    if not available:
+        return ok({"sent": False}, message=blocked_message)
+
     user = db.scalar(
         select(User).where((User.email == target) | (User.phone == target))
     )
     if not user:
-        # 安全考虑：不泄露账号是否存在
         return ok({"sent": True}, message="若该账号存在，验证码已发送")
 
     code = f"{random.randint(0, 999999):06d}"
     if not _send_reset_code_email(db, target, code):
-        # 不落库、不写日志、不返回验证码：避免"假发送"与验证码进日志。
-        return ok(
-            {"sent": False},
-            message="验证码已发送（若系统已配置邮件服务）。"
-                    "当前未检测到可用的邮件配置，请联系管理员重置密码",
-        )
+        # 通道配好了但这次发送失败（SMTP 抖动 / 凭据失效）：属于系统级故障，
+        # 不能单独提示，否则"存在但发不出"与"不存在"又能被区分开。
+        # 不落库、不把验证码写日志，运维侧靠下面这行日志告警。
+        logger.error("找回密码验证码发送失败（SMTP 可用但发送异常）")
+        return ok({"sent": True}, message="若该账号存在，验证码已发送")
 
     # 落 sys_reset_code（同 target 覆盖写，旧码立刻失效）。
     # 进程内 dict 在多 worker 下会让"发送在 A、校验在 B"，找回密码随机失败。
     store_reset_code(db, target, code)
-    return ok({"sent": True}, message="验证码已发送，5 分钟内有效")
+    return ok({"sent": True}, message="若该账号存在，验证码已发送")
 
 
 @router.post("/reset-password", summary="重置密码（验证码）")

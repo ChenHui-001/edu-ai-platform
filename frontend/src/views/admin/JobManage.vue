@@ -19,6 +19,7 @@
 
     <el-card shadow="never">
       <el-table v-loading="loading" :data="list" border stripe>
+        <template #empty><TableEmpty text="暂无定时任务" /></template>
         <el-table-column prop="name" label="任务名称" min-width="160" />
         <el-table-column label="任务标识" width="260" show-overflow-tooltip>
           <template #default="{ row }">
@@ -77,7 +78,7 @@
             <el-option v-for="h in handlers" :key="h.path"
                        :label="`${h.label}（${h.path.split('.').pop()}）`" :value="h.path" />
           </el-select>
-          <div class="tip" v-if="isUnregistered(form)" style="color:#f56c6c">
+          <div class="tip" v-if="isUnregistered(form)" style="color:var(--el-color-danger)">
             该执行逻辑在后端没有对应处理函数，任务永远不会执行成功。
             请升级到包含该函数的版本，或删除这条任务。
           </div>
@@ -104,6 +105,7 @@
 
     <el-drawer v-model="execDrawer" title="任务执行记录" size="65%">
       <el-table v-loading="execLoading" :data="executions" border stripe>
+        <template #empty><TableEmpty text="暂无执行记录" /></template>
         <el-table-column prop="started_at" label="开始时间" width="170" />
         <el-table-column prop="finished_at" label="结束时间" width="170" />
         <el-table-column label="状态" width="90">
@@ -123,9 +125,10 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { logApi } from '@/api'
+import { confirmAction } from '@/utils/confirm'
 
 const list = ref([])
 const handlers = ref([])
@@ -204,7 +207,7 @@ async function toggle(row) {
 }
 
 async function run(row) {
-  await ElMessageBox.confirm(`确认立即执行任务「${row.name}」？`, '提示', { type: 'info' })
+  if (!await confirmAction(`确认立即执行任务「${row.name}」？`, '提示', { type: 'info' })) return
   const res = await logApi.runJob(row.id)
   // 提示语在响应体顶层 message，不在 data 里（data 是执行结果本身）
   ElMessage.success(res.message || '执行完成')
@@ -212,7 +215,7 @@ async function run(row) {
 }
 
 async function remove(row) {
-  await ElMessageBox.confirm(`确认删除任务「${row.name}」？`, '提示', { type: 'warning' })
+  if (!await confirmAction(`确认删除任务「${row.name}」？`, '提示', { type: 'warning' })) return
   await logApi.removeJob(row.id)
   ElMessage.success('已删除')
   load()
@@ -235,5 +238,5 @@ onMounted(load)
 <style scoped>
 .mb12 { margin-bottom: 16px; }
 .mt16 { margin-top: 16px; justify-content: flex-end; }
-.tip { font-size: 12px; color: #909399; margin-top: 4px; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 </style>

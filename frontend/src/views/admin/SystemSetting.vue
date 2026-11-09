@@ -72,6 +72,7 @@
         </div>
       </template>
       <el-table v-if="editable.length" :data="editable" size="small" stripe max-height="380">
+        <template #empty><TableEmpty text="暂无配置项" /></template>
         <el-table-column prop="label" label="配置项" min-width="130" show-overflow-tooltip />
         <el-table-column prop="key" label="键名" min-width="150" show-overflow-tooltip>
           <template #default="{ row }"><code>{{ row.key }}</code></template>
@@ -150,7 +151,7 @@ onMounted(load)
 .mt16 { margin-top: 16px; }
 code {
   background: #f2f4f7; padding: 2px 6px; border-radius: 4px;
-  font-family: Consolas, Monaco, monospace; font-size: 12px; color: #2f6fd0;
+  font-family: Consolas, Monaco, monospace; font-size: 12px; color: var(--el-color-primary);
 }
 .card-head {
   display: flex;
@@ -158,7 +159,7 @@ code {
   gap: 8px;
   flex-wrap: wrap;
 }
-.hint { font-size: 12px; color: #909399; }
+.hint { font-size: 12px; color: var(--el-text-color-secondary); }
 
 /* 卡片在 <md 断点堆叠时补上纵向间距（el-row 的 gutter 只管横向） */
 @media (max-width: 991px) {

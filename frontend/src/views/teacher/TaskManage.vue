@@ -106,7 +106,7 @@
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty description="暂无任务，点击右上角发布作业 / 考试" :image-size="70" />
+          <TableEmpty text="暂无任务，点击右上角发布作业 / 考试" />
         </template>
       </el-table>
 
@@ -198,6 +198,7 @@
         </el-col>
       </el-row>
       <el-table v-loading="subLoading" :data="submissions" border stripe>
+        <template #empty><TableEmpty text="暂无提交" /></template>
         <el-table-column prop="student_name" label="学生" width="120" />
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
@@ -251,6 +252,7 @@
           <el-empty v-else description="点击下方按钮生成 AI 教学建议" :image-size="60" />
 
           <el-table :data="report.detail || []" border size="small" class="mt12">
+            <template #empty><TableEmpty text="暂无作答统计" /></template>
             <el-table-column prop="student_name" label="学生" width="110" />
             <el-table-column prop="score" label="得分" width="80" />
             <el-table-column prop="correct_count" label="正确题数" width="100" />
@@ -287,10 +289,11 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { taskApi, questionApi, eduApi, gradingApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import { confirmAction } from '@/utils/confirm'
 
 const userStore = useUserStore()
 // 按钮级权限统一取 store 的 can getter
@@ -383,11 +386,11 @@ async function batchAction(action) {
   if (!ids.length) return ElMessage.warning('请先勾选任务')
   const isDelete = action === 'delete'
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       isDelete
         ? `确认删除 ${ids.length} 个任务？已有提交记录的任务会被跳过（不级联删除成绩），删除不可恢复。`
         : `确认将 ${ids.length} 个任务批量结束？结束后学生不能继续作答。`,
-      isDelete ? '批量删除确认' : '批量结束确认', { type: 'warning' })
+      isDelete ? '批量删除确认' : '批量结束确认', { type: 'warning' })) return
   } catch { return }
   batchLoading.value = true
   try {
@@ -508,9 +511,9 @@ async function save() {
 
 async function remove(row) {
   if (!canEditTask(row)) return ElMessage.warning('只能删除自己创建的任务')
-  await ElMessageBox.confirm(
+  if (!await confirmAction(
     `确认删除任务「${row.title}」？\n已有提交记录的任务无法删除（请使用「结束」保留成绩）。`,
-    '提示', { type: 'warning' })
+    '提示', { type: 'warning' })) return
   await taskApi.remove(row.id)
   ElMessage.success('已删除')
   await refreshAll()
@@ -612,12 +615,12 @@ onMounted(async () => {
 .mt16 { margin-top: 16px; justify-content: flex-end; }
 .mt12 { margin-top: 12px; }
 .mb12 { margin-bottom: 12px; }
-.tip { font-size: 12px; color: #909399; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); }
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .filter-card :deep(.el-form-item) { margin-bottom: 12px; }
-.q-item { padding: 10px 0; border-bottom: 1px dashed #ebeef5; }
-.correct { color: #67c23a; margin: 4px 0; }
-.analysis { color: #909399; font-size: 13px; margin: 4px 0; }
+.q-item { padding: 10px 0; border-bottom: 1px dashed var(--el-border-color-lighter); }
+.correct { color: var(--el-color-success); margin: 4px 0; }
+.analysis { color: var(--el-text-color-secondary); font-size: 13px; margin: 4px 0; }
 .advice-box { background: #f7f9fc; padding: 12px; border-radius: 8px; }
 .advice { white-space: pre-wrap; margin: 0; font-family: inherit; font-size: 13px; line-height: 1.8; }
 

@@ -51,6 +51,7 @@
 
     <el-card shadow="never">
       <el-table v-loading="loading" :data="list" border stripe>
+        <template #empty><TableEmpty text="暂无 Agent 调用记录" /></template>
         <el-table-column label="Agent" width="140">
           <template #default="{ row }">
             <el-tag size="small" effect="plain">{{ row.agent_name || row.agent_code }}</el-tag>
@@ -130,6 +131,7 @@
 
       <el-divider content-position="left">已注册 Agent（{{ agents.length }}）</el-divider>
       <el-table :data="agents" border size="small">
+        <template #empty><TableEmpty text="暂无已注册 Agent" /></template>
         <!-- 后端字段是 name（标识）/ display_name（中文名），没有 code -->
         <el-table-column prop="display_name" label="名称" width="150" />
         <el-table-column prop="name" label="标识" width="150" />
@@ -227,5 +229,5 @@ onMounted(async () => {
   font-size: 12px; max-height: 220px; overflow: auto; white-space: pre-wrap;
   word-break: break-all; margin: 0;
 }
-.code-box.error { background: #fef0f0; color: #f56c6c; }
+.code-box.error { background: #fef0f0; color: var(--el-color-danger); }
 </style>

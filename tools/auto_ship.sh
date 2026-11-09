@@ -9,7 +9,9 @@
 #
 # ⚠️ 2026-10-29 起测试体系（tests/ 与 CI 的 e2e job）已移除。原来的
 #    「端到端回归」换成三件事，门槛降低但**不是零**：
-#      1) 五道静态门禁（硬编码地址/弱断言/时间契约/模型外键/F 类）
+#      1) 十三道静态门禁（后端九道：硬编码地址/弱断言/时间契约/模型外键/
+#         迁移列/响应体/裸 SQL/定时任务注册/ruff + 造数确定性 + 用例覆盖；
+#         前端四道：模板引用/重复模板/res.data.data/裸消息框）
 #      2) 导库 + create_all 建表 + 路由数下限（拦住语法错、循环导入、模型断裂）
 #      3) CI 的 compileall + 镜像构建仍会独立跑一次
 #    代价要说清楚：**行为回归已无自动化覆盖**，改业务逻辑后必须人工点一遍相关页面。
@@ -113,6 +115,11 @@ if [ -n "$GATE_PY" ]; then
   "$GATE_PY" tools/check_schema_bodies.py || GATE_RC=1
   "$GATE_PY" tools/check_api_sql.py || GATE_RC=1
   "$GATE_PY" tools/check_job_handlers.py || GATE_RC=1
+  # 演示造数确定性（两次生成指纹一致）与「关键模块必须有测试 import」：
+  # 两者都只在 CI 跑过，本地漏跑就会「提交后等 2 分钟才知道红」。
+  # 实测耗时 10s / 0.3s，放进本地门禁不痛。
+  "$GATE_PY" tools/check_gen_data_determinism.py || GATE_RC=1
+  "$GATE_PY" tools/check_new_code_tests.py || GATE_RC=1
   # ruff 未安装时 lint_gate 返回 2 —— 那是「环境缺工具」而不是「代码有缺陷」，
   # 与 CI 不同（CI 里会先 pip install ruff，缺了就是流程错）。
   # 本地缺失只告警不阻断，避免为了跑一次交付先折腾环境。
@@ -125,9 +132,21 @@ if [ -n "$GATE_PY" ]; then
     fi
   }
   if [ "$GATE_RC" -ne 0 ]; then
-    die 1 "静态门禁未通过（硬编码地址 / 恒真断言 / 时间契约 / 模型输出写外键 / F 类缺陷），修复后再交付"
+    die 1 "静态门禁未通过（硬编码地址 / 恒真断言 / 时间契约 / 模型输出写外键 / F 类缺陷 / 造数确定性 / 用例覆盖），修复后再交付"
   fi
   ok "静态门禁通过"
+
+  # 前端四道普查同样只在 CI 跑过：改 .vue 时最容易踩「模板引用未定义标识符」
+  # 「整块模板被复制成两份」「res.data.data 恒 undefined」「裸 ElMessageBox」，
+  # 四者 build 与 eslint 全绿、浏览器里才炸。四道合计 <2s，一并前置。
+  FE_RC=0
+  for _g in scan_vue_refs scan_vue_dup check_data_data check_bare_messagebox; do
+    "$GATE_PY" "tools/${_g}.py" || FE_RC=1
+  done
+  if [ "$FE_RC" -ne 0 ]; then
+    die 1 "前端静态普查未通过（白屏引用 / 重复模板块 / res.data.data / 裸消息框），修复后再交付"
+  fi
+  ok "前端静态普查通过"
 else
   echo "  ${c_warn}未找到 python，跳过静态门禁${c_reset}"
 fi

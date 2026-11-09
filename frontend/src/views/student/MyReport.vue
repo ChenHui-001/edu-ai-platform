@@ -100,6 +100,7 @@
     <el-card shadow="never">
       <template #header><b>错题高频知识点 Top10</b></template>
       <el-table :data="wrong.knowledge_rank || []" border stripe max-height="320">
+        <template #empty><TableEmpty text="暂无错题分布" /></template>
         <el-table-column type="index" label="排名" width="80" align="center">
           <template #default="{ $index }">
             <el-tag :type="$index < 3 ? 'danger' : 'info'" size="small">No.{{ $index + 1 }}</el-tag>

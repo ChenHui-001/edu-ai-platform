@@ -42,7 +42,7 @@
     <section class="main">
       <div ref="scrollBox" class="messages">
         <div v-if="messages.length === 0" class="welcome">
-          <el-icon :size="54" color="#2f6fd0"><MagicStick /></el-icon>
+          <el-icon :size="54" color="var(--el-color-primary)"><MagicStick /></el-icon>
           <h2>你好，{{ userStore.realName }}！我是你的 AI 教学助手</h2>
           <p>我可以帮你出题、组卷、批改、规划学习、解答疑惑、整理笔记</p>
         </div>
@@ -487,43 +487,43 @@ onMounted(async () => {
 <style scoped>
 .chat-page { display: flex; height: calc(100vh - 60px); background: var(--page-bg); }
 .side {
-  width: 250px; background: #fff; border-right: 1px solid #ebeef5;
+  width: 250px; background: #fff; border-right: 1px solid var(--el-border-color-lighter);
   padding: 14px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto;
 }
 .engine-status {
   padding: 12px; border-radius: 8px; background: #fdf6ec; border: 1px solid #f5dab1;
 }
-.engine-status.on { background: #f0f9eb; border-color: #e1f3d8; }
+.engine-status.on { background: var(--el-color-success-light-9); border-color: #e1f3d8; }
 .st-title { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 8px; font-size: 13px; }
-.st-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; color: #606266; }
-.st-row b { color: #303133; font-weight: 500; }
+.st-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; color: var(--el-text-color-regular); }
+.st-row b { color: var(--el-text-color-primary); font-weight: 500; }
 .side-block { flex: 1; }
-.sb-title { font-size: 12px; color: #909399; margin-bottom: 8px; }
+.sb-title { font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 8px; }
 .sample {
-  padding: 8px 10px; margin-bottom: 6px; border-radius: 6px; background: #f5f7fa;
+  padding: 8px 10px; margin-bottom: 6px; border-radius: 6px; background: var(--el-fill-color-light);
   font-size: 12px; cursor: pointer; line-height: 1.5;
 }
-.sample:hover { background: #ecf5ff; color: #2f6fd0; }
+.sample:hover { background: var(--el-color-primary-light-9); color: var(--el-color-primary); }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .messages { flex: 1; overflow-y: auto; padding: 20px; }
-.welcome { text-align: center; padding: 80px 20px; color: #909399; }
-.welcome h2 { color: #303133; font-size: 20px; margin: 16px 0 8px; }
+.welcome { text-align: center; padding: 80px 20px; color: var(--el-text-color-secondary); }
+.welcome h2 { color: var(--el-text-color-primary); font-size: 20px; margin: 16px 0 8px; }
 .msg { display: flex; margin-bottom: 18px; }
 .msg.user { justify-content: flex-end; }
 .bubble {
-  max-width: 78%; padding: 12px 16px; border-radius: 10px; background: #2f6fd0;
+  max-width: 78%; padding: 12px 16px; border-radius: 10px; background: var(--el-color-primary);
   color: #fff; line-height: 1.7; white-space: pre-wrap;
 }
 .bubble.ai {
-  background: #fff; color: #303133; max-width: 88%; width: 88%;
-  box-shadow: 0 1px 4px rgba(0,0,0,.06); border: 1px solid #ebeef5;
+  background: #fff; color: var(--el-text-color-primary); max-width: 88%; width: 88%;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06); border: 1px solid var(--el-border-color-lighter);
 }
 .bubble.ai :deep(.markdown-body h1),
 .bubble.ai :deep(.markdown-body h2),
 .bubble.ai :deep(.markdown-body h3) { font-size: 15px; margin: 12px 0 6px; }
 .typing { display: flex; gap: 5px; padding: 6px 0; }
 .typing span {
-  width: 7px; height: 7px; border-radius: 50%; background: #909399;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--el-text-color-secondary);
   animation: bounce 1.4s infinite ease-in-out;
 }
 .typing span:nth-child(2) { animation-delay: .2s; }
@@ -531,22 +531,22 @@ onMounted(async () => {
 @keyframes bounce { 0%,80%,100% { transform: scale(.6); opacity:.5 } 40% { transform: scale(1); opacity:1 } }
 .result-block {
   margin-top: 12px; padding: 10px 12px; background: #f8fafc;
-  border-radius: 6px; border-left: 3px solid #2f6fd0; font-size: 13px;
+  border-radius: 6px; border-left: 3px solid var(--el-color-primary); font-size: 13px;
 }
-.rb-title { font-weight: 600; margin-bottom: 6px; color: #2f6fd0; }
+.rb-title { font-weight: 600; margin-bottom: 6px; color: var(--el-color-primary); }
 .paper-item { margin-bottom: 5px; line-height: 1.6; }
-.rb-note { margin-top: 6px; color: #909399; font-size: 12px; }
+.rb-note { margin-top: 6px; color: var(--el-text-color-secondary); font-size: 12px; }
 .answer-box { margin-top: 5px; padding: 8px; background: #fff; border-radius: 4px; font-size: 12px; }
 .ref-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
 .ref-name { font-weight: 500; }
 .plan-day { margin-bottom: 8px; font-size: 12px; }
-.refs { margin-top: 10px; font-size: 12px; color: #909399; }
+.refs { margin-top: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
 .msg-meta {
   display: flex; align-items: center; gap: 8px; margin-top: 10px;
   padding-top: 8px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #c0c4cc;
 }
 .msg-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
-.input-bar { padding: 12px 20px 14px; background: #fff; border-top: 1px solid #ebeef5; }
+.input-bar { padding: 12px 20px 14px; background: #fff; border-top: 1px solid var(--el-border-color-lighter); }
 .filters { display: flex; gap: 8px; margin-bottom: 8px; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }
 .tip { font-size: 11px; color: #c0c4cc; margin-top: 6px; text-align: right; }

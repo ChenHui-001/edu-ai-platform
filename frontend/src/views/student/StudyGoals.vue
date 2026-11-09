@@ -14,13 +14,13 @@
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color:#f56c6c">{{ maxStreak }}</div>
+          <div class="stat-value" style="color:var(--el-color-danger)">{{ maxStreak }}</div>
           <div class="stat-label">最长连续打卡</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color:#67c23a">{{ todayCheckedCount }}</div>
+          <div class="stat-value" style="color:var(--el-color-success)">{{ todayCheckedCount }}</div>
           <div class="stat-label">今日已打卡</div>
         </div>
       </el-col>
@@ -120,10 +120,11 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { formatLocalDate } from '@/utils/date'
 import { Plus, Check, Edit, Delete } from '@element-plus/icons-vue'
 import { learningApi } from '@/api'
+import { confirmAction } from '@/utils/confirm'
 
 const goals = ref([])
 const calendar = ref({})
@@ -200,7 +201,7 @@ async function saveGoal() {
 }
 
 async function removeGoal(g) {
-  await ElMessageBox.confirm('确定删除该目标？', '提示', { type: 'warning' })
+  if (!await confirmAction('确定删除该目标？', '提示', { type: 'warning' })) return
   await learningApi.deleteGoal(g.id)
   ElMessage.success('已删除')
   load()
@@ -230,19 +231,18 @@ onMounted(load)
 
 <style scoped>
 .mb16 { margin-bottom: 16px; }
-.stat-card { text-align: center; padding: 16px; background: #f5f7fa; border-radius: 8px; }
-.stat-value { font-size: 28px; font-weight: 700; color: var(--el-color-primary); }
-.stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
+.stat-card { text-align: center; padding: 16px; background: var(--el-fill-color-light); border-radius: 8px; }
+.stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .calendar-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
-.calendar-cell { aspect-ratio: 1; border-radius: 4px; background: #f5f7fa; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; color: #c0c4cc; }
-.calendar-cell.checked { background: #67c23a; color: #fff; }
-.calendar-cell.today { border: 2px solid #409eff; }
+.calendar-cell { aspect-ratio: 1; border-radius: 4px; background: var(--el-fill-color-light); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; color: #c0c4cc; }
+.calendar-cell.checked { background: var(--el-color-success); color: #fff; }
+.calendar-cell.today { border: 2px solid var(--el-color-primary); }
 .cal-day { font-weight: 500; }
 .cal-val { font-size: 10px; }
 .goal-card { margin-bottom: 12px; }
 .goal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .goal-title { margin: 0 8px; font-size: 15px; }
-.goal-target { color: #909399; font-size: 13px; }
+.goal-target { color: var(--el-text-color-secondary); font-size: 13px; }
 .goal-progress { display: flex; align-items: center; gap: 16px; }
 .streak-info { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 500; white-space: nowrap; }
 .flame { font-size: 20px; }

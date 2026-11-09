@@ -20,13 +20,13 @@
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color:#f56c6c">{{ data.weak_count || 0 }}</div>
+          <div class="stat-value" style="color:var(--el-color-danger)">{{ data.weak_count || 0 }}</div>
           <div class="stat-label">薄弱知识点</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color:#67c23a">{{ data.mastered_count || 0 }}</div>
+          <div class="stat-value" style="color:var(--el-color-success)">{{ data.mastered_count || 0 }}</div>
           <div class="stat-label">已精通知识点</div>
         </div>
       </el-col>
@@ -138,24 +138,23 @@ onMounted(async () => {
 <style scoped>
 .mb16 { margin-bottom: 16px; }
 .ml8 { margin-left: 8px; }
-.stat-card { text-align: center; padding: 16px; background: #f5f7fa; border-radius: 8px; }
-.stat-value { font-size: 28px; font-weight: 700; color: var(--el-color-primary); }
-.stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
+.stat-card { text-align: center; padding: 16px; background: var(--el-fill-color-light); border-radius: 8px; }
+.stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .flex-between { display: flex; align-items: center; justify-content: space-between; }
-.ai-advice { font-size: 14px; line-height: 1.8; color: #303133; white-space: pre-wrap; }
+.ai-advice { font-size: 14px; line-height: 1.8; color: var(--el-text-color-primary); white-space: pre-wrap; }
 .path-timeline { display: flex; flex-direction: column; gap: 0; }
 .path-node { display: flex; gap: 16px; position: relative; padding-bottom: 24px; }
-.path-connector { position: absolute; left: 16px; top: 32px; bottom: 0; width: 2px; background: #dcdfe6; }
-.path-circle { width: 32px; height: 32px; border-radius: 50%; background: #409eff; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; z-index: 1; }
-.path-node.高 .path-circle { background: #f56c6c; }
-.path-node.中 .path-circle { background: #e6a23c; }
-.path-node.低 .path-circle { background: #67c23a; }
+.path-connector { position: absolute; left: 16px; top: 32px; bottom: 0; width: 2px; background: var(--el-border-color); }
+.path-circle { width: 32px; height: 32px; border-radius: 50%; background: var(--el-color-primary); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; z-index: 1; }
+.path-node.高 .path-circle { background: var(--el-color-danger); }
+.path-node.中 .path-circle { background: var(--el-color-warning); }
+.path-node.低 .path-circle { background: var(--el-color-success); }
 .path-content { flex: 1; }
 .path-card { width: 100%; }
 .path-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .path-name { font-size: 15px; }
 .mastery-badge { color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: auto; }
-.path-desc { font-size: 13px; color: #606266; margin: 8px 0; }
-.path-stats { display: flex; gap: 16px; font-size: 12px; color: #909399; margin: 8px 0; }
-.path-action { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #409eff; margin: 8px 0 12px; }
+.path-desc { font-size: 13px; color: var(--el-text-color-regular); margin: 8px 0; }
+.path-stats { display: flex; gap: 16px; font-size: 12px; color: var(--el-text-color-secondary); margin: 8px 0; }
+.path-action { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--el-color-primary); margin: 8px 0 12px; }
 </style>

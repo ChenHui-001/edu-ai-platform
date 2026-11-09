@@ -64,6 +64,7 @@
       </el-tabs>
 
       <el-table v-loading="loading" :data="list" border stripe>
+        <template #empty><TableEmpty text="暂无登录日志" /></template>
         <template v-if="tab === 'login'">
           <el-table-column prop="username" label="用户" width="120" />
           <el-table-column prop="ip_address" label="IP 地址" width="150" />

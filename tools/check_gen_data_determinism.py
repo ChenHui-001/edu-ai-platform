@@ -71,9 +71,16 @@ def _db_url(path: str) -> str:
 
 def _run_generator(gen_path: str, db_path: str) -> str:
     """跑一次生成器，返回 stdout（失败抛 RuntimeError）。"""
+    # 编码必须显式钉死 UTF-8，并且**连子进程的 stdout 编码一起钉**：
+    # `text=True` 不指定 encoding 时用系统 locale（中文 Windows 是 GBK），
+    # 生成器一旦输出 GBK 无法编码的符号（如 √ U+2713）就会在两侧各炸一次。
+    # 第三轮复审 P2-E：这道门禁在 Ubuntu CI 上是绿的，在任何中文 Windows
+    # 开发机上必崩，且栈回溯与"确定性"毫无关系。
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     proc = subprocess.run(
         [sys.executable, gen_path, "--db", _db_url(db_path)],
-        capture_output=True, text=True, timeout=300, cwd=ROOT,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=300, cwd=ROOT, env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(
@@ -171,14 +178,20 @@ def _check_invariants(db_path: str, label: str) -> None:
             f"{label}: 课程覆盖缺口 pairs={pairs} assigned={assigned} "
             f"期望={EXPECTED['teaching']}"
         )
-        print(f"  [{label}] 不变式全绿：行数契约 ✓ 班主任互异 ✓ "
-              f"不跨学段 ✓ 每师≤{max_cls}班 ✓ 每班跨年级 ✓ "
-              f"覆盖 {assigned}/{pairs} ✓")
+        print(f"  [{label}] 不变式全绿：行数契约 √ 班主任互异 √ "
+              f"不跨学段 √ 每师≤{max_cls}班 √ 每班跨年级 √ "
+              f"覆盖 {assigned}/{pairs} √")
     finally:
         con.close()
 
 
 def main() -> int:
+    # 父进程 stdout 在 GBK 控制台下遇到不能编码的字符时，替换而不是抛异常：
+    # 门禁的职责是判定确定性，不该因为终端编码而崩。
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:  # noqa: BLE001 老版本 Python / 非 TTY 环境忽略
+        pass
     ap = argparse.ArgumentParser(description="测试数据确定性门禁")
     ap.add_argument("--gen", default=DEFAULT_GEN,
                     help="生成器脚本路径（默认 tools/gen_test_data.py）")

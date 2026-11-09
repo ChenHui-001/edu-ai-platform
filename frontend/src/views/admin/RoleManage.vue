@@ -14,6 +14,7 @@
         <el-card shadow="never" v-loading="loading">
           <template #header><b>角色列表（{{ roles.length }}）</b></template>
           <el-table :data="roles" border stripe highlight-current-row @current-change="selectRole">
+            <template #empty><TableEmpty text="暂无角色" /></template>
             <el-table-column prop="name" label="角色名称" />
             <el-table-column prop="code" label="角色标识" width="140" />
             <el-table-column label="用户数" width="80" align="center">
@@ -86,9 +87,10 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus, Refresh, Edit, Delete, Check, DocumentCopy } from '@element-plus/icons-vue'
 import { systemApi } from '@/api'
+import { confirmAction, promptAction } from '@/utils/confirm'
 
 const roles = ref([])
 const permTree = ref([])
@@ -195,16 +197,17 @@ async function save() {
 }
 
 async function copyRole() {
-  const { name } = await ElMessageBox.prompt('请输入新角色名称', '复制角色', {
+  const name = await promptAction('请输入新角色名称', '复制角色', {
     inputValue: `${current.value.name} - 副本`
   })
+  if (name === null) return  // 用户取消
   await systemApi.copyRole(current.value.id, { name })
   ElMessage.success('复制成功')
   load()
 }
 
 async function remove() {
-  await ElMessageBox.confirm(`确认删除角色「${current.value.name}」？`, '提示', { type: 'warning' })
+  if (!await confirmAction(`确认删除角色「${current.value.name}」？`, '提示', { type: 'warning' })) return
   await systemApi.deleteRole(current.value.id)
   ElMessage.success('已删除')
   current.value = null

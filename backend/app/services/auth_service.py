@@ -168,6 +168,12 @@ def authenticate(
     # 锁定检查
     if user.locked_until and user.locked_until > now_local():
         _fail(f"账号已锁定，请于 {user.locked_until.strftime('%H:%M')} 后重试")
+    if user.locked_until and user.locked_until <= now_local():
+        # 锁定期已过：这一刻才清零失败计数，重新给满额机会。
+        # 不能在"锁定瞬间"清零 —— 那样管理端"已锁定(N)"里的 N 永远是空的
+        # （第三轮复审 §4.3：前端那行括号成了死代码）。
+        user.locked_until = None
+        user.login_fail_count = 0
     if not user.is_active:
         if user.status == UserStatus.PENDING.value:
             _fail("账号正在审批中，请耐心等待管理员审核")
@@ -178,7 +184,8 @@ def authenticate(
         abnormal = False
         if user.login_fail_count >= MAX_LOGIN_FAIL:
             user.locked_until = now_local() + timedelta(minutes=LOCK_MINUTES)
-            user.login_fail_count = 0
+            # 保留 login_fail_count（不归零）：管理端要显示"已锁定(N)"，
+            # N 就是触发锁定的连续失败次数。锁定期满后再清零。
             abnormal = True
         db.add(
             LoginLog(

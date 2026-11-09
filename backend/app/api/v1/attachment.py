@@ -96,9 +96,11 @@ def public_upload(
       - 同一 IP 10 分钟内最多 10 次
     """
     ip = get_client_ip(request) if request is not None else "unknown"
-    from app.services.rate_limit import check_and_hit
+    from app.services.rate_limit import check_and_hit, key_digest
 
-    if not check_and_hit(db, f"pubupload:{ip}", 10, 600):
+    # 键用加盐哈希：这张表曾被写入明文的来源 IP（也就能被当作访问者清单），
+    # 且键由匿名调用方控制，明文入库既涉隐私又便于刷键撑表。
+    if not check_and_hit(db, key_digest("pubupload", ip), 10, 600):
         raise BusinessException("上传过于频繁，请 10 分钟后再试")
 
     ext = os.path.splitext(file.filename or "")[1].lower()

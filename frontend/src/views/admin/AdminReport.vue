@@ -42,6 +42,7 @@
         <el-card shadow="never">
           <template #header><b>各年级教学数据对比</b></template>
           <el-table v-loading="loadingGrade" :data="grades" border stripe>
+            <template #empty><TableEmpty text="暂无年级统计" /></template>
             <el-table-column prop="grade_name" label="年级" width="110" />
             <el-table-column prop="user_count" label="用户数" width="90" align="center" />
             <el-table-column prop="question_count" label="题量" width="90" align="center" />
@@ -66,6 +67,7 @@
         <el-card shadow="never">
           <template #header><b>AI 引擎运行统计</b></template>
           <el-table :data="aiRows" border>
+            <template #empty><TableEmpty text="暂无 AI 用量数据" /></template>
             <el-table-column prop="label" label="指标" />
             <el-table-column prop="value" label="数量" width="120" align="center" />
           </el-table>

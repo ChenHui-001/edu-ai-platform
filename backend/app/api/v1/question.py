@@ -20,12 +20,25 @@ from app.models import (
     Question, QuestionBankType, QuestionStatus, ShareScope, Subject, Task, TaskStatus,
     User,
 )
+from app.schemas.legacy_bodies import (
+    ArchivePaperIn,
+    BatchPapersIn,
+    BatchQuestionsIn,
+    ChangeStatusIn,
+    CopyPaperIn,
+    CreatePaperIn,
+    CreateQuestionIn,
+    SharePaperIn,
+    UpdatePaperIn,
+    UpdateQuestionIn,
+)
 from app.schemas.question import QuestionBatchCreateIn
 from app.services.question_access import question_usable_error
 from app.services.question_usage import (
     question_ids_of_paper, question_ids_of_papers, recount_usage as _recount_usage,
 )
 from app.utils.common import PageParams, dictify, ok
+from app.utils.options import normalize_options
 
 router = APIRouter(prefix="/question", tags=["题库与试卷"])
 
@@ -476,7 +489,10 @@ def _prepare_question(
             and not _can_audit(user):
         status = QuestionStatus.DRAFT.value
 
-    options = data.get("options")
+    # 选项在写入口就归一化成唯一契约形状（任意历史/外部形状 → [{key,text}]）。
+    # 这一层不能省：只要写入侧漏一种形状，读取侧就会在导出/答题上炸成 500
+    # （第三轮复审 P1-C：演示数据写成字符串数组，两处导出直接 500）。
+    options = normalize_options(data.get("options"))
     if qtype == "judge" and not options:
         options = DEFAULT_JUDGE_OPTIONS
     return Question(
@@ -496,9 +512,10 @@ def _prepare_question(
 
 @router.post("/questions", summary="新增题目")
 def create_question(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: CreateQuestionIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
 ):
+    data = body.model_dump(exclude_unset=True)
     q = _prepare_question(data, db, user)
     db.add(q)
     db.commit()
@@ -582,7 +599,7 @@ def batch_create_questions(
 
 @router.post("/questions/batch", summary="批量操作题目")
 def batch_questions(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: BatchQuestionsIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
 ):
     """批量删除/上下架/移动题库/分配知识点/修改难度。
@@ -590,6 +607,7 @@ def batch_questions(
     权限：同批只要有一道题无权操作，整体 403（防部分写入歧义）；
     业务失败（被试卷引用、知识点不匹配等）进 skipped，不影响其它题。
     """
+    data = body.model_dump(exclude_unset=True)
     action = str(data.get("action") or "").strip().lower()
     if action not in {"delete", "publish", "offline", "draft", "move_bank",
                       "assign_knowledge", "set_difficulty"}:
@@ -735,9 +753,10 @@ def import_template(
 
 @router.put("/questions/{q_id}", summary="编辑题目")
 def update_question(
-    q_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    q_id: int, body: UpdateQuestionIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
 ):
+    data = body.model_dump(exclude_unset=True)
     q = db.get(Question, q_id)
     if not q:
         raise NotFoundException("题目不存在")
@@ -804,7 +823,8 @@ def update_question(
     if "subject_id" in data:
         q.subject_id = effective_subject
     if "options" in data:
-        q.options = _dump(data.get("options"))
+        # 与新增走同一口径：先归一化再落库，避免编辑接口成为脏形状的入口
+        q.options = _dump(normalize_options(data.get("options")))
     if "answer" in data:
         q.answer = _dump(data.get("answer"))
     if "analysis" in data:
@@ -845,9 +865,10 @@ def delete_question(
 
 @router.put("/questions/{q_id}/status", summary="上下架 / 审核")
 def change_status(
-    q_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    q_id: int, body: ChangeStatusIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm(QUESTION_PERM_WRITE)),
 ):
+    data = body.model_dump(exclude_unset=True)
     q = db.get(Question, q_id)
     if not q:
         raise NotFoundException("题目不存在")
@@ -1396,10 +1417,11 @@ def paper_stats(
 
 @router.post("/papers/batch", summary="批量操作试卷")
 def batch_papers(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: BatchPapersIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
     """批量删除/复制/共享试卷。返回 {done, skipped}；同批无权整体 403。"""
+    data = body.model_dump(exclude_unset=True)
     action = str(data.get("action") or "").strip().lower()
     if action not in {"delete", "copy", "share"}:
         raise BusinessException("action 仅支持 delete / copy / share")
@@ -1512,7 +1534,8 @@ def get_paper(
             "paper_item_id": it.id, "question_id": q.id, "sort_order": it.sort_order,
             "score": it.score, "section_name": it.section_name,
             "type": qtype, "type_label": QUESTION_TYPE_LABEL.get(qtype, qtype),
-            "stem": q.stem, "options": _load(q.options), "answer": _load(q.answer),
+            "stem": q.stem, "options": normalize_options(q.options),
+            "answer": _load(q.answer),
             "analysis": q.analysis, "difficulty": q.difficulty,
             "knowledge_point_name": kp.name if kp else None,
         })
@@ -1531,9 +1554,10 @@ def get_paper(
 
 @router.post("/papers", summary="手动组卷")
 def create_paper(
-    data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    body: CreatePaperIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
+    data = body.model_dump(exclude_unset=True)
     name = _validate_paper_name(data.get("name"))
     grade, subject = _require_grade_subject(
         db, data.get("grade_id"), data.get("subject_id"))
@@ -1566,9 +1590,10 @@ def create_paper(
 
 @router.put("/papers/{paper_id}", summary="编辑试卷")
 def update_paper(
-    paper_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    paper_id: int, body: UpdatePaperIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
+    data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -1668,7 +1693,7 @@ def delete_paper(
 
 @router.post("/papers/{paper_id}/archive", summary="停用 / 恢复试卷")
 def archive_paper(
-    paper_id: int, data: Dict[str, Any] = Body(default_factory=dict),
+    paper_id: int, body: ArchivePaperIn = Body(default_factory=dict),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
@@ -1679,6 +1704,7 @@ def archive_paper(
     但**系统里没有任何地方能把试卷置为停用** —— 用户按提示操作只会卡住，
     最后被迫删任务（连带学生成绩一起没）。停用不动任何题项与提交记录。
     """
+    data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -1763,10 +1789,11 @@ def _copy_paper_row(db: Session, src: Paper, user: User, name: Optional[str] = N
 
 @router.post("/papers/{paper_id}/copy", summary="试卷复制复用")
 def copy_paper(
-    paper_id: int, data: Dict[str, Any] = Body(default={}),
+    paper_id: int, body: CopyPaperIn = Body(default={}),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
+    data = body.model_dump(exclude_unset=True)
     src = db.get(Paper, paper_id)
     if not src:
         raise NotFoundException("试卷不存在")
@@ -1818,9 +1845,10 @@ def _share_paper_to(db: Session, paper: Paper, user: User, targets: List[int]) -
 
 @router.post("/papers/{paper_id}/share", summary="共享试卷给同科教师")
 def share_paper(
-    paper_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    paper_id: int, body: SharePaperIn = Body(...), db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:share")),
 ):
+    data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
@@ -1873,7 +1901,7 @@ def export_paper(
                 current_section = it.section_name
                 ws.append([current_section])
             q = it.question
-            opts = _load(q.options) or []
+            opts = normalize_options(q.options)
             opt_text = "  ".join(f"{o['key']}. {o['text']}" for o in opts)
             ws.append([f"{idx}. （{it.score}分）{q.stem}"])
             if opt_text:

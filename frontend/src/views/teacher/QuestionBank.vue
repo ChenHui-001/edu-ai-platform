@@ -100,8 +100,13 @@
                    @click="batchDelete">删除</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" row-key="id" border stripe
+      <!-- 首屏骨架屏（§3.5 试点）：首次进入时用骨架占位，后续翻页/筛选仍用表格内 loading -->
+
+      <el-skeleton v-if="loading && !list.length" :rows="8" animated />
+
+      <el-table v-else v-loading="loading" :data="list" row-key="id" border stripe
                 @selection-change="onSelectionChange" @row-click="onRowClick">
+        <template #empty><TableEmpty text="暂无题目" /></template>
         <el-table-column type="selection" width="44" />
         <el-table-column label="题干" min-width="340">
           <template #default="{ row }">
@@ -361,7 +366,7 @@
       </el-form>
       <el-upload drag :auto-upload="false" :limit="1" accept=".xlsx,.xls"
                  :on-change="onFileChange" :file-list="fileList">
-        <el-icon size="40" color="#909399"><UploadFilled /></el-icon>
+        <el-icon size="40" color="var(--el-text-color-secondary)"><UploadFilled /></el-icon>
         <div>将 Excel 拖到此处，或<em>点击选择文件</em></div>
       </el-upload>
       <div v-if="importResult" class="import-result">
@@ -370,6 +375,7 @@
                   :description="importResult.skipped_count ? `跳过 ${importResult.skipped_count} 道（重复或格式错误）` : ''" />
         <el-table v-if="importResult.skipped?.length" :data="importResult.skipped"
                   size="small" max-height="180" style="margin-top:10px">
+          <template #empty><TableEmpty text="无失败行" /></template>
           <el-table-column prop="line" label="行号" width="70" />
           <el-table-column prop="stem" label="题干" show-overflow-tooltip />
           <el-table-column prop="reason" label="原因" width="120" />
@@ -457,6 +463,7 @@
                     ? '草稿题审核通过后即可用于组卷；可在列表用「来源=AI」筛选查看'
                     : (aiResultTip || '题库中已存在同类题被复用，本次未新增；调整条件后可重试')" />
         <el-table :data="aiResult" size="small" border max-height="240" class="mt8">
+          <template #empty><TableEmpty text="暂无题目" /></template>
           <el-table-column label="题型" width="76">
             <template #default="{ row }">{{ typeLabel(row.type) }}</template>
           </el-table-column>
@@ -514,6 +521,7 @@
         </div>
         <el-table ref="aiVarTableRef" :data="aiVarItems" size="small" border max-height="320"
                   @selection-change="onAiVarSelectionChange">
+          <template #empty><TableEmpty text="暂无题目" /></template>
           <el-table-column type="selection" width="42" />
           <el-table-column label="题型" width="90">
             <template #default="{ row }">{{ typeLabel(row.type || aiVarBase?.type) }}</template>
@@ -551,6 +559,7 @@
       </div>
       <el-table ref="aiEnrichTableRef" v-loading="aiEnrichLoading" :data="aiEnrichItems"
                 size="small" border max-height="360" @selection-change="onAiEnrichSelectionChange">
+        <template #empty><TableEmpty text="暂无题目" /></template>
         <el-table-column type="selection" width="42" />
         <el-table-column label="题目" min-width="220">
           <template #default="{ row }">
@@ -581,6 +590,7 @@
       <el-alert v-if="aiQualityFallback" class="mb12" type="warning" :closable="false" show-icon
                 title="当前无可用大模型，质检结果为规则引擎降级生成（is_fallback=true）" />
       <el-table v-loading="aiQualityLoading" :data="aiQualityItems" size="small" border max-height="420">
+        <template #empty><TableEmpty text="暂无题目" /></template>
         <el-table-column label="题目" min-width="260">
           <template #default="{ row }">
             <span class="muted">#{{ row.id }}</span> {{ stemOf(row.id) }}
@@ -671,7 +681,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   Download, Plus, Refresh, Search, Upload, UploadFilled, Delete, MagicStick, Cpu
 } from '@element-plus/icons-vue'
@@ -679,6 +689,7 @@ import { questionApi, eduApi, agentApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { downloadBlob } from '@/utils/download'
+import { alertAction, confirmAction } from '@/utils/confirm'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 function safeStem(s) { return sanitizeHtml(s) }
@@ -1030,9 +1041,9 @@ async function restoreKpDraft(targetId) {
     return false
   }
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `检测到 ${new Date(draft.savedAt).toLocaleString()} 未保存的编辑内容，是否恢复？`,
-      '恢复草稿', { type: 'info', confirmButtonText: '恢复', cancelButtonText: '丢弃' })
+      '恢复草稿', { type: 'info', confirmButtonText: '恢复', cancelButtonText: '丢弃' })) return
   } catch {
     localStorage.removeItem(KP_DRAFT_KEY)
     return false
@@ -1068,9 +1079,9 @@ async function save() {
 
 async function remove(row) {
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `确定删除题目「${stripHtml(row.stem).slice(0, 20)}...」吗？已被试卷引用时会删除失败。`,
-      '删除确认', { type: 'warning', confirmButtonText: '确认删除' })
+      '删除确认', { type: 'warning', confirmButtonText: '确认删除' })) return
   } catch { return }
   await questionApi.remove(row.id)
   ElMessage.success('已删除')
@@ -1089,7 +1100,7 @@ async function checkDupe(row) {
   const res = await questionApi.duplicates(row.id)
   const dupes = Array.isArray(res.data) ? res.data : []
   if (!dupes.length) return ElMessage.success('未发现重复题目')
-  ElMessageBox.alert(
+  alertAction(
     dupes.map(d => `ID ${d.id}：${stripHtml(d.stem)}`).join('<br/>'),
     `发现 ${dupes.length} 道疑似重复题目`, { dangerouslyUseHTMLString: true }
   )
@@ -1314,8 +1325,8 @@ async function runBatch(action, payload, confirmText) {
   if (!ensureSelection()) return false
   const ids = batchIds()
   try {
-    await ElMessageBox.confirm(confirmText || `确认对 ${ids.length} 道题执行批量操作？`,
-      '批量操作确认', { type: 'warning' })
+    if (!await confirmAction(confirmText || `确认对 ${ids.length} 道题执行批量操作？`,
+      '批量操作确认', { type: 'warning' })) return false
   } catch {
     return false
   }
@@ -1690,7 +1701,7 @@ onMounted(async () => {
   width: 24px; height: 24px; line-height: 24px; text-align: center;
   background: #f0f2f5; border-radius: 4px; font-size: 12px; flex-shrink: 0;
 }
-.err-tip { color: #f56c6c; font-size: 12px; }
+.err-tip { color: var(--el-color-danger); font-size: 12px; }
 .import-result { margin-top: 14px; }
 .ai-base {
   display: flex; align-items: center; gap: 6px; margin-bottom: 10px;

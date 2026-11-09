@@ -30,25 +30,25 @@
     <el-row :gutter="12" class="mb12">
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value">{{ total }}</div>
+          <div class="stat-value stat-value--sm">{{ total }}</div>
           <div class="stat-label">收藏总数</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value">{{ tags.length }}</div>
+          <div class="stat-value stat-value--sm">{{ tags.length }}</div>
           <div class="stat-label">标签数</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value">{{ typeCount }}</div>
+          <div class="stat-value stat-value--sm">{{ typeCount }}</div>
           <div class="stat-label">题型种类</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color:#67c23a">{{ recentCount }}</div>
+          <div class="stat-value stat-value--sm" style="color:var(--el-color-success)">{{ recentCount }}</div>
           <div class="stat-label">近 7 天新增</div>
         </div>
       </el-col>
@@ -95,12 +95,13 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Promotion, Refresh, Search, Edit, Delete } from '@element-plus/icons-vue'
 import TYPES from '@/constants/question'
 import { learningApi } from '@/api'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { parseServerDate } from '@/utils/date'
+import { confirmAction } from '@/utils/confirm'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
@@ -183,7 +184,7 @@ async function saveTag(item) {
 }
 
 async function remove(item) {
-  await ElMessageBox.confirm('确定取消收藏该题？', '提示', { type: 'warning' })
+  if (!await confirmAction('确定取消收藏该题？', '提示', { type: 'warning' })) return
   await learningApi.removeFavorite(item.id)
   ElMessage.success('已取消收藏')
   load()
@@ -210,16 +211,15 @@ onMounted(load)
 .stat-card {
   text-align: center;
   padding: 16px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 8px;
 }
-.stat-value { font-size: 24px; font-weight: 700; color: var(--el-color-primary); }
-.stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
+.stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .fav-card { margin-bottom: 12px; }
 .fav-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .ml4 { margin-left: 4px; }
 .ml8 { margin-left: 8px; }
-.text-muted { color: #909399; font-size: 12px; }
+.text-muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .fav-date { margin-left: auto; font-size: 12px; color: #c0c4cc; }
 .stem { font-size: 14px; line-height: 1.8; margin: 8px 0; }
 .options { margin: 8px 0; }

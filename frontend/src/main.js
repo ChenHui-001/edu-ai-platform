@@ -8,9 +8,13 @@ import 'element-plus/es/components/message-box/style/css'
 
 import App from './App.vue'
 import router from './router'
+import TableEmpty from './components/TableEmpty.vue'
+import { describeError, isBusinessError } from './utils/errors'
 import './styles/index.css'
 
 const app = createApp(App)
+// 全局注册表格空态：被 29 个页面、65 张表使用，逐页 import 只会把导入区撑长
+app.component('TableEmpty', TableEmpty)
 
 // 全局错误捕获：组件 setup / 渲染异常此前只会让内容区白屏、无任何提示，
 // 排查成本极高。现将错误显式呈现（顶部红条 + 提示），并保留 console 输出。
@@ -22,25 +26,12 @@ const app = createApp(App)
 // 伪装成前端崩溃，既误导用户也掩盖真问题。
 // request.js 抛出的错误都带 __handled 标记，axios 原生错误靠 isAxiosError 兜底识别。
 //
-// ⚠️ Element Plus 的 ElMessageBox 被用户「取消 / 关闭」时，reject 的是**字符串**
-// 'cancel' / 'close'，不是 Error。那是用户主动放弃操作，绝非前端崩溃 —— 全站
-// 有 43 处 ElMessageBox，其中相当一部分没有 try 保护，一旦落进这里，用户每次点
-// 「取消」都会看到「页面运行时错误： cancel」+ 一条盖住 60px 页头、切路由也不消失
-// 的红条，体感就是「这系统会崩」。因此：**任何非对象类型的 rejection 一律视为
-// 用户取消**（业务异常统一是 Error / axios 错误，不会是裸字符串）。
-const CANCEL_REASONS = ['cancel', 'close']
-
-function isBusinessError(err) {
-  if (err === undefined || err === null) return true
-  if (typeof err !== 'object') {
-    if (!CANCEL_REASONS.includes(err)) {
-      console.warn('[app error][非 Error 的 rejection]', err)
-    }
-    return true
-  }
-  return err.__handled === true || err.isAxiosError === true || !!err.response
-}
-
+// ⚠️ 取消语义**只认白名单**：Element Plus 的消息框被用户「取消 / 关闭」时 reject
+// 的是字符串 'cancel' / 'close'，不是 Error。那是用户主动放弃操作，绝非前端崩溃。
+// 但**不能反过来把「一切非对象」都当取消**（reaudit3 P2-B）：那样 `throw undefined`
+// / `Promise.reject('boom')` 这类真实故障会既不弹提示也不挂红条，只在控制台留一行
+// warn —— 在一个装着学生教育数据的后台里，「什么都不知道」比「报个错」更难排查。
+// 判据本身搬到了 utils/errors.js：它是全局兜底的唯一分拣点，必须能被单测锁住。
 const ERROR_BAR_ID = 'global-error-bar'
 const ERROR_BAR_TTL_MS = 10000
 let errorBarTimer = null
@@ -60,9 +51,13 @@ function showErrorBar(msg) {
   if (!el) {
     el = document.createElement('div')
     el.id = ERROR_BAR_ID
-    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;' +
+    // z-index 3000：略高于 ElMessage（2000 起）与 el-dialog 遮罩，但不再用 99999 ——
+    // 原先那档会把同一次错误里自己的 toast 一起压住（reaudit3 P2-G）。
+    // 颜色走 EP 的 CSS 变量，避免再造三个硬编码色值。
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:3000;' +
       'display:flex;align-items:flex-start;gap:12px;' +
-      'background:#fef0f0;color:#f56c6c;border-bottom:1px solid #fbc4c4;' +
+      'background:var(--el-color-danger-light-9,#fef0f0);color:var(--el-color-danger,#f56c6c);' +
+      'border-bottom:1px solid var(--el-color-danger-light-5,#fbc4c4);' +
       'padding:8px 16px;font-size:13px;font-family:monospace;white-space:pre-wrap'
     const text = document.createElement('span')
     text.id = `${ERROR_BAR_ID}-text`
@@ -72,7 +67,8 @@ function showErrorBar(msg) {
     close.textContent = '×'
     close.setAttribute('aria-label', '关闭错误提示')
     close.style.cssText = 'flex:0 0 auto;border:0;background:transparent;' +
-      'color:#f56c6c;font-size:18px;line-height:1;cursor:pointer;padding:0 4px'
+      'color:var(--el-color-danger,#f56c6c);font-size:18px;line-height:1;' +
+      'cursor:pointer;padding:0 4px'
     close.addEventListener('click', clearErrorBar)
     el.appendChild(text)
     el.appendChild(close)
@@ -91,11 +87,12 @@ app.config.errorHandler = (err, instance, info) => {
     return
   }
   console.error('[app error]', err, info)
-  const msg = err?.message || String(err)
-  ElMessage.error(`页面出错：${msg.slice(0, 120)}`)
+  const msg = describeError(err)
+  // 先挂红条再弹 toast：红条占住顶部，toast 必须下移，否则两者叠在一起只看得见一条
   try {
     showErrorBar(msg)
   } catch { /* DOM 不可用时忽略 */ }
+  ElMessage.error({ message: `页面出错：${msg.slice(0, 120)}`, offset: 88 })
 }
 
 router.onError((err) => {

@@ -158,7 +158,7 @@ defineExpose({ refresh: () => fetchInfo(true) })
   align-items: center;
   gap: 2px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   cursor: default;
   white-space: nowrap;
 }
@@ -187,7 +187,7 @@ defineExpose({ refresh: () => fetchInfo(true) })
   margin-left: auto;
   font-size: 12px;
   font-weight: 400;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 /* auto-fit + minmax 实现响应式：宽屏 4 列 → 中等 2 列 → 手机 1 列，
@@ -202,19 +202,19 @@ defineExpose({ refresh: () => fetchInfo(true) })
   padding: 12px 14px;
   border-radius: 8px;
   background: #f7f9fc;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
 }
 
 .ver-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-bottom: 6px;
 }
 
 .ver-val {
   font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: var(--el-text-color-primary);
   word-break: break-all;
 }
 
@@ -227,7 +227,7 @@ defineExpose({ refresh: () => fetchInfo(true) })
 .ver-ago {
   font-size: 12px;
   font-weight: 400;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .ver-foot {
@@ -236,7 +236,7 @@ defineExpose({ refresh: () => fetchInfo(true) })
   gap: 6px;
   margin-top: 12px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 @media (max-width: 768px) {

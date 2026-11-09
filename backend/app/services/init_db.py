@@ -1,6 +1,10 @@
 """初始化种子数据：角色权限、年级学科、知识点、默认管理员、默认定时任务。"""
+import hashlib
+import json
+import re as _re
 import secrets
-from typing import Dict, List, Tuple
+from datetime import timedelta
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -13,8 +17,14 @@ from app.models import (
     User, UserRole,
 )
 from app.utils.common import now_local
+from app.utils.options import normalize_options
 
 logger = get_logger("init")
+
+
+def _j(obj) -> str:
+    """把对象序列化为 JSON 文本（演示造数与接口写库同一口径）。"""
+    return json.dumps(obj, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------- 知识点种子
@@ -456,9 +466,16 @@ def init_jobs(db: Session) -> None:
                     cron_expression=cron, is_builtin=True, is_active=True,
                 )
             )
-        elif func_path not in JOB_HANDLERS and exists.is_active:
+        # 判据必须用**数据库里那一行实际存的** func_path，不能用循环变量：
+        # 循环变量来自 DEFAULT_JOBS，永远在 JOB_HANDLERS 里，这个分支就成了
+        # 死代码（第三轮复审 P2-A）—— 存量库里被写坏的 func_path 永远不会
+        # 被停用，每天到点 run_job 抛错、给全体 sys_admin 推失败通知。
+        elif exists.func_path not in JOB_HANDLERS and exists.is_active:
             exists.is_active = False
-            logger.warning("定时任务「%s」的执行逻辑未注册，已自动停用", name)
+            logger.warning(
+                "定时任务「%s」的执行逻辑未注册（func_path=%s），已自动停用",
+                name, exists.func_path,
+            )
     db.commit()
     logger.info(f"默认定时任务初始化完成（{len(DEFAULT_JOBS)} 个）")
 
@@ -559,77 +576,50 @@ def init_demo_data(db: Session) -> None:
     logger.info("演示数据初始化完成（4 个班级 / 4 名教师 / 12 名学生）")
 
 
-def init_demo_learning_flow(db: Session) -> None:
-    """最小可演示闭环：题库 → 试卷 → 考试 → 作答 → 批改 → 错题 → 复习计划。
+def _demo_banks() -> Dict[int, List[tuple]]:
+    """各年级的演示题库（题型 / 题干 / 选项文本 / 正确答案键 / 解析）。
 
-    为什么需要它：登录页对外写着「覆盖教-学-练-考-评-改全教学流程」，
-    而 `init_demo_data` 只造账号。默认形态下教师进题库看到 0 条、批改中心
-    0 条待批改，学生进错题本 / 复习计划全是"暂无数据"——宣传的 5 条能力里
-    4 条没有东西可看，此前修好的组卷、打印导出、错题导出、跨角色批改在空库
-    上根本点不出来。
+    为什么按年级分开：`init_demo_data` 播的是「一年级 + 七年级」各两个班，
+    而登录页一键填充给的是一年级账号（teacher1 / stu731 分属不同班）。
+    只给七年级造数据，等于让产品自己指引入口的那批账号仍然看到空壳
+    （第三轮复审 P1-D）。这里两个学段各准备 10 道题，每班一套。
 
-    这里只造**一套**（10 题 / 1 卷 / 1 场考试 / 1 份已批改 + 1 份待批改作答），
-    目标是每条链路都有样本，不追求复刻一整个月。需要完整数据请跑
-    `tools/seed_prod_data.py`（走真实 API，幂等可重跑）。
+    选项一律是 `["A. 7", …]` 这种**带前缀的文本**，落库前由
+    `_demo_options()` 拆成 `[{"key": "A", "text": "7"}]` —— 全站契约是
+    后者，写成纯字符串数组会让试卷 Excel 导出 / 错题导出直接 500
+    （第三轮复审 P1-C）。
     """
-    import hashlib
-    import json
-    import re as _re
-    from datetime import timedelta
-
-    from app.models import (
-        Answer, Class, KnowledgeMastery, Note, Paper, PaperItem, Question,
-        QuestionFavorite, ReviewPlan, StudyRecord, Submission, Task,
-        TaskAssignment, WrongQuestion,
-    )
-    from app.models.task import GradeStatus
-
-    if not settings.SEED_DEMO_DATA:
-        return
-    # 已有题库说明数据是管理员导入的、或 seed_prod_data 已经跑过 —— 一律不覆盖。
-    if db.scalar(select(func.count()).select_from(Question)) or 0:
-        return
-
-    grade = db.scalar(select(Grade).where(Grade.grade_num == 7))
-    if not grade:
-        logger.info("演示闭环跳过：七年级未播种")
-        return
-    cls = db.scalar(select(Class).where(Class.grade_id == grade.id).order_by(Class.id))
-    if not cls:
-        logger.info("演示闭环跳过：七年级无班级（SEED_DEMO_DATA 可能被关掉过）")
-        return
-    teacher = db.get(User, cls.head_teacher_id) if cls.head_teacher_id else None
-    students = db.scalars(
-        select(User).where(User.class_id == cls.id, User.identity == "student")
-        .order_by(User.id)
-    ).all()
-    if not teacher or len(students) < 2:
-        logger.info("演示闭环跳过：班级缺少班主任或学生账号")
-        return
-
-    subject = db.scalar(
-        select(Subject).where(Subject.grade_id == grade.id, Subject.name == "数学")
-    ) or db.scalar(select(Subject).where(Subject.grade_id == grade.id).order_by(Subject.id))
-    if not subject:
-        logger.info("演示闭环跳过：七年级无学科（SEED_BASE_DATA=false）")
-        return
-    kps = db.scalars(
-        select(KnowledgePoint)
-        .where(KnowledgePoint.subject_id == subject.id, KnowledgePoint.level >= 2)
-        .order_by(KnowledgePoint.id).limit(3)
-    ).all()
-
-    def _fp(text: str) -> str:
-        norm = _re.sub(r"\s+", "", _re.sub(r"[（(].*?[)）]", "", text))
-        return hashlib.md5(norm.encode()).hexdigest()
-
-    def _j(obj) -> str:
-        return json.dumps(obj, ensure_ascii=False)
-
-    # ---- 题库：10 道客观题（单选 6 / 判断 2 / 填空 2），每题 10 分
-    #      答案在库里按 JSON 存（与 create_question 的 _dump 一致），
-    #      学生作答内容是原文（"A" 而不是 "\"A\""），两者别混。
-    bank = [
+    primary = [
+        ("single", "计算：3 + 4 = （  ）",
+         ["A. 6", "B. 7", "C. 8", "D. 9"], "B",
+         "把 3 和 4 合起来，数一数是 7。"),
+        ("single", "计算：9 - 5 = （  ）",
+         ["A. 3", "B. 4", "C. 5", "D. 6"], "B",
+         "从 9 里去掉 5，还剩 4。"),
+        ("single", "下面各数中，最大的是（  ）",
+         ["A. 12", "B. 9", "C. 15", "D. 7"], "C",
+         "15 比 12、9、7 都大。"),
+        ("single", "计算：8 + 7 = （  ）",
+         ["A. 13", "B. 14", "C. 15", "D. 16"], "C",
+         "8 加 7，把 7 分成 2 和 5：8+2=10，10+5=15。"),
+        ("single", "计算：16 - 8 = （  ）",
+         ["A. 6", "B. 7", "C. 8", "D. 9"], "C",
+         "16 减 8，想 8 加几等于 16：8+8=16，所以得 8。"),
+        ("single", "一个加数是 6，和是 13，另一个加数是（  ）",
+         ["A. 5", "B. 6", "C. 7", "D. 8"], "C",
+         "13 - 6 = 7。"),
+        ("judge", "0 加任何数，都得这个数本身。",
+         ["A. 正确", "B. 错误"], "A",
+         "0 表示一个也没有，加上去不改变原来的数量。"),
+        ("judge", "20 以内的两位数中，最大的是 20。",
+         ["A. 正确", "B. 错误"], "A",
+         "20 以内（含 20）的两位数从 10 到 20，20 最大。"),
+        ("blank", "计算：7 + 8 = ______。", None, "15",
+         "凑十法：7+3=10，10+5=15。"),
+        ("blank", "计算：14 - 6 = ______。", None, "8",
+         "14 减 6，先减 4 得 10，再减 2 得 8。"),
+    ]
+    junior = [
         ("single", "下列各数中，最小的数是（  ）",
          ["A. -3", "B. 0", "C. 1", "D. 2"], "A",
          "负数小于 0 和正数，-3 是四个数中最小的。"),
@@ -659,11 +649,90 @@ def init_demo_learning_flow(db: Session) -> None:
         ("blank", "若 2x = 8，则 x = ______。", None, "4",
          "两边同除以 2，得 x = 4。"),
     ]
+    return {1: primary, 7: junior}
+
+
+def _split_option(text: str, idx: int) -> Dict[str, str]:
+    """把 `"A. 7"` 拆成 `{"key": "A", "text": "7"}`；无前缀时按序号补键。"""
+    raw = str(text or "").strip()
+    for sep in (". ", "．", "、", "."):
+        if len(raw) > 2 and raw[0].isalpha() and raw[1:len(sep) + 1] == sep:
+            return {"key": raw[0].upper(), "text": raw[len(sep) + 1:].strip()}
+    return {"key": chr(ord("A") + idx), "text": raw}
+
+
+def _demo_options(options: Optional[List[str]]) -> Optional[List[Dict[str, str]]]:
+    """演示题库的选项文本 → 全站契约形状 `[{"key","text"}]`。"""
+    if not options:
+        return None
+    return [_split_option(t, i) for i, t in enumerate(options)]
+
+
+def _wrong_answer_for(qtype: str, answer: str, options: Optional[List[str]]) -> str:
+    """给一道题编一个**确实错的**答案（用于造真实的错题记录）。
+
+    旧实现把 `wrong_answer` 写死成 "C"，第 2 题的正确答案恰好也是 "C"，
+    错题本里出现"错的答案和正确答案一模一样"（第三轮复审 P2-H）。
+    """
+    if qtype in ("single", "multiple", "judge") and options:
+        keys = [_split_option(t, i)["key"] for i, t in enumerate(options)]
+        for k in keys:
+            if k != (answer or "").strip().upper():
+                return k
+        return keys[0] if keys else "A"
+    # 填空/主观：给一个不等于标准答案的占位错答
+    return "0" if (answer or "").strip() != "0" else "1"
+
+
+def _seed_class_flow(db: Session, grade, cls, bank: List[tuple]) -> bool:
+    """给一个班级造一套完整闭环；已造过则跳过（幂等锚点按班级）。"""
+    from app.models import (
+        Answer, KnowledgeMastery, Note, Paper, PaperItem, Question,
+        QuestionFavorite, ReviewPlan, StudyRecord, Submission, Task,
+        TaskAssignment, WrongQuestion,
+    )
+    from app.models.task import GradeStatus
+
+    teacher = db.get(User, cls.head_teacher_id) if cls.head_teacher_id else None
+    students = db.scalars(
+        select(User).where(User.class_id == cls.id, User.identity == "student")
+        .order_by(User.id)
+    ).all()
+    if not teacher or len(students) < 2:
+        logger.info("演示闭环跳过：%s 缺少班主任或学生账号", cls.name)
+        return False
+
+    subject = db.scalar(
+        select(Subject).where(Subject.grade_id == grade.id, Subject.name == "数学")
+    ) or db.scalar(select(Subject).where(Subject.grade_id == grade.id).order_by(Subject.id))
+    if not subject:
+        logger.info("演示闭环跳过：%s 无学科（SEED_BASE_DATA=false）", grade.name)
+        return False
+
+    # 幂等锚点：这个班主任已经有题 → 这个班造过了。
+    # 旧实现以「全库题库为空」为锚点，管理员只要导入过 1 道题，演示闭环
+    # 就永久跳过（换库才恢复），属于隐性缺陷。
+    if db.scalar(
+        select(func.count()).select_from(Question).where(Question.owner_id == teacher.id)
+    ):
+        return False
+
+    kps = db.scalars(
+        select(KnowledgePoint)
+        .where(KnowledgePoint.subject_id == subject.id, KnowledgePoint.level >= 2)
+        .order_by(KnowledgePoint.id).limit(3)
+    ).all()
+
+    def _fp(text: str) -> str:
+        norm = _re.sub(r"\s+", "", _re.sub(r"[（(].*?[)）]", "", text))
+        return hashlib.md5(norm.encode()).hexdigest()
+
+    # ---- 题库：每班 10 道客观题（答案按 JSON 存，与 create_question 一致）
     questions = []
-    for idx, (qtype, stem, options, answer, analysis) in enumerate(bank):
+    for idx, (qtype, stem, opt_texts, answer, analysis) in enumerate(bank):
         q = Question(
             type=qtype, stem=stem,
-            options=_j(options) if options else None,
+            options=_j(_demo_options(opt_texts)) if opt_texts else None,
             answer=_j(answer), analysis=analysis, score=10.0,
             difficulty="easy" if idx < 4 else "medium",
             grade_id=grade.id, subject_id=subject.id,
@@ -672,28 +741,36 @@ def init_demo_learning_flow(db: Session) -> None:
             fingerprint=_fp(stem), source="manual", usage_count=1,
         )
         db.add(q)
-        questions.append((q, answer))
+        questions.append((q, answer, opt_texts))
     db.flush()
 
-    # ---- 试卷：与标准组卷的卷面结构一致（选择 / 判断 / 填空三个大题，
-    #      section_sort 决定大题顺序，section_code 是题型标识）
+    # 造数自检：客观题落库后必须能被读取侧解析出选项。
+    # 这一条是 P1-C 的回归防线 —— 当初 options 写成字符串数组，造数"成功"、
+    # 导出 500、学生端渲染 undefined，没有任何一处报错。
+    for q, _a, _o in questions:
+        if q.type in ("single", "multiple", "judge") and not normalize_options(q.options):
+            raise ValueError(f"演示题选项归一化后为空：{q.type} / {q.stem[:20]}")
+
+    # ---- 试卷：与标准组卷的卷面结构一致（选择 / 判断 / 填空三个大题）
     sections = {"single": ("一、选择题", 1), "judge": ("二、判断题", 2),
                 "blank": ("三、填空题", 3)}
     paper = Paper(
         name=f"{grade.name}{subject.name}·第一次月考（演示卷）",
         grade_id=grade.id, subject_id=subject.id,
-        total_score=100.0, duration=45,
+        total_score=100.0, duration=30 if grade.grade_num <= 6 else 45,
         difficulty_ratio=_j({"easy": 40, "medium": 50, "hard": 10}),
         creator_id=teacher.id, source="manual",
         status="published", share_scope="grade", is_shared=True,
         description="演示数据：用于展示组卷、下发、作答、批改、错题与复习计划全链路。",
-        exam_type="monthly", stage="junior", current_version=1,
+        exam_type="monthly",
+        stage="primary" if grade.grade_num <= 6 else "junior",
+        current_version=1,
     )
     db.add(paper)
     db.flush()
 
     answer_text = {}
-    for order, (q, ans) in enumerate(questions, start=1):
+    for order, (q, ans, opt_texts) in enumerate(questions, start=1):
         sec_name, sec_sort = sections[q.type]
         answer_text[q.id] = ans
         db.add(PaperItem(
@@ -710,7 +787,7 @@ def init_demo_learning_flow(db: Session) -> None:
         type="exam", paper_id=paper.id, subject_id=subject.id, grade_id=grade.id,
         creator_id=teacher.id, status="published",
         start_at=now - timedelta(days=3), end_at=now + timedelta(days=7),
-        duration=45, allow_retake=1, show_answer=True,
+        duration=paper.duration, allow_retake=1, show_answer=True,
         total_score=100.0, pass_score=60.0,
         description="演示任务：一份已自动批改、一份待批改。",
     )
@@ -720,36 +797,53 @@ def init_demo_learning_flow(db: Session) -> None:
     db.flush()
 
     items = db.scalars(
-        select(PaperItem).where(PaperItem.paper_id == paper.id).order_by(PaperItem.sort_order)
+        select(PaperItem).where(PaperItem.paper_id == paper.id)
+        .order_by(PaperItem.sort_order)
     ).all()
     # 前两题答错，其余正确 —— 错题本 / 复习计划 / 掌握度都需要"真的错过"
     wrong_ids = {items[0].question_id, items[1].question_id}
+    qmap = {q.id: (q, ans, opt_texts) for q, ans, opt_texts in questions}
+    wrong_content = {}
+    for qid in wrong_ids:
+        q, ans, opt_texts = qmap[qid]
+        wrong_content[qid] = _wrong_answer_for(q.type, ans, opt_texts)
 
     def _build_answers(sub, graded: bool):
+        """作答内容与判分结果必须自洽：错题写的是**真错答**，分数按内容算。"""
+        earned = 0.0
         for it in items:
             ok = it.question_id not in wrong_ids
+            content = answer_text[it.question_id] if ok else wrong_content[it.question_id]
+            if graded and ok:
+                earned += float(it.score)
             db.add(Answer(
                 submission_id=sub.id, paper_item_id=it.id, question_id=it.question_id,
-                content=answer_text[it.question_id],
+                content=content,
                 is_correct=ok if graded else None,
                 score=(float(it.score) if ok else 0.0) if graded else 0.0,
                 full_score=float(it.score), grader_type="auto",
                 teacher_comment=("计算时符号处理错误，注意异号相加的法则。"
                                  if graded and not ok else None),
             ))
+        return earned
 
-    # 学生 1：已自动批改（80 分），产生成绩 + 错题 + 复习计划
+    total = float(paper.total_score or 100.0)
+
+    # 学生 1：已自动批改（两题错 → 80 分），产生成绩 + 错题 + 复习计划
     sub1 = Submission(
         task_id=task.id, student_id=students[0].id, attempt=1,
-        status=GradeStatus.AUTO_GRADED.value, score=80.0, objective_score=80.0,
+        status=GradeStatus.AUTO_GRADED.value, score=None,
         subjective_score=0.0, duration_seconds=1620, is_passed=True, class_rank=1,
-        comment="整体掌握较好，注意异号两数相加的符号判断。",
+        comment="整体掌握较好，注意基础计算的准确性。",
         switch_count=0, submit_count=1,
         submit_time=now - timedelta(days=2), grade_time=now - timedelta(days=2),
     )
     db.add(sub1)
     db.flush()
-    _build_answers(sub1, graded=True)
+    earned = _build_answers(sub1, graded=True)
+    sub1.score = earned
+    sub1.objective_score = earned
+    sub1.is_passed = earned >= 60.0
 
     # 学生 2：已交卷未批改 —— 教师端「批改中心」的待办样本
     sub2 = Submission(
@@ -764,15 +858,13 @@ def init_demo_learning_flow(db: Session) -> None:
 
     # ---- 错题本 + 艾宾浩斯复习计划（1/2/4/7 天四轮，首轮已完成）
     wrong_rows = []
-    for it in items:
-        if it.question_id not in wrong_ids:
-            continue
-        q = next(x for x, _a in questions if x.id == it.question_id)
+    for qid in wrong_ids:
+        q, _ans, _opts = qmap[qid]
         wq = WrongQuestion(
-            student_id=students[0].id, question_id=q.id, subject_id=subject.id,
+            student_id=students[0].id, question_id=qid, subject_id=subject.id,
             knowledge_point_id=q.knowledge_point_id,
-            wrong_answer="C" if q.type == "single" else "B",
-            error_count=1, error_reason="符号判断错误", source_type="exam",
+            wrong_answer=wrong_content[qid],
+            error_count=1, error_reason="计算时符号处理错误", source_type="exam",
             source_id=task.id, source_name=task.title,
             is_mastered=False, last_wrong_at=now - timedelta(days=2),
         )
@@ -780,12 +872,16 @@ def init_demo_learning_flow(db: Session) -> None:
         wrong_rows.append(wq)
     db.flush()
 
+    # 复习计划的外键非空：没有挂知识点的题就不能造计划（旧实现写 None →
+    # IntegrityError → 整段演示数据回滚，一条都不落地）。
     for wq in wrong_rows:
+        kp_id = wq.knowledge_point_id
+        if not kp_id:
+            continue
         for stage, days in ((1, 1), (2, 2), (3, 4), (4, 7)):
             db.add(ReviewPlan(
                 student_id=students[0].id, wrong_question_id=wq.id,
-                knowledge_point_id=wq.knowledge_point_id or (kps[0].id if kps else None),
-                subject_id=subject.id, stage=stage,
+                knowledge_point_id=kp_id, subject_id=subject.id, stage=stage,
                 scheduled_date=(now + timedelta(days=days)).strftime("%Y-%m-%d"),
                 is_completed=(stage == 1),
                 completed_at=(now - timedelta(days=1)) if stage == 1 else None,
@@ -801,18 +897,29 @@ def init_demo_learning_flow(db: Session) -> None:
         ))
 
     # ---- 笔记 / 收藏 / 学习记录：学生端「我的笔记」「我的收藏」「学习报表」不再是空页
+    # tags 的契约是**逗号分隔**（见 api/v1/learning/notes.py），写成 JSON 数组
+    # 会被序列化成 `['["有理数"', ' "加法"]']`。
+    if grade.grade_num <= 6:
+        note_title, note_tags = "20 以内加减法小结", "计算,口算"
+        note_body = ("## 20 以内加减法\n\n1. 加法用凑十法：先凑成 10，再加剩下的。\n"
+                     "2. 减法用想加算减：想「几加几等于被减数」。\n"
+                     "3. 算完检查一遍，注意进位与退位。")
+    else:
+        note_title, note_tags = "有理数加法法则小结", "有理数,加法"
+        note_body = ("## 有理数加法\n\n1. 同号相加：取相同符号，绝对值相加。\n"
+                     "2. 异号相加：取绝对值较大者的符号，用较大绝对值减较小绝对值。\n"
+                     "3. 互为相反数的两数相加得 0。")
     db.add(Note(
-        title="有理数加法法则小结", format="markdown", student_id=students[0].id,
+        title=note_title, format="markdown", student_id=students[0].id,
         subject_id=subject.id,
         knowledge_point_id=kps[0].id if kps else None,
-        content="## 有理数加法\n\n1. 同号相加：取相同符号，绝对值相加。\n"
-                "2. 异号相加：取绝对值较大者的符号，用较大绝对值减较小绝对值。\n"
-                "3. 互为相反数的两数相加得 0。",
-        tags=_j(["有理数", "加法"]), is_favorite=True, view_count=6, is_shared=False,
+        content=note_body,
+        tags=note_tags,
+        is_favorite=True, view_count=6, is_shared=False,
     ))
     db.add(QuestionFavorite(
         user_id=students[0].id, question_id=questions[0][0].id,
-        tag="易错", note="符号判断要细心",
+        tag="易错", note="计算要细心",
     ))
     for back in range(7):
         day = (now - timedelta(days=back)).strftime("%Y-%m-%d")
@@ -822,10 +929,80 @@ def init_demo_learning_flow(db: Session) -> None:
             correct_count=6 + back, note_count=1 if back < 3 else 0,
         ))
 
+    # ---- 练习记录：学生端「练习历史」读的是 Task(type='practice')，
+    #      只造 edu_study_record 的话那一页永远是空（第三轮复审 P2-J）。
+    practice = Task(
+        title=f"{subject.name}·课后练习（演示）", type="practice",
+        paper_id=paper.id, subject_id=subject.id, grade_id=grade.id,
+        creator_id=students[0].id, status="published",
+        start_at=now - timedelta(days=1), end_at=now + timedelta(days=1),
+        duration=paper.duration, total_score=total, show_answer=True,
+    )
+    db.add(practice)
+    db.flush()
+    db.add(TaskAssignment(task_id=practice.id, student_id=students[0].id))
+    db.add(Submission(
+        task_id=practice.id, student_id=students[0].id, attempt=1,
+        status=GradeStatus.AUTO_GRADED.value, score=90.0, objective_score=90.0,
+        subjective_score=0.0, duration_seconds=900, is_passed=True,
+        switch_count=0, submit_count=1,
+        submit_time=now - timedelta(hours=20), grade_time=now - timedelta(hours=20),
+    ))
+    return True
+
+
+def init_demo_learning_flow(db: Session) -> None:
+    """最小可演示闭环：题库 → 试卷 → 考试 → 作答 → 批改 → 错题 → 复习计划。
+
+    为什么需要它：登录页对外写着「覆盖教-学-练-考-评-改全教学流程」，
+    而 `init_demo_data` 只造账号。默认形态下教师进题库看到 0 条、批改中心
+    0 条待批改，学生进错题本 / 复习计划全是"暂无数据"。
+
+    2026-11-09 第三轮复审后的三点变化：
+    1. **铺满全部班级**：`init_demo_data` 造的是「一年级 + 七年级」各两个班，
+       只给七年级第一个班造数据，会让登录页一键填充的 teacher1 / stu731
+       仍然看到空壳（P1-D）。现在每个班各一套题库与试卷，12 个学生里
+       每个班的前两名都有作答。
+    2. **契约优先**：选项一律落 `[{"key","text"}]`（P1-C），笔记 tags 落
+       逗号分隔（P2-H），作答内容与判分自洽（P2-H）。
+    3. **生产守卫**：生产形态下默认不播（P2-I），需要演示时显式设
+       `DEMO_LEARNING_FLOW=true`。
+
+    幂等锚点从"全库题库为空"改为**按班级**（该班主任名下是否已有题）：
+    旧锚点只要管理员导入过 1 道题就永久跳过，换库才恢复。
+    """
+    from app.models import Class
+
+    if not settings.SEED_DEMO_DATA:
+        return
+    if _demo_is_production_shape() and not settings.DEMO_LEARNING_FLOW:
+        logger.info(
+            "生产形态下未显式开启 DEMO_LEARNING_FLOW，跳过演示教学闭环"
+            "（避免在真实环境里长出假成绩与假通知）")
+        return
+
+    banks = _demo_banks()
+    grades = db.scalars(
+        select(Grade).where(Grade.grade_num.in_(list(banks)))
+    ).all()
+    if not grades:
+        logger.info("演示闭环跳过：一年级 / 七年级尚未播种")
+        return
+
+    seeded = 0
+    for grade in sorted(grades, key=lambda g: g.grade_num):
+        classes = db.scalars(
+            select(Class).where(Class.grade_id == grade.id).order_by(Class.id)
+        ).all()
+        for cls in classes:
+            try:
+                if _seed_class_flow(db, grade, cls, banks[grade.grade_num]):
+                    seeded += 1
+            except Exception as exc:  # noqa: BLE001 单班失败不能拖垮启动
+                db.rollback()
+                logger.warning("演示闭环：%s 造数失败（已跳过）：%s", cls.name, exc)
     db.commit()
-    logger.info(
-        "演示教学闭环初始化完成（10 题 / 1 卷 / 1 场考试 / 2 份作答 / "
-        "{} 条错题 / {} 条复习计划）", len(wrong_rows), len(wrong_rows) * 4)
+    logger.info(f"演示教学闭环初始化完成（本次新建 {seeded} 个班的数据）")
 
 
 def init_knowledge_points(db: Session) -> None:

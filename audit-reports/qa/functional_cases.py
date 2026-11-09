@@ -247,7 +247,7 @@ CASES += [
       "POST /edu/class-requests", method="POST", path="/edu/class-requests", body={"grade_id": 1, "name": "x"}, assert_="200"),
     C("admin", "教学资源/班级", "班级管理", "学生管理抽屉", "抽屉", "P1",
       "存在班级", ["1. 点『学生数』开抽屉", "2. 批量导入/导出/移出"], "学生名单增删正确；导入按 学号,姓名,密码",
-      "POST /edu/classes/{id}/students/import", method="POST", path="/edu/classes/{id}/students/import", assert_="200"),
+      "POST /edu/classes/{id}/students", method="POST", path="/edu/classes/{id}/students", assert_="200"),
     C("admin", "教学资源/班级", "班级管理", "启用/停用/删除", "行内", "P1",
       "存在班级", ["1. 切状态", "2. 删除(有学生不可删)"], "状态变更；有学生删除被拒",
       "PUT /edu/classes/{id}", method="PUT", path="/edu/classes/{id}", assert_="200"),
@@ -325,7 +325,7 @@ CASES += [
       "GET /agent/logs", locator="text=AI 调用日志"),
     C("admin", "系统基础/AI日志", "AI 调用日志", "详情/引擎状态", "对话框+抽屉", "P2",
       "存在日志", ["1. 点详情", "2. 点引擎状态"], "展示调用明细与已注册 Agent",
-      "GET /agent/logs/{id}", method="GET", path="/agent/logs/{id}"),
+      "GET /agent/status", method="GET", path="/agent/status"),
 ]
 
 # ---- 版本信息（新增功能）
@@ -364,7 +364,7 @@ CASES += [
       "PUT /question/questions/{id}", method="PUT", path="/question/questions/{id}", assert_="200"),
     C("teacher", "教学资源/题库", "题库管理", "状态开关", "行内", "P1",
       "存在题目", ["1. 切状态开关"], "题目上/下架即时生效",
-      "POST /question/questions/{id}/status", method="POST", path="/question/questions/{id}/status", body={"status": "published"}, assert_="200"),
+      "PUT /question/questions/{id}/status", method="PUT", path="/question/questions/{id}/status", body={"status": "published"}, assert_="200"),
     C("teacher", "教学资源/题库", "题库管理", "批量(发布/下架/移动/分配知识点/改难度/删除)", "批量栏", "P1",
       "勾选多条", ["1. 选批量操作并确认"], "批量状态/归属变更；仅本人创建可被批量改",
       "POST /question/questions/batch", method="POST", path="/question/questions/batch", body={"action": "publish"}, assert_="200"),
@@ -415,7 +415,7 @@ CASES += [
     C("teacher", "教学资源/试卷", "编辑试卷", "元信息/逐题改分/换题/移除", "编辑", "P1",
       "编辑页", ["1. 改试卷名/时长", "2. 每题改分值", "3. 换一题/移除", "4. 保存并重算成绩"],
       "题目项分值更新；移除题作答迁移/计数；CASCADE 不丢学生作答",
-      "PUT /question/papers/{id}/items", method="PUT", path="/question/papers/{id}/items", assert_="200"),
+      "POST /question/papers/{id}/items", method="POST", path="/question/papers/{id}/items", assert_="200"),
     C("teacher", "教学资源/试卷", "编辑试卷", "导出/版本/收藏", "顶部操作", "P2",
       "编辑页", ["1. 导出(多格式)", "2. 版本记录回溯", "3. 收藏"], "导出带鉴权；版本可回溯(禁当前)；收藏切换",
       "GET /question/papers/{id}/export", method="GET", path="/question/papers/{id}/export", assert_="blob 200"),
@@ -448,7 +448,7 @@ CASES += [
       "GET /grading/pending", locator="text=批改中心"),
     C("teacher", "教学/批改", "批改中心", "逐题评分", "工作区", "P0",
       "选中一份", ["1. 每题设满分/零分或填分值", "2. 填评语"], "分值与评语写入工作区",
-      "PUT /grading/submissions/{id}", method="PUT", path="/grading/submissions/{id}", body={"scores": {}}, assert_="200"),
+      "POST /grading/submissions/{id}/grade", method="POST", path="/grading/submissions/{id}/grade", body={"scores": {}}, assert_="200"),
     C("teacher", "教学/批改", "批改中心", "保存/发布", "底部操作", "P0",
       "已评分", ["1. 保存批改结果", "2. 发布成绩"], "客观题自动判分；主观题 LLM 批改；发布后学生可见成绩",
       "POST /grading/submissions/{id}/grade", method="POST", path="/grading/submissions/{id}/grade", assert_="200"),
@@ -584,7 +584,7 @@ CASES += [
       "student 登录", ["1. 点智能复习", "2. 点 AI 生成复习计划填天数/时长"], "计划列表；AI 生成艾宾浩斯计划",
       "POST /learning/review/plan", method="POST", path="/learning/review/plan", body={"days": 7, "daily_minutes": 30}, assert_="200"),
     C("student", "学习/复习", "智能复习", "完成复习", "行内", "P1",
-      "存在计划", ["1. 点完成复习"], "标记完成(quality=good)", "POST /learning/review-plans/{id}/complete", method="POST", path="/learning/review-plans/{id}/complete", assert_="200"),
+      "存在计划", ["1. 点完成复习"], "标记完成(quality=good)", "PUT /learning/review-plans/{id}/complete", method="PUT", path="/learning/review-plans/{id}/complete", assert_="200"),
     C("student", "学习/报表", "学习报表", "页面访问+导出+AI建议", "渲染", "P1",
       "student 登录", ["1. 点学习报表", "2. 选学科趋势", "3. 重新生成 AI 建议", "4. 导出"], "图表渲染；建议生成；导出带鉴权",
       "GET /report/student/overview", locator="text=学习报表"),
@@ -597,7 +597,7 @@ CASES += [
 CASES += [
     C("student", "学习/收藏", "题目收藏", "页面访问+改标签/取消", "渲染", "P2",
       "student 登录", ["1. 点题目收藏", "2. 改标签保存", "3. 取消收藏"], "标签更新；取消后移除",
-      "PUT /learning/favorites/{id}", method="PUT", path="/learning/favorites/{id}", assert_="200"),
+      "DELETE /learning/favorites/{id}", method="DELETE", path="/learning/favorites/{id}", assert_="200"),
     C("student", "学习/收藏", "题目收藏", "收藏专项练习", "点击", "P2",
       "有收藏", ["1. 点收藏专项练习"], "生成专项练习跳答题页", "POST /learning/favorites/practice", method="POST", path="/learning/favorites/practice", assert_="200"),
     C("student", "学习/掌握", "掌握图谱", "页面访问+薄弱练习", "渲染", "P1",
@@ -719,7 +719,9 @@ if __name__ == "__main__":
         # 延迟导入执行器，避免无依赖时报错
         sys.path.insert(0, HERE)
         import functional_runner  # noqa: F401
-        functional_runner.main()
+        # 必须把退出码透出去：执行器现在会因「有 FAIL」或「api 用例没跑完」
+        # 返回 1，这里吞掉的话 CI 依旧是绿的（P1-7 的原始症状）。
+        sys.exit(functional_runner.main())
     else:
         coverage()
         emit()

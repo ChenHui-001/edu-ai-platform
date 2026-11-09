@@ -37,6 +37,7 @@
 
     <el-card shadow="never">
       <el-table v-loading="loading" :data="list" border stripe>
+        <template #empty><TableEmpty text="暂无上传的附件" /></template>
         <el-table-column prop="filename" label="文件名" min-width="240" show-overflow-tooltip />
         <el-table-column prop="ext" label="类型" width="90">
           <template #default="{ row }">
@@ -94,10 +95,11 @@
 
 <script setup>
 import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Upload, UploadFilled, Search, Refresh } from '@element-plus/icons-vue'
 import { attachmentApi } from '@/api'
 import { downloadBlob, fetchBlobUrl } from '@/utils/download'
+import { confirmAction } from '@/utils/confirm'
 
 const list = ref([])
 const total = ref(0)
@@ -188,7 +190,7 @@ async function download(row) {
 }
 
 async function remove(row) {
-  await ElMessageBox.confirm(`确认删除附件「${row.filename}」？`, '提示', { type: 'warning' })
+  if (!await confirmAction(`确认删除附件「${row.filename}」？`, '提示', { type: 'warning' })) return
   await attachmentApi.remove(row.id)
   ElMessage.success('已删除')
   load()
@@ -201,6 +203,6 @@ onBeforeUnmount(revokePreviewUrl)
 
 <style scoped>
 .mt16 { margin-top: 16px; justify-content: flex-end; }
-.tip { font-size: 12px; color: #909399; margin-top: 8px; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 8px; }
 .filter-card :deep(.el-form-item) { margin-bottom: 12px; }
 </style>

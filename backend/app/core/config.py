@@ -278,8 +278,19 @@ class Settings(BaseSettings):
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 200
     # 空库是否播种演示班级/教师/学生（teacher1/Teacher@123 等已知口令账号）。
-    # 生产环境建议设为 false，只保留 admin 与基础年级学科数据。
-    SEED_DEMO_DATA: bool = True
+    #
+    # 2026-11-09 起默认 **false**：这套系统承载未成年人数据，生产环境最不该
+    # 默认长出一批"公开口令 + 假成绩"的账号。需要演示时显式打开：
+    #   docker run -e SEED_DEMO_DATA=true ...
+    # 本地开发 / CI 均在 env 里显式声明，不受默认值变化影响。
+    SEED_DEMO_DATA: bool = False
+    # 生产形态（DEBUG=false 且 APP_ENV=production）下是否仍播种**演示教学内容**
+    # （题库 / 试卷 / 考试 / 成绩 / 错题 / 复习计划）。
+    #
+    # 为什么单列一个开关而不复用 SEED_DEMO_DATA：两者语义不同 ——
+    # "要不要演示账号" 与 "要不要在真实环境里造一套带成绩的假教学数据" 是两件事。
+    # 复用同一个开关会出现两难：关掉则开箱没东西可看，开着则生产被污染。
+    DEMO_LEARNING_FLOW: bool = False
 
     @model_validator(mode="after")
     def _resolve_secret_key(self) -> "Settings":

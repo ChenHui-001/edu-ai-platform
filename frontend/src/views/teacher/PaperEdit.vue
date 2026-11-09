@@ -11,8 +11,8 @@
         </p>
       </div>
       <div class="head-actions">
-        <el-dropdown trigger="click" @command="onExport">
-          <el-button :icon="Download">导出<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+        <el-dropdown trigger="click" :disabled="exporting" @command="onExport">
+          <el-button :icon="Download" :loading="exporting">导出<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="docx-teacher">Word 教师卷（含答案）</el-dropdown-item>
@@ -191,6 +191,7 @@
         <el-button type="primary" :icon="Search" @click="loadCandidates">搜索</el-button>
       </div>
       <el-table :data="candidates" height="420" size="small" @selection-change="onSelect">
+        <template #empty><TableEmpty text="暂无题目" /></template>
         <el-table-column type="selection" width="44" />
         <el-table-column label="题干" min-width="360">
           <template #default="{ row }">
@@ -219,6 +220,7 @@
     <!-- 版本记录 -->
     <el-drawer v-model="versionDrawer" title="版本记录" size="720px">
       <el-table :data="versions" size="small">
+        <template #empty><TableEmpty text="暂无版本记录" /></template>
         <el-table-column prop="version" label="版本" width="70">
           <template #default="{ row }">v{{ row.version }}</template>
         </el-table-column>
@@ -245,12 +247,14 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   ArrowDown, Back, Clock, Delete, Download, Edit, Plus, RefreshRight,
   Search, Sort, Star, View
 } from '@element-plus/icons-vue'
 import { questionApi } from '@/api'
+import { confirmAction } from '@/utils/confirm'
+import { toastIfUnhandled } from '@/utils/notify'
 
 const route = useRoute()
 const router = useRouter()
@@ -405,9 +409,9 @@ async function restorePaperDraft() {
   const count = (draft.sections || []).reduce((a, x) => a + ((x.items || []).length), 0)
   if (!count) { localStorage.removeItem(PAPER_DRAFT_KEY); return }
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `检测到 ${new Date(draft.savedAt).toLocaleString()} 未保存的试卷修改（共 ${count} 题），是否恢复？`,
-      '恢复草稿', { type: 'info', confirmButtonText: '恢复', cancelButtonText: '丢弃' })
+      '恢复草稿', { type: 'info', confirmButtonText: '恢复', cancelButtonText: '丢弃' })) return
   } catch {
     localStorage.removeItem(PAPER_DRAFT_KEY)
     return
@@ -445,7 +449,7 @@ async function loadPaper() {
     // 只有首次加载会真正弹窗（paperDraftChecked 兜住保存后的重新加载）
     await restorePaperDraft()
   } catch (e) {
-    ElMessage.error('加载试卷失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '加载试卷失败')
   } finally {
     loading.value = false
   }
@@ -471,10 +475,9 @@ function removeItem(it) {
   dropWarning.value = '移除题目后，该题的学生作答会随题项作废（保存时如实告知条数）'
 }
 
-function resetLocal() {
-  ElMessageBox.confirm('撤销本次所有未保存的修改？', '提示', { type: 'warning' })
-    .then(() => loadPaper())
-    .catch(() => {})
+async function resetLocal() {
+  if (!await confirmAction('撤销本次所有未保存的修改？')) return
+  loadPaper()
 }
 
 async function doSave() {
@@ -512,7 +515,7 @@ async function doSave() {
     ElMessage.success(msg)
     await loadPaper()
   } catch (e) {
-    ElMessage.error('保存失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '保存失败')
   } finally {
     saving.value = false
   }
@@ -556,7 +559,7 @@ async function onRegenerate(it) {
       ElMessage.success('已换成 AI 新题（记得保存生效）')
     }
   } catch (e) {
-    ElMessage.error('换题失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '换题失败')
   } finally {
     regenerating.value = null
   }
@@ -584,7 +587,7 @@ async function doRename() {
     renameDialog.value = false
     ElMessage.success('大题名称已更新')
   } catch (e) {
-    ElMessage.error('改名失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '改名失败')
   } finally {
     renaming.value = false
   }
@@ -592,15 +595,15 @@ async function doRename() {
 
 async function doRestructure() {
   try {
-    await ElMessageBox.confirm(
-      '按题型重新归组并重排题号（题目本身不变）？', '重构大题', { type: 'info' })
+    if (!await confirmAction(
+      '按题型重新归组并重排题号（题目本身不变）？', '重构大题', { type: 'info' })) return
   } catch { return }
   try {
     await questionApi.restructurePaper(paperId, {})
     ElMessage.success('已重构大题')
     await loadPaper()
   } catch (e) {
-    ElMessage.error('重构失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '重构失败')
   }
 }
 
@@ -631,7 +634,7 @@ async function loadCandidates() {
     candidates.value = res.data?.items || []
   } catch (e) {
     candidates.value = []
-    ElMessage.error('加载题库失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '加载题库失败')
   }
 }
 
@@ -673,7 +676,12 @@ function doAddItems() {
 }
 
 // ---------------- 导出 ----------------
+// 6 种导出全是慢请求（PDF 要服务端渲染整卷），必须给出 loading 并挡住连点，
+// 否则同一份卷子会被并发生成多遍（reaudit3 P2-11）。
+const exporting = ref(false)
 async function onExport(cmd) {
+  if (exporting.value) return
+  exporting.value = true
   try {
     if (cmd === 'html') {
       // 走 axios 带 Token 取 HTML 文本，再写入新窗口；直接 window.open 会 401
@@ -697,7 +705,9 @@ async function onExport(cmd) {
       `${meta.name || '试卷'}_${mode === 'teacher' ? '教师卷' : '学生卷'}.${kind}`,
       kind === 'pdf' ? 'application/pdf' : 'application/octet-stream')
   } catch (e) {
-    ElMessage.error('导出失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '导出失败')
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -720,7 +730,7 @@ async function onFavorite() {
     paper.value.is_favorite = next
     ElMessage.success(next ? '已收藏' : '已取消收藏')
   } catch (e) {
-    ElMessage.error('操作失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '操作失败')
   }
 }
 
@@ -736,9 +746,9 @@ async function openVersions() {
 
 async function doRestore(row) {
   try {
-    await ElMessageBox.confirm(
+    if (!await confirmAction(
       `回溯到 v${row.version}？当前内容会先存为一个新版本，不会丢失。`,
-      '回溯版本', { type: 'warning' })
+      '回溯版本', { type: 'warning' })) return
   } catch { return }
 
   const apply = async (force) => {
@@ -755,19 +765,19 @@ async function doRestore(row) {
     // 这里再给一次带风险说明的确认，而不是简单报错让用户无从下手。
     if (/份学生提交/.test(e.message || '')) {
       try {
-        await ElMessageBox.confirm(
+        if (!await confirmAction(
           `${e.message}\n\n确认继续回溯？该操作不可撤销。`,
           '回溯风险确认',
-          { type: 'warning', confirmButtonText: '我已知晓，继续回溯', cancelButtonText: '取消' })
+          { type: 'warning', confirmButtonText: '我已知晓，继续回溯', cancelButtonText: '取消' })) return
       } catch { return }
       try {
         await apply(true)
       } catch (e2) {
-        ElMessage.error('回溯失败：' + (e2.message || '未知错误'))
+        toastIfUnhandled(e2, '回溯失败')
       }
       return
     }
-    ElMessage.error('回溯失败：' + (e.message || '未知错误'))
+    toastIfUnhandled(e, '回溯失败')
   }
 }
 

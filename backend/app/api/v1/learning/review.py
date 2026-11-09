@@ -21,7 +21,8 @@ from app.models import (
     Subject, Task, TaskAssignment, User, WrongQuestion,
 )
 from app.services import grading_service
-from app.utils.common import PageParams, dictify, load_json, now_local, ok, today_str
+from app.utils.common import PageParams, dictify, now_local, ok, today_str
+from app.utils.options import normalize_options
 
 router = APIRouter()
 
@@ -301,7 +302,7 @@ def get_practice(
             "paper_item_id": it.id, "question_id": it.question_id,
             "sort_order": it.sort_order, "score": it.score, "section_name": it.section_name,
             "type": it.question.type, "stem": it.question.stem,
-            "options": load_json(it.question.options),
+            "options": normalize_options(it.question.options),
         }
         for it in sorted(paper.items, key=lambda x: x.sort_order)
         if it.question is not None

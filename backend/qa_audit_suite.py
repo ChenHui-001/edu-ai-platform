@@ -9,7 +9,7 @@
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -569,6 +569,261 @@ def test_batch_create_rejects_empty_and_oversized(db_session):
             ] * (qmod.BATCH_CREATE_LIMIT + 1)),
             db=s, user=u,
         )
+
+
+# ===================== 选项契约（reaudit3 P1-C） =====================
+# 第三轮复审的核心事故：演示数据把 options 写成 `["A. 7", "B. 8"]`，
+# 而全站契约是 `[{"key","text"}]` —— 试卷 Excel 导出与错题导出直接 500，
+# 学生答题页渲染成 `undefined. undefined`。现在写入/读取共用一个归一化函数，
+# 这组用例就是那个函数的行为基线。
+def test_normalize_options_standard_shape_passthrough():
+    from app.utils.options import normalize_options
+
+    raw = [{"key": "A", "text": "7"}, {"key": "B", "text": "8"}]
+    assert normalize_options(raw) == raw
+
+
+def test_normalize_options_legacy_string_list():
+    """旧导入模板 / 演示数据的 `["A. 7", "B. 8"]` 必须被救回来。"""
+    from app.utils.options import normalize_options
+
+    assert normalize_options(["A. 7", "B. 8"]) == [
+        {"key": "A", "text": "7"}, {"key": "B", "text": "8"}]
+
+
+def test_normalize_options_chinese_separators():
+    from app.utils.options import normalize_options
+
+    assert normalize_options(["A．甲", "B、乙", "C）丙"]) == [
+        {"key": "A", "text": "甲"}, {"key": "B", "text": "乙"},
+        {"key": "C", "text": "丙"}]
+
+
+def test_normalize_options_unprefixed_gets_sequential_key():
+    from app.utils.options import normalize_options
+
+    assert normalize_options(["甲", "乙"]) == [
+        {"key": "A", "text": "甲"}, {"key": "B", "text": "乙"}]
+
+
+def test_normalize_options_json_text():
+    """库里存的是 JSON 文本，读取侧必须先 unjson 再归一化。"""
+    import json as _json
+
+    from app.utils.options import normalize_options
+
+    assert normalize_options(_json.dumps(["A. 1"])) == [{"key": "A", "text": "1"}]
+
+
+def test_normalize_options_mapping_shape():
+    from app.utils.options import normalize_options
+
+    assert normalize_options({"A": "7", "B": "8"}) == [
+        {"key": "A", "text": "7"}, {"key": "B", "text": "8"}]
+
+
+def test_normalize_options_never_raises_on_garbage():
+    """展示链路不能因为一条脏数据整页崩：任何输入都返回列表。"""
+    from app.utils.options import normalize_options
+
+    for bad in (None, "", "{不是 JSON", 42, object(), [None, 3], {"k": None}):
+        assert isinstance(normalize_options(bad), list)
+
+
+def test_options_match_key_accepts_both_shapes():
+    """判分前用它兜脏数据：标准形状与旧字符串数组都要认出同一个 key。"""
+    from app.utils.options import options_match_key
+
+    assert options_match_key([{"key": "A", "text": "7"}], "a") is True
+    assert options_match_key(["A. 7", "B. 8"], "B") is True
+    assert options_match_key(["A. 7"], "C") is False
+    assert options_match_key(None, "A") is False
+
+
+# ===================== 限流：键摘要 + 表有界（reaudit3 P1-B） =====================
+def test_key_digest_hides_raw_key():
+    """限流键落库前必须哈希：裸邮箱等于在库里存一份任意人可写的 PII。"""
+    from app.services.rate_limit import key_digest
+
+    d = key_digest("reset", "Someone@Example.com")
+    assert "someone" not in d.lower()
+    assert "@" not in d
+    # 归一化：大小写与首尾空格不影响同一个名额
+    assert d == key_digest("reset", "  someone@example.com  ")
+
+
+def test_key_digest_prefix_isolated():
+    from app.services.rate_limit import key_digest
+
+    assert key_digest("reset", "x").split(":")[0] == "reset"
+    assert key_digest("reset", "x") != key_digest("pubupload", "x")
+
+
+def test_purge_expired_removes_only_expired(db_session):
+    from datetime import timedelta
+
+    from app.models.security_cache import RateLimit
+    from app.services.rate_limit import purge_expired_and_cap
+    from app.utils.common import now_local
+
+    now = now_local()
+    db_session.add_all([
+        RateLimit(key="k:old", hits=1,
+                  window_start=(now - timedelta(hours=2)).timestamp(),
+                  expire_at=now - timedelta(hours=1)),
+        RateLimit(key="k:live", hits=1, window_start=now.timestamp(),
+                  expire_at=now + timedelta(hours=1)),
+    ])
+    db_session.commit()
+    removed = purge_expired_and_cap(db_session)
+    assert removed == 1
+    assert db_session.scalar(select(RateLimit).where(RateLimit.key == "k:live")) is not None
+
+
+def test_purge_caps_keyspace(db_session, monkeypatch):
+    """键由攻击者控制 → 表必须自己有上界，否则 25 个 target 就是 25 行。"""
+    from datetime import timedelta
+
+    from app.models.security_cache import RateLimit
+    from app.services import rate_limit as rl
+    from app.utils.common import now_local
+
+    monkeypatch.setattr(rl, "KEY_SOFT_CAP", 10)
+    now = now_local()
+    db_session.add_all([
+        RateLimit(key=f"k:{i}", hits=1, window_start=now.timestamp(),
+                  expire_at=now + timedelta(minutes=i + 1))
+        for i in range(30)
+    ])
+    db_session.commit()
+    removed = rl.purge_expired_and_cap(db_session)
+    left = db_session.scalar(select(func.count()).select_from(RateLimit))
+    assert removed == 22          # 30 → 保留 80% = 8
+    assert left == 8
+    # 淘汰的是最早过期的那些，最"新"的必须还在
+    assert db_session.scalar(select(RateLimit).where(RateLimit.key == "k:29")) is not None
+
+
+# ===================== fatal_guard：FATAL → 容器退出 =====================
+# 这段逻辑在容器里跑，出错的后果是「全站 502 但 docker ps 显示 Up」，
+# 靠人工根本发现不了，所以必须用单测钉住事件解析与放行名单。
+def _run_guard(monkeypatch, stdin_text):
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location(
+        "fatal_guard", root / "deploy" / "fatal_guard.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    killed = []
+    monkeypatch.setattr(mod.signal, "raise_signal", lambda sig: killed.append(sig))
+    monkeypatch.setattr(mod.os, "getppid", lambda: 4242)
+    monkeypatch.setattr(mod.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(mod.sys, "stdin", __import__("io").StringIO(stdin_text))
+    out = __import__("io").StringIO()
+    monkeypatch.setattr(mod.sys, "stdout", out)
+    rc = mod.main()
+    return rc, killed, out.getvalue()
+
+
+def test_fatal_guard_kills_container_on_backend_fatal(monkeypatch):
+    ev = ("eventname:PROCESS_STATE_FATAL\n"
+          "processname:backend groupname:edu from_state:RUNNING\n")
+    rc, killed, out = _run_guard(monkeypatch, ev)
+    assert killed, "backend FATAL 必须触发退出信号，否则容器 Up 而全站 502"
+    assert rc == 0
+    assert "RESULT 2" in out, "event listener 必须回 ack，否则 supervisord 停止派发事件"
+
+
+def test_fatal_guard_kills_on_nginx_fatal(monkeypatch):
+    ev = ("eventname:PROCESS_STATE_FATAL\n"
+          "processname:nginx groupname:edu from_state:RUNNING\n")
+    _, killed, _ = _run_guard(monkeypatch, ev)
+    assert killed
+
+
+def test_fatal_guard_ignores_non_guarded_program(monkeypatch):
+    """偶发失败的辅助进程不该把整个站点拉下线。"""
+    ev = ("eventname:PROCESS_STATE_FATAL\n"
+          "processname:fatal_guard groupname:edu from_state:RUNNING\n")
+    _, killed, out = _run_guard(monkeypatch, ev)
+    assert not killed
+    assert "RESULT 2" in out
+
+
+def test_fatal_guard_ignores_non_fatal_events(monkeypatch):
+    ev = ("eventname:PROCESS_STATE_RUNNING\n"
+          "processname:backend groupname:edu from_state:STARTING\n")
+    _, killed, out = _run_guard(monkeypatch, ev)
+    assert not killed
+    assert "RESULT 2" in out
+
+
+# ===================== 演示造数契约（reaudit3 P2-H / P2-K） =====================
+# 造出来的数据必须能被产品自己的判分函数接受，否则演示闭环自相矛盾：
+# 错题写着 is_correct=False，用 answers_match 重算却是满分。
+def test_demo_options_all_contract_compliant():
+    from app.services.init_db import _demo_banks, _demo_options
+    from app.utils.options import normalize_options
+
+    for bank in _demo_banks().values():
+        for row in bank:
+            qtype, stem, options = row[0], row[1], row[2]
+            if qtype not in ("single", "multiple"):
+                continue
+            opts = _demo_options(options)
+            assert opts, f"选择题必须造出选项：{stem}"
+            assert normalize_options(opts) == opts, f"选项形状违约：{opts}"
+
+
+def test_demo_wrong_answer_is_not_the_right_answer():
+    """错题本的 wrong_answer 必须与标准答案不同，否则「错的那个」=「对的」。"""
+    from app.services.init_db import _demo_banks, _demo_options, _wrong_answer_for
+    from app.utils.options import normalize_options
+
+    for bank in _demo_banks().values():
+        for row in bank:
+            qtype, stem, options, answer = row[0], row[1], row[2], row[3]
+            opts = normalize_options(_demo_options(options))
+            wrong = _wrong_answer_for(qtype, answer, opts)
+            assert wrong != "", f"应能造出错答：{stem}"
+            assert str(wrong).upper() != str(answer).strip().upper(), \
+                f"错答与正确答案相同：{stem} answer={answer}"
+
+
+def test_demo_answers_match_grading_function():
+    """用平台自己的判分函数验证：错答判 0 分、对答判满分。"""
+    from app.services.init_db import _demo_banks, _demo_options, _wrong_answer_for
+    from app.utils.answer import answers_match
+
+    checked = 0
+    for bank in _demo_banks().values():
+        for row in bank:
+            qtype, _stem, options, answer = row[0], row[1], row[2], row[3]
+            if qtype not in ("single", "multiple", "judge"):
+                continue
+            opts = _demo_options(options)
+            wrong = _wrong_answer_for(qtype, answer, opts)
+            assert answers_match(qtype, answer, answer) is True, "标准答案必须判对"
+            assert answers_match(qtype, answer, wrong) is False, \
+                f"错答被判对：wrong={wrong} answer={answer}"
+            checked += 1
+    assert checked >= 8, f"可校验的演示题太少（{checked}）"
+
+
+def test_demo_seed_guard_is_off_by_default():
+    """生产形态默认不造演示数据：两个开关的**类默认值**都必须是 False。
+
+    这里查的是 Settings 的字段默认值，不是实例值 —— 实例会被仓库里的
+    `.env` 覆盖（开发机通常开着 SEED_DEMO_DATA），拿实例断言等于在测环境。
+    """
+    from app.core.config import Settings
+
+    fields = Settings.model_fields
+    assert fields["SEED_DEMO_DATA"].default is False
+    assert fields["DEMO_LEARNING_FLOW"].default is False
 
 
 if __name__ == "__main__":

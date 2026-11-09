@@ -141,6 +141,7 @@
     <el-card shadow="never" class="mt16">
       <template #header><b>提供商说明</b></template>
       <el-table :data="providerTable" border size="small">
+        <template #empty><TableEmpty text="暂无模型提供商，点击「新增提供商」开始配置" /></template>
         <el-table-column prop="label" label="提供商" width="180" />
         <el-table-column prop="base_url" label="默认 API 地址" />
         <el-table-column prop="model" label="默认模型" width="180" />
@@ -157,8 +158,10 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { Refresh, Connection, Check, Cpu } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import request from '@/api/request'
+import { confirmAction } from '@/utils/confirm'
+import { toastIfUnhandled } from '@/utils/notify'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -286,17 +289,17 @@ async function save() {
   if (form.value.llm_enabled && form.value.llm_provider !== 'ollama'
       && !keyConfigured.value && !form.value.llm_api_key.trim() && !clearKey.value) {
     try {
-      await ElMessageBox.confirm(
+      if (!await confirmAction(
         '已启用 AI 但尚未配置 API Key（非 Ollama），AI 调用会失败并自动降级到规则引擎。确认继续保存？',
-        '配置确认', { type: 'warning', confirmButtonText: '继续保存' })
+        '配置确认', { type: 'warning', confirmButtonText: '继续保存' })) return
     } catch { return }
   }
   // 勾选清除 Key 且仍启用 AI：明确告知保存后 AI 将不可用
   if (clearKey.value && form.value.llm_enabled && form.value.llm_provider !== 'ollama') {
     try {
-      await ElMessageBox.confirm(
+      if (!await confirmAction(
         '将清除已保存的 API Key，但 AI 仍处于启用状态，保存后 AI 调用会失败并降级为规则引擎。确认继续保存？',
-        '清除 Key 确认', { type: 'warning', confirmButtonText: '确认清除' })
+        '清除 Key 确认', { type: 'warning', confirmButtonText: '确认清除' })) return
     } catch { return }
   }
 
@@ -313,7 +316,7 @@ async function save() {
     ElMessage.success(res.data?.message || 'AI 配置已保存')
     await load()
   } catch (e) {
-    ElMessage.error(e.response?.data?.message || '保存失败')
+    toastIfUnhandled(e, '保存失败')
   } finally {
     saving.value = false
   }
@@ -368,7 +371,7 @@ onMounted(load)
 .form-tip {
   margin-left: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .api-key-block { width: 100%; }
 </style>

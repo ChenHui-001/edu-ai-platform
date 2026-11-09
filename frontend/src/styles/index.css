@@ -1,5 +1,5 @@
 :root {
-  --el-color-primary: #2f6fd0;
+  --el-color-primary: var(--el-color-primary);
   --el-color-primary-light-3: #6b9ce0;
   --el-color-primary-light-5: #94b6e8;
   --el-color-primary-light-7: #bdd2f1;
@@ -21,7 +21,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   background: var(--page-bg);
-  color: #303133;
+  color: var(--el-text-color-primary);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
@@ -70,6 +70,14 @@ body {
   box-shadow: 0 6px 20px rgba(31, 45, 61, 0.1);
 }
 
+/* ---------------- 统计卡（全站唯一来源） ----------------
+ * 此前 `.stat-value` 被 7 个页面各自在 scoped style 里重定义一遍，字号只有
+ * 24 / 28 两种、字重只有 600 / 700 两种，却派生出四套写法，改一次主色要改
+ * 七个文件（reaudit3 §3.1）。现在只在这里定义一次：
+ *   默认     28px / 700  —— 学生端、Dashboard 这类「一屏 3~4 张」的展示型卡片
+ *   --sm     24px / 600  —— 管理端表格类页面，信息密度高、卡片更窄
+ * 页面需要改卡片底色/居中时仍然可以在 scoped style 里覆盖 `.stat-card`，
+ * 但**不要再定义 `.stat-value`**。 */
 .stat-value {
   font-size: 28px;
   font-weight: 700;
@@ -77,9 +85,14 @@ body {
   color: var(--el-color-primary);
 }
 
+.stat-value--sm {
+  font-size: 24px;
+  font-weight: 600;
+}
+
 .stat-label {
   font-size: 13px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-top: 6px;
 }
 
@@ -106,26 +119,26 @@ body {
 .markdown-body {
   line-height: 1.8;
   font-size: 14px;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3 {
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid var(--el-border-color-lighter);
   padding-bottom: 6px;
   margin-top: 20px;
 }
 
 .markdown-body pre {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   padding: 12px;
   border-radius: 6px;
   overflow: auto;
 }
 
 .markdown-body code {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   padding: 2px 5px;
   border-radius: 3px;
   font-family: Consolas, Monaco, monospace;
@@ -137,7 +150,7 @@ body {
 }
 
 .markdown-body blockquote {
-  border-left: 4px solid #dcdfe6;
+  border-left: 4px solid var(--el-border-color);
   padding-left: 12px;
   color: #6b7280;
   margin: 10px 0;
@@ -151,13 +164,13 @@ body {
 
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   padding: 7px 10px;
   font-size: 13px;
 }
 
 .markdown-body th {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   font-weight: 600;
 }
 

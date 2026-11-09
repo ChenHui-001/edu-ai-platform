@@ -66,6 +66,12 @@ jobs:
         # （班主任互异 / 不跨学段 / 每师带班≤2 / (班级,学科) 全覆盖）。
         run: python tools/check_gen_data_determinism.py
 
+      - name: 新增代码覆盖门禁（关键模块必须有测试 import）
+        # 第二、三轮复审各出现一次「新代码零覆盖」：一轮 4585 行新代码，
+        # 测试增量 0。这条门禁要求 REGISTRY 里的关键模块都被测试真正 import，
+        # 并用棘轮锁住 pytest / vitest 用例数 —— 删测试即红。
+        run: python tools/check_new_code_tests.py
+
       - name: 后端断言套件（qa_audit_suite）
         # 后端 e2e 移除后这是唯一幸存的 pytest 套件，此前从未接入 CI：
         # 实现从 usage_count 记账改成幂等重算后，过期断言烂在仓库里
@@ -138,12 +144,21 @@ jobs:
         # 曾在全站 18 文件 52+ 处踩坑
         run: python tools/check_data_data.py
 
+      - name: 裸消息框普查（取消即报错/双弹）
+        # ElMessageBox.confirm/prompt/alert 取消时 reject 裸字符串 'cancel'，
+        # 组件里写 try/catch + ElMessage.error(e.message) 就会「点取消弹红色报错」；
+        # 且不能 await 后直接走成功分支。统一走 @/utils/confirm 三件套。
+        run: python tools/check_bare_messagebox.py
+
       - name: 单元测试（vitest）
-        # 33 个断言，锁三处回归：
+        # 6 个文件 76 个用例，锁六处回归：
         #   date.test.js        —— Safari 解析 "YYYY-MM-DD HH:mm:ss" 与东八区口径
         #   paperWizard.test.js —— AI 组卷按钮恒灰的回归锁
         #   sanitize.test.js    —— 存储型 XSS 白名单
-        # 2026-10-29 之前这三份只存在于本地，CI 从未执行过 `npm test`；
+        #   errors.test.js      —— 取消语义白名单（只放行 'cancel'/'close'，其余算真故障）
+        #   agentResult.test.js —— AI 产出空态判定 fail-safe（键存在但非数组也判空）
+        #   confirm.test.js     —— confirm/prompt 取消返回 false/null 且不抛异常
+        # 2026-10-29 之前前三份只存在于本地，CI 从未执行过 `npm test`；
         # 后端测试体系移除后补上，是当前唯一的自动化行为断言。
         working-directory: frontend
         run: npm test
