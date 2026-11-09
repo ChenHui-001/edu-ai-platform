@@ -85,6 +85,32 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+def needs_rehash(hashed: str) -> bool:
+    """该哈希是否弱于当前强度（旧 3 段格式或迭代数偏低）。"""
+    parts = (hashed or "").split("$")
+    if parts[0] != "pbkdf2_sha256":
+        return True
+    if len(parts) != 4:
+        # 3 段是 10 万次旧格式，其它长度视为不可识别 —— 都值得重算
+        return True
+    try:
+        return int(parts[1]) < PBKDF2_ITERATIONS
+    except ValueError:
+        return True
+
+
+def maybe_upgrade_hash(plain: str, hashed: str) -> Optional[str]:
+    """密码校验通过后顺手升级哈希；无需升级返回 None。
+
+    只在调用方**已经验证成功**之后使用。旧哈希不会自己变成新强度：此前只有
+    "用户主动改密"这一条升级路径，存量账号不换密码就永久停留在 10 万次。
+    登录是唯一能同时拿到明文与旧哈希的时机，在这里重算一次成本可忽略。
+    """
+    if not needs_rehash(hashed):
+        return None
+    return hash_password(plain)
+
+
 # ---------------------------------------------------------------- JWT
 def create_access_token(subject: str | int, role: str = "", extra: Optional[Dict[str, Any]] = None) -> str:
     """签发访问令牌。"""
@@ -491,19 +517,33 @@ def store_reset_code(db: Session, target: str, code: str, ttl_seconds: int = 300
 
 
 def verify_reset_code(db: Session, target: str, code: str) -> bool:
-    """校验并消费找回密码验证码（一次性）。
+    """校验找回密码验证码（成功才消费）。
 
-    与 `verify_captcha` 同理：先取后删，无论成败都消费掉。
+    旧实现「先删后验」：输错一位就把整条记录删掉，用户只能从头再走一遍
+    （还会撞上 5 次/10min 的发送限流），体验上等于不可用。这里改为**校验
+    通过才消费**，防爆破改由独立的尝试次数限流承担（同一目标 5 次/10min）：
+    总尝试次数没放宽，但"输错一次全废"变成了"最多试错 5 次"。
     """
     row = db.get(ResetCode, target)
     if row is None:
         return False
-    stored, expire_at = row.code, row.expire_at
-    db.execute(delete(ResetCode).where(ResetCode.target == target))
-    db.commit()
-    if now_local() > expire_at:
+    if now_local() > row.expire_at:
+        db.execute(delete(ResetCode).where(ResetCode.target == target))
+        db.commit()
         return False
-    return stored == (code or "").strip()
+    # 延迟导入：security 在很早期被导入，避免模块级循环依赖
+    from app.services.rate_limit import check_and_hit
+
+    if not check_and_hit(db, f"reset_code_try:{target}", 5, 600):
+        # 尝试次数耗尽 → 作废这条码，逼用户重新获取（新码会重置尝试额度）
+        db.execute(delete(ResetCode).where(ResetCode.target == target))
+        db.commit()
+        return False
+    if secrets.compare_digest(str(row.code), (code or "").strip()):
+        db.execute(delete(ResetCode).where(ResetCode.target == target))
+        db.commit()
+        return True
+    return False
 
 
 def _purge_reset_code(db: Session) -> int:

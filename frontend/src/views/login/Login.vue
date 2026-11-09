@@ -76,7 +76,7 @@
               <!-- /auth/forgot-password 与 /auth/reset-password 后端早已实现，
                    但登录页没有任何入口，学生忘记密码只能找管理员。 -->
               <el-link type="primary" :underline="false" class="link"
-                       style="margin-left:12px" @click="forgotPassword">忘记密码</el-link>
+                       style="margin-left:12px" @click="openForgot">忘记密码</el-link>
             </div>
             <!-- 演示账号默认不展示：登录页公网可达，明文列出 admin 口令等于公开
                  默认管理员凭据。仅在显式设置 VITE_SHOW_DEMO_ACCOUNTS=true 时显示
@@ -100,13 +100,45 @@
                   title="首次登录请先修改密码" style="margin-top: 12px" />
       </el-card>
     </div>
+
+    <!-- 找回密码：原先用三步 ElMessageBox.prompt 串联，既没有倒计时也不能重发，
+         输错一位就得从头再来（后端还会把验证码作废）。改为一个对话框：
+         发码按钮带 60 秒倒计时可重发，错误就地提示，密码强度在前端先拦一次。 -->
+    <el-dialog v-model="forgotDlg" title="找回密码" width="420px" append-to-body
+               @closed="stopCountdown">
+      <el-form label-width="80px">
+        <el-form-item label="账号">
+          <el-input v-model="forgotForm.target" placeholder="注册时使用的邮箱或手机号" clearable />
+        </el-form-item>
+        <el-form-item label="验证码">
+          <div class="code-row">
+            <el-input v-model="forgotForm.code" placeholder="6 位数字" maxlength="6" style="flex:1" />
+            <el-button :disabled="countdown > 0" :loading="sendingCode" @click="sendCode">
+              {{ countdown > 0 ? `${countdown}s 后可重发` : '发送验证码' }}
+            </el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input v-model="forgotForm.password" type="password" show-password
+                    placeholder="至少 8 位，且同时包含字母和数字" />
+        </el-form-item>
+        <el-form-item label="确认密码">
+          <el-input v-model="forgotForm.confirm" type="password" show-password
+                    placeholder="再次输入新密码" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="forgotDlg = false">取消</el-button>
+        <el-button type="primary" :loading="resetting" @click="submitReset">重置密码</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   School, MagicStick, Notebook, EditPen, Refresh, DataLine, User, Lock, Key, ArrowDown
 } from '@element-plus/icons-vue'
@@ -137,43 +169,96 @@ const rules = {
 }
 
 // 找回密码：后端 /auth/forgot-password + /auth/reset-password 早已实现，
-// 但页面上没有入口。用三步 prompt 走完「发码 → 验码 → 设新密码」，
-// 不新增路由/弹窗组件，避免为了一个低频入口扩大改动面。
-async function forgotPassword() {
+// 但登录页原先只有「三步 prompt」入口，既没有倒计时也不能重发。
+const forgotDlg = ref(false)
+const sendingCode = ref(false)
+const resetting = ref(false)
+const countdown = ref(0)
+const forgotForm = ref({ target: '', code: '', password: '', confirm: '' })
+let countdownTimer = null
+
+function openForgot() {
+  forgotForm.value = { target: '', code: '', password: '', confirm: '' }
+  countdown.value = 0
+  forgotDlg.value = true
+}
+
+function stopCountdown() {
+  if (countdownTimer) clearInterval(countdownTimer)
+  countdownTimer = null
+  countdown.value = 0
+}
+
+function startCountdown(seconds = 60) {
+  stopCountdown()
+  countdown.value = seconds
+  countdownTimer = setInterval(() => {
+    countdown.value -= 1
+    if (countdown.value <= 0) stopCountdown()
+  }, 1000)
+}
+
+/** 账号里带 @ 当邮箱、否则当手机号（与后端两个字段一一对应） */
+function forgotField() {
+  return String(forgotForm.value.target || '').includes('@') ? 'email' : 'phone'
+}
+
+async function sendCode() {
+  const target = String(forgotForm.value.target || '').trim()
+  if (!target) {
+    ElMessage.warning('请先填写注册时使用的邮箱或手机号')
+    return
+  }
+  sendingCode.value = true
   try {
-    const { value: target } = await ElMessageBox.prompt(
-      '请输入注册时使用的邮箱或手机号', '找回密码', {
-        confirmButtonText: '发送验证码', cancelButtonText: '取消',
-        inputPattern: /\S+/, inputErrorMessage: '请输入邮箱或手机号'
-      })
-    const field = String(target).includes('@') ? 'email' : 'phone'
-    const res = await authApi.forgotPassword({ [field]: target })
+    const res = await authApi.forgotPassword({ [forgotField()]: target })
     // 后端有两个分支：sent=true（已发 / 账号不存在但按安全惯例不泄露）
-    // 与 sent=false（账号存在但系统没配邮件通道）。此前硬编码绿色「已发送」，
-    // 未配置邮件时用户会白等 5 分钟、第 3 步必然报「验证码错误」。
+    // 与 sent=false（账号存在但系统没配邮件通道）。后者不能报"已发送"，
+    // 否则用户白等 5 分钟，下一步必然"验证码错误"。
     if (res?.data?.sent === false) {
       ElMessage.warning(res?.message || '邮件服务未配置，请联系管理员重置密码')
       return
     }
-    ElMessage.success('若该账号存在，验证码已发送')
-    const { value: code } = await ElMessageBox.prompt(
-      '请输入收到的 6 位验证码', '找回密码', {
-        confirmButtonText: '下一步', cancelButtonText: '取消',
-        inputPattern: /^\d{6}$/, inputErrorMessage: '验证码为 6 位数字'
-      })
-    const { value: newPwd } = await ElMessageBox.prompt(
-      '请设置新密码（至少 8 位，含字母和数字）', '找回密码', {
-        confirmButtonText: '提交', cancelButtonText: '取消',
-        inputType: 'password', inputPattern: /^.{8,}$/,
-        inputErrorMessage: '密码至少 8 位'
-      })
-    await authApi.resetPasswordByCode({ [field]: target, code, new_password: newPwd })
-    ElMessage.success('密码已重置，请用新密码登录')
-    loadCaptcha()
-  } catch {
-    // 用户点「取消」或接口失败：拦截器已统一提示，这里不重复弹窗
+    ElMessage.success('若该账号存在，验证码已发送（10 分钟内有效）')
+    startCountdown(60)
+  } finally {
+    sendingCode.value = false
   }
 }
+
+async function submitReset() {
+  const f = forgotForm.value
+  const target = String(f.target || '').trim()
+  if (!target) {
+    ElMessage.warning('请填写注册时使用的邮箱或手机号')
+    return
+  }
+  if (!/^\d{6}$/.test(String(f.code || '').trim())) {
+    ElMessage.warning('验证码为 6 位数字')
+    return
+  }
+  if (!/^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(f.password || '')) {
+    ElMessage.warning('新密码至少 8 位，且同时包含字母和数字')
+    return
+  }
+  if (f.password !== f.confirm) {
+    ElMessage.warning('两次输入的新密码不一致')
+    return
+  }
+  resetting.value = true
+  try {
+    await authApi.resetPasswordByCode({
+      [forgotField()]: target, code: String(f.code).trim(), new_password: f.password
+    })
+    ElMessage.success('密码已重置，请用新密码登录')
+    forgotDlg.value = false
+    loadCaptcha()
+  } finally {
+    resetting.value = false
+  }
+}
+
+onUnmounted(stopCountdown)
 
 async function loadCaptcha() {
   // S7：后端已强制校验验证码（不携带 captcha_key 直接 400），所以这里
@@ -346,6 +431,13 @@ onMounted(loadCaptcha)
   gap: 10px;
   width: 100%;
   align-items: center;
+}
+
+/* 找回密码对话框里的「验证码 + 发送」同一行 */
+.code-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
 }
 
 /* 取码失败时的替补按钮：与验证码图同尺寸，位置不跳动，

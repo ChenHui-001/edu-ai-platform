@@ -7,6 +7,13 @@
 因此与契约层同一策略：**先锁住上限，再逐步下降**。每把一个内聚模块
 抽到 services/，就把 BASELINE 同步减 1。
 
+P2-8 的修正（旧口径可绕过）：
+  * 按**出现次数**计数，不再按行：同一行写两个 `select(` 旧实现只算 1；
+  * 补上 `db.query(` 这条 ORM 老写法（旧实现完全看不见）；
+  * 补上 `execute(text(` 这条裸 SQL 写法。
+扫描范围仍限定 `api/v1`：services 层本来就该写 SQL，把它算进来会让这个
+指标失去意义（目标是"路由不写 SQL"，不是"全仓零 SQL"）。
+
 用法：python tools/check_api_sql.py    # 0=通过 1=SQL 又长回 API 层
 """
 import os
@@ -16,9 +23,9 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_DIR = os.path.join(ROOT, "backend", "app", "api", "v1")
 
-# 抽出 services/ai_fill_batch.py 后的实测值（同步下调，防止倒退）。
-BASELINE = 383
-PATTERN = re.compile(r"\bselect\s*\(|db\.execute\s*\(\s*text")
+# 按出现次数计（不再是行数），基线已按新口径重测。
+BASELINE = 384
+PATTERN = re.compile(r"\bselect\s*\(|\bdb\.query\s*\(|\bexecute\s*\(\s*text\s*\(")
 
 
 def main() -> int:
@@ -28,7 +35,8 @@ def main() -> int:
             if not name.endswith(".py"):
                 continue
             with open(os.path.join(root, name), encoding="utf-8") as fh:
-                total += sum(1 for line in fh if PATTERN.search(line))
+                for line in fh:
+                    total += len(PATTERN.findall(line))
     if total > BASELINE:
         print(f"[FAIL] API 层直接 SQL = {total}，超过基线 {BASELINE}")
         print("新逻辑请放 services/；下沉存量后把本脚本 BASELINE 同步减 1。")

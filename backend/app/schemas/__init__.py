@@ -7,6 +7,7 @@
 逐步迁移，迁移时保留宽松兼容（extra="ignore"）。
 """
 from app.schemas.agent import PaperComposerRequest
+from app.schemas.auth import RefreshTokenIn
 from app.schemas.question import QuestionBatchCreateIn
 
-__all__ = ["PaperComposerRequest", "QuestionBatchCreateIn"]
+__all__ = ["PaperComposerRequest", "QuestionBatchCreateIn", "RefreshTokenIn"]

@@ -25,6 +25,7 @@ from app.core.security import (
 )
 from app.core.logger import get_logger
 from app.models import Registration, User
+from app.schemas import RefreshTokenIn
 from app.services import auth_service
 from app.utils.common import dictify, ok
 
@@ -344,8 +345,8 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/refresh", summary="刷新访问令牌")
-def refresh_token(body: Dict[str, str] = Body(...), db: Session = Depends(get_db)):
-    token = body.get("refresh_token", "")
+def refresh_token(body: RefreshTokenIn, db: Session = Depends(get_db)):
+    token = body.refresh_token
     # 必须传 db：登出时 refresh token 也被吊销，不查库就能拿它反复换新
     # access token（7 天内无法止损）。
     payload = decode_token(token, db)
@@ -366,7 +367,8 @@ def refresh_token(body: Dict[str, str] = Body(...), db: Session = Depends(get_db
     # decode_token 的 fail-closed 吊销检查拦下（即重放检测）。
     # 前端 request.js 已支持读取 data.refresh_token 覆盖本地存储；
     # 老调用方可显式传 rotate=false 保持「只换 access」的旧行为。
-    rotate = str(body.get("rotate", "true")).lower() not in ("false", "0", "no")
+    rotate = str("true" if body.rotate is None else body.rotate).lower() \
+        not in ("false", "0", "no")
     if rotate:
         data["refresh_token"] = create_refresh_token(user.id)
         revoke_token(payload, db)

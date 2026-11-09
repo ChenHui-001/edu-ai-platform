@@ -115,7 +115,10 @@
                 </el-col>
               </el-row>
               <el-form-item label="额外要求">
+                <!-- 后端 requirements 上限 200 字，超长会在提交后 400；
+                     这里先截断并显示字数，避免"写完才被拒"。 -->
                 <el-input v-model="qForm.requirements" type="textarea" :rows="2"
+                          maxlength="200" show-word-limit
                           placeholder="如：侧重实际应用，难度适中偏难" />
               </el-form-item>
             </el-form>
@@ -137,13 +140,24 @@
                 </el-select>
               </el-form-item>
               <el-form-item label="学科">
+                <!-- 未选年级时按年级分组展示：学科表是 (年级,学科) 多行，
+                     平铺会出现十几个"数学/语文"同名项，用户根本选不对。
+                     分组数据复用出题表单的 genSubjectGroups。 -->
                 <el-select v-model="paperSubjectId" clearable filterable
                            placeholder="按需求文本自动识别" style="width:180px">
-                  <el-option v-for="s in paperSubjects" :key="s.id" :label="s.name" :value="s.id" />
+                  <template v-if="paperGradeId">
+                    <el-option v-for="s in paperSubjects" :key="s.id" :label="s.name" :value="s.id" />
+                  </template>
+                  <template v-else>
+                    <el-option-group v-for="g in genSubjectGroups" :key="g.id" :label="g.label">
+                      <el-option v-for="s in g.options" :key="s.id" :label="s.name" :value="s.id" />
+                    </el-option-group>
+                  </template>
                 </el-select>
               </el-form-item>
             </el-form>
             <el-input v-model="paperReq" type="textarea" :rows="3"
+                      maxlength="8000" show-word-limit
                       placeholder="如：生成七年级数学一元一次方程试卷，10 题，选择题 6 道 + 填空 4 道，难度中等，限时 30 分钟" />
             <div class="mt8">
               <!-- 按钮只放得下摘要，完整需求用 tooltip 给出，避免看不全 -->
@@ -159,12 +173,18 @@
           <!-- 其他 Agent 通用 -->
           <template v-else-if="active === 'note_organizer' || active === 'tutor'">
             <el-form label-width="90px">
-              <el-form-item v-if="active === 'note_organizer'" label="笔记 ID">
-                <el-input-number v-model="genericForm.note_id" :min="1" style="width:200px" />
-                <span class="tip ml8">可在「学习笔记」页面查看笔记 ID</span>
+              <!-- 手填数字 ID 等于让用户去猜主键；改成从自己的笔记里选 -->
+              <el-form-item v-if="active === 'note_organizer'" label="笔记">
+                <el-select v-model="genericForm.note_id" filterable clearable
+                           :loading="noteLoading" placeholder="选择要整理的笔记"
+                           style="width:100%">
+                  <el-option v-for="n in noteOptions" :key="n.id"
+                             :label="n.title || `笔记 #${n.id}`" :value="n.id" />
+                </el-select>
               </el-form-item>
               <el-form-item v-else label="问题">
                 <el-input v-model="genericForm.question" type="textarea" :rows="4"
+                          maxlength="8000" show-word-limit
                           placeholder="如：为什么一元二次方程的判别式能判断根的个数？" />
               </el-form-item>
               <el-form-item v-if="active === 'tutor'" label="知识点">
@@ -178,8 +198,19 @@
             <el-form label-width="100px">
               <el-row :gutter="12">
                 <el-col :span="12">
-                  <el-form-item label="学生 ID">
-                    <el-input-number v-model="genericForm.student_id" :min="1" style="width:100%" />
+                  <el-form-item label="学生">
+                    <!-- 同样不再手填 ID：先选班级再选学生（教师只看得到自己的班） -->
+                    <div class="student-pick">
+                      <el-select v-model="plannerClassId" clearable placeholder="班级"
+                                 style="width:42%" @change="onPlannerClassChange">
+                        <el-option v-for="c in classOptions" :key="c.id" :label="c.name" :value="c.id" />
+                      </el-select>
+                      <el-select v-model="genericForm.student_id" filterable clearable
+                                 placeholder="学生" style="flex:1">
+                        <el-option v-for="st in plannerStudents" :key="st.id"
+                                   :label="`${st.real_name || st.username}（${st.username}）`" :value="st.id" />
+                      </el-select>
+                    </div>
                   </el-form-item>
                 </el-col>
                 <el-col :span="12">
@@ -331,11 +362,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Refresh, Cpu, Notebook, Tickets, EditPen, Calendar, ChatDotRound, Collection } from '@element-plus/icons-vue'
-import { agentApi, eduApi, questionApi } from '@/api'
+import { agentApi, eduApi, learningApi, questionApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { sanitizeHtml } from '@/utils/sanitize'
 // 题型唯一真源：项目规范禁止页面内再定义本地映射。
@@ -423,6 +454,54 @@ const qForm = reactive({
   difficulty: 'medium', count: 5, requirements: ''
 })
 const genericForm = reactive({ note_id: null, question: '', knowledge_point: '', student_id: null, days: 7, daily_minutes: 90 })
+
+// ---- P2-16：把「手填笔记 ID / 学生 ID」换成选择器
+const noteOptions = ref([])
+const noteLoading = ref(false)
+const classOptions = ref([])
+const plannerStudents = ref([])
+const plannerClassId = ref(null)
+
+async function loadNotes() {
+  if (noteOptions.value.length || noteLoading.value) return
+  noteLoading.value = true
+  try {
+    const res = await learningApi.notes({ page_size: 50 })
+    noteOptions.value = res?.data?.items || res?.data || []
+  } catch {
+    noteOptions.value = []
+  } finally {
+    noteLoading.value = false
+  }
+}
+
+async function loadClasses() {
+  if (classOptions.value.length) return
+  try {
+    const res = await eduApi.classes({ page_size: 100 })
+    classOptions.value = res?.data?.items || res?.data || []
+  } catch {
+    classOptions.value = []
+  }
+}
+
+async function onPlannerClassChange(cid) {
+  genericForm.student_id = null
+  plannerStudents.value = []
+  if (!cid) return
+  try {
+    const res = await eduApi.classStudents(cid, { page_size: 200 })
+    plannerStudents.value = res?.data?.items || res?.data || []
+  } catch {
+    plannerStudents.value = []
+  }
+}
+
+// 切到对应 Agent 时才拉数据，避免进页面就打三个无关请求
+watch(active, (val) => {
+  if (val === 'note_organizer') loadNotes()
+  if (val === 'study_planner') loadClasses()
+})
 
 const paperTemplates = [
   '生成七年级数学一元一次方程试卷，10 题，选择题 6 道 + 填空 4 道，难度中等',
@@ -811,6 +890,8 @@ onMounted(async () => {
 .ml8 { margin-left: 8px; }
 .mr4 { margin-right: 4px; }
 .tip { font-size: 12px; color: #909399; }
+/* 班级 + 学生两级选择同一行 */
+.student-pick { display: flex; gap: 8px; width: 100%; }
 .agent-menu { border-right: none; }
 .agent-menu :deep(.el-menu-item) { height: 44px; }
 .action-bar { display: flex; align-items: center; gap: 10px; margin-top: 16px; }

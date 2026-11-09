@@ -512,7 +512,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .mb8 { margin-bottom: 8px; }
-.mb8 { margin-bottom: 8px; }
 .exam-page { min-height: 100%; background: #f4f6fa; padding-bottom: 40px; }
 .bar {
   position: sticky; top: 0; z-index: 10; background: #fff; padding: 12px 20px;

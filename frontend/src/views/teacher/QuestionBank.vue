@@ -14,7 +14,7 @@
       <div class="qb-actions">
         <el-button v-if="canImport" :icon="Download" @click="downloadTemplate">下载模板</el-button>
         <el-button v-if="canImport" :icon="Upload" @click="importVisible = true">批量导入</el-button>
-        <el-button v-if="canExport" :icon="Download" @click="exportExcel">导出</el-button>
+        <el-button v-if="canExport" :icon="Download" :loading="exporting" @click="onExport">导出</el-button>
         <el-button v-if="canWrite" :icon="MagicStick" type="warning" @click="openAiDlg">
           AI 智能出题
         </el-button>
@@ -1119,6 +1119,20 @@ function onImportGradeChange() {
 
 async function downloadTemplate() {
   await downloadBlob(questionApi.downloadTemplate(), '题目导入模板.xlsx')
+}
+
+// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
+const exporting = ref(false)
+
+async function onExport() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    await exportExcel()
+  } finally {
+    exporting.value = false
+  }
 }
 
 async function exportExcel() {

@@ -15,7 +15,7 @@
         <el-button :icon="Refresh" @click="refreshAll">刷新</el-button>
         <el-button v-if="canWrite" :icon="Plus" type="primary" @click="openCreateRoot">新增根节点</el-button>
         <el-button v-if="canWrite" :icon="Upload" @click="openImport">导入</el-button>
-        <el-button :icon="Download" @click="exportExcel">导出</el-button>
+        <el-button :icon="Download" :loading="exporting" @click="onExport">导出</el-button>
         <el-button v-if="canWrite" :icon="Cpu" @click="openAiGenerate">AI 生成</el-button>
         <el-popover placement="bottom" :width="300" trigger="hover">
           <template #reference>
@@ -1677,6 +1677,20 @@ async function runImport(dryRun) {
     }
   } finally {
     importing.value = false
+  }
+}
+
+// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
+const exporting = ref(false)
+
+async function onExport() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    await exportExcel()
+  } finally {
+    exporting.value = false
   }
 }
 

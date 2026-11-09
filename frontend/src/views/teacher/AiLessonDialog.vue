@@ -221,7 +221,7 @@
                      :loading="submitting" @click="doGenerate">开始生成</el-button>
           <el-button v-if="step === 2" @click="step = 1">重新生成</el-button>
           <el-button v-if="step === 2" :icon="Download" :disabled="!job.jobId"
-                     @click="doExport">导出 Markdown</el-button>
+                     :loading="exporting" @click="onExport">导出 Markdown</el-button>
           <el-button v-if="step === 2" type="primary" :icon="Check"
                      :loading="savingToLib" @click="doSave">保存到教案库</el-button>
           <el-button v-if="step === 3" type="primary" @click="visible = false">完成</el-button>
@@ -462,6 +462,20 @@ function applyResult(data) {
 }
 
 // ------------------------------------------------------------ 导出 / 保存
+// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
+const exporting = ref(false)
+
+async function onExport() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    await doExport()
+  } finally {
+    exporting.value = false
+  }
+}
+
 async function doExport() {
   if (!job.jobId) return
   // 此前用 fetch + localStorage.getItem('token') 手拼请求头：全站 token 键名

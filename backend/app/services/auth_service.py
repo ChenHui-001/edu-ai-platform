@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.exception import AuthException, BusinessException
 from app.core.security import (
     create_access_token, create_refresh_token, hash_password,
-    revoke_user_tokens, verify_password,
+    maybe_upgrade_hash, revoke_user_tokens, verify_password,
 )
 from app.core.logger import get_logger
 from app.models import (
@@ -188,6 +188,13 @@ def authenticate(
         )
         db.commit()
         raise AuthException("账号或密码错误")
+
+    # 机会式升级哈希：旧 3 段格式（10 万次迭代）此前只有"用户主动改密"才能
+    # 升级，存量账号不换密码就永远弱强度。校验成功这一刻是唯一能同时拿到明文
+    # 与旧哈希的时机，就地重算（下面的 commit 会一起落库，无额外写）。
+    upgraded = maybe_upgrade_hash(password, user.password)
+    if upgraded:
+        user.password = upgraded
 
     # 异地登录检测：IP 变化且 24 小时内有其他 IP 成功登录
     prev_ip = user.last_login_ip

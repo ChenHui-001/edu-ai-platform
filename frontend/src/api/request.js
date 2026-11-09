@@ -81,6 +81,27 @@ function ensureRefresh() {
  * 并在顶部插一条红条。用户看到的是「一句业务提示 + 一句看不懂的英文」，
  * 且红条会一直挂着不消失。打标记后全局兜底可据此跳过。
  */
+// axios 的英文原文不要直接丢给教师/学生看：
+//   "Request failed with status code 500" / "Network Error" / "timeout of 120000ms exceeded"
+// 这些既不可读也不指向下一步动作。后端给的中文 message 优先，其次按类型兜底。
+const ERROR_HINTS = [
+  [/network error/i, '网络连接失败，请检查网络后重试'],
+  [/timeout of \d+ms exceeded/i, '请求超时，请稍后重试'],
+  [/request failed with status code 5\d\d/i, '服务暂时不可用，请稍后重试'],
+  [/request failed with status code 4\d\d/i, '请求被拒绝，请检查填写内容后重试'],
+  [/failed to fetch/i, '网络连接失败，请检查网络后重试']
+]
+
+function humanizeError(error, response) {
+  const backendMsg = response?.data?.message
+  if (backendMsg) return backendMsg
+  const raw = String(error?.message || '')
+  for (const [pattern, text] of ERROR_HINTS) {
+    if (pattern.test(raw)) return text
+  }
+  return raw || '网络异常'
+}
+
 function markHandled(err) {
   try {
     if (err && typeof err === 'object') err.__handled = true
@@ -137,6 +158,8 @@ service.interceptors.response.use(
       if (onPublicPage) {
         return Promise.reject(error)
       }
+      // 本次失败时用的令牌：后面判断"有没有被别的标签页换掉"全靠它
+      const tokenBefore = localStorage.getItem('access_token')
       if (!config?._retried) {
         config._retried = true
         try {
@@ -146,19 +169,34 @@ service.interceptors.response.use(
             return service(config)
           }
         } catch (e) {
-          // 刷新失败，走登出
+          // 跨标签页竞态：refresh_token 是一次性轮换的，两个标签页同时 401
+          // 时只有先到的那个能换成功，另一个必然拿到 401。旧实现在这里直接
+          // 清空 localStorage —— 会把对端刚写入的**新 refresh_token 一起删掉**，
+          // 于是两个标签页同时被踢出登录。
+          // 这里等一拍再看存储：若已被换成新令牌，直接复用它重放，不再刷新。
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          const latest = localStorage.getItem('access_token')
+          if (latest && latest !== tokenBefore && !config._tabRetry) {
+            config._tabRetry = true
+            config.headers.Authorization = `Bearer ${latest}`
+            return service(config)
+          }
         }
       }
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('refresh_token')
-      localStorage.removeItem('user')
-      ElMessage.error('登录已过期，请重新登录')
-      router.push('/login')
+      // 两条路都走不通才登出。清理前再确认一次：如果存储里的令牌已经不是我
+      // 这次失败的令牌，说明另一页刷新成功，清掉等于误伤。
+      const latestNow = localStorage.getItem('access_token')
+      if (!latestNow || latestNow === tokenBefore) {
+        localStorage.removeItem('access_token')
+        localStorage.removeItem('refresh_token')
+        localStorage.removeItem('user')
+        ElMessage.error('登录已过期，请重新登录')
+        router.push('/login')
+      }
       return Promise.reject(error)
     }
 
-    const msg = response?.data?.message || error.message || '网络异常'
-    ElMessage.error(msg)
+    ElMessage.error(humanizeError(error, response))
     return Promise.reject(error)
   }
 )

@@ -260,28 +260,38 @@ const aiEntries = [
   { name: '学习规划', icon: Compass, path: '/agent/chat' }
 ]
 
+// 统计卡配色语义（P2-20）。此前三组卡片各自硬编码同一套四色，颜色只起装饰
+// 作用：蓝色在教师端是"发布任务"、管理端是"用户总数"，同一个颜色跨角色
+// 代表完全不同的东西，用户读不出任何含义。现在只保留三个**固定语义**：
+//   待办（需要我处理）→ 橙  完成（已经做完的量）→ 绿  规模（存量/总量）→ 品牌蓝
+const STAT_TONES = {
+  todo: '#e6a23c',
+  done: '#67c23a',
+  volume: 'var(--el-color-primary)'
+}
+
 const stats = computed(() => {
   if (userStore.isStudent && !userStore.isTeacher) {
     return [
-      { label: '待复习任务', value: reviewData.value.today_count ?? 0, color: '#2f6fd0' },
-      { label: '待完成任务', value: tasks.value.filter(t => !t.my_submission).length, color: '#e6a23c' },
-      { label: '已完成任务', value: tasks.value.filter(t => t.my_submission).length, color: '#67c23a' },
-      { label: '作业考试', value: tasks.value.length, color: '#909399' }
+      { label: '待复习任务', value: reviewData.value.today_count ?? 0, color: STAT_TONES.todo },
+      { label: '待完成任务', value: tasks.value.filter(t => !t.my_submission).length, color: STAT_TONES.todo },
+      { label: '已完成任务', value: tasks.value.filter(t => t.my_submission).length, color: STAT_TONES.done },
+      { label: '作业考试', value: tasks.value.length, color: STAT_TONES.volume }
     ]
   }
   if (userStore.isTeacher) {
     return [
-      { label: '发布任务', value: tasks.value.length, color: '#2f6fd0' },
-      { label: '待批改', value: pending.value.length, color: '#e6a23c' },
-      { label: '学生人数', value: sysStats.value.user?.student ?? 0, color: '#67c23a' },
-      { label: '题库总量', value: sysStats.value.content?.question ?? 0, color: '#909399' }
+      { label: '发布任务', value: tasks.value.length, color: STAT_TONES.volume },
+      { label: '待批改', value: pending.value.length, color: STAT_TONES.todo },
+      { label: '学生人数', value: sysStats.value.user?.student ?? 0, color: STAT_TONES.volume },
+      { label: '题库总量', value: sysStats.value.content?.question ?? 0, color: STAT_TONES.volume }
     ]
   }
   return [
-    { label: '用户总数', value: sysStats.value.user?.total ?? 0, color: '#2f6fd0' },
-    { label: '待审批', value: sysStats.value.user?.pending ?? 0, color: '#e6a23c' },
-    { label: '题库总量', value: sysStats.value.content?.question ?? 0, color: '#67c23a' },
-    { label: 'AI 调用', value: sysStats.value.ai?.calls ?? 0, color: '#909399' }
+    { label: '用户总数', value: sysStats.value.user?.total ?? 0, color: STAT_TONES.volume },
+    { label: '待审批', value: sysStats.value.user?.pending ?? 0, color: STAT_TONES.todo },
+    { label: '题库总量', value: sysStats.value.content?.question ?? 0, color: STAT_TONES.volume },
+    { label: 'AI 调用', value: sysStats.value.ai?.calls ?? 0, color: STAT_TONES.volume }
   ]
 })
 

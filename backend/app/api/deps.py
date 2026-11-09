@@ -1,4 +1,5 @@
 """依赖注入：认证、当前用户、权限校验、数据权限范围。"""
+import ipaddress
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -293,6 +294,19 @@ def require_perm(*perm_codes: str):
     return _checker
 
 
+def _is_trusted_proxy_peer(host: str) -> bool:
+    """对端是否为可信反代（回环 / 私有网段 / 容器内地址）。"""
+    if not host:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # TestClient 的 "testclient"、unix socket 名等：不是可路由地址，
+        # 不构成"公网直连"，按可信处理（本地测试环境仍然读头）。
+        return host == "testclient"
+    return ip.is_loopback or ip.is_private
+
+
 def get_client_ip(request: Request) -> str:
     """获取真实客户端 IP。
 
@@ -309,6 +323,21 @@ def get_client_ip(request: Request) -> str:
     3. `request.client.host`：仅直连兜底（生产由 nginx 反代，
        且 uvicorn 已只信任 127.0.0.1 的转发头，正常走不到这里）。
     """
+    peer = request.client.host if request.client else "unknown"
+    # 转发头只在「对端是反代」时才可信。纯后端部署（Dockerfile 里的
+    # `uvicorn --host 0.0.0.0` 直连形态）没有 nginx 覆盖 X-Real-IP，任何人都能
+    # 每次换一个头值绕过按 IP 的限流（找回密码 5 次/10min、匿名上传 10 次/10min），
+    # 登录日志里的 IP 也全是假的。对端是公网地址时一律以 TCP 对端为准。
+    #
+    # 三种部署形态都成立：
+    #   * 同容器 nginx：对端 127.0.0.1（私有）→ 信任头，nginx 用 $remote_addr 覆盖；
+    #   * 独立反代：对端私有 → 信任头；
+    #   * 直连暴露：对端是公网客户端 → 忽略头，返回真实对端。
+    # 容器内 uvicorn 开了 --proxy-headers，scope["client"] 已由它按
+    # forwarded-allow-ips 解析成真实客户端（伪造的 XFF 前缀会被跳过），
+    # 因此这里拿到的 peer 本身也是可信的。
+    if not _is_trusted_proxy_peer(peer):
+        return peer
     real_ip = request.headers.get("X-Real-IP")
     if real_ip and real_ip.strip():
         return real_ip.strip()
@@ -317,7 +346,7 @@ def get_client_ip(request: Request) -> str:
         parts = [p.strip() for p in xff.split(",") if p.strip()]
         if parts:
             return parts[-1]
-    return request.client.host if request.client else "unknown"
+    return peer
 
 
 def get_user_agent(request: Request) -> str:

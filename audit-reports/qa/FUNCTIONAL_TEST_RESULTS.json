@@ -1273,7 +1273,7 @@
       "path": "/system/version",
       "own_status": 200,
       "status": "PASS",
-      "detail": "{\"app_name\": \"新芽学堂\", \"version\": \"2.5.10\", \"build_number\": \"\", \"commit\": \"\", \"built_at\": \"\", \"updated_at\": \"2026-11-09 12"
+      "detail": "{\"app_name\": \"新芽学堂\", \"version\": \"2.5.11\", \"build_number\": \"\", \"commit\": \"\", \"built_at\": \"\", \"updated_at\": \"2026-11-09 13"
     },
     {
       "id": "FUNC-CFG",

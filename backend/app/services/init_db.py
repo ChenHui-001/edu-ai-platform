@@ -2,7 +2,7 @@
 import secrets
 from typing import Dict, List, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -1066,6 +1066,56 @@ def enforce_default_admin_password(db: Session) -> int:
     return auto_fixed
 
 
+def enforce_demo_account_passwords(db: Session) -> int:
+    """生产形态下，把仍在使用公开演示口令的账号改成随机口令（P2-4）。
+
+    `_demo_password` 只在**建号那一刻**生效：`init_demo_data` 走 `_demo_password`
+    时生产形态会随机化，但那只覆盖"空库首次初始化"。存量部署里的
+    teacher1 / Teacher@123、stu711 / Student@123 是真实可登录的，而这两组口令
+    公开写在 README 里 —— 等于把公开凭据长期留在生产库。
+
+    处置口径与 `enforce_default_admin_password` 一致：**只有口令确实还是公开
+    默认值才动**（`verify_password` 命中），已改过密的一律不碰。
+
+    自限流：只处理 `must_change_password == False` 的演示账号。第一次处理后
+    这些账号都被置 True，下次启动候选集为空，不做任何 PBKDF2 计算。
+    """
+    if not _demo_is_production_shape():
+        return 0
+
+    candidates = db.scalars(
+        select(User).where(
+            User.school_name == "示范学校",
+            User.must_change_password.is_(False),
+            or_(User.username.like("teacher%"), User.username.like("stu%")),
+        )
+    ).all()
+    if not candidates:
+        return 0
+
+    fixed = []
+    for user in candidates:
+        public_default = "Teacher@123" if user.identity == "teacher" else "Student@123"
+        if not verify_password(public_default, user.password):
+            continue
+        user.password = hash_password(secrets.token_urlsafe(18))
+        user.must_change_password = True
+        fixed.append(user.username)
+    if not fixed:
+        return 0
+    try:
+        db.commit()
+    except Exception as exc:  # noqa: BLE001  收尾步骤失败不阻断启动
+        db.rollback()
+        logger.error("演示账号口令随机化失败（已回滚，下次启动重试）：{}", exc)
+        return 0
+    logger.warning(
+        "已将 {} 个仍在使用公开演示口令的账号改为随机口令并强制首次改密：{}",
+        len(fixed), "、".join(fixed[:10]),
+    )
+    return len(fixed)
+
+
 def init_all(db: Session) -> None:
     """按依赖顺序执行全部初始化。"""
     init_permissions(db)
@@ -1098,6 +1148,9 @@ def init_all(db: Session) -> None:
         # 而且后续 init 的提交会把这些半成品一起落库。
         db.rollback()
         logger.warning('演示教学闭环初始化失败（不影响启动）：{}', exc)
+    # 演示账号的公开口令（Teacher@123 / Student@123）在存量部署里同样是
+    # 真实可登录的凭据，必须和 admin 出厂口令一样被处置掉。
+    enforce_demo_account_passwords(db)
     enforce_default_admin_password(db)
 
 

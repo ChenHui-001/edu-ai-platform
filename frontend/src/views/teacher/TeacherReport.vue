@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">教学报表</h2>
       <div>
-        <el-button :icon="Download" @click="exportExcel">导出 Excel</el-button>
+        <el-button :icon="Download" :loading="exporting" @click="onExport">导出 Excel</el-button>
         <el-button :icon="Refresh" @click="loadAll">刷新</el-button>
       </div>
     </div>
@@ -176,6 +176,20 @@ async function loadEffect() {
     effect.value = Array.isArray(d) ? d : (d?.items || [])
   } finally {
     loadingEffect.value = false
+  }
+}
+
+// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
+const exporting = ref(false)
+
+async function onExport() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    await exportExcel()
+  } finally {
+    exporting.value = false
   }
 }
 
