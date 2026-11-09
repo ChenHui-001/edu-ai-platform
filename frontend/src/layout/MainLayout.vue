@@ -11,9 +11,9 @@
           :collapse="collapsed"
           :collapse-transition="false"
           router
-          background-color="#1f2d3d"
-          text-color="#bfcbd9"
-          active-text-color="#409eff"
+          :background-color="MENU_BG"
+          :text-color="MENU_TEXT"
+          :active-text-color="MENU_ACTIVE"
         >
           <el-menu-item index="/dashboard">
             <el-icon><HomeFilled /></el-icon>
@@ -84,7 +84,7 @@
 
           <el-dropdown @command="handleCommand">
             <span class="user-info">
-              <el-avatar :size="30" style="background:#409eff">
+              <el-avatar :size="30" style="background:var(--el-color-primary)">
                 {{ userStore.realName.charAt(0) }}
               </el-avatar>
               <span class="user-name">{{ userStore.realName }}</span>
@@ -141,6 +141,14 @@ import VersionInfo from '@/components/VersionInfo.vue'
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+
+// 侧边栏配色。深色底 #1f2d3d 保留原有观感，选中高亮改用品牌色梯度：
+// 此前写死 Element 默认蓝 #409eff，而全站按钮/链接是品牌蓝 #2f6fd0 ——
+// 全局布局最显眼的位置用的是"另一套蓝"。light-3 是品牌色的浅化梯度，
+// 在深底上对比度足够（直接上 #2f6fd0 会偏暗、按下不清晰）。
+const MENU_BG = '#1f2d3d'
+const MENU_TEXT = '#bfcbd9'
+const MENU_ACTIVE = 'var(--el-color-primary-light-3)'
 
 // 图标名字符串 → 图标组件（菜单元数据与路由 meta 共用这份映射）
 const ICONS = {

@@ -41,21 +41,31 @@ def clean_expired_exams() -> Dict[str, Any]:
 def clean_ai_draft_questions() -> Dict[str, Any]:
     """清理 AI 组卷预览 / 重生产生的过期草稿题（P2-13）。
 
-    每次组卷预览、单题或整题型重生都会落一批 source=ai_fill / ai_regen
-    的草稿题，此前没有任何清理任务，题库只增不减。只删「7 天前 +
-    没有被任何试卷题项引用」的，避免误删已被采用的题目。
+    每次组卷预览、单题或整题型重生都会落一批 AI 草稿题（`source` 分别是
+    `ai` / `ai_fill` / `ai_regen`），此前没有任何清理任务，题库只增不减。
+    只删「7 天前 + 没有被任何试卷题项引用」的，避免误删已被采用的题目。
+
+    口径要点（首轮修复漏掉的两处）：
+    - 漏了 `source="ai"`：题库页 AI 出题走的是 agent 的 `save=True` 路径，
+      默认来源就是 `ai`，只清 ai_fill/ai_regen 等于放过主要增长源；
+    - 只排除了 `PaperItem`：`edu_question_favorite` / `edu_wrong_question`
+      同样以 CASCADE 指向 `edu_question`，删除会连带清掉学生的收藏与错题记录。
     """
-    from app.models import PaperItem, Question
+    from app.models import PaperItem, Question, QuestionFavorite, WrongQuestion
 
     db = SessionLocal()
     try:
         cutoff = now_local() - timedelta(days=7)
-        referenced = select(PaperItem.question_id)
+        in_paper = select(PaperItem.question_id)
+        favorited = select(QuestionFavorite.question_id)
+        in_wrongbook = select(WrongQuestion.question_id)
         count = db.query(Question).filter(
-            Question.source.in_(["ai_fill", "ai_regen"]),
+            Question.source.in_(["ai", "ai_fill", "ai_regen"]),
             Question.status == "draft",
             Question.created_at < cutoff,
-            Question.id.notin_(referenced),
+            Question.id.notin_(in_paper),
+            Question.id.notin_(favorited),
+            Question.id.notin_(in_wrongbook),
         ).delete(synchronize_session=False)
         db.commit()
         return {"deleted": int(count or 0)}
@@ -340,6 +350,12 @@ def publish_scheduled_tasks() -> Dict[str, Any]:
 
 
 # 任务注册表：func_path -> 执行函数
+#
+# ⚠️ 这张表是「定时任务能不能跑」的唯一真源：`run_job` 只认这里。
+# 往 `init_db.DEFAULT_JOBS` 加内置任务时**必须同步加一行**，否则该任务
+# 永远不会执行，而且每次到点都会给全体管理员推一条「定时任务执行失败」
+# （P1-6 实证：清理 AI 草稿题漏注册，每天 05:00 骚扰全员）。
+# 该不变量现由 tools/check_job_handlers.py 在 CI 守护。
 JOB_HANDLERS = {
     "app.services.task_jobs.clean_expired_exams": clean_expired_exams,
     "app.services.task_jobs.generate_daily_report": generate_daily_report,
@@ -348,6 +364,7 @@ JOB_HANDLERS = {
     "app.services.task_jobs.generate_weekly_report": generate_weekly_report,
     "app.services.task_jobs.publish_scheduled_tasks": publish_scheduled_tasks,
     "app.services.task_jobs.clean_old_logs": clean_old_logs,
+    "app.services.task_jobs.clean_ai_draft_questions": clean_ai_draft_questions,
 }
 
 

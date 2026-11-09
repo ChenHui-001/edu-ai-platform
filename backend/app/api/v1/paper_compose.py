@@ -30,7 +30,7 @@ import re
 import threading
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Dict, List, Optional
+from typing import Annotated, Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -2163,7 +2163,10 @@ def regenerate_item(
 @router.delete("/{paper_id}/items/{item_id}", summary="移除单题")
 def remove_item(
     paper_id: int, item_id: int,
-    force: bool = Query(False, description="确认作废该题已有学生作答"),
+    # 用 Annotated 承载 Query 元数据：`force: bool = Query(False)` 的 **Python 级
+    # 默认值**是 Query 实例（真值），绕过 HTTP 直接调用本函数时 `not force`
+    # 永远为假，作答守卫会被静默跳过。
+    force: Annotated[bool, Query(description="确认作废该题已有学生作答")] = False,
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):

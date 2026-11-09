@@ -116,6 +116,28 @@ def _check_demo_data(db: Session) -> Optional[str]:
     )
 
 
+def _check_cors(db: Session) -> Optional[str]:
+    """生产形态下 CORS 仍配成通配符 → 接口对任意站点开放。
+
+    代码默认值早已从 `["*"]` 改成 `[]`（同源反代），但标准部署流程是
+    `cp .env.example .env`。`.env.example` 里若还写着 `["*"]`，收敛就等于
+    没做 —— 改代码挡不住照抄模板的人，所以这里再喊一次。
+
+    判据用 `APP_ENV`，与演示数据那项同一套理由（CI 是 DEBUG=false）。
+    """
+    origins = list(getattr(settings, "CORS_ORIGINS", None) or [])
+    if "*" not in origins:
+        return None
+    if getattr(settings, "APP_ENV", "production") != "production":
+        return None
+    return (
+        "CORS_ORIGINS 含通配符 \"*\"，且 APP_ENV=production："
+        "任意站点都可以带用户凭据调用本接口。"
+        "修复：把 CORS_ORIGINS 留空（= 只允许同源，单镜像 unified 部署的正确形态），"
+        "前后端分域时才填具体来源，如 [\"https://edu.example.com\"]。"
+    )
+
+
 def _check_llm_config(db: Session) -> Optional[str]:
     """LLM_ENABLED=true 但拿不到有效密钥 → AI 功能已静默降级。
 
@@ -222,6 +244,7 @@ def run_startup_checks(db: Session) -> int:
     """
     checks = (
         ("演示数据", _check_demo_data),
+        ("CORS 白名单", _check_cors),
         ("LLM 配置", _check_llm_config),
         ("V2 迁移标记", _check_migration_markers),
     )

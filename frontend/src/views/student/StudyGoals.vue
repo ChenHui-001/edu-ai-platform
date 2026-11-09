@@ -231,7 +231,7 @@ onMounted(load)
 <style scoped>
 .mb16 { margin-bottom: 16px; }
 .stat-card { text-align: center; padding: 16px; background: #f5f7fa; border-radius: 8px; }
-.stat-value { font-size: 28px; font-weight: 700; color: #409eff; }
+.stat-value { font-size: 28px; font-weight: 700; color: var(--el-color-primary); }
 .stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
 .calendar-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
 .calendar-cell { aspect-ratio: 1; border-radius: 4px; background: #f5f7fa; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; color: #c0c4cc; }

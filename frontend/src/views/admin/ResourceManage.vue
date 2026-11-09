@@ -525,7 +525,7 @@ watch(viewMode, (m) => {
 
 .stats-row { margin-bottom: 14px; }
 .stat-card { border-radius: 10px; }
-.stat-value { font-size: 24px; font-weight: 600; color: #1f2d3d; line-height: 1.3; }
+.stat-value { font-size: 24px; font-weight: 600; color: var(--el-color-primary); line-height: 1.3; }
 .stat-label { color: #8a94a6; font-size: 13px; margin-top: 2px; }
 
 .mode-bar {  display: flex; align-items: center;

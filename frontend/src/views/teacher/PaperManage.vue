@@ -1060,6 +1060,10 @@ function reportBatchResult(data, prefix) {
   const d = data || {}
   const done = (d.done || []).length
   const skipped = d.skipped || []
+  if (!done && !skipped.length) {
+    ElMessage.warning(`${prefix} 0 份：所选试卷未发生变更（可能已处于目标状态）`)
+    return
+  }
   if (skipped.length) {
     const reasons = skipped.slice(0, 3)
       .map(s => `#${s.id} ${s.reason || s.message || '失败'}`).join('；')

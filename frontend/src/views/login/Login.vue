@@ -16,6 +16,16 @@
     </div>
 
     <div class="login-right">
+      <!-- 窄屏（<=900px）左侧品牌区被隐藏，这里补一个紧凑品牌头：
+           否则小屏/分屏用户看到的是一个没有任何来由的裸表单，
+           既看不到产品名也看不到定位（900px 是笔记本分屏的常见宽度）。 -->
+      <div class="brand-compact">
+        <el-icon :size="28"><School /></el-icon>
+        <div class="brand-compact-text">
+          <strong>新芽学堂</strong>
+          <span>九年义务教育 AI 学习平台</span>
+        </div>
+      </div>
       <el-card class="login-card" shadow="never">
         <h2 class="login-title">欢迎登录</h2>
         <p class="login-sub">请输入账号密码继续</p>
@@ -137,7 +147,14 @@ async function forgotPassword() {
         inputPattern: /\S+/, inputErrorMessage: '请输入邮箱或手机号'
       })
     const field = String(target).includes('@') ? 'email' : 'phone'
-    await authApi.forgotPassword({ [field]: target })
+    const res = await authApi.forgotPassword({ [field]: target })
+    // 后端有两个分支：sent=true（已发 / 账号不存在但按安全惯例不泄露）
+    // 与 sent=false（账号存在但系统没配邮件通道）。此前硬编码绿色「已发送」，
+    // 未配置邮件时用户会白等 5 分钟、第 3 步必然报「验证码错误」。
+    if (res?.data?.sent === false) {
+      ElMessage.warning(res?.message || '邮件服务未配置，请联系管理员重置密码')
+      return
+    }
     ElMessage.success('若该账号存在，验证码已发送')
     const { value: code } = await ElMessageBox.prompt(
       '请输入收到的 6 位验证码', '找回密码', {
@@ -372,7 +389,19 @@ onMounted(loadCaptcha)
   text-decoration: none;
 }
 
+.brand-compact { display: none; }
+
 @media (max-width: 900px) {
   .login-left { display: none; }
+  .login-right { flex-direction: column; justify-content: center; }
+  .brand-compact {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    color: var(--el-color-primary);
+  }
+  .brand-compact-text strong { display: block; font-size: 20px; line-height: 1.25; }
+  .brand-compact-text span { font-size: 12px; color: #8a94a6; }
 }
 </style>

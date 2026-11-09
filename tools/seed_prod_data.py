@@ -115,7 +115,35 @@ QUESTIONS_TEMPLATE = [
 ]
 
 
+def _apply_cli_overrides():
+    """命令行覆盖默认目标与账号。
+
+    此前只能改源码里的 BASE / sysadmin 才能对本地开发形态（:8000 + admin）
+    跑一遍 —— 报告里点出的"跑它还得先改两个默认值"，改不动的人就干脆不跑，
+    演示数据永远只有账号。环境变量仍然可用（优先级低于命令行、高于默认值）。
+    """
+    global BASE, ADMIN_USER, ADMIN_PASS
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="生成完整演示教学数据（走真实 API，幂等可重跑）")
+    ap.add_argument("--base", default=None,
+                    help="服务地址，形如 http://127.0.0.1:<端口>（默认取 BASE 环境变量或 :8081）")
+    ap.add_argument("--user", default=None, help="管理员账号（默认 sysadmin）")
+    ap.add_argument("--password", default=None, help="管理员口令（默认取 ADMIN_PASS）")
+    args, _unknown = ap.parse_known_args()
+    if args.base:
+        # 允许传 "http://host:port" 或已带 /api/v1 的完整前缀
+        base = args.base.rstrip("/")
+        BASE = base if base.endswith("/api/v1") else base + "/api/v1"
+    if args.user:
+        ADMIN_USER = args.user
+    if args.password:
+        ADMIN_PASS = args.password
+
+
 def main():
+    _apply_cli_overrides()
     print("=" * 60)
     print("生产数据生成 · 模拟示范学校开学一个月运转")
     print("=" * 60)

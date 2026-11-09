@@ -177,6 +177,10 @@ RUN mkdir -p "$CHROMA_CACHE_DIR/onnx_models/all-MiniLM-L6-v2" \
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# 容器守卫：backend/nginx 重试耗尽被置 FATAL 时主动让容器退出，
+# 使 restart 策略生效，避免「容器 Up、全站 502」这种隐蔽故障。
+COPY deploy/fatal_guard.py /usr/local/bin/fatal_guard.py
+RUN chmod +x /usr/local/bin/fatal_guard.py
 
 # 运行目录属主交给 app：降权后的 uvicorn 要在这里写 SQLite / 附件 / 日志。
 # 注意 docker-compose 用 ./data:/app/data 绑定挂载会**盖掉**这里的属主，

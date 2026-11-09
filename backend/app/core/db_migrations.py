@@ -9,7 +9,8 @@
 ALTER TABLE ADD COLUMN（SQLite 支持，且重复执行幂等——先 PRAGMA 探测）。
 """
 import logging
-from typing import List, Tuple
+import time
+from typing import List, Optional, Tuple
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -17,6 +18,25 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# 瞬时错误：重试有意义。SQLite 单写锁在并发启动/备份/大事务时会出现
+# `database is locked`，磁盘抖动会出 `disk I/O error`。这些重试几次就过。
+# 其它错误（DDL 本身写错、NOT NULL 无默认值）重试一万次也一样，必须快速失败。
+_TRANSIENT_MARKERS = (
+    "database is locked",
+    "database schema is locked",
+    "database table is locked",
+    "disk i/o error",
+    "unable to open database file",
+    "attempt to write a readonly database",
+)
+MIGRATION_ATTEMPTS = 3
+MIGRATION_RETRY_DELAY = 0.5
+
+
+def _is_transient(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _TRANSIENT_MARKERS)
 
 # (表名, 列名, 列类型 DDL)。新加模型字段若老库可能缺列，登记到这里。
 MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
@@ -363,27 +383,50 @@ def run_column_migrations(db: Session) -> List[str]:
         )
         return applied
     for table, column, ddl in MIGRATION_COLUMNS:
-        try:
-            rows = db.execute(
-                text(f"PRAGMA table_info({table})")).fetchall()
-            if not rows:
-                continue  # 表尚不存在：create_all 会建出全列结构
-            existing = {r[1] for r in rows}
-            if column in existing:
-                continue
-            db.execute(text(
-                f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
-            db.commit()
-            applied.append(f"{table}.{column}")
-            logger.warning("结构迁移：已为 %s 补充列 %s", table, column)
-        except Exception as exc:  # noqa: BLE001
-            db.rollback()
-            # 旧实现「记日志继续下一条」：启动照常完成，进程带着缺失列
-            # 对外服务，之后任何涉及该列的读写随机 500，且日志里只有一行
-            # error 很容易被忽略。结构迁移失败必须阻断启动——带病上线
-            # 比启动失败危险得多。静态一致性由 tools/check_migration_columns.py
-            # 在 CI 里提前拦住拼错的清单项。
-            logger.error("结构迁移失败 %s.%s: %s", table, column, exc)
-            raise RuntimeError(
-                f"结构迁移失败：{table}.{column}: {exc}") from exc
+        rows = db.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        if not rows:
+            continue  # 表尚不存在：create_all 会建出全列结构
+        existing = {r[1] for r in rows}
+        if column in existing:
+            continue
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, MIGRATION_ATTEMPTS + 1):
+            try:
+                db.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+                db.commit()
+                last_exc = None
+                applied.append(f"{table}.{column}")
+                logger.warning("结构迁移：已为 %s 补充列 %s", table, column)
+                break
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                last_exc = exc
+                if not _is_transient(exc) or attempt >= MIGRATION_ATTEMPTS:
+                    break
+                # 瞬时错误才重试，且退避递增；确定性错误立刻跳出
+                logger.warning(
+                    "结构迁移 %s.%s 第 %d/%d 次失败（瞬时错误，稍后重试）：%s",
+                    table, column, attempt, MIGRATION_ATTEMPTS, exc)
+                time.sleep(MIGRATION_RETRY_DELAY * attempt)
+        if last_exc is None:
+            continue
+        # 旧实现「记日志继续下一条」：启动照常完成，进程带着缺失列
+        # 对外服务，之后任何涉及该列的读写随机 500，且日志里只有一行
+        # error 很容易被忽略。结构迁移失败必须阻断启动——带病上线
+        # 比启动失败危险得多。静态一致性由 tools/check_migration_columns.py
+        # 在 CI 里提前拦住拼错的清单项。
+        #
+        # 阻断时的报错必须能直接指导人工修复：只说「迁移失败」会让人去翻
+        # 代码，而真正要做的是在库里补这一列。容器层面由
+        # deploy/fatal_guard.py 把 backend FATAL 翻译成「容器退出」，
+        # 使 docker 的 restart 策略接管，避免出现「容器 Up 但全站 502」。
+        logger.error("结构迁移失败 %s.%s: %s", table, column, last_exc)
+        raise RuntimeError(
+            f"结构迁移失败：{table}.{column}：{last_exc}\n"
+            f"人工处理（任选其一，补齐后重启容器会自动跳过）：\n"
+            f"  1) 在数据库中执行：ALTER TABLE {table} ADD COLUMN {column} {ddl};\n"
+            f"  2) 若该列本应可空，给 MIGRATION_COLUMNS 里的 DDL 补 DEFAULT 值后重新发版。\n"
+            f"  说明：SQLite 无法给已有数据的表补「NOT NULL 且无默认值」的列。"
+        ) from last_exc
     return applied

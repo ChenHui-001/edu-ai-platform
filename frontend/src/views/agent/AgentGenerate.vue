@@ -563,10 +563,28 @@ async function pollJob(id, timeoutMs) {
 
 // 智能批改等 Agent 拿不到 items 时会返回空对象/空列表，旧实现无条件弹
 // 「生成完成」——用户看到成功却一条都没批，是典型的谎报成功。
+/**
+ * 判断生成结果是否「空产出」。
+ *
+ * 三个能力的载荷键各不相同：补题/变式是 `items`，AI 出题是 `questions`，
+ * 智能组卷是 `paper`。此前只认 `items`，于是出题返回
+ * `{questions: [], total: 0, saved: 0, ...}` 时因为「对象非空」被判成有产出，
+ * 前端照常显示结果面板并弹绿色「生成完成」—— 后端已经如实返回了 0 条，
+ * 前端没接（见 audit-reports/reaudit-2026-11-06.md P1-2）。
+ */
 function hasNoOutput(payload) {
   if (!payload || typeof payload !== 'object') return true
-  const items = payload.items
-  if (Array.isArray(items)) return items.length === 0
+  // paper 先判：组卷载荷会额外展开 report（distribution/coverage 等），
+  // 将来若 report 里出现同名字段，放前面才不会被误判
+  if ('paper' in payload) {
+    const paper = payload.paper
+    if (!paper || typeof paper !== 'object') return true
+    // 预览态没有 id，但有 items；保存态两者都有
+    if (Array.isArray(paper.items)) return paper.items.length === 0
+    return !paper.id
+  }
+  if (Array.isArray(payload.questions)) return payload.questions.length === 0
+  if (Array.isArray(payload.items)) return payload.items.length === 0
   return Object.keys(payload).length === 0
 }
 
@@ -681,7 +699,11 @@ function buildQuestionPayload(q) {
     grade_id: gradeId,
     subject_id: q.subject_id || qForm.subject_id || null,
     // AI 结果来自公共/生成场景，统一保存为当前用户私有题，避免公共题审核语义
-    bank_type: 'private'
+    bank_type: 'private',
+    // 溯源：标明这几道题是 AI 生成的。此前后端固定写 source="manual"，
+    // 「清理 AI 草稿题」定时任务按 source like 'ai%' 统计却永远算不到它们，
+    // 题库里也看不出哪些是 AI 产出。
+    source: 'ai'
   }
   // 兼容旧字段：V2 create 只认 knowledge_point_id，多余数组字段会导致校验/落库异常
   delete payload.knowledge_point_ids

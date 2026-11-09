@@ -20,6 +20,8 @@ export const systemApi = {
   updateUser: (id, data) => request.put(`/system/users/${id}`, data),
   deleteUser: (id) => request.delete(`/system/users/${id}`),
   resetPassword: (data) => request.put('/system/password/reset', data),
+  // 解除登录失败锁定（不改密码）。此前只能靠「重置密码」顺带解锁。
+  unlockUser: (id) => request.post(`/system/users/${id}/unlock`),
   // 学生自助找回（此前后端已实现但前端无任何入口）
   forgotPassword: (data) => request.post('/auth/forgot-password', data),
   resetPasswordByCode: (data) => request.post('/auth/reset-password', data),

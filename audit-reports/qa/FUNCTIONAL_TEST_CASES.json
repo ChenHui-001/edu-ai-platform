@@ -469,11 +469,11 @@
       "3. 确认"
     ],
     "expected": "目标年级生成同名学科",
-    "api": "POST /edu/subjects/clone",
+    "api": "POST /edu/subjects/{subject_id}/clone",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/edu/subjects/clone",
+      "path": "/edu/subjects/{subject_id}/clone",
       "body": {
         "id": 1,
         "target_grade_ids": [
@@ -604,7 +604,7 @@
     "api": "PUT /edu/knowledge/batch",
     "automation": {
       "type": "api",
-      "method": "PUT",
+      "method": "POST",
       "path": "/edu/knowledge/batch",
       "body": {
         "action": "publish"
@@ -658,7 +658,7 @@
     "api": "PUT /edu/knowledge/batch",
     "automation": {
       "type": "api",
-      "method": "PUT",
+      "method": "POST",
       "path": "/edu/knowledge/batch",
       "body": {
         "action": "move"
@@ -731,11 +731,11 @@
       "3. 预览/下载"
     ],
     "expected": "附件入库可预览下载；可见性开关控制学生端是否可见",
-    "api": "POST /attachments/batch-upload",
+    "api": "POST /attachments/batch",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/attachments/batch-upload",
+      "path": "/attachments/batch",
       "body": null,
       "assert": "200",
       "locator": null
@@ -1275,11 +1275,11 @@
       "3. 确认重置"
     ],
     "expected": "该用户下次登录须用新密码；留空时系统生成强密码并提示",
-    "api": "POST /system/users/reset-password",
+    "api": "PUT /system/password/reset",
     "automation": {
       "type": "api",
-      "method": "POST",
-      "path": "/system/users/reset-password",
+      "method": "PUT",
+      "path": "/system/password/reset",
       "body": {
         "user_id": 1,
         "new_password": "New@1234"
@@ -1379,11 +1379,11 @@
       "3. 删除确认"
     ],
     "expected": "附件入库；预览/下载带鉴权；删除后列表移除",
-    "api": "POST /attachments/batch-upload",
+    "api": "POST /attachments/batch",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/attachments/batch-upload",
+      "path": "/attachments/batch",
       "body": null,
       "assert": "200",
       "locator": null
@@ -1448,10 +1448,10 @@
       "1. 批量操作并确认"
     ],
     "expected": "批量状态变更",
-    "api": "PUT /edu/classes/batch",
+    "api": "POST /edu/classes/batch",
     "automation": {
       "type": "api",
-      "method": "PUT",
+      "method": "POST",
       "path": "/edu/classes/batch",
       "body": null,
       "assert": "200",
@@ -1545,14 +1545,12 @@
       "3. 结果『定位』"
     ],
     "expected": "返回相关片段并可定位到树节点",
-    "api": "POST /edu/knowledge/search",
+    "api": "GET /edu/knowledge/search",
     "automation": {
       "type": "api",
-      "method": "POST",
+      "method": "GET",
       "path": "/edu/knowledge/search",
-      "body": {
-        "query": "分数加减"
-      },
+      "body": null,
       "assert": "200",
       "locator": null
     }
@@ -1802,13 +1800,12 @@
       "2. 输入新名称确认"
     ],
     "expected": "生成同名权限副本的新角色",
-    "api": "POST /system/roles/copy",
+    "api": "POST /system/roles/{role_id}/copy",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/system/roles/copy",
+      "path": "/system/roles/{role_id}/copy",
       "body": {
-        "id": 1,
         "name": "副本"
       },
       "assert": "200",
@@ -1853,10 +1850,10 @@
       "2. 单条标记已读"
     ],
     "expected": "通知状态更新",
-    "api": "POST /system/notifications/read-all",
+    "api": "PUT /system/notifications/read-all",
     "automation": {
       "type": "api",
-      "method": "POST",
+      "method": "PUT",
       "path": "/system/notifications/read-all",
       "body": null,
       "assert": "200",
@@ -3022,11 +3019,11 @@
       "2. 点生成练习"
     ],
     "expected": "生成练习卷进入答题区",
-    "api": "POST /task/practice",
+    "api": "POST /learning/practice",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/task/practice",
+      "path": "/learning/practice",
       "body": {
         "subject_id": 1,
         "count": 5
@@ -3050,11 +3047,11 @@
       "3. 提交并查看结果"
     ],
     "expected": "答案保存；收藏入库；提交后显示对错/解析",
-    "api": "POST /task/submit",
+    "api": "POST /task/tasks/{task_id}/submit",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/task/submit",
+      "path": "/task/tasks/{task_id}/submit",
       "body": {
         "answers": {}
       },
@@ -3123,11 +3120,11 @@
       "2. (或倒计时归零)"
     ],
     "expected": "交卷判分；超时自动交卷；次数用尽显示 exhausted",
-    "api": "POST /task/submit",
+    "api": "POST /task/tasks/{task_id}/submit",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/task/submit",
+      "path": "/task/tasks/{task_id}/submit",
       "body": null,
       "assert": "200",
       "locator": null
@@ -3147,11 +3144,11 @@
       "2. 点题号跳转"
     ],
     "expected": "答案写入；题号状态(todo/done)更新",
-    "api": "POST /task/submit",
+    "api": "POST /task/tasks/{task_id}/submit",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/task/submit",
+      "path": "/task/tasks/{task_id}/submit",
       "body": {
         "answers": {}
       },
@@ -3247,11 +3244,11 @@
       "2. 点 AI 生成复习计划填天数/时长"
     ],
     "expected": "计划列表；AI 生成艾宾浩斯计划",
-    "api": "POST /learning/review-plans/generate",
+    "api": "POST /learning/review/plan",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/learning/review-plans/generate",
+      "path": "/learning/review/plan",
       "body": {
         "days": 7,
         "daily_minutes": 30
@@ -3448,11 +3445,11 @@
       "2. 等待 30s"
     ],
     "expected": "切屏次数+1；心跳上报；草稿 30 分钟可恢复",
-    "api": "POST /task/heartbeat",
+    "api": "POST /task/tasks/{task_id}/heartbeat",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/task/heartbeat",
+      "path": "/task/tasks/{task_id}/heartbeat",
       "body": null,
       "assert": "200",
       "locator": null
@@ -3501,11 +3498,11 @@
       "3. 变式练习"
     ],
     "expected": "错因分析弹窗；重做/变式跳答题页",
-    "api": "POST /learning/wrong-questions/analyze",
+    "api": "POST /learning/wrong-questions/{wid}/analyze",
     "automation": {
       "type": "api",
       "method": "POST",
-      "path": "/learning/wrong-questions/analyze",
+      "path": "/learning/wrong-questions/{wid}/analyze",
       "body": null,
       "assert": "200",
       "locator": null

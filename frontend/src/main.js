@@ -21,8 +21,67 @@ const app = createApp(App)
 // status code 400」，顶部还挂一条不消失的红条 —— 把可预期的业务校验
 // 伪装成前端崩溃，既误导用户也掩盖真问题。
 // request.js 抛出的错误都带 __handled 标记，axios 原生错误靠 isAxiosError 兜底识别。
+//
+// ⚠️ Element Plus 的 ElMessageBox 被用户「取消 / 关闭」时，reject 的是**字符串**
+// 'cancel' / 'close'，不是 Error。那是用户主动放弃操作，绝非前端崩溃 —— 全站
+// 有 43 处 ElMessageBox，其中相当一部分没有 try 保护，一旦落进这里，用户每次点
+// 「取消」都会看到「页面运行时错误： cancel」+ 一条盖住 60px 页头、切路由也不消失
+// 的红条，体感就是「这系统会崩」。因此：**任何非对象类型的 rejection 一律视为
+// 用户取消**（业务异常统一是 Error / axios 错误，不会是裸字符串）。
+const CANCEL_REASONS = ['cancel', 'close']
+
 function isBusinessError(err) {
-  return !!err && (err.__handled === true || err.isAxiosError === true || !!err.response)
+  if (err === undefined || err === null) return true
+  if (typeof err !== 'object') {
+    if (!CANCEL_REASONS.includes(err)) {
+      console.warn('[app error][非 Error 的 rejection]', err)
+    }
+    return true
+  }
+  return err.__handled === true || err.isAxiosError === true || !!err.response
+}
+
+const ERROR_BAR_ID = 'global-error-bar'
+const ERROR_BAR_TTL_MS = 10000
+let errorBarTimer = null
+
+/** 关闭红条。致命错误横幅不能是「只能刷新页面才消失」的永久遮挡。 */
+function clearErrorBar() {
+  if (errorBarTimer) {
+    clearTimeout(errorBarTimer)
+    errorBarTimer = null
+  }
+  const el = document.getElementById(ERROR_BAR_ID)
+  if (el) el.remove()
+}
+
+function showErrorBar(msg) {
+  let el = document.getElementById(ERROR_BAR_ID)
+  if (!el) {
+    el = document.createElement('div')
+    el.id = ERROR_BAR_ID
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;' +
+      'display:flex;align-items:flex-start;gap:12px;' +
+      'background:#fef0f0;color:#f56c6c;border-bottom:1px solid #fbc4c4;' +
+      'padding:8px 16px;font-size:13px;font-family:monospace;white-space:pre-wrap'
+    const text = document.createElement('span')
+    text.id = `${ERROR_BAR_ID}-text`
+    text.style.cssText = 'flex:1;min-width:0'
+    const close = document.createElement('button')
+    close.type = 'button'
+    close.textContent = '×'
+    close.setAttribute('aria-label', '关闭错误提示')
+    close.style.cssText = 'flex:0 0 auto;border:0;background:transparent;' +
+      'color:#f56c6c;font-size:18px;line-height:1;cursor:pointer;padding:0 4px'
+    close.addEventListener('click', clearErrorBar)
+    el.appendChild(text)
+    el.appendChild(close)
+    document.body.appendChild(el)
+  }
+  const text = document.getElementById(`${ERROR_BAR_ID}-text`)
+  if (text) text.textContent = `页面运行时错误：${msg}`
+  if (errorBarTimer) clearTimeout(errorBarTimer)
+  errorBarTimer = setTimeout(clearErrorBar, ERROR_BAR_TTL_MS)
 }
 
 app.config.errorHandler = (err, instance, info) => {
@@ -35,16 +94,7 @@ app.config.errorHandler = (err, instance, info) => {
   const msg = err?.message || String(err)
   ElMessage.error(`页面出错：${msg.slice(0, 120)}`)
   try {
-    let el = document.getElementById('global-error-bar')
-    if (!el) {
-      el = document.createElement('div')
-      el.id = 'global-error-bar'
-      el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;' +
-        'background:#fef0f0;color:#f56c6c;border-bottom:1px solid #fbc4c4;' +
-        'padding:10px 16px;font-size:13px;font-family:monospace;white-space:pre-wrap'
-      document.body.appendChild(el)
-    }
-    el.textContent = `页面运行时错误：${msg}`
+    showErrorBar(msg)
   } catch { /* DOM 不可用时忽略 */ }
 }
 
@@ -52,6 +102,9 @@ router.onError((err) => {
   console.error('[router error]', err)
   ElMessage.error(`路由加载失败：${String(err?.message || err).slice(0, 120)}`)
 })
+
+// 切路由时清掉红条：用户已经离开出问题的页面，错误横幅没有理由继续盖着页头
+router.afterEach(() => clearErrorBar())
 
 app.use(createPinia())
 app.use(router)

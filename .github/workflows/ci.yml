@@ -52,6 +52,9 @@ jobs:
           python tools/check_migration_columns.py
           python tools/check_schema_bodies.py
           python tools/check_api_sql.py
+          # 定时任务 func_path 是否真的注册到 JOB_HANDLERS：漏注册时任务
+          # 每天 05:00 失败 + 给全体管理员发通知，而静态扫描看不出来。
+          python tools/check_job_handlers.py
           pip install -q ruff
           python tools/lint_gate.py
 

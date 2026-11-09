@@ -421,16 +421,44 @@ def init_admin(db: Session) -> None:
 
 
 def init_jobs(db: Session) -> None:
-    """初始化默认定时任务。"""
+    """初始化默认定时任务。
+
+    `func_path` 必须能命中 `task_jobs.JOB_HANDLERS` —— `run_job` 只认注册表，
+    漏注册的任务永远不会成功，而 scheduler 的失败分支会给**全体 sys_admin**
+    推一条系统通知（P1-6 实证：清理 AI 草稿题漏注册，每天 05:00 骚扰全员）。
+
+    静态不变量由 `tools/check_job_handlers.py` 在 CI 守；运行时这里做两件事，
+    都不阻断启动（一个清理任务挂掉不该让整站起不来）：
+      1) 未注册的任务**不播种**，避免新库继续踩坑；
+      2) 存量库里已存在的未注册任务置为停用，止住每天的通知骚扰。
+    """
+    from app.services.task_jobs import JOB_HANDLERS
+
+    invalid = [
+        f"{name}（{func_path}）"
+        for name, func_path, _cron, _desc in DEFAULT_JOBS
+        if func_path not in JOB_HANDLERS
+    ]
+    if invalid:
+        logger.error(
+            "以下内置定时任务没有登记处理函数，已跳过播种 / 停用存量：%s。"
+            "请在 app/services/task_jobs.py 的 JOB_HANDLERS 补注册",
+            "、".join(invalid),
+        )
     for name, func_path, cron, desc in DEFAULT_JOBS:
         exists = db.scalar(select(ScheduledJob).where(ScheduledJob.name == name))
         if not exists:
+            if func_path not in JOB_HANDLERS:
+                continue
             db.add(
                 ScheduledJob(
                     name=name, description=desc, func_path=func_path,
                     cron_expression=cron, is_builtin=True, is_active=True,
                 )
             )
+        elif func_path not in JOB_HANDLERS and exists.is_active:
+            exists.is_active = False
+            logger.warning("定时任务「%s」的执行逻辑未注册，已自动停用", name)
     db.commit()
     logger.info(f"默认定时任务初始化完成（{len(DEFAULT_JOBS)} 个）")
 
@@ -529,6 +557,275 @@ def init_demo_data(db: Session) -> None:
             "如需使用请在管理端 /system/users 重置密码，"
             "或设置 SEED_DEMO_DATA=false 后重建数据卷")
     logger.info("演示数据初始化完成（4 个班级 / 4 名教师 / 12 名学生）")
+
+
+def init_demo_learning_flow(db: Session) -> None:
+    """最小可演示闭环：题库 → 试卷 → 考试 → 作答 → 批改 → 错题 → 复习计划。
+
+    为什么需要它：登录页对外写着「覆盖教-学-练-考-评-改全教学流程」，
+    而 `init_demo_data` 只造账号。默认形态下教师进题库看到 0 条、批改中心
+    0 条待批改，学生进错题本 / 复习计划全是"暂无数据"——宣传的 5 条能力里
+    4 条没有东西可看，此前修好的组卷、打印导出、错题导出、跨角色批改在空库
+    上根本点不出来。
+
+    这里只造**一套**（10 题 / 1 卷 / 1 场考试 / 1 份已批改 + 1 份待批改作答），
+    目标是每条链路都有样本，不追求复刻一整个月。需要完整数据请跑
+    `tools/seed_prod_data.py`（走真实 API，幂等可重跑）。
+    """
+    import hashlib
+    import json
+    import re as _re
+    from datetime import timedelta
+
+    from app.models import (
+        Answer, Class, KnowledgeMastery, Note, Paper, PaperItem, Question,
+        QuestionFavorite, ReviewPlan, StudyRecord, Submission, Task,
+        TaskAssignment, WrongQuestion,
+    )
+    from app.models.task import GradeStatus
+
+    if not settings.SEED_DEMO_DATA:
+        return
+    # 已有题库说明数据是管理员导入的、或 seed_prod_data 已经跑过 —— 一律不覆盖。
+    if db.scalar(select(func.count()).select_from(Question)) or 0:
+        return
+
+    grade = db.scalar(select(Grade).where(Grade.grade_num == 7))
+    if not grade:
+        logger.info("演示闭环跳过：七年级未播种")
+        return
+    cls = db.scalar(select(Class).where(Class.grade_id == grade.id).order_by(Class.id))
+    if not cls:
+        logger.info("演示闭环跳过：七年级无班级（SEED_DEMO_DATA 可能被关掉过）")
+        return
+    teacher = db.get(User, cls.head_teacher_id) if cls.head_teacher_id else None
+    students = db.scalars(
+        select(User).where(User.class_id == cls.id, User.identity == "student")
+        .order_by(User.id)
+    ).all()
+    if not teacher or len(students) < 2:
+        logger.info("演示闭环跳过：班级缺少班主任或学生账号")
+        return
+
+    subject = db.scalar(
+        select(Subject).where(Subject.grade_id == grade.id, Subject.name == "数学")
+    ) or db.scalar(select(Subject).where(Subject.grade_id == grade.id).order_by(Subject.id))
+    if not subject:
+        logger.info("演示闭环跳过：七年级无学科（SEED_BASE_DATA=false）")
+        return
+    kps = db.scalars(
+        select(KnowledgePoint)
+        .where(KnowledgePoint.subject_id == subject.id, KnowledgePoint.level >= 2)
+        .order_by(KnowledgePoint.id).limit(3)
+    ).all()
+
+    def _fp(text: str) -> str:
+        norm = _re.sub(r"\s+", "", _re.sub(r"[（(].*?[)）]", "", text))
+        return hashlib.md5(norm.encode()).hexdigest()
+
+    def _j(obj) -> str:
+        return json.dumps(obj, ensure_ascii=False)
+
+    # ---- 题库：10 道客观题（单选 6 / 判断 2 / 填空 2），每题 10 分
+    #      答案在库里按 JSON 存（与 create_question 的 _dump 一致），
+    #      学生作答内容是原文（"A" 而不是 "\"A\""），两者别混。
+    bank = [
+        ("single", "下列各数中，最小的数是（  ）",
+         ["A. -3", "B. 0", "C. 1", "D. 2"], "A",
+         "负数小于 0 和正数，-3 是四个数中最小的。"),
+        ("single", "计算 (-2) + 5 的结果是（  ）",
+         ["A. -7", "B. -3", "C. 3", "D. 7"], "C",
+         "异号两数相加，取绝对值较大的加数的符号：5-2=3，符号取正。"),
+        ("single", "单项式 3x²y 的次数是（  ）",
+         ["A. 2", "B. 3", "C. 4", "D. 5"], "B",
+         "所有字母的指数之和：2+1=3。"),
+        ("single", "若 x + 3 = 7，则 x 的值是（  ）",
+         ["A. 3", "B. 4", "C. 10", "D. -4"], "B",
+         "移项得 x = 7 - 3 = 4。"),
+        ("single", "一个角的补角是 65°，这个角是（  ）",
+         ["A. 25°", "B. 65°", "C. 115°", "D. 125°"], "C",
+         "两角互补则和为 180°，180°-65°=115°。"),
+        ("single", "下列图形中，是轴对称图形的是（  ）",
+         ["A. 平行四边形", "B. 等腰三角形", "C. 任意三角形", "D. 梯形"], "B",
+         "等腰三角形沿底边中线所在直线对折可完全重合。"),
+        ("judge", "两个负数相加，和一定小于其中任何一个加数。",
+         ["A. 正确", "B. 错误"], "A",
+         "如 (-2)+(-3)=-5，-5 小于 -2 也小于 -3。"),
+        ("judge", "绝对值等于它本身的数一定是正数。",
+         ["A. 正确", "B. 错误"], "B",
+         "0 的绝对值是 0，等于它本身，但 0 不是正数。"),
+        ("blank", "计算：|−5| = ______。", None, "5",
+         "绝对值表示到原点的距离，恒为非负数，|-5| = 5。"),
+        ("blank", "若 2x = 8，则 x = ______。", None, "4",
+         "两边同除以 2，得 x = 4。"),
+    ]
+    questions = []
+    for idx, (qtype, stem, options, answer, analysis) in enumerate(bank):
+        q = Question(
+            type=qtype, stem=stem,
+            options=_j(options) if options else None,
+            answer=_j(answer), analysis=analysis, score=10.0,
+            difficulty="easy" if idx < 4 else "medium",
+            grade_id=grade.id, subject_id=subject.id,
+            knowledge_point_id=kps[idx % len(kps)].id if kps else None,
+            bank_type="private", owner_id=teacher.id, status="published",
+            fingerprint=_fp(stem), source="manual", usage_count=1,
+        )
+        db.add(q)
+        questions.append((q, answer))
+    db.flush()
+
+    # ---- 试卷：与标准组卷的卷面结构一致（选择 / 判断 / 填空三个大题，
+    #      section_sort 决定大题顺序，section_code 是题型标识）
+    sections = {"single": ("一、选择题", 1), "judge": ("二、判断题", 2),
+                "blank": ("三、填空题", 3)}
+    paper = Paper(
+        name=f"{grade.name}{subject.name}·第一次月考（演示卷）",
+        grade_id=grade.id, subject_id=subject.id,
+        total_score=100.0, duration=45,
+        difficulty_ratio=_j({"easy": 40, "medium": 50, "hard": 10}),
+        creator_id=teacher.id, source="manual",
+        status="published", share_scope="grade", is_shared=True,
+        description="演示数据：用于展示组卷、下发、作答、批改、错题与复习计划全链路。",
+        exam_type="monthly", stage="junior", current_version=1,
+    )
+    db.add(paper)
+    db.flush()
+
+    answer_text = {}
+    for order, (q, ans) in enumerate(questions, start=1):
+        sec_name, sec_sort = sections[q.type]
+        answer_text[q.id] = ans
+        db.add(PaperItem(
+            paper_id=paper.id, question_id=q.id, sort_order=order, score=10.0,
+            section_name=sec_name, section_code=q.type, section_sort=sec_sort,
+            score_override=False,
+        ))
+    db.flush()
+
+    # ---- 考试任务：已发布且仍在有效期内，学生端「我的考试」会出现在进行中
+    now = now_local()
+    task = Task(
+        title=f"{grade.name}{subject.name}·第一次月考（演示）",
+        type="exam", paper_id=paper.id, subject_id=subject.id, grade_id=grade.id,
+        creator_id=teacher.id, status="published",
+        start_at=now - timedelta(days=3), end_at=now + timedelta(days=7),
+        duration=45, allow_retake=1, show_answer=True,
+        total_score=100.0, pass_score=60.0,
+        description="演示任务：一份已自动批改、一份待批改。",
+    )
+    db.add(task)
+    db.flush()
+    db.add(TaskAssignment(task_id=task.id, class_id=cls.id, notified=True))
+    db.flush()
+
+    items = db.scalars(
+        select(PaperItem).where(PaperItem.paper_id == paper.id).order_by(PaperItem.sort_order)
+    ).all()
+    # 前两题答错，其余正确 —— 错题本 / 复习计划 / 掌握度都需要"真的错过"
+    wrong_ids = {items[0].question_id, items[1].question_id}
+
+    def _build_answers(sub, graded: bool):
+        for it in items:
+            ok = it.question_id not in wrong_ids
+            db.add(Answer(
+                submission_id=sub.id, paper_item_id=it.id, question_id=it.question_id,
+                content=answer_text[it.question_id],
+                is_correct=ok if graded else None,
+                score=(float(it.score) if ok else 0.0) if graded else 0.0,
+                full_score=float(it.score), grader_type="auto",
+                teacher_comment=("计算时符号处理错误，注意异号相加的法则。"
+                                 if graded and not ok else None),
+            ))
+
+    # 学生 1：已自动批改（80 分），产生成绩 + 错题 + 复习计划
+    sub1 = Submission(
+        task_id=task.id, student_id=students[0].id, attempt=1,
+        status=GradeStatus.AUTO_GRADED.value, score=80.0, objective_score=80.0,
+        subjective_score=0.0, duration_seconds=1620, is_passed=True, class_rank=1,
+        comment="整体掌握较好，注意异号两数相加的符号判断。",
+        switch_count=0, submit_count=1,
+        submit_time=now - timedelta(days=2), grade_time=now - timedelta(days=2),
+    )
+    db.add(sub1)
+    db.flush()
+    _build_answers(sub1, graded=True)
+
+    # 学生 2：已交卷未批改 —— 教师端「批改中心」的待办样本
+    sub2 = Submission(
+        task_id=task.id, student_id=students[1].id, attempt=1,
+        status=GradeStatus.NOT_GRADED.value, score=None,
+        duration_seconds=1500, switch_count=0, submit_count=1,
+        submit_time=now - timedelta(days=1),
+    )
+    db.add(sub2)
+    db.flush()
+    _build_answers(sub2, graded=False)
+
+    # ---- 错题本 + 艾宾浩斯复习计划（1/2/4/7 天四轮，首轮已完成）
+    wrong_rows = []
+    for it in items:
+        if it.question_id not in wrong_ids:
+            continue
+        q = next(x for x, _a in questions if x.id == it.question_id)
+        wq = WrongQuestion(
+            student_id=students[0].id, question_id=q.id, subject_id=subject.id,
+            knowledge_point_id=q.knowledge_point_id,
+            wrong_answer="C" if q.type == "single" else "B",
+            error_count=1, error_reason="符号判断错误", source_type="exam",
+            source_id=task.id, source_name=task.title,
+            is_mastered=False, last_wrong_at=now - timedelta(days=2),
+        )
+        db.add(wq)
+        wrong_rows.append(wq)
+    db.flush()
+
+    for wq in wrong_rows:
+        for stage, days in ((1, 1), (2, 2), (3, 4), (4, 7)):
+            db.add(ReviewPlan(
+                student_id=students[0].id, wrong_question_id=wq.id,
+                knowledge_point_id=wq.knowledge_point_id or (kps[0].id if kps else None),
+                subject_id=subject.id, stage=stage,
+                scheduled_date=(now + timedelta(days=days)).strftime("%Y-%m-%d"),
+                is_completed=(stage == 1),
+                completed_at=(now - timedelta(days=1)) if stage == 1 else None,
+                correct_rate=100.0 if stage == 1 else None,
+            ))
+
+    # ---- 掌握度：错题所在知识点记为"做过 3 次对 2 次"
+    for kp in kps:
+        db.add(KnowledgeMastery(
+            student_id=students[0].id, knowledge_point_id=kp.id, subject_id=subject.id,
+            total_count=3, correct_count=2, wrong_count=1, mastery=66.7,
+            study_seconds=1620, last_practice_at=now - timedelta(days=2),
+        ))
+
+    # ---- 笔记 / 收藏 / 学习记录：学生端「我的笔记」「我的收藏」「学习报表」不再是空页
+    db.add(Note(
+        title="有理数加法法则小结", format="markdown", student_id=students[0].id,
+        subject_id=subject.id,
+        knowledge_point_id=kps[0].id if kps else None,
+        content="## 有理数加法\n\n1. 同号相加：取相同符号，绝对值相加。\n"
+                "2. 异号相加：取绝对值较大者的符号，用较大绝对值减较小绝对值。\n"
+                "3. 互为相反数的两数相加得 0。",
+        tags=_j(["有理数", "加法"]), is_favorite=True, view_count=6, is_shared=False,
+    ))
+    db.add(QuestionFavorite(
+        user_id=students[0].id, question_id=questions[0][0].id,
+        tag="易错", note="符号判断要细心",
+    ))
+    for back in range(7):
+        day = (now - timedelta(days=back)).strftime("%Y-%m-%d")
+        db.add(StudyRecord(
+            student_id=students[0].id, subject_id=subject.id, study_date=day,
+            study_seconds=1200 + back * 180, question_count=8 + back,
+            correct_count=6 + back, note_count=1 if back < 3 else 0,
+        ))
+
+    db.commit()
+    logger.info(
+        "演示教学闭环初始化完成（10 题 / 1 卷 / 1 场考试 / 2 份作答 / "
+        "{} 条错题 / {} 条复习计划）", len(wrong_rows), len(wrong_rows) * 4)
 
 
 def init_knowledge_points(db: Session) -> None:
@@ -793,6 +1090,14 @@ def init_all(db: Session) -> None:
     init_jobs(db)
     init_exam_standards(db)
     init_demo_data(db)
+    # 最小可演示闭环：只有账号没有内容时，组卷/批改/错题/复习计划全无样本可看。
+    try:
+        init_demo_learning_flow(db)
+    except Exception as exc:  # noqa: BLE001  演示数据失败不能阻断启动
+        # 必须回滚：半套演示数据（有试卷没作答）比没有更难排查，
+        # 而且后续 init 的提交会把这些半成品一起落库。
+        db.rollback()
+        logger.warning('演示教学闭环初始化失败（不影响启动）：{}', exc)
     enforce_default_admin_password(db)
 
 

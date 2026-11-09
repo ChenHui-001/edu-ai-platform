@@ -100,8 +100,12 @@
           <template #header>
             <div class="card-header">
               <span>待批改</span>
-              <el-link type="primary" :underline="false" @click="$router.push('/teacher/grading')">
-                全部 {{ pendingTotal }} 份
+              <!-- 0 份时不要渲染成"全部 0 份"的可点链接：既不是动作，
+                   点进去也是空页。没有待批改就直说。 -->
+              <span v-if="!pendingTotal" class="muted">暂无待批改</span>
+              <el-link v-else type="primary" :underline="false"
+                       @click="$router.push('/teacher/grading')">
+                去批改 {{ pendingTotal }} 份
               </el-link>
             </div>
           </template>
@@ -134,7 +138,7 @@
           <div v-if="pending.length >= 8" class="table-more">
             仅显示最近 8 份，
             <el-link type="primary" :underline="false" @click="$router.push('/teacher/grading')">
-              查看全部 {{ pendingTotal }} 份
+              去批改中心 · 共 {{ pendingTotal }} 份
             </el-link>
           </div>
         </el-card>

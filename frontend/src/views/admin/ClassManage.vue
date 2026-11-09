@@ -690,7 +690,7 @@ onMounted(async () => {
 .header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .stats-row { margin-bottom: 14px; }
 .stat-card { border-radius: 10px; }
-.stat-value { font-size: 24px; font-weight: 600; color: #1f2d3d; line-height: 1.3; }
+.stat-value { font-size: 24px; font-weight: 600; color: var(--el-color-primary); line-height: 1.3; }
 .stat-label { color: #8a94a6; font-size: 13px; margin-top: 2px; }
 .filter-card :deep(.el-form-item) { margin-bottom: 10px; }
 .mt16 { margin-top: 16px; justify-content: flex-end; }

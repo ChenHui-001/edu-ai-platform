@@ -1464,6 +1464,10 @@ function reportBatchResult(data, prefix) {
   const d = data || {}
   const done = d.done?.length || 0
   const skipped = d.skipped || []
+  if (!done && !skipped.length) {
+    ElMessage.warning(`${prefix} 0 个：所选知识点未发生变更（可能已处于目标状态）`)
+    return
+  }
   if (skipped.length) {
     const reasons = skipped.slice(0, 3).map(s => s.reason || `#${s.id}`).join('；')
     ElMessage.warning(`${prefix} ${done} 个，跳过 ${skipped.length} 个：${reasons}`)

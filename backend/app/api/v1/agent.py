@@ -449,12 +449,14 @@ def paper_composer(
     res = PaperComposerAgent().run(
         db, user_id=user.id, request=request,
         grade_id=grade_id, subject_id=subject_id,
-        total_score=float(data.total_score),
+        # total_score 在模型里是可选的（兜 null），0/负数已被 Field(ge/le) 拒绝，
+        # 这里再保一层，避免 None 传给 float()
+        total_score=float(data.total_score or 100),
         difficulty_ratio=data.difficulty_ratio,
         type_ratio=data.type_ratio,
         knowledge_point_ids=data.knowledge_point_ids,
         paper_name=data.paper_name,
-        save=data.save,
+        save=bool(data.save),
     )
     _warn_if_slow(res, "paper_composer")
     if not res.get("success"):

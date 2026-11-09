@@ -177,7 +177,7 @@ onMounted(async () => {
 .mb16 { margin-bottom: 16px; }
 .ml8 { margin-left: 8px; }
 .stat-card { text-align: center; padding: 16px; background: #f5f7fa; border-radius: 8px; }
-.stat-value { font-size: 28px; font-weight: 700; color: #409eff; }
+.stat-value { font-size: 28px; font-weight: 700; color: var(--el-color-primary); }
 .stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
 .flashcard-area { display: flex; flex-direction: column; align-items: center; padding: 20px 0; }
 .progress-bar { width: 100%; max-width: 500px; margin-bottom: 16px; }

@@ -127,10 +127,21 @@ async function changePassword() {
   if (!(await pwdRef.value.validate().catch(() => false))) return
   changing.value = true
   try {
-    await authApi.changePassword({
+    const res = await authApi.changePassword({
       old_password: pwdForm.value.old_password,
       new_password: pwdForm.value.new_password
     })
+    // 改密会吊销该用户改密前的**全部**令牌（含本请求用的那个），
+    // 后端因此回签了一对新令牌。必须立刻写回 localStorage，否则下面
+    // 这行 loadProfile() 带着刚被作废的旧 token，必然 401 → 刚提示
+    // 「密码修改成功」就跳登录页。
+    const tokens = res?.data || {}
+    if (tokens.access_token) {
+      localStorage.setItem('access_token', tokens.access_token)
+      if (tokens.refresh_token) {
+        localStorage.setItem('refresh_token', tokens.refresh_token)
+      }
+    }
     ElMessage.success('密码修改成功')
     pwdForm.value = { old_password: '', new_password: '', confirm_password: '' }
     await loadProfile()

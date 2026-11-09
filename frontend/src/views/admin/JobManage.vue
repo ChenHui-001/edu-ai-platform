@@ -20,8 +20,15 @@
     <el-card shadow="never">
       <el-table v-loading="loading" :data="list" border stripe>
         <el-table-column prop="name" label="任务名称" min-width="160" />
-        <el-table-column label="任务标识" width="220" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.func_path || '-' }}</template>
+        <el-table-column label="任务标识" width="260" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span>{{ row.func_path || '-' }}</span>
+            <!-- 后端 run_job 只认 JOB_HANDLERS 注册表：func_path 不在表里时
+                 该任务永远不会成功，而列表外观与其它任务完全一致（P1-6）。
+                 这里必须显式标红，否则管理员只能靠「每天收到失败通知」推断。 -->
+            <el-tag v-if="isUnregistered(row)" type="danger" size="small"
+                    style="margin-left:6px">未注册</el-tag>
+          </template>
         </el-table-column>
         <el-table-column prop="cron_expression" label="Cron 表达式" width="160" />
         <el-table-column label="类型" width="110">
@@ -38,10 +45,15 @@
         </el-table-column>
         <el-table-column prop="description" label="说明" min-width="200" show-overflow-tooltip />
         <el-table-column prop="last_run_at" label="上次执行" width="160" />
-        <el-table-column label="操作" width="220" fixed="right">
+        <!-- 220px 装不下 4 个链接按钮："删除"会被挤到第二行，危险动作反而
+             更容易误点；同时 fixed="right" 在 1280 视口下会压住"说明"与
+             "上次执行"两列（DOM 实测重叠 206px）。这里加宽到 280 并取消固定
+             列——本表只有 8 行，横向略滚一次远好过内容被盖住。
+             颜色只保留"删除"为红：同组操作一个主色，危险动作用警示色。 -->
+        <el-table-column label="操作" width="280">
           <template #default="{ row }">
             <el-button link type="primary" @click="openExecutions(row)">执行记录</el-button>
-            <el-button link type="warning" @click="run(row)">立即执行</el-button>
+            <el-button link type="primary" @click="run(row)">立即执行</el-button>
             <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
             <el-button link type="danger" @click="remove(row)">删除</el-button>
           </template>
@@ -65,8 +77,12 @@
             <el-option v-for="h in handlers" :key="h.path"
                        :label="`${h.label}（${h.path.split('.').pop()}）`" :value="h.path" />
           </el-select>
-          <div class="tip">
-            编辑已有任务时不可更改执行逻辑（后端不支持更新该字段）。
+          <div class="tip" v-if="isUnregistered(form)" style="color:#f56c6c">
+            该执行逻辑在后端没有对应处理函数，任务永远不会执行成功。
+            请升级到包含该函数的版本，或删除这条任务。
+          </div>
+          <div class="tip" v-else-if="form.id">
+            内置任务的执行逻辑由代码决定，创建后不可修改（后端不支持更新该字段）。
           </div>
         </el-form-item>
         <el-form-item label="Cron 表达式">
@@ -130,6 +146,14 @@ const statusCards = computed(() => [
   { label: '任务总数', value: list.value.length },
   { label: '启用中', value: list.value.filter(j => j.is_active).length }
 ])
+
+// 后端 /jobs/handlers 返回的是「run_job 能执行的 func_path 白名单」。
+// 库里的 func_path 不在其中 → run_job 必然抛「未找到任务处理函数」，
+// 任务永远不会成功，scheduler 还会给全体管理员推失败通知（P1-6）。
+const handlerPaths = computed(() => new Set((handlers.value || []).map(h => h.path)))
+function isUnregistered(row) {
+  return !!row?.func_path && !handlerPaths.value.has(row.func_path)
+}
 
 async function load() {
   loading.value = true

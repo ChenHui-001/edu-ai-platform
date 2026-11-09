@@ -416,7 +416,24 @@ def change_password(
     user: User = Depends(get_current_user),
 ):
     auth_service.change_password(db, user, payload.old_password, payload.new_password)
-    return ok(message="密码修改成功")
+    # 改密必须让旧令牌全部作废（止损），但**不能连调用者自己正在用的这个也作废**。
+    # 本请求使用的正是改密前签发的 access token，若只返回一句「修改成功」，
+    # 前端紧接着的 loadProfile() 必然 401 → 用户看到「密码修改成功」后立刻
+    # 被踢回登录页。强制首次改密的账号（演示账号、被管理员重置的账号）走的
+    # 就是这条路径，属于每一次改密的必经流程，不是边缘场景。
+    #
+    # 回签的新令牌签发时刻晚于 revoke_user_tokens 写入的水位，
+    # is_user_token_revoked 用 `iat_precise < invalid_before_ts` 判定，
+    # 新令牌不会命中；旧令牌（含其它设备）仍然全部失效，止损成立。
+    access = create_access_token(user.id, role=",".join(user.role_codes))
+    return ok(
+        {
+            "access_token": access,
+            "refresh_token": create_refresh_token(user.id),
+            "token_type": "Bearer",
+        },
+        message="密码修改成功",
+    )
 
 
 @router.post("/logout", summary="退出登录")

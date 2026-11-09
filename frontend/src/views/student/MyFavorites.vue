@@ -213,7 +213,7 @@ onMounted(load)
   background: #f5f7fa;
   border-radius: 8px;
 }
-.stat-value { font-size: 24px; font-weight: 700; color: #409eff; }
+.stat-value { font-size: 24px; font-weight: 700; color: var(--el-color-primary); }
 .stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
 .fav-card { margin-bottom: 12px; }
 .fav-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }

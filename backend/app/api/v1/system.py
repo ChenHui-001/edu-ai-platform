@@ -13,7 +13,7 @@ from app.models import (
     LessonPlan, Notification, Paper, Permission, Question, Role, RolePermission,
     Submission, SysConfig, Task, TeachingAssignment, User, UserRole,
 )
-from app.utils.common import PageParams, dictify, ok
+from app.utils.common import PageParams, dictify, now_local, ok
 
 router = APIRouter(prefix="/system", tags=["系统管理"])
 
@@ -29,6 +29,9 @@ def user_dict(u: User, with_roles: bool = True) -> Dict[str, Any]:
     d = dictify(u)
     for f in _USER_SECRET_FIELDS:
         d.pop(f, None)
+    # 锁定状态由服务端算好再下发：locked_until 是本地时间字符串，让前端自己
+    # 跟浏览器时区做比较，跨时区用户会算出相反结论。前端只认这个布尔值。
+    d["is_locked"] = bool(u.locked_until and u.locked_until > now_local())
     if with_roles:
         d["roles"] = u.role_codes
     return d
@@ -60,7 +63,14 @@ def list_users(
     if identity:
         stmt = stmt.where(User.identity == identity)
     if status:
-        stmt = stmt.where(User.status == status)
+        if status == "locked":
+            # 「已锁定」不是 status 取值：登录失败达阈值只写 locked_until，
+            # status 仍是 active。旧实现按 status=='locked' 过滤，这个筛选项
+            # 永远筛不出任何被锁账号。
+            stmt = stmt.where(User.locked_until.is_not(None),
+                              User.locked_until > now_local())
+        else:
+            stmt = stmt.where(User.status == status)
     if grade_id:
         stmt = stmt.where(User.grade_id == grade_id)
     if class_id:
@@ -237,6 +247,28 @@ def reset_password(
                                min_length=_st.PASSWORD_MIN_LENGTH)
     reset_password_by_admin(db, payload.user_id, payload.new_password)
     return ok(message="密码已重置，用户下次登录须修改密码")
+
+
+@router.post("/users/{user_id}/unlock", summary="解除账号锁定")
+def unlock_user(
+    user_id: int, db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """解除登录失败锁定。
+
+    锁定阈值 5 次 / 15 分钟，是**纯账号级**的：知道用户名的人连试 5 次错密码
+    就能把该账号锁死 15 分钟。此前管理端唯一能解锁的办法是「重置密码」——
+    那会连用户的密码一起改掉，等于用一个破坏性操作解决一个不该破坏的问题。
+    """
+    user = db.get(User, user_id)
+    if not user:
+        raise NotFoundException("用户不存在")
+    if not user.locked_until or user.locked_until <= now_local():
+        return ok({"user_id": user_id, "unlocked": False}, message="该账号当前未被锁定")
+    user.locked_until = None
+    user.login_fail_count = 0
+    db.commit()
+    return ok({"user_id": user_id, "unlocked": True}, message="已解除锁定，用户可立即登录")
 
 
 @router.get("/roles", summary="角色列表")

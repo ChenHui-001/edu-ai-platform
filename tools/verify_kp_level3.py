@@ -14,6 +14,13 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
+# 自设环境开关：本脚本依赖「学科/章节基线」已播种。在根 .env 的空基线配置
+# （SEED_BASE_DATA=false）下直接跑，必然因为找不到 level2 父级而全红 ——
+# 那种红不是代码缺陷，是脚本没有自带前置条件。用 setdefault 保证外部显式
+# 指定时仍以外部为准；必须在 import app.* 之前设置（config 在导入时求值）。
+os.environ.setdefault("SEED_BASE_DATA", "true")
+os.environ.setdefault("SEED_DEMO_DATA", "false")
+
 FAILED = []
 
 
@@ -74,18 +81,26 @@ def main():
         print("\n=== 3. 父级与 path 正确性 ===")
         leaf = db.scalars(select(KnowledgePoint)
                           .where(KnowledgePoint.level == 3).limit(1)).first()
-        check("level3 有 parent_id", leaf is not None and leaf.parent_id is not None)
-        parent = db.get(KnowledgePoint, leaf.parent_id)
-        check("父节点是 level2 章节", parent is not None and parent.level == 2,
-              f"level={parent.level if parent else None}")
-        check("path 以父 path 为前缀",
-              bool(leaf.path and parent.path and leaf.path.startswith(parent.path + "/")),
-              f"{leaf.path} vs {parent.path}")
-        check("code 带 L3 标识", "-L3-" in (leaf.code or ""), str(leaf.code))
-        check("同名同父不重复",
-              (db.scalar(select(func.count()).select_from(KnowledgePoint).where(
-                  KnowledgePoint.parent_id == parent.id,
-                  KnowledgePoint.name == leaf.name)) or 0) == 1)
+        # 取不到叶子时，下面所有断言都要用 leaf/parent，直接解引用会
+        # AttributeError 栈回溯（上一行 check 里的 None 守卫护不住下一行）。
+        # 这里显式早退：给出干净的 FAIL，而不是让脚本自己崩掉。
+        if not check("level3 有 parent_id", leaf is not None and leaf.parent_id is not None,
+                     "level3 表为空，无法验证父子关系"):
+            print("  -- 跳过后续父子/path 校验（没有 level3 样本）")
+        else:
+            parent = db.get(KnowledgePoint, leaf.parent_id)
+            check("父节点是 level2 章节", parent is not None and parent.level == 2,
+                  f"level={parent.level if parent else None}")
+            check("path 以父 path 为前缀",
+                  bool(leaf.path and parent and parent.path
+                       and leaf.path.startswith(parent.path + "/")),
+                  f"{leaf.path} vs {parent.path if parent else None}")
+            check("code 带 L3 标识", "-L3-" in (leaf.code or ""), str(leaf.code))
+            check("同名同父不重复",
+                  parent is not None
+                  and (db.scalar(select(func.count()).select_from(KnowledgePoint).where(
+                      KnowledgePoint.parent_id == parent.id,
+                      KnowledgePoint.name == leaf.name)) or 0) == 1)
 
         print("\n=== 4. 幂等：重跑不新增 ===")
         stat2 = seed_knowledge_level3(db)

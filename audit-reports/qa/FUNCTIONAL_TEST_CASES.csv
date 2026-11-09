@@ -17,17 +17,17 @@ FUNC-ADM-015,admin,系统基础/系统配置,系统配置,页面访问+契约,�
 FUNC-ADM-016,admin,系统基础/角色权限,角色权限,权限树勾选+保存,勾选并保存,P0,已选中某角色,1. 勾选/取消权限节点 | 2. 点『保存权限』,该角色的 permissions 更新；RBAC 菜单/操作级生效,PUT /system/roles/{id},api,PUT,/system/roles/{id},200,
 FUNC-ADM-017,admin,系统基础/角色权限,角色权限,页面访问,访问渲染,P0,sys_admin 登录,1. 点『角色权限』,展示角色列表与权限树,GET /system/roles,ui,,,,text=角色权限
 FUNC-ADM-018,admin,教学资源/学科,学科管理,编辑/删除,对话框,P1,存在学科,1. 编辑保存 | 2. 删除确认,编辑生效；删除需无关联题目/班级,PUT /edu/subjects/{id},api,PUT,/edu/subjects/{id},200,
-FUNC-ADM-019,admin,教学资源/学科,学科管理,跨年级复制,对话框,P1,存在学科,1. 点『跨年级复制』 | 2. 选目标年级 | 3. 确认,目标年级生成同名学科,POST /edu/subjects/clone,api,POST,/edu/subjects/clone,200,
+FUNC-ADM-019,admin,教学资源/学科,学科管理,跨年级复制,对话框,P1,存在学科,1. 点『跨年级复制』 | 2. 选目标年级 | 3. 确认,目标年级生成同名学科,POST /edu/subjects/{subject_id}/clone,api,POST,/edu/subjects/{subject_id}/clone,200,
 FUNC-ADM-020,admin,教学资源/班级,班级管理,启用/停用/删除,行内,P1,存在班级,1. 切状态 | 2. 删除(有学生不可删),状态变更；有学生删除被拒,PUT /edu/classes/{id},api,PUT,/edu/classes/{id},200,
 FUNC-ADM-021,admin,教学资源/班级,班级管理,学生管理抽屉,抽屉,P1,存在班级,1. 点『学生数』开抽屉 | 2. 批量导入/导出/移出,"学生名单增删正确；导入按 学号,姓名,密码",POST /edu/classes/{id}/students/import,api,POST,/edu/classes/{id}/students/import,200,
 FUNC-ADM-022,admin,教学资源/班级,班级管理,申请建班/审核,抽屉,P1,无写权限教师,1. 点『申请建班』提交 | 2. manager 『建班审核』通过,申请经审核后自动建班,POST /edu/class-requests,api,POST,/edu/class-requests,200,
 FUNC-ADM-023,admin,教学资源/知识点,知识点管理,导入(预检→确认),导入对话框,P1,准备 xlsx 模板,1. 下载模板 | 2. 上传 | 3. 预检 | 4. 确认导入,预检展示跳过/错误；确认后入库；编码用父 id，禁止批量套模板,POST /edu/knowledge/import,api,POST,/edu/knowledge/import,200,
-FUNC-ADM-024,admin,教学资源/知识点,知识点管理,批量发布/归档/删除,批量栏,P1,勾选多条,1. 勾选→批量发布 | 2. 批量删除(确认),状态批量变更；删除需确认,PUT /edu/knowledge/batch,api,PUT,/edu/knowledge/batch,200,
+FUNC-ADM-024,admin,教学资源/知识点,知识点管理,批量发布/归档/删除,批量栏,P1,勾选多条,1. 勾选→批量发布 | 2. 批量删除(确认),状态批量变更；删除需确认,PUT /edu/knowledge/batch,api,POST,/edu/knowledge/batch,200,
 FUNC-ADM-025,admin,教学资源/知识点,知识点管理,新增子级,节点操作,P1,存在父节点,1. 节点悬停『子级』 | 2. 填名称保存,子节点挂在父节点下，path/level 正确,POST /edu/knowledge,api,POST,/edu/knowledge,200,
-FUNC-ADM-026,admin,教学资源/知识点,知识点管理,移动到其他年级/学科,移动对话框,P1,sys_admin,1. 详情『移动』 | 2. 选目标年级/学科/父节点 | 3. 确认,"节点归属变更；code 唯一约束(grade_id,subject_id,code)仍满足",PUT /edu/knowledge/batch,api,PUT,/edu/knowledge/batch,200,
+FUNC-ADM-026,admin,教学资源/知识点,知识点管理,移动到其他年级/学科,移动对话框,P1,sys_admin,1. 详情『移动』 | 2. 选目标年级/学科/父节点 | 3. 确认,"节点归属变更；code 唯一约束(grade_id,subject_id,code)仍满足",PUT /edu/knowledge/batch,api,POST,/edu/knowledge/batch,200,
 FUNC-ADM-027,admin,教学资源/知识点,知识点管理,筛选(年级/学科/学期/状态/关键词),筛选,P1,有数据,1. 选年级→学科联动 | 2. 输关键词查询,列表/树按条件过滤；学科随年级联动,GET /edu/knowledge,api,GET,/edu/knowledge,list 已过滤,
 FUNC-ADM-028,admin,教学资源/知识点,知识点管理,编辑详情并保存,详情表单,P1,存在节点,1. 点节点→详情 | 2. 改难度/说明 | 3. 保存,节点属性更新,PUT /edu/knowledge/{id},api,PUT,/edu/knowledge/{id},200,
-FUNC-ADM-029,admin,教学资源/知识点,知识点管理,附件上传+可见性,附件区,P1,存在节点,1. 上传附件 | 2. 切『学生可见』开关 | 3. 预览/下载,附件入库可预览下载；可见性开关控制学生端是否可见,POST /attachments/batch-upload,api,POST,/attachments/batch-upload,200,
+FUNC-ADM-029,admin,教学资源/知识点,知识点管理,附件上传+可见性,附件区,P1,存在节点,1. 上传附件 | 2. 切『学生可见』开关 | 3. 预览/下载,附件入库可预览下载；可见性开关控制学生端是否可见,POST /attachments/batch,api,POST,/attachments/batch,200,
 FUNC-ADM-030,admin,系统基础/AI日志,AI 调用日志,页面访问+筛选,渲染+筛选,P1,sys_admin/grade_admin,1. 点『AI 调用日志』 | 2. 选 Agent/状态筛选,日志表加载并按条件过滤,GET /agent/logs,ui,,,,text=AI 调用日志
 FUNC-ADM-031,admin,系统基础/AI配置,AI 大模型配置,保存配置,点击,P1,已改参数,1. 点『保存配置』,配置落库；勾选清除 Key 时清空，未勾选空值不误清,PUT /system/ai-config,api,PUT,/system/ai-config,200,
 FUNC-ADM-032,admin,系统基础/AI配置,AI 大模型配置,测试连接,点击,P1,已填 API Key/地址,1. 点『测试连接』,返回连通结果；失败提示原因不崩溃,POST /system/ai-config/test,api,POST,/system/ai-config/test,返回 success/fail,
@@ -49,18 +49,18 @@ FUNC-ADM-047,admin,系统基础/用户管理,用户管理,启用/禁用,行内�
 FUNC-ADM-048,admin,系统基础/用户管理,用户管理,新增用户-校验,负向校验,P1,sys_admin 登录，打开新增对话框,1. 用户名留空或密码<8位纯数字 | 2. 点保存,前端拦截并提示必填/格式错误，不发请求,POST /system/users,api,POST,/system/users,前端校验失败，HTTP 未发出或 422,
 FUNC-ADM-049,admin,系统基础/用户管理,用户管理,筛选(关键词/身份/状态/年级)+查询,筛选,P1,用户列表已有数据,1. 填关键词/选身份/状态/年级 | 2. 点『查询』,列表仅返回符合条件记录，分页总数更新,GET /system/users?keyword=&identity=&status=&grade_id=,api,GET,/system/users,resp.data.list 长度随筛选变化,
 FUNC-ADM-050,admin,系统基础/用户管理,用户管理,编辑用户,打开对话框并保存,P1,存在目标用户,1. 行内『编辑』 | 2. 改姓名/状态/角色 | 3. 保存,提示成功，列表对应行更新,PUT /system/users/{id},api,PUT,/system/users/{id},200,
-FUNC-ADM-051,admin,系统基础/用户管理,用户管理,重置密码,对话框操作,P1,存在目标用户,1. 行内『重置密码』 | 2. 填新密码或留空(自动生成) | 3. 确认重置,该用户下次登录须用新密码；留空时系统生成强密码并提示,POST /system/users/reset-password,api,POST,/system/users/reset-password,200,
+FUNC-ADM-051,admin,系统基础/用户管理,用户管理,重置密码,对话框操作,P1,存在目标用户,1. 行内『重置密码』 | 2. 填新密码或留空(自动生成) | 3. 确认重置,该用户下次登录须用新密码；留空时系统生成强密码并提示,PUT /system/password/reset,api,PUT,/system/password/reset,200,
 FUNC-ADM-052,admin,系统基础/系统报表,系统报表,页面访问,渲染,P1,sys_admin/grade_admin,1. 点『系统报表』,统计卡+图表渲染，无报错,GET /report/admin/overview,ui,,,,text=系统报表
 FUNC-ADM-053,admin,系统基础/角色权限,角色权限,新增角色,对话框保存,P1,sys_admin 登录,1. 点『新增角色』 | 2. 填名称/标识/描述 | 3. 保存,新角色出现在列表,POST /system/roles,api,POST,/system/roles,200,
 FUNC-ADM-054,admin,系统基础/角色权限,角色权限,编辑/删除,对话框,P1,存在自定义角色,1. 编辑改名保存 | 2. 删除并确认,编辑生效；删除后列表移除；内置角色不可操作,PUT /system/roles/{id},api,PUT,/system/roles/{id},200,
-FUNC-ADM-055,admin,系统基础/附件,附件管理,上传/预览/下载/删除,对话框+行操作,P1,已登录,1. 点上传拖入文件 | 2. 行内预览/下载 | 3. 删除确认,附件入库；预览/下载带鉴权；删除后列表移除,POST /attachments/batch-upload,api,POST,/attachments/batch-upload,200,
+FUNC-ADM-055,admin,系统基础/附件,附件管理,上传/预览/下载/删除,对话框+行操作,P1,已登录,1. 点上传拖入文件 | 2. 行内预览/下载 | 3. 删除确认,附件入库；预览/下载带鉴权；删除后列表移除,POST /attachments/batch,api,POST,/attachments/batch,200,
 FUNC-ADM-056,admin,系统基础/附件,附件管理,页面访问,渲染,P1,sys_admin/grade_admin,1. 点『附件管理』,附件表格加载,GET /attachments,ui,,,,text=附件管理
 FUNC-ADM-057,admin,教学资源/学科,学科管理,视图切换,单选,P2,学科页,1. 切『按年级查看/平铺列表』,两种视图正确渲染,—,ui,,,,.el-radio
-FUNC-ADM-058,admin,教学资源/班级,班级管理,批量启用/停用/删除,批量栏,P2,勾选多条,1. 批量操作并确认,批量状态变更,PUT /edu/classes/batch,api,PUT,/edu/classes/batch,200,
+FUNC-ADM-058,admin,教学资源/班级,班级管理,批量启用/停用/删除,批量栏,P2,勾选多条,1. 批量操作并确认,批量状态变更,POST /edu/classes/batch,api,POST,/edu/classes/batch,200,
 FUNC-ADM-059,admin,教学资源/知识点,知识点管理,AI 生成,对话框,P2,LLM 可用,1. 点『AI 生成』填年级/学科/数量(3-12) | 2. 生成预览 | 3. 创建选中,生成知识点预览，确认后入库,POST /edu/knowledge/ai/generate,api,POST,/edu/knowledge/ai/generate,200,
 FUNC-ADM-060,admin,教学资源/知识点,知识点管理,AI 补全,对话框,P2,LLM 可用,1. 详情『AI 补全』 | 2. 应用选中建议,节点内容被补全更新（仅预览不落库，确认才写）,POST /edu/knowledge/ai/enrich,api,POST,/edu/knowledge/ai/enrich,200,
 FUNC-ADM-061,admin,教学资源/知识点,知识点管理,导出,点击,P2,有数据,1. 点『导出』,下载知识点 xlsx，带 Authorization,GET /edu/knowledge/export,api,GET,/edu/knowledge/export,blob 200,
-FUNC-ADM-062,admin,教学资源/知识点,知识点管理,语义搜索,自然语言搜索,P2,RAG 启用,1. 输自然语言查询 | 2. 点搜索 | 3. 结果『定位』,返回相关片段并可定位到树节点,POST /edu/knowledge/search,api,POST,/edu/knowledge/search,200,
+FUNC-ADM-062,admin,教学资源/知识点,知识点管理,语义搜索,自然语言搜索,P2,RAG 启用,1. 输自然语言查询 | 2. 点搜索 | 3. 结果『定位』,返回相关片段并可定位到树节点,GET /edu/knowledge/search,api,GET,/edu/knowledge/search,200,
 FUNC-ADM-063,admin,教学资源/知识点,知识点管理,重建索引,确认框,P2,RAG 启用,1. 点『重建索引』确认,Chroma 索引重建，状态标签更新,POST /edu/knowledge/reindex,api,POST,/edu/knowledge/reindex,200,
 FUNC-ADM-064,admin,系统基础/AI日志,AI 调用日志,详情/引擎状态,对话框+抽屉,P2,存在日志,1. 点详情 | 2. 点引擎状态,展示调用明细与已注册 Agent,GET /agent/logs/{id},api,GET,/agent/logs/{id},,
 FUNC-ADM-065,admin,系统基础/AI配置,AI 大模型配置,参数边界,负向,P2,打开页面,1. 温度设超 0-2 / 最大输出超 256-32768,控件限制边界，保存不越界,PUT /system/ai-config,api,PUT,/system/ai-config,,
@@ -71,9 +71,9 @@ FUNC-ADM-069,admin,系统基础/版本信息,全站页脚,渲染,访问渲染,P2
 FUNC-ADM-070,admin,系统基础/用户管理,用户管理,分页,翻页,P2,用户数>10,1. 改每页条数/翻页,列表与分页总数正确联动,GET /system/users?page=&page_size=,ui,,,,.el-pagination
 FUNC-ADM-071,admin,系统基础/用户管理,用户管理,重置筛选,点击,P2,已设置筛选条件,1. 点『重置』,所有筛选条件清空，恢复全量列表,GET /system/users,ui,,,,text=重置
 FUNC-ADM-072,admin,系统基础/系统报表,系统报表,导出 Excel,点击,P2,有数据,1. 点导出,下载 admin_overview xlsx,GET /report/export/excel?report_type=admin_overview,api,GET,/report/export/excel,blob 200,
-FUNC-ADM-073,admin,系统基础/角色权限,角色权限,复制角色,prompt 新名,P2,存在角色,1. 点『复制角色』 | 2. 输入新名称确认,生成同名权限副本的新角色,POST /system/roles/copy,api,POST,/system/roles/copy,200,
+FUNC-ADM-073,admin,系统基础/角色权限,角色权限,复制角色,prompt 新名,P2,存在角色,1. 点『复制角色』 | 2. 输入新名称确认,生成同名权限副本的新角色,POST /system/roles/{role_id}/copy,api,POST,/system/roles/{role_id}/copy,200,
 FUNC-ADM-074,admin,系统基础/角色权限,角色权限,清空/展开/折叠,树操作,P2,权限树已加载,1. 点『清空』 | 2. 点『展开全部/折叠全部』,清空后无勾选；展开/折叠改变树展示,—,ui,,,,.el-tree
-FUNC-ADM-075,admin,系统基础/通知,顶栏通知,全部已读/单条,点击,P2,有未读通知,1. 点全部已读 | 2. 单条标记已读,通知状态更新,POST /system/notifications/read-all,api,POST,/system/notifications/read-all,200,
+FUNC-ADM-075,admin,系统基础/通知,顶栏通知,全部已读/单条,点击,P2,有未读通知,1. 点全部已读 | 2. 单条标记已读,通知状态更新,PUT /system/notifications/read-all,api,PUT,/system/notifications/read-all,200,
 FUNC-TCH-001,teacher,教学/作业考试,作业与考试,发布作业/考试,对话框,P0,有写权限,1. 点发布 | 2. 填标题/类型/试卷/起止时间/时长/及格分/下发班级 | 3. 确定,任务发布；选试卷自动收敛及格分；下发关系建立,POST /task/tasks,api,POST,/task/tasks,200,
 FUNC-TCH-002,teacher,教学/作业考试,作业与考试,页面访问,渲染,P0,teacher 登录,1. 点『作业与考试』,任务表格加载,GET /task/tasks,ui,,,,text=作业与考试
 FUNC-TCH-003,teacher,教学/批改,批改中心,保存/发布,底部操作,P0,已评分,1. 保存批改结果 | 2. 发布成绩,客观题自动判分；主观题 LLM 批改；发布后学生可见成绩,POST /grading/submissions/{id}/grade,api,POST,/grading/submissions/{id}/grade,200,
@@ -120,16 +120,16 @@ FUNC-TCH-043,teacher,教学资源/试卷,试卷管理,批量(复制/共享/删�
 FUNC-TCH-044,teacher,教学资源/题库,题库管理,导出/AI出题/AI质检,对话框,P2,有数据/LLM可用,1. 导出 | 2. AI 智能出题生成入库 | 3. AI 质检定位,导出 xlsx；AI 出题存私有草稿；质检返回结果,GET /question/questions/export,api,GET,/question/questions/export,blob 200,
 FUNC-TCH-045,teacher,教学资源/题库,题库管理,查重/AI变式,行内,P2,存在题目,1. 点查重 | 2. 点 AI 变式→创建选中,查重返回相似题；变式预览后入库,GET /question/questions/{id}/duplicates,api,GET,/question/questions/{id}/duplicates,,
 FUNC-STU-001,student,学习/成绩,成绩中心,页面访问+查看解析,渲染,P0,student 登录,1. 点成绩中心 | 2. 查看解析,成绩列表；解析弹窗含得分/排名/逐题,GET /task/my/scores,ui,,,,text=成绩中心
-FUNC-STU-002,student,学习/练习,随机练习,生成练习,点击,P0,已选条件,1. 设学科/数量/题型 | 2. 点生成练习,生成练习卷进入答题区,POST /task/practice,api,POST,/task/practice,200,
-FUNC-STU-003,student,学习/练习,随机练习,答题+收藏+提交,交互,P0,练习进行中,1. 逐题作答 | 2. 星标收藏 | 3. 提交并查看结果,答案保存；收藏入库；提交后显示对错/解析,POST /task/submit,api,POST,/task/submit,200,
+FUNC-STU-002,student,学习/练习,随机练习,生成练习,点击,P0,已选条件,1. 设学科/数量/题型 | 2. 点生成练习,生成练习卷进入答题区,POST /learning/practice,api,POST,/learning/practice,200,
+FUNC-STU-003,student,学习/练习,随机练习,答题+收藏+提交,交互,P0,练习进行中,1. 逐题作答 | 2. 星标收藏 | 3. 提交并查看结果,答案保存；收藏入库；提交后显示对错/解析,POST /task/tasks/{task_id}/submit,api,POST,/task/tasks/{task_id}/submit,200,
 FUNC-STU-004,student,学习/考试,模拟考试,开始答题,卡片,P0,有待完成,1. 点开始答题(canStart),跳答题页；不可开始时禁用并提示原因,GET /task/tasks/{id}/paper,api,GET,/task/tasks/{id}/paper,,
 FUNC-STU-005,student,学习/考试,模拟考试,页面访问+Tab,渲染,P0,student 登录,1. 点『模拟考试』 | 2. 切待完成/已完成,卡片列表按状态分组,GET /task/my-tasks,ui,,,,text=模拟考试
-FUNC-STU-006,student,学习/考试,答题,交卷(手动/超时),交卷,P0,答题中,1. 点交卷确认 | 2. (或倒计时归零),交卷判分；超时自动交卷；次数用尽显示 exhausted,POST /task/submit,api,POST,/task/submit,200,
-FUNC-STU-007,student,学习/考试,答题,作答+题号导航,交互,P0,答题页,1. 逐题作答 | 2. 点题号跳转,答案写入；题号状态(todo/done)更新,POST /task/submit,api,POST,/task/submit,200,
+FUNC-STU-006,student,学习/考试,答题,交卷(手动/超时),交卷,P0,答题中,1. 点交卷确认 | 2. (或倒计时归零),交卷判分；超时自动交卷；次数用尽显示 exhausted,POST /task/tasks/{task_id}/submit,api,POST,/task/tasks/{task_id}/submit,200,
+FUNC-STU-007,student,学习/考试,答题,作答+题号导航,交互,P0,答题页,1. 逐题作答 | 2. 点题号跳转,答案写入；题号状态(todo/done)更新,POST /task/tasks/{task_id}/submit,api,POST,/task/tasks/{task_id}/submit,200,
 FUNC-STU-008,student,学习/错题,错题本,页面访问+筛选,渲染,P0,student 登录,1. 点错题本 | 2. 选学科/错因/掌握状态/关键词,错题卡片按条件过滤,GET /learning/wrong-questions,ui,,,,text=错题本
 FUNC-STU-009,student,AI/Agent,AI 智能助手,对话+上下文,对话,P1,student 登录,1. 点 AI 智能助手 | 2. 选年级/学科上下文 | 3. 发送消息,流式回复含上下文；降级走规则引擎,POST /agent/chat,api,POST,/agent/chat,200,
 FUNC-STU-010,student,学习/复习,智能复习,完成复习,行内,P1,存在计划,1. 点完成复习,标记完成(quality=good),POST /learning/review-plans/{id}/complete,api,POST,/learning/review-plans/{id}/complete,200,
-FUNC-STU-011,student,学习/复习,智能复习,页面访问+AI生成,渲染,P1,student 登录,1. 点智能复习 | 2. 点 AI 生成复习计划填天数/时长,计划列表；AI 生成艾宾浩斯计划,POST /learning/review-plans/generate,api,POST,/learning/review-plans/generate,200,
+FUNC-STU-011,student,学习/复习,智能复习,页面访问+AI生成,渲染,P1,student 登录,1. 点智能复习 | 2. 点 AI 生成复习计划填天数/时长,计划列表；AI 生成艾宾浩斯计划,POST /learning/review/plan,api,POST,/learning/review/plan,200,
 FUNC-STU-012,student,学习/报表,学习报表,页面访问+导出+AI建议,渲染,P1,student 登录,1. 点学习报表 | 2. 选学科趋势 | 3. 重新生成 AI 建议 | 4. 导出,图表渲染；建议生成；导出带鉴权,GET /report/student/overview,ui,,,,text=学习报表
 FUNC-STU-013,student,学习/掌握,掌握图谱,页面访问+薄弱练习,渲染,P1,student 登录,1. 点掌握图谱选学科 | 2. 薄弱专项练习,雷达/条形图；跳练习,GET /learning/mastery-map,ui,,,,text=掌握图谱
 FUNC-STU-014,student,学习/笔记,学习笔记,AI 整理/收藏/删除,卡片,P1,存在笔记,1. AI 整理 | 2. 收藏切换 | 3. 删除确认,AI 整理写回 ai_*；收藏切换；删除移除,POST /learning/notes/{id}/organize,api,POST,/learning/notes/{id}/organize,200,
@@ -137,9 +137,9 @@ FUNC-STU-015,student,学习/笔记,学习笔记,新建/编辑笔记,对话框,P1
 FUNC-STU-016,student,学习/笔记,学习笔记,页面访问+筛选,渲染,P1,student 登录,1. 点学习笔记 | 2. 筛选,笔记卡片列表,GET /learning/notes,ui,,,,text=学习笔记
 FUNC-STU-017,student,学习/练习,随机练习,页面访问,渲染,P1,student 登录,1. 点『随机练习』,配置区(学科/年级/数量/题型/难度/知识点)加载,GET /task/practice,ui,,,,text=随机练习
 FUNC-STU-018,student,学习/考试,模拟考试,查看解析/重考,卡片,P1,有已完成,1. 查看解析 | 2. 重考(left>0),展示逐题解析；剩余次数内可重考,GET /task/submissions/{id},api,GET,/task/submissions/{id},,
-FUNC-STU-019,student,学习/考试,答题,防切屏心跳,隐式,P1,考试且 anti_cheat,1. 切后台再回 | 2. 等待 30s,切屏次数+1；心跳上报；草稿 30 分钟可恢复,POST /task/heartbeat,api,POST,/task/heartbeat,200,
+FUNC-STU-019,student,学习/考试,答题,防切屏心跳,隐式,P1,考试且 anti_cheat,1. 切后台再回 | 2. 等待 30s,切屏次数+1；心跳上报；草稿 30 分钟可恢复,POST /task/tasks/{task_id}/heartbeat,api,POST,/task/tasks/{task_id}/heartbeat,200,
 FUNC-STU-020,student,学习/自主组卷,自主组卷,生成自测卷+答题,表单,P1,student 登录,1. 填名称/学科/数量/题型/难度/知识点 | 2. 生成自测卷 | 3. 立即开始答题,生成自测卷跳答题页,POST /learning/custom-paper,api,POST,/learning/custom-paper,200,
-FUNC-STU-021,student,学习/错题,错题本,AI 分析错因/重做/变式,行内,P1,存在错题,1. AI 分析错因 | 2. 重做同类 | 3. 变式练习,错因分析弹窗；重做/变式跳答题页,POST /learning/wrong-questions/analyze,api,POST,/learning/wrong-questions/analyze,200,
+FUNC-STU-021,student,学习/错题,错题本,AI 分析错因/重做/变式,行内,P1,存在错题,1. AI 分析错因 | 2. 重做同类 | 3. 变式练习,错因分析弹窗；重做/变式跳答题页,POST /learning/wrong-questions/{wid}/analyze,api,POST,/learning/wrong-questions/{wid}/analyze,200,
 FUNC-STU-022,student,学习/错题,错题本,标注错因/标记掌握,行内,P1,存在错题,1. 标注错因 | 2. 标记已掌握,错因/掌握状态更新,PUT /learning/wrong-questions/{id},api,PUT,/learning/wrong-questions/{id},200,
 FUNC-STU-023,student,学习/打卡,学习打卡,新建目标+打卡,对话框,P2,student 登录,1. 新建目标(名称/周期/值/单位) | 2. 今日打卡,目标入库；打卡记录,POST /learning/goals,api,POST,/learning/goals,200,
 FUNC-STU-024,student,学习/收藏,题目收藏,收藏专项练习,点击,P2,有收藏,1. 点收藏专项练习,生成专项练习跳答题页,POST /learning/favorites/practice,api,POST,/learning/favorites/practice,200,

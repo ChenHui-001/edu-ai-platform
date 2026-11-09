@@ -222,6 +222,16 @@ def _validate_bank_type(value: Any, default: str = "private") -> str:
     return bank
 
 
+# 题目来源。与 task_jobs「清理 AI 草稿题」的 `source like 'ai%'` 口径一致：
+# 凡是 AI 产出都必须以 ai 开头，否则清理任务统计不到、题库也看不出溯源。
+QUESTION_SOURCE_VALUES = {"manual", "import", "ai", "ai_fill", "ai_regen"}
+
+
+def _validate_source(value: Any, default: str = "manual") -> str:
+    src = str(value or default).strip().lower()
+    return src if src in QUESTION_SOURCE_VALUES else default
+
+
 def _validate_knowledge_point(
     db: Session, kp_id: Any, grade_id: int, subject_id: int
 ) -> KnowledgePoint:
@@ -480,7 +490,7 @@ def _prepare_question(
         knowledge_point_id=kp_id,
         bank_type=bank_type,
         owner_id=user.id, status=status,
-        fingerprint=_fingerprint(stem), source="manual",
+        fingerprint=_fingerprint(stem), source=_validate_source(data.get("source")),
     )
 
 

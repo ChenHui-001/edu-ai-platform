@@ -1281,6 +1281,12 @@ function reportBatchResult(data, prefix) {
   const d = data || {}
   const done = (d.done || []).length
   const skipped = d.skipped || []
+  // done=0 且无 skipped：后端确实回了成功信封，但一道也没处理。直接弹绿色
+  // "已处理 0 道题目"等于骗用户——他会以为操作生效，回头发现数据没变。
+  if (!done && !skipped.length) {
+    ElMessage.warning(`${prefix} 0 道：所选题目未发生变更（可能已处于目标状态）`)
+    return
+  }
   if (skipped.length) {
     const reasons = skipped.slice(0, 3)
       .map(s => `#${s.id} ${s.reason || '失败'}`).join('；')

@@ -61,15 +61,22 @@
         <el-table-column prop="grade_name" label="年级" width="100" />
         <el-table-column prop="class_name" label="班级" width="120" />
         <el-table-column prop="phone" label="手机号" width="130" />
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="statusTag(row.status)" size="small">{{ STATUS[row.status] || row.status }}</el-tag>
+            <!-- 锁定不写在 status 上（仍是 active），必须优先判 is_locked，
+                 否则被锁账号在列表里显示"正常"，管理员只能猜测原因。 -->
+            <el-tag v-if="row.is_locked" type="warning" size="small">
+              已锁定{{ row.login_fail_count ? `(${row.login_fail_count})` : '' }}
+            </el-tag>
+            <el-tag v-else :type="statusTag(row.status)" size="small">{{ STATUS[row.status] || row.status }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="last_login_at" label="最后登录" width="160" />
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button v-if="isSysAdmin" link type="primary" @click="openDialog(row)">编辑</el-button>
+            <el-button v-if="isSysAdmin && row.is_locked" link type="success"
+                       @click="doUnlock(row)">解锁</el-button>
             <el-button v-if="isSysAdmin" link type="warning" @click="openReset(row)">重置密码</el-button>
             <el-button v-if="isSysAdmin" link type="danger" @click="remove(row)">删除</el-button>
           </template>
@@ -186,6 +193,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { systemApi, eduApi } from '@/api'
+import { confirmAction } from '@/utils/confirm'
 import { useUserStore } from '@/store/user'
 
 // 路由 admin/users 对 grade_admin 放行，但后端新建/改/删/重置密码四处
@@ -293,6 +301,21 @@ async function doReset() {
     resetDlg.value = false
   } catch (e) {
     ElMessage.error(e?.message || '重置失败')
+  }
+}
+
+async function doUnlock(row) {
+  // 只用 confirmAction（内部吃掉 'cancel'/'close' 拒绝），避免点取消触发
+  // 全局红条「页面运行时错误： cancel」。
+  if (!await confirmAction(`解除「${row.real_name || row.username}」的登录锁定？该账号可立即重新登录。`,
+    { title: '解除锁定' })) return
+  try {
+    const res = await systemApi.unlockUser(row.id)
+    if (res?.data?.unlocked === false) ElMessage.info(res?.message || '该账号当前未被锁定')
+    else ElMessage.success('已解除锁定')
+    load()
+  } catch (e) {
+    ElMessage.error(e?.message || '解锁失败')
   }
 }
 
