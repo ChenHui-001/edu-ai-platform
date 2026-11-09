@@ -59,6 +59,10 @@ REGISTRY = {
     "backend/app/utils/answer.py": ["backend/qa_audit_suite.py"],
     # 部署：supervisord FATAL → 容器退出（否则 Up + 全站 502）
     "deploy/fatal_guard.py": ["backend/qa_audit_suite.py"],
+    # 工具：四层一致性合议（服务器落后不能被其它层绿灯掩盖）
+    "tools/check_four_layer.py": ["backend/qa_audit_suite.py"],
+    # 工具：部署器重建命令（少一个 flag 就是静默降级 / 空库）
+    "tools/deploy_release.py": ["backend/qa_audit_suite.py"],
 }
 
 # ---------------- 棘轮基线（只许涨） ----------------
@@ -66,7 +70,7 @@ REGISTRY = {
 # 带 `@pytest.mark.parametrize` 的函数会在运行时展开成多条，
 # 拿运行数做基线会让同一次改动在两个口径间来回对不上。
 BASELINE = {
-    "pytest_cases": 52,   # def test_* 个数（运行 54 passed，含 2 条参数化展开）
+    "pytest_cases": 58,   # def test_* 个数（运行 60 passed，含 2 条参数化展开）
     "vitest_cases": 76,
 }
 

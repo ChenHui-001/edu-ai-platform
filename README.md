@@ -213,7 +213,75 @@ LLM_MODEL=qwen2:7b
 
 ---
 
+## 发布与一致性
+
+代码有**四个落点**，任何一个跟丢都不会自己报错：
+
+| 层 | 由谁保证 | 漂移后果 |
+|---|---|---|
+| 本地 worktree | 提交前门禁（`auto_ship.sh` 内置 13 道） | 镜像里混入未入库改动，无法溯源 |
+| 远端 `origin/master` | 推送后 CI（后端检查 / 前端构建 / 接口回归） | 镜像对应的提交在远端不存在 |
+| ghcr 镜像 | CI 构建 + `BUILD_INFO` 指纹 | 标签与内容不符，回滚回错版本 |
+| **生产服务器容器** | 本文下面的巡检与部署器 | **修好的安全问题没上线，而 CI 全绿** |
+
+一条命令看四层是否一致：
+
+```bash
+python tools/check_four_layer.py          # 退出码 0 一致 / 1 漂移 / 2 无法判定
+python tools/check_four_layer.py --json   # 机读，便于接到监控
+```
+
+输出示例（服务器落后时会明确指出来）：
+
+```
+层                  版本    指纹     判定  说明
+本地 worktree       2.5.13  fb72749  [OK]  工作区干净
+远端 origin/master  2.5.13  fb72749  [OK]  已推送
+镜像 :2.5.13        2.5.13  fb72749  [OK]  BUILD_INFO 自洽（本地镜像）
+服务器 :8081        2.5.10  -        [!!]  服务器 2.5.10 ≠ 期望 2.5.13
+```
+
+### 发版并上线
+
+```bash
+bash tools/auto_ship.sh --bump patch --deploy
+```
+
+`--deploy` 会在镜像校验通过后调用 `tools/deploy_release.py`，它按顺序做六件事，
+任何一步失败立即停止：
+
+1. 预检（工作区干净、已推送、镜像存在）
+2. **备份数据库**（容器内 sqlite backup API，不能 `cp`，会读到撕裂的 WAL）
+3. `docker pull` 目标镜像
+4. 用**运行中容器的环境变量**为基线重建容器（避免少传 `-e` 导致 AI 降级/验证码关闭）
+5. 健康门禁（`healthy` **且** `version` 匹配，30 次 × 3s）
+6. 校验 `BUILD_INFO` 的 commit == 本地 HEAD；失败自动回滚到上一镜像
+
+只想看会执行什么：`python tools/deploy_release.py --dry-run`。
+
+### 服务器侧巡检（部署一次，长期生效）
+
+```bash
+ssh root@<host> 'bash -s' < deploy/watchdog/install.sh
+```
+
+装一个 systemd timer，每 5 分钟比对「容器内版本」与「仓库 master 的 `VERSION`」，
+状态变化时写 `/opt/edu-ai-platform/logs/watchdog.log`，可选 webhook 告警：
+
+| 状态 | 含义 |
+|---|---|
+| `OK` | 一致 |
+| `DRIFT` | 仓库已有新版本且镜像就绪，服务器没跟上 |
+| `BUILDING` | 刚发版，镜像还在 CI 构建（正常窗口） |
+| `DOWN` | 容器不在或健康检查不通过 |
+
+有意**不做自动部署**：无人值守时自动重建会把「迁移失败 + 无备份」放大成整站不可用。
+告警后由人执行一次 `python tools/deploy_release.py --yes`。
+
+---
+
 ## 项目结构
+
 
 ```
 edu-ai-platform/

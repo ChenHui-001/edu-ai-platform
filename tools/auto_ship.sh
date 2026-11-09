@@ -28,6 +28,7 @@
 #   ./tools/auto_ship.sh --msg "xxx"      # 自定义提交信息
 #   ./tools/auto_ship.sh --skip-test      # 跳过冒烟校验（仅提交，慎用）
 #   ./tools/auto_ship.sh --bump patch     # 版本号 +1（1.0.8 -> 1.0.9）后交付
+#   ./tools/auto_ship.sh --deploy         # 交付完成后把服务器也切到新版本
 #   ./tools/auto_ship.sh --dry-run        # 只跑校验，不提交不拉镜像
 #
 # ⚠️ 手工验证提示：改动涉及权限、判分、组卷、交卷、迁移时，
@@ -43,6 +44,7 @@ ROOT="$(pwd)"
 PUSH=0
 SKIP_TEST=0
 DRY_RUN=0
+DEPLOY=0
 BUMP=""
 MSG=""
 STAGES=""
@@ -58,6 +60,7 @@ while [ $# -gt 0 ]; do
     --no-push)   NO_PUSH=1 ;;
     --skip-test) SKIP_TEST=1 ;;
     --dry-run)   DRY_RUN=1; SKIP_COMMIT=1 ;;
+    --deploy)    DEPLOY=1 ;;
     --msg)       MSG="$2"; shift ;;
     --bump)      BUMP="$2"; shift ;;
     --stages)    STAGES=""; shift ;;   # 兼容旧命令：阶段已移除，忽略
@@ -403,6 +406,28 @@ if [ "$PUSH" -eq 1 ]; then
 else
   step "4/5  推送 —— 已跳过（加 --push 启用）"
   echo "  手动推送：./push_dockerhub.sh ${NAMESPACE} ${VERSION}"
+fi
+
+# ---------- 4c. 部署到生产（可选） ----------
+# 为什么默认不部署：这台机器的网络到服务器 22 端口不稳定（/32 直连路由会随
+# 换网失效），把"发版"和"上线"绑死会让一次网络抖动卡住整条交付流水线。
+# 显式加 --deploy 才做，且部署器自带备份/健康门禁/回滚。
+if [ "$DEPLOY" -eq 1 ]; then
+  step "4c/5  部署到生产（备份 → 拉取 → 重建 → 健康门禁 → 失败回滚）"
+  if ! "$GATE_PY" tools/deploy_release.py --yes; then
+    die 5 "部署失败（脚本已尝试回滚到上一版本），详见上方输出"
+  fi
+  ok "服务器已切换到 ${VERSION}"
+fi
+
+# ---------- 4d. 四层一致性巡检 ----------
+# 每发一次版都看一眼「服务器跟上没有」：三层绿而服务器停在旧版，
+# 正是第三轮复审里最难发现的一类漂移（CI 全绿、线上没修）。
+step "一致性巡检：本地 / 仓库 / 镜像 / 服务器"
+if ! "$GATE_PY" tools/check_four_layer.py --no-fetch; then
+  echo "  ${c_warn}存在漂移${c_reset}：服务器可能仍跑旧版。对齐命令："
+  echo "    ${GATE_PY} tools/deploy_release.py --yes"
+  echo "  或下次发版直接加 ${c_info}--deploy${c_reset}"
 fi
 
 echo ""

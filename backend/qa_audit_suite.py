@@ -826,5 +826,100 @@ def test_demo_seed_guard_is_off_by_default():
     assert fields["DEMO_LEARNING_FLOW"].default is False
 
 
+def _load_tool(filename):
+    """按文件路径加载 tools/ 下的脚本（tools 不是包，不能直接 import）。
+
+    传**带 .py 的文件名**而不是模块名：覆盖门禁靠「测试里出现该文件名」
+    来证明这个模块真的被测过，去掉扩展名会让登记制失效。
+    """
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location(
+        f"_tool_{filename[:-3]}", root / "tools" / filename)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_four_layer_verdict_matrix():
+    """四层合议：任何一种漂移都不能被"其它层绿"稀释成通过。"""
+    m = _load_tool("check_four_layer.py")
+    row = lambda st: {"layer": "x", "status": st, "version": "1", "commit": None, "note": ""}
+
+    assert m.verdict([row(m.OK), row(m.OK)]) == 0
+    assert m.verdict([row(m.OK), row(m.BAD)]) == 1
+    # 服务器不可达 / 镜像未拉取 = 无法判定，既不算通过也不算漂移
+    assert m.verdict([row(m.OK), row(m.WARN)]) == 2
+    assert m.verdict([row(m.WARN), row(m.NA)]) == 2
+
+
+def test_four_layer_behind_count_uses_git():
+    """服务器落后几个提交必须真去数，不能按版本号字符串猜。"""
+    m = _load_tool("check_four_layer.py")
+    head = m.git("rev-parse", "HEAD")[0]
+    prev = m.git("rev-parse", "HEAD~1")[0]
+    if not head or not prev:
+        pytest.skip("浅克隆或无父提交，跳过")
+    assert m.behind_count(prev, head) == 1
+    assert m.behind_count(head, head) == 0
+
+
+def test_four_layer_local_flags_dirty_worktree(monkeypatch):
+    """本地有未提交改动 = 已经不是任何已发布版本，必须报漂移。"""
+    m = _load_tool("check_four_layer.py")
+
+    monkeypatch.setattr(m, "git", lambda *a, **k: (
+        ("M backend/x.py", "") if a[:2] == ("status", "--porcelain") else ("f" * 40, "")))
+    assert m.layer_local("2.5.13")["status"] == m.BAD
+
+    monkeypatch.setattr(m, "git", lambda *a, **k: (
+        ("", "") if a[:2] == ("status", "--porcelain") else ("f" * 40, "")))
+    assert m.layer_local("2.5.13")["status"] == m.OK
+
+
+def test_deploy_run_cmd_keeps_every_required_flag():
+    """重建容器的命令行少任何一个 flag 都是**静默降级**：
+
+    - 少 `--env-file` → AI/调度/上传上限全回默认
+    - 少 `-e SECRET_KEY` → 每次重启 JWT 随机换密钥，全员掉线
+    - 少 `-v data` → 新容器起来是空库（最惨的一种）
+    """
+    d = _load_tool("deploy_release.py")
+    cmd = d.run_cmd("9.9.9", "/opt/edu-ai-platform/.env.runtime", "SK123",
+                    "ghcr.io/chenhui-001/edu-ai-platform:9.9.9")
+    for frag in (
+        "--env-file /opt/edu-ai-platform/.env.runtime",
+        "APP_VERSION=9.9.9",
+        "-p 8081:80",
+        "-v /opt/edu-ai-platform/data:/app/data",
+        "-v /opt/edu-ai-platform/logs:/app/data/logs",
+        "SECRET_KEY=SK123",
+        "DATABASE_URL=sqlite:////app/data/edu_platform.db",
+        "--restart unless-stopped",
+    ):
+        assert frag in cmd, f"重建命令缺少 {frag}"
+
+
+def test_deploy_strips_docker_injected_env():
+    """从旧容器抄环境时，PATH/HOSTNAME 这类必须剔除，否则新容器会继承旧容器身份。"""
+    d = _load_tool("deploy_release.py")
+    assert {"PATH", "HOSTNAME", "HOME", "PWD", "LANG"} <= d.INJECTED
+
+
+def test_deploy_dotenv_parsing(tmp_path):
+    """首装回落读 .env：注释/空行跳过，值里的 `=` 不能被截断。"""
+    d = _load_tool("deploy_release.py")
+    p = tmp_path / ".env"
+    p.write_text("# 注释\n\nLLM_MODEL=m1\nLLM_BASE_URL=https://x/y?a=1\nEMPTY=\n",
+                 encoding="utf-8")
+    env = d.read_dotenv(str(p))
+    assert env["LLM_MODEL"] == "m1"
+    assert env["LLM_BASE_URL"] == "https://x/y?a=1"
+    assert env["EMPTY"] == ""
+    assert "注释" not in "".join(env)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
