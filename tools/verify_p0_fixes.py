@@ -148,6 +148,7 @@ def seed():
         return {
             "teacher_id": teacher.id, "paper_id": paper.id, "class_id": klass.id,
             "item_ids": [i.id for i in items], "task_id": task.id, "sub_id": sub.id,
+            "stu_id": stu.id, "grade_id": g.id, "subject_id": s.id,
         }
     finally:
         db.close()
@@ -252,6 +253,75 @@ def main():
                   f"score={sub.score}")
         finally:
             db.close()
+
+        print("\n[P1-9] 题项覆盖写：版本号不匹配必须 409（不能静默覆盖他人改动）")
+        cur_detail = client.get(api + f"/question/papers/{pid}", headers=H).json().get("data") or {}
+        cur_v = int(cur_detail.get("current_version") or 1)
+        cur_items = [{"question_id": i["question_id"], "score": 5,
+                      "section_code": i.get("section_code"),
+                      "section_name": i.get("section_name"),
+                      "section_sort": i.get("section_sort")}
+                     for i in cur_detail.get("items") or []]
+        stale_v = cur_v - 1 if cur_v > 1 else cur_v + 99
+        r = client.post(api + f"/question/papers/{pid}/items", headers=H,
+                        json={"current_version": stale_v, "items": cur_items})
+        check("过期版本号被拒绝", r.status_code == 409, f"HTTP {r.status_code} {r.text[:100]}")
+        det = (r.json() or {}).get("detail") or {}
+        check("409 回传当前版本号（前端据此提示刷新）",
+              int(det.get("current_version") or 0) == cur_v,
+              f"detail={det} 期望 current_version={cur_v}")
+        r = client.post(api + f"/question/papers/{pid}/items", headers=H,
+                        json={"current_version": cur_v, "items": cur_items})
+        check("正确版本号保存成功", r.status_code == 200, f"HTTP {r.status_code} {r.text[:100]}")
+        new_v = int((r.json().get("data") or {}).get("version") or 0)
+        # 不强求「恰好 +1」：一次保存会写两条快照（编辑题目 / 编辑完成），
+        # `snapshot()` 遇到版本号冲突还会再推进一格。真正要守住的是**单调前进**
+        # —— 版本不前进，前端保存后重新载入拿到的还是旧号，下一次保存又会 409。
+        check("保存后版本号前进（下次保存不会误判冲突）", new_v > cur_v,
+              f"{cur_v} -> {new_v}")
+        # 旧前端 / 脚本不带 current_version 时必须保持原行为（否则升级即全员保存失败）
+        r = client.post(api + f"/question/papers/{pid}/items", headers=H,
+                        json={"items": cur_items})
+        check("不带版本号仍可保存（向后兼容）", r.status_code == 200,
+              f"HTTP {r.status_code} {r.text[:100]}")
+
+        print("\n[P1-10] 学生自测卷：题型筛选生效 / 放宽如实上报 / 满分可读")
+        s_tok = create_access_token(ctx["stu_id"], role="student")
+        SH = {"Authorization": f"Bearer {s_tok}"}
+        base_body = {"subject_id": ctx["subject_id"], "grade_id": ctx["grade_id"],
+                     "difficulty": ""}
+        # 只勾「填空题」且只要 1 题：题库里正好有 1 道 blank，必须严格满足、不放宽
+        r = client.post(api + "/learning/custom-paper", headers=SH,
+                        json={**base_body, "count": 1, "question_types": ["blank"]})
+        d = r.json().get("data") or {}
+        check("自测卷生成成功", r.status_code == 200, f"HTTP {r.status_code} {r.text[:100]}")
+        check("回传满分（原来是 undefined）", isinstance(d.get("total_score"), (int, float)),
+              str(d.get("total_score")))
+        check("条件可满足时不虚报放宽", (d.get("relaxations") or []) == [],
+              str(d.get("relaxations")))
+        db = SessionLocal()
+        try:
+            p = db.get(Paper, d.get("paper_id"))
+            types = [it.question.type for it in p.items] if p else []
+        finally:
+            db.close()
+        check("只选出填空题就真的只出填空题（alias fill 已归一）",
+              types == ["blank"], str(types))
+
+        # 只勾填空题但要 5 题：题库不够，必须放宽**且如实上报**，年级不能放宽
+        r = client.post(api + "/learning/custom-paper", headers=SH,
+                        json={**base_body, "count": 5, "question_types": ["blank"]})
+        d2 = r.json().get("data") or {}
+        check("题目不足时如实上报放宽原因", bool(d2.get("relaxations")),
+              str(d2.get("relaxations")))
+        db = SessionLocal()
+        try:
+            p2 = db.get(Paper, d2.get("paper_id"))
+            same_grade = bool(p2) and all(it.question.grade_id == ctx["grade_id"]
+                                          for it in p2.items)
+        finally:
+            db.close()
+        check("放宽只丢题型，年级绝不放宽", same_grade, f"paper={d2.get('paper_id')}")
 
     # ---------------------------------------------------------------- F-03
     print("\n[F-03] 班级薄弱知识点聚合")

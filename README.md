@@ -59,14 +59,18 @@
 ### 方式一（最快）：直接拉取已发布镜像
 
 ```bash
-docker pull nanpo/edu-ai-platform:2.0.0
+# 版本号取仓库根目录的 VERSION（不要在这里写死具体版本：曾经写死 2.0.0，
+# 与当时实际发布的镜像差了几十个版本，照着抄的人会拉到一年前的镜像）
+VERSION=$(cat VERSION)
+
+docker pull nanpo/edu-ai-platform:$VERSION
 docker run -d --name edu-platform -p 8080:80 \
   -e SECRET_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(48))')" \
   -e DEBUG=false \
   -e SEED_DEMO_DATA=true \
   -v "$(pwd)/data:/app/data" \
   --restart unless-stopped \
-  nanpo/edu-ai-platform:2.0.0
+  nanpo/edu-ai-platform:$VERSION
 
 # 访问 http://localhost:8080
 # 默认账号 admin / Admin@123456

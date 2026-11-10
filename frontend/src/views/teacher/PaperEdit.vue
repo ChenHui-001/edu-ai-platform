@@ -253,7 +253,7 @@ import {
   Search, Sort, Star, View
 } from '@element-plus/icons-vue'
 import { questionApi } from '@/api'
-import { confirmAction } from '@/utils/confirm'
+import { alertAction, confirmAction } from '@/utils/confirm'
 import { toastIfUnhandled } from '@/utils/notify'
 
 const route = useRoute()
@@ -510,6 +510,13 @@ async function doSave() {
       name: meta.name.trim(),
       description: meta.description || '',
       duration: meta.duration,
+      // 乐观锁：把页面上读到的版本号一并带回。期间若别人保存过，后端返回 409，
+      // 而不是按「后写覆盖」把对方的题序/分数静默冲掉（P1-9）。
+      // 前端单方面无法根治冲突，但至少能把「悄悄覆盖」变成「明确拒绝」。
+      // 版本号取不到时**不带该字段**（后端视为不加锁），千万别塞 0 —— 那会让
+      // 每一次正常保存都被判成冲突。
+      ...(Number(paper.value?.current_version) > 0
+        ? { current_version: Number(paper.value.current_version) } : {}),
       items: items.value.map(it => ({
         question_id: it.question_id,
         score: Number(it.score) || 0,
@@ -536,10 +543,38 @@ async function doSave() {
     ElMessage.success(msg)
     await loadPaper()
   } catch (e) {
+    if (e?.response?.status === 409) {
+      await handleVersionConflict(e)
+      return
+    }
     toastIfUnhandled(e, '保存失败')
   } finally {
     saving.value = false
   }
+}
+
+/**
+ * 版本冲突（409）的唯一出口。
+ *
+ * 这里**不自动刷新**：用户手上的题序/分数调整可能还没复制出去，替他把页面
+ * 重载等于替他销毁劳动成果。给一个明确的二选一，由人决定。
+ * 拦截器已经弹过后端那句「已被他人修改」的 toast，这里不再重复报错文案，
+ * 只补充「冲突发生在哪个版本之间」以及「接下来能做什么」。
+ */
+async function handleVersionConflict(err) {
+  const detail = err?.response?.data?.detail || {}
+  const serverVer = detail.current_version
+  const mineVer = detail.your_version ?? paper.value?.current_version
+  const go = await confirmAction(
+    `该试卷已被他人修改${serverVer ? `（服务器当前 v${serverVer}）` : ''}，`
+    + `你基于的是 v${mineVer || 1}。\n`
+    + '继续保存会覆盖对方的改动，因此已拒绝本次保存。\n\n'
+    + '点「重新载入」获取最新版本（本次未保存的调整会丢失，可先复制出去）；'
+    + '点「留在本页」自行取舍。',
+    '版本冲突',
+    { confirmButtonText: '重新载入', cancelButtonText: '留在本页' }
+  )
+  if (go) await loadPaper()
 }
 
 // ---------------- 换一题 ----------------
@@ -772,6 +807,27 @@ async function openVersions() {
   }
 }
 
+/** 卷级字段 → 中文名。后端回传的是列名，直接展示等于把实现细节丢给教师 */
+const RESTORE_FIELD_LABELS = {
+  name: '试卷名称', duration: '考试时长', description: '命题说明',
+  difficulty_ratio: '难度分布', exam_type: '考试类型', standard_id: '命题标准'
+}
+
+/** 把回溯结果如实讲清楚：还原了什么、哪些没动、总分为什么变了 */
+function showRestoreResult(d, version) {
+  const lines = [
+    `已回到 v${version}，卷面 ${d.item_count ?? '-'} 题，总分 ${d.total_score ?? '-'}。`
+  ]
+  const restored = (d.restored_fields || []).map(f => RESTORE_FIELD_LABELS[f] || f)
+  if (restored.length) lines.push(`已还原：${restored.join('、')}`)
+  else lines.push('已还原：题目与顺序（卷级信息本次无可恢复内容）')
+  const kept = d.kept_fields || []
+  if (kept.length) lines.push('未随回溯改变：\n' + kept.map(x => `· ${x}`).join('\n'))
+  if (d.total_score_note) lines.push(d.total_score_note)
+  if (d.warning) lines.push(`注意：${d.warning}`)
+  alertAction(lines.join('\n\n'), '回溯结果')
+}
+
 async function doRestore(row) {
   try {
     if (!await confirmAction(
@@ -780,10 +836,16 @@ async function doRestore(row) {
   } catch { return }
 
   const apply = async (force) => {
-    await questionApi.restorePaperVersion(paperId, row.version, force ? { force: true } : {})
-    ElMessage.success(`已回溯到 v${row.version}`)
+    const res = await questionApi.restorePaperVersion(
+      paperId, row.version, force ? { force: true } : {})
     versionDrawer.value = false
     await loadPaper()
+    // 回溯是低频高风险操作：不能只用一句「已回溯到 vN」收尾。
+    // 旧实现只还原 name/duration，卷面说明/难度分布/命题标准都留在"新"值上，
+    // 而 UI 宣称"已回溯"，教师会当整卷都回到了历史状态（P1-5）。
+    // 后端现在会回传 restored_fields / kept_fields / total_score_note，
+    // 这里必须如实转述，让"没回滚的部分"也有明确出处。
+    showRestoreResult(res.data || {}, row.version)
   }
 
   try {

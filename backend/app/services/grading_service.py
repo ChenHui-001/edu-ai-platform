@@ -1,7 +1,7 @@
 """答题、判分、错题收录、知识点掌握度更新等核心教学逻辑。"""
 import json
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
@@ -399,6 +399,73 @@ def _calc_rank(db: Session, submission: Submission) -> Optional[int]:
     return int(total) + 1
 
 
+def pick_practice_questions(
+    db: Session,
+    *,
+    subject_id: int,
+    grade_id: Optional[int],
+    count: int,
+    question_types: Optional[List[str]] = None,
+    difficulty: Optional[str] = None,
+    knowledge_point_ids: Optional[List[int]] = None,
+) -> Tuple[List[Question], List[str]]:
+    """按条件抽练习题，不足时逐级放宽，并回传「放宽了什么」。
+
+    逐级放宽顺序：知识点 → 难度 → 题型，**年级永不放宽**。
+    旧实现（两个调用点各写一份）在题目不够时直接返回一个更少的列表，
+    或者一次性丢掉全部条件：学生勾「只要填空题」却收到选择题、勾「简单」
+    却收到困难题，界面上毫无提示。这里把「放宽」变成显式返回值，
+    调用方必须转述给用户（宁可承认凑不齐，也不要假装满足）。
+
+    返回 `(questions, relaxations)`；`questions` 可能少于 `count`（题库就那么多）。
+    """
+    base = [Question.subject_id == subject_id, Question.status == "published"]
+    if grade_id:
+        base.append(Question.grade_id == grade_id)
+
+    filters: List[Tuple[str, Any]] = []
+    if question_types:
+        filters.append(("题型", Question.type.in_(question_types)))
+    if difficulty:
+        filters.append(("难度", Question.difficulty == difficulty))
+    if knowledge_point_ids:
+        filters.append(("知识点", Question.knowledge_point_id.in_(knowledge_point_ids)))
+
+    relax_order = [name for name, _ in filters]
+    questions: List[Question] = []
+    relaxations: List[str] = []
+    satisfied = False
+    for drop in range(len(filters) + 1):
+        dropped = set(relax_order[:drop])
+        stmt = select(Question).where(*base)
+        for name, cond in filters:
+            if name not in dropped:
+                stmt = stmt.where(cond)
+        questions = list(
+            db.scalars(stmt.order_by(func.random()).limit(max(count, 1) * 3)).all()
+        )
+        if len(questions) >= count:
+            satisfied = True
+            if drop:
+                relaxations.append(
+                    f"符合「{'、'.join(relax_order[:drop])}」条件的题目不足，"
+                    f"已忽略该条件"
+                )
+            break
+    if not satisfied:
+        # 连「全部筛选条件都丢掉」也凑不够 count：条件确实被放宽了，
+        # 必须照实说，否则学生勾了「只要填空题」却拿到混合卷且毫无提示。
+        if filters:
+            relaxations.append(
+                f"符合「{'、'.join(relax_order)}」条件的题目不足，已忽略这些条件"
+            )
+        if questions:
+            relaxations.append(
+                f"该范围内题目共 {len(questions)} 道，少于所需的 {count} 道"
+            )
+    return questions[:count], relaxations
+
+
 def create_practice_paper(
     db: Session,
     *,
@@ -409,41 +476,17 @@ def create_practice_paper(
     question_types: Optional[List[str]] = None,
     difficulty: Optional[str] = None,
     knowledge_point_ids: Optional[List[int]] = None,
-) -> Paper:
-    """随机练习：即时生成一份练习试卷。"""
-    stmt = select(Question).where(
-        Question.subject_id == subject_id,
-        Question.status == "published",
-    )
-    if grade_id:
-        stmt = stmt.where(Question.grade_id == grade_id)
-    if question_types:
-        stmt = stmt.where(Question.type.in_(question_types))
-    if difficulty:
-        stmt = stmt.where(Question.difficulty == difficulty)
-    if knowledge_point_ids:
-        stmt = stmt.where(Question.knowledge_point_id.in_(knowledge_point_ids))
+) -> Tuple[Paper, List[str]]:
+    """随机练习：即时生成一份练习试卷。
 
-    questions = list(
-        db.scalars(stmt.order_by(func.random()).limit(count * 3)).all()
+    返回 `(paper, relaxations)`，`relaxations` 说明本次哪些筛选条件没被满足
+    （空列表 = 完全按学生要求出的题），由接口负责人转述给学生。
+    """
+    questions, relaxations = pick_practice_questions(
+        db, subject_id=subject_id, grade_id=grade_id, count=count,
+        question_types=question_types, difficulty=difficulty,
+        knowledge_point_ids=knowledge_point_ids,
     )
-    if len(questions) < count:
-        # 放宽条件：只放宽「题型 / 难度 / 知识点」，**绝不放宽年级**。
-        # 原实现这里把 grade_id 一起丢掉了，只按 subject_id 查：
-        # 由于 Subject 的唯一键是 (grade_id, name)，subject_id 本身已经绑定了
-        # 某个具体年级，丢掉 grade_id 就等于允许「七年级学生拿到一年级语文题」。
-        # 实测 stu731（七年级）请求语文时，严格条件 0 条 → 降级后抽到
-        # grade_id=1 的 5 道题，卷面却标着七年级，学生完全做不了。
-        relaxed = select(Question).where(
-            Question.subject_id == subject_id,
-            Question.status == "published",
-        )
-        if grade_id:
-            relaxed = relaxed.where(Question.grade_id == grade_id)
-        questions = list(
-            db.scalars(relaxed.limit(count * 2)).all()
-        )
-    questions = questions[:count]
     if not questions:
         raise BusinessException("该学科在该年级暂无题目，请先向老师申请添加")
 
@@ -459,7 +502,7 @@ def create_practice_paper(
         db.add(PaperItem(paper_id=paper.id, question_id=q.id, sort_order=i, score=q.score))
     db.commit()
     db.refresh(paper)
-    return paper
+    return paper, relaxations
 
 
 def create_practice_task(db: Session, student_id: int, paper: Paper) -> Task:

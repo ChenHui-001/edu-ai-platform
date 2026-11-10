@@ -164,15 +164,15 @@ LLM_MODEL=deepseek-chat
 ```powershell
 .\start.ps1 -Command rebuild   # 会重新构建
 ```
-或手动：
+或手动（版本取仓库根目录 `VERSION`，别抄死版本号）：
 ```bat
 docker compose down
-docker pull nanpo/edu-ai-platform:2.0.0
+docker pull nanpo/edu-ai-platform:%VERSION%
 docker compose up -d
 ```
 > Docker Hub `nanpo/edu-ai-platform` 由本地 `push_dockerhub.sh` 推送；
 > CI 发布的是 `ghcr.io/chenhui-001/edu-ai-platform`，Docker Hub 不可达时可改用
-> `docker pull ghcr.io/chenhui-001/edu-ai-platform:2.0.0`。
+> `docker pull ghcr.io/chenhui-001/edu-ai-platform:%VERSION%`。
 
 ---
 

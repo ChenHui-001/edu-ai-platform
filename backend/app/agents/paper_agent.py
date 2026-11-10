@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
 from app.core.exception import BusinessException
-from app.models import KnowledgePoint, Paper, PaperItem, Question
+from app.models import (
+    KnowledgePoint, Paper, PaperItem, Question, QuestionBankType,
+)
 from app.services.question_usage import recount_usage as _recount_usage
 from app.utils.common import now_local
 
@@ -115,8 +117,12 @@ class PaperComposerAgent(BaseAgent):
                 p = r["parsed"]
                 parsed_params = (p.get("params") if isinstance(p, dict) else {}) or {}
 
-        subject_id = subject_id or parsed_params.get("subject_id") or 0
-        grade_id = grade_id or parsed_params.get("grade_id") or 0
+        # ★ 提示词明确规定「不要输出 grade_id / subject_id，只输出 grade_num / subject_name」
+        #   （模型猜的 id 会指向别的年级/学科）。所以这里必须**按名称反查 id**，
+        #   旧实现只读 id → 只传 request 时必然抛「无法识别学科」（P1-7）。
+        grade_id, subject_id = self._resolve_grade_subject(
+            db, grade_id, subject_id, parsed_params)
+
         total_score = float(parsed_params.get("total_score") or total_score)
         difficulty_ratio = difficulty_ratio or parsed_params.get("difficulty_ratio") or DIFFICULTY_WEIGHT
         type_ratio = type_ratio or parsed_params.get("type_ratio") or {
@@ -129,7 +135,8 @@ class PaperComposerAgent(BaseAgent):
 
         # 2. 规则组卷引擎
         plan = self._compose(
-            db, grade_id=grade_id, subject_id=subject_id, total_score=total_score,
+            db, user_id=user_id,
+            grade_id=grade_id, subject_id=subject_id, total_score=total_score,
             difficulty_ratio=difficulty_ratio, type_ratio=type_ratio, kp_ids=kp_ids,
         )
         if not plan["items"]:
@@ -180,18 +187,42 @@ class PaperComposerAgent(BaseAgent):
             },
             **report,
             "saved": bool(paper),
-            "tip": "" if plan["items"] else "",
+            # 约束被放宽过就说清楚，别让教师以为勾的知识点/难度都生效了（P1-11）
+            "relaxations": plan.get("relaxations") or [],
+            "tip": "；".join(plan.get("relaxations") or []),
         }
 
     # ---------------- 组卷引擎 ----------------
     def _compose(
         self, db: Session, *, grade_id: int, subject_id: int, total_score: float,
         difficulty_ratio: Dict[str, int], type_ratio: Dict[str, int], kp_ids: List[int],
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """按难度分布与题型分布从题库抽题，并平衡知识点覆盖。"""
+        """按难度分布与题型分布从题库抽题，并平衡知识点覆盖。
+
+        **必须带题库可见性过滤**：`Question.bank_type` 默认 `private`、
+        `status` 默认 `published`，只按 subject/type/difficulty 查会抽到
+        **别人已发布但私有**的题——预览里能看到他人题干，保存时又被
+        `_normalize_items` 以「无权使用题目」拒绝，表现为「抽到 N 题却保存失败」。
+        同项目 `question_agent.py` 与 `paper_compose.py` 都收窄了，只有这里漏（P1-6）。
+        """
         used: set = set()
         selected: List[Dict[str, Any]] = []
         coverage: Dict[str, int] = {}
+        # 放宽记录：知识点/难度被放宽过就如实上报，不能让教师以为约束生效了
+        relaxations: List[str] = []
+
+        def _visible(stmt):
+            """题库可见范围：公共库 ∪ 本人题目。
+
+            私有题只有作者能用；`bank_type` 为空的历史数据按私有处理（宁严不宽）。
+            """
+            from sqlalchemy import or_
+
+            cond = Question.bank_type == QuestionBankType.PUBLIC.value
+            if user_id:
+                cond = or_(cond, Question.owner_id == user_id)
+            return stmt.where(cond)
 
         # 题型分布可能是比例也可能是题量，先统一成整数题量（P0-4）
         type_counts = _split_counts(type_ratio, default_total=10)
@@ -219,12 +250,12 @@ class PaperComposerAgent(BaseAgent):
             # 题型 + 难度双维度抽题
             for diff, _w in diff_weights.items():
                 need = max(1, round(qty * _w / diff_total))
-                stmt = select(Question).where(
+                stmt = _visible(select(Question).where(
                     Question.subject_id == subject_id,
                     Question.type == qtype,
                     Question.difficulty == diff,
                     Question.status == "published",
-                )
+                ))
                 if grade_id:
                     stmt = stmt.where(Question.grade_id == grade_id)
                 if kp_ids:
@@ -244,37 +275,80 @@ class PaperComposerAgent(BaseAgent):
                         "type": q.type, "stem": q.stem, "knowledge_point": kp_name,
                         "section_name": f"一、{TYPE_LABEL.get(qtype, qtype)}（共 {qty} 题，每题 {avg} 分）",
                     })
-            # 难度配额不足时放宽难度
+            # 难度配额不足时**先放宽难度、保留知识点约束**。
+            # 旧实现这段兜底把 `knowledge_point_id.in_(kp_ids)` 丢了，
+            # 用户勾的知识点被静默忽略，卷子里混进无关题，而知识点覆盖报告
+            # 按"实际抽到的"统计 → 教师看不出约束没生效（P1-11）。
             if picked < qty:
-                stmt = select(Question).where(
-                    Question.subject_id == subject_id,
-                    Question.type == qtype,
-                    Question.status == "published",
+                picked = self._fallback_fill(
+                    db, qtype=qtype, qty=qty, picked=picked, avg=avg, used=used,
+                    selected=selected, coverage=coverage,
+                    subject_id=subject_id, grade_id=grade_id,
+                    kp_ids=kp_ids, visible=_visible,
                 )
-                if grade_id:
-                    stmt = stmt.where(Question.grade_id == grade_id)
-                for q in db.scalars(stmt.limit(qty * 3)).all():
-                    if picked >= qty:
-                        break
-                    if q.id in used:
-                        continue
-                    used.add(q.id)
-                    picked += 1
-                    kp = db.get(KnowledgePoint, q.knowledge_point_id) if q.knowledge_point_id else None
-                    kp_name = kp.name if kp else "综合"
-                    coverage[kp_name] = coverage.get(kp_name, 0) + 1
-                    selected.append({
-                        "question_id": q.id, "score": avg, "difficulty": q.difficulty,
-                        "type": q.type, "stem": q.stem, "knowledge_point": kp_name,
-                        "section_name": f"一、{TYPE_LABEL.get(qtype, qtype)}（共 {qty} 题，每题 {avg} 分）",
-                    })
+            # 仍然不足：才放宽知识点约束，并**显式记账**，不假装约束生效
+            if picked < qty and kp_ids:
+                before = picked
+                picked = self._fallback_fill(
+                    db, qtype=qtype, qty=qty, picked=picked, avg=avg, used=used,
+                    selected=selected, coverage=coverage,
+                    subject_id=subject_id, grade_id=grade_id,
+                    kp_ids=[], visible=_visible,
+                )
+                if picked > before:
+                    relaxations.append(
+                        f"{TYPE_LABEL.get(qtype, qtype)}：{picked - before} 题"
+                        f"不在所选知识点范围内（题库匹配不足，已放宽）")
 
         # 重新编号排序
         total_score_actual = round(sum(i["score"] for i in selected), 1)
         preview = [
             {**i, "sort_order": idx + 1} for idx, i in enumerate(selected)
         ]
-        return {"items": preview, "preview": preview, "actual_score": total_score_actual, "coverage": coverage}
+        return {
+            "items": preview, "preview": preview,
+            "actual_score": total_score_actual, "coverage": coverage,
+            "relaxations": relaxations,
+        }
+
+    def _fallback_fill(
+        self, db: Session, *, qtype: str, qty: int, picked: int, avg: float,
+        used: set, selected: List[Dict[str, Any]], coverage: Dict[str, int],
+        subject_id: int, grade_id: int, kp_ids: List[int], visible,
+    ) -> int:
+        """在指定约束下把某题型的缺口补齐，返回补后的已选数量。
+
+        单独成函数是为了让「先放宽难度、再放宽知识点」两轮共用同一段逻辑：
+        两轮只差 `kp_ids` 传不传，复制一份必然漂移（旧实现就是兜底那轮
+        把知识点条件整个丢了）。
+        """
+        stmt = visible(select(Question).where(
+            Question.subject_id == subject_id,
+            Question.type == qtype,
+            Question.status == "published",
+        ))
+        if grade_id:
+            stmt = stmt.where(Question.grade_id == grade_id)
+        if kp_ids:
+            stmt = stmt.where(Question.knowledge_point_id.in_(kp_ids))
+        for q in db.scalars(stmt.limit(max(qty, 1) * 3)).all():
+            if picked >= qty:
+                break
+            if q.id in used:
+                continue
+            used.add(q.id)
+            picked += 1
+            kp = (db.get(KnowledgePoint, q.knowledge_point_id)
+                  if q.knowledge_point_id else None)
+            kp_name = kp.name if kp else "综合"
+            coverage[kp_name] = coverage.get(kp_name, 0) + 1
+            selected.append({
+                "question_id": q.id, "score": avg, "difficulty": q.difficulty,
+                "type": q.type, "stem": q.stem, "knowledge_point": kp_name,
+                "section_name":
+                    f"一、{TYPE_LABEL.get(qtype, qtype)}（共 {qty} 题，每题 {avg} 分）",
+            })
+        return picked
 
     def _build_report(self, plan: Dict[str, Any], ratio: Dict[str, int]) -> Dict[str, Any]:
         """难度分析 + 知识点覆盖报告。"""
@@ -327,6 +401,60 @@ class PaperComposerAgent(BaseAgent):
         from app.models import Grade
         g = db.get(Grade, grade_id) if grade_id else None
         return g.name if g else "综合"
+
+    @staticmethod
+    def _resolve_grade_subject(
+        db: Session, grade_id: Optional[int], subject_id: Optional[int],
+        parsed: Dict[str, Any],
+    ) -> tuple:
+        """把「显式 id」或「模型给的名称/序号」解析成真实的 `(grade_id, subject_id)`。
+
+        为什么必须做：本 Agent 的提示词写得很明确——「**不要输出 grade_id /
+        subject_id**，你不知道系统内部主键，猜出来的 id 会指向别的年级/学科，
+        只输出 grade_num 与 subject_name」。而旧代码只读 id，全仓也没有任何
+        一处做名称→id 映射，于是「只传 request」这条主路径稳定报
+        「无法识别学科」（P1-7）。
+
+        `Subject` 的唯一键是 `(grade_id, name)`，所以**不能只按 name 查**：
+        「数学」在 1~9 年级各有一条记录，按名称裸查会随机命中某个年级的数学，
+        进而触发「题目年级/学科与试卷不一致」。先定位年级，再按 (grade_id, name) 过滤。
+        """
+        from app.models import Grade, Subject
+
+        try:
+            gid = int(grade_id or 0)
+        except (TypeError, ValueError):
+            gid = 0
+        try:
+            sid = int(subject_id or 0)
+        except (TypeError, ValueError):
+            sid = 0
+
+        grade = db.get(Grade, gid) if gid else None
+        if grade is None:
+            # 提示词要求的是年级序号（1-9），不是主键
+            raw = parsed.get("grade_num") or parsed.get("grade")
+            try:
+                num = int(raw)
+            except (TypeError, ValueError):
+                num = 0
+            if 1 <= num <= 9:
+                grade = db.scalar(select(Grade).where(Grade.grade_num == num))
+
+        subject = db.get(Subject, sid) if sid else None
+        if subject is None:
+            name = str(parsed.get("subject_name") or "").strip()
+            if name:
+                stmt = select(Subject).where(Subject.name == name)
+                if grade is not None:
+                    stmt = stmt.where(Subject.grade_id == grade.id)
+                subject = db.scalar(stmt.order_by(Subject.id).limit(1))
+
+        # 只给了学科、没给年级：按学科的归属年级补齐，避免下游拿 grade_id=0 去抽题
+        if grade is None and subject is not None:
+            grade = db.get(Grade, subject.grade_id)
+
+        return (grade.id if grade else 0, subject.id if subject else 0)
 
     # ---------------- AI 补题 ----------------
     def _ai_fill(

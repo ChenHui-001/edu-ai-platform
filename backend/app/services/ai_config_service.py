@@ -276,11 +276,11 @@ def _reload_llm_client() -> None:
     模块级镜像），所以这里分两件事做：
 
     1. `llm_breaker.reset_all()` —— 清 DB 行 + 本地镜像（**跨进程立即解除**）；
-    2. 清各实例的 `_client` / `_fallback_reason` —— 这两个仍是进程内缓存
+    2. 清实例的 `_clients` / `_fallback_reason` —— 这两个仍是进程内缓存
        （连接池与最近降级原因），必须重建才能用上新密钥。
 
-    仍然遍历两个实例：虽然熔断已共享，但 `_client`（连接池）是各实例自己的，
-    只清一个会出现「部分功能用新密钥、部分用旧连接 + 旧 base_url」的鬼现象。
+    只清**一个**实例就够了：`get_llm()` 现在返回的就是模块级 `llm_client`
+    （P1-12 收敛），进程里不再有第二份客户端。
     """
     try:
         from app.agents import llm as _llm_mod
@@ -289,15 +289,10 @@ def _reload_llm_client() -> None:
         # 先清熔断：让下次 get_client() 的判定立刻放行（同步执行，见其 docstring）。
         llm_breaker.reset_all()
 
-        targets = [_llm_mod.llm_client]
-        while_single = getattr(_llm_mod, "_llm_singleton", None)
-        if while_single is not None and while_single is not _llm_mod.llm_client:
-            targets.append(while_single)
-        for c in targets:
-            # 场景级路由后每个实例持有多份客户端缓存，统一清空，
-            # 不能只置 `_client = None`（那样快场景会一直用旧参数）。
-            c.reset_clients()
-        logger.info(f"LLM 客户端已重载（{len(targets)} 个实例，熔断/冷却已跨进程复位）")
+        # reset_clients() 内部会连带清空 `_get_db_value` 的 TTL 缓存，
+        # 所以不必再单独 clear_config_cache()。
+        _llm_mod.llm_client.reset_clients()
+        logger.info("LLM 客户端已重载（单实例，熔断/冷却已跨进程复位）")
     except Exception as exc:
         logger.warning(f"重载 LLM 客户端失败: {exc}")
 

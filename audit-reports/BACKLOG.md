@@ -3,7 +3,7 @@
 > **本文件是唯一入口。** 其他 `audit-reports/*.md` 只作为「当时的证据与复现记录」保留，
 > 新发现一律往这里加一行，不再新开报告。修复进度以本文件的「状态」列为准。
 >
-> 基线：`VERSION=2.5.19`，master `8abab94`（2026-11-10）
+> 基线：`VERSION=2.5.21`，master（2026-11-10 第二轮修复后）
 > 来源：`paper-analysis-2026-11-10.md`（P0×4 / P1×11 / P2×20）+ `structured-assessment-2.5.19-2026-11-10.md`（§5.5）
 > 状态图例：`已修` = 本轮已改并验证；`待修` = 确认存在未处理；`待评估` = 需先确认影响面
 
@@ -18,7 +18,7 @@
 | P0-3 | AI 一键组卷「只写描述、不选年级学科」异步路径 100% 失败 | `api/v1/paper_compose.py` | **已修** | 抽出 `_ai_resolve_params()`，同步 `/compose/ai` 与异步 `/compose/ai/async` 共用；修正 `compose_ai_async` docstring。反向验证：`出一份一年级数学期中卷` → 解析出 grade=1 / subject=2（不依赖 LLM） |
 | P0-4 | 智能组卷 Agent 默认比例被 `int()` 截断 → 恒 0 题 + `NoneType` 崩溃 | `agents/paper_agent.py` | **已修** | 新增 `_split_counts()` 区分「比例/题量」并保证合计对齐；难度权重按 float 归一；`_ai_fill` 的 `PaperItem` 写入加 `paper is not None` 守卫，逐题 commit 改为一轮。反向验证：默认参数 10 题、`save=False` 不崩 |
 | P0-5 | 列表页「编辑试卷」整卷覆盖写 → 抹平标准卷大题结构；删题后成绩不重算 | `PaperManage.vue` / `question.py` / `paper_compose.py` | **已修** | 详情接口回传 `section_code/section_sort`；前端 `openDialog`/`save`/`applyRecommendations` 全链路透传；`_normalize_paper_items` 保留三件套 |
-| P0-6 | 无自动化行为回归，35 项修复无用例护航 | `tools/` / `backend/qa_audit_suite.py` | **已补** | 新增 `tools/verify_p0_fixes.py`（21 条接口级断言，临时库 + TestClient 走真实 HTTP，约 17s），覆盖 P0-1/3/4、P1-1/4、F-03，已接入 `auto_ship.sh` 的「0.4 行为回归」段 |
+| P0-6 | 无自动化行为回归，35 项修复无用例护航 | `tools/` / `backend/qa_audit_suite.py` | **已补** | 新增 `tools/verify_p0_fixes.py`（32 条接口级断言，临时库 + TestClient 走真实 HTTP，约 20s），覆盖 P0-1/3/4、P1-1/4/9/10、F-03，已接入 `auto_ship.sh` 的「0.4 行为回归」段 |
 
 ## P1 — 限制迭代速度与规模
 
@@ -28,15 +28,15 @@
 | P1-2 | 编辑页改名称/时长后保存按钮恒灰 | `views/teacher/PaperEdit.vue` | **已修**（meta 基线快照 → 置 dirty） |
 | P1-3 | 「重构大题」静默清空未保存修改 | `views/teacher/PaperEdit.vue` | **已修**（dirty 时二次确认） |
 | P1-4 | 删题后成绩不重算；重算时总分与客观分矛盾 | `api/v1/paper_compose.py` | **已修**（`remove_item` 复用 `_recalculate_after_change`；重算 `objective/subjective`；无作答行的提交跳过并上报 `skipped_no_answer`） |
-| P1-5 | 版本回溯只还原 `name`/`duration` | `services/paper_version_service.py` | 待修 |
-| P1-6 | 组卷抽题不做题库可见性过滤 → 预览泄露他人私有题 | `api/v1/paper_compose.py` | 待修 |
-| P1-7 | 自然语言组卷 LLM 契约与解析代码矛盾 | `agents/paper_agent.py` 提示词 | 待修 |
-| P1-8 | 异步轮询一次抖动即中断整条链路 | `views/teacher/PaperWizard.vue` | 待修 |
-| P1-9 | 编辑页保存无版本冲突检测，后写覆盖先写 | `api/v1/paper_compose.py` | 待修 |
-| P1-10 | 学生自主组卷题型下拉重复 + 默认值导致填空题抽不到 | `views/student/CustomPaper.vue` | 待修 |
-| P1-11 | 「放宽难度」兜底查询丢掉知识点约束 | `api/v1/paper_compose.py` | 待修 |
-| P1-12 | `llm.py` 双实例各熔各的 / `_get_db_value` 每次开新 Session | `agents/llm.py` | 部分（已加全局并发闸门，双实例未收敛） |
-| P1-13 | 文档基线漂移（README 仍写镜像 2.0.0、ARCHITECTURE_ASSESSMENT 停在 2.2.19） | `README.md` / `docs/` | 待修 |
+| P1-5 | 版本回溯只还原 `name`/`duration` | `api/v1/paper_compose.py` | **已修**（补 `description/difficulty_ratio/exam_type/standard_id`，`status` 刻意不回滚；回传 `restored_fields`/`kept_fields`/`total_score_note`，前端弹「回溯结果」逐项说明） |
+| P1-6 | 组卷抽题不做题库可见性过滤 → 预览泄露他人私有题 | `agents/paper_agent.py` | **已修**（`_visible()` = public 或本人 owner） |
+| P1-7 | 自然语言组卷 LLM 契约与解析代码矛盾 | `agents/paper_agent.py` | **已修**（`_resolve_grade_subject()` 名称/序号 → id 反查，不再强依赖 LLM 返回 id） |
+| P1-8 | 异步轮询一次抖动即中断整条链路 | `views/teacher/PaperWizard.vue` | **已修**（连续 3 次才判失败、失败文案提示先去确认避免重复组卷；`onUnmounted` 置中止标志） |
+| P1-9 | 编辑页保存无版本冲突检测，后写覆盖先写 | `api/v1/paper_compose.py` / `views/teacher/PaperEdit.vue` | **已修**（新增 `ConflictException`(409)；`update_items` 比对 `current_version` 并回传双方版本；前端带版本号保存，409 时给「重新载入 / 留在本页」二选一） |
+| P1-10 | 学生自主组卷题型下拉重复 + 默认值导致填空题抽不到 | `views/student/CustomPaper.vue` / `learning/tools.py` | **已修**（只用 `QUESTION_TYPE_LABELS`，默认改 `blank`，提交前归一别名；`pick_practice_questions()` 逐级放宽并回传 `relaxations`；补回 `total_score`） |
+| P1-11 | 「放宽难度」兜底查询丢掉知识点约束 | `agents/paper_agent.py` | **已修**（`_fallback_fill()` 分两轮：先放宽难度保留知识点，仍不足才放宽知识点，`relaxations` 写进返回体与 `tip`） |
+| P1-12 | `llm.py` 双实例各熔各的 / `_get_db_value` 每次开新 Session | `agents/llm.py` | **已修**（`get_llm()` 返回模块级 `llm_client`，单实例；`_get_db_value` 加 2s TTL 缓存，`reset_clients()` 连带清空） |
+| P1-13 | 文档基线漂移（README 仍写镜像 2.0.0、ARCHITECTURE_ASSESSMENT 停在 2.2.19） | `README.md` / `docs/` | **已修**（拉镜像命令改用 `VERSION` 变量不再写死；架构评估加「时点快照」声明并指向本 backlog） |
 | P1-14 | `index.html` 锁 `user-scalable=no` | `frontend/index.html` | **已修** |
 | P1-15 | 多 worker 前提未闭合（IP 桶 / 限流缓存 / RAG 集合均进程内） | `core/security.py` 等 | 待评估（当前刻意单 worker） |
 

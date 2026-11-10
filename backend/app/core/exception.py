@@ -43,6 +43,19 @@ class BusinessException(AppException):
         super().__init__(message, 400, detail)
 
 
+class ConflictException(AppException):
+    """版本冲突（乐观锁失败）。
+
+    单独一个类而不用 `BusinessException`：要用 409 让前端能区分
+    「参数不合法」与「你手里的数据过期了」——后者的正确处理是刷新重试，
+    前者是改输入。混成 400 时前端只能统一弹一句无用的"操作失败"。
+    """
+
+    def __init__(self, message: str = "该数据已被他人修改，请刷新后重试",
+                 detail: Any = None):
+        super().__init__(message, 409, detail)
+
+
 def _body(code: int, message: str, detail: Any = None) -> Dict[str, Any]:
     payload: Dict[str, Any] = {"code": code, "message": message, "success": code == 200}
     if detail is not None:

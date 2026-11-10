@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.utils.common import PageParams, dictify, load_json, now_local, ok, today_str
 from app.utils.options import normalize_options
+from app.services import grading_service
 
 router = APIRouter()
 
@@ -338,32 +339,27 @@ def create_custom_paper(
         if same:
             subject_id = same.id
 
+    relaxations: list = []
     if question_ids:
         # 手动选题模式
         qs = db.scalars(select(Question).where(
             Question.id.in_(question_ids), Question.status == "published"
         )).all()
     else:
-        # 随机抽题模式
-        stmt = select(Question).where(
-            Question.subject_id == subject_id, Question.status == "published"
-        )
-        if data.get("knowledge_point_ids"):
-            stmt = stmt.where(Question.knowledge_point_id.in_(data["knowledge_point_ids"]))
-        if data.get("difficulty"):
-            stmt = stmt.where(Question.difficulty == data["difficulty"])
-        if data.get("question_types"):
-            stmt = stmt.where(Question.type.in_(data["question_types"]))
-        # 年级过滤此前被完全忽略：data.get("grade_id") 只在最后给 Paper 赋值时
-        # 用到，抽题语句里没有它，界面上的「年级」下拉是个摆设。
-        if target_grade:
-            stmt = stmt.where(Question.grade_id == target_grade)
+        # 随机抽题模式：抽题与「不足时逐级放宽」统一走 service，
+        # 不再在这里另写一份（两个调用点各写一份的结果是：/learning/practice
+        # 会放宽并说明，/learning/custom-paper 却静默返回更少的题目）。
         try:
             count = int(data.get("count", 10))
         except (TypeError, ValueError):
             raise BusinessException("题目数量必须是整数")
         count = max(1, min(count, 30))
-        qs = list(db.scalars(stmt.order_by(func.random()).limit(count)).all())
+        qs, relaxations = grading_service.pick_practice_questions(
+            db, subject_id=subject_id, grade_id=target_grade, count=count,
+            question_types=data.get("question_types"),
+            difficulty=data.get("difficulty"),
+            knowledge_point_ids=data.get("knowledge_point_ids"),
+        )
 
     if not qs:
         raise BusinessException("没有符合条件的题目")
@@ -384,7 +380,9 @@ def create_custom_paper(
     db.add(task)
     db.commit()
     return ok({"task_id": task.id, "paper_id": paper.id, "total": len(qs),
-               "total_score": total_score},
+               "total_score": total_score,
+               # 条件凑不满时如实上报（空列表 = 完全按你的要求出的题）
+               "relaxations": relaxations},
               message=f"组卷成功，共 {len(qs)} 题")
 
 

@@ -40,7 +40,9 @@ from sqlalchemy.orm import Session, noload
 from app.api.deps import require_perm
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exception import BusinessException, NotFoundException, PermissionException
+from app.core.exception import (
+    BusinessException, ConflictException, NotFoundException, PermissionException,
+)
 from app.models import (
     Answer, ExamStandard, Grade, KnowledgePoint, Paper, PaperFavorite, PaperItem,
     PaperShare, PaperStatus, PaperVersion, Question, SharePermission,
@@ -2012,6 +2014,24 @@ def update_items(
         raise NotFoundException("试卷不存在")
     _assert_can_edit(db, paper, user)
 
+    # 乐观锁：前端把读到的 current_version 带回来，不匹配说明期间有人保存过。
+    # 没有这道判定时，后保存者会用陈旧题表整卷覆盖，先保存者的改动被静默丢弃，
+    # 双方都收到「已保存」（P1-9）。不带该字段的调用方（旧前端/脚本）保持原行为。
+    client_version = data.get("current_version")
+    if client_version is not None:
+        try:
+            client_version = int(client_version)
+        except (TypeError, ValueError):
+            raise BusinessException("current_version 必须是整数")
+        server_version = int(paper.current_version or 1)
+        if client_version != server_version:
+            raise ConflictException(
+                f"该试卷已被他人修改（你基于 v{client_version}，当前已是 "
+                f"v{server_version}）。请刷新页面确认最新内容后再保存。",
+                detail={"current_version": server_version,
+                        "your_version": client_version},
+            )
+
     raw_items = data.get("items")
     items = _normalize_items(db, user, raw_items, paper.grade_id, paper.subject_id)
     if not items:
@@ -2482,16 +2502,62 @@ def restore_version(
 
     _write_items(db, paper, restore_items)
     paper_data = snapshot.get("paper") or {}
+    # ★ 快照里存了 8 个卷级字段，旧实现只还原 name/duration —— 回溯产出的是
+    #   「旧题项 + 新卷级元数据」的混合体：卷面说明、命题标准、难度分布都对不上，
+    #   而 UI 写着"已回溯到 vN"，教师会以为完全回到历史状态（P1-5）。
+    restored_fields: List[str] = []
+    kept_fields: List[str] = []
+
     if paper_data.get("name"):
         paper.name = str(paper_data["name"])[:128]
+        restored_fields.append("name")
     if paper_data.get("duration"):
         paper.duration = int(paper_data["duration"])
+        restored_fields.append("duration")
+    if paper_data.get("description") is not None:
+        paper.description = paper_data["description"]
+        restored_fields.append("description")
+    if paper_data.get("difficulty_ratio") is not None:
+        # 该列是 Text（存 JSON 字符串）；快照里可能已是 str 或 list/dict
+        raw_ratio = paper_data["difficulty_ratio"]
+        paper.difficulty_ratio = (
+            raw_ratio if isinstance(raw_ratio, str)
+            else json.dumps(raw_ratio, ensure_ascii=False))
+        restored_fields.append("difficulty_ratio")
+    if paper_data.get("exam_type"):
+        paper.exam_type = paper_data["exam_type"]
+        restored_fields.append("exam_type")
+    std_id = paper_data.get("standard_id")
+    if std_id:
+        if db.get(ExamStandard, int(std_id)):
+            paper.standard_id = int(std_id)
+            restored_fields.append("standard_id")
+        else:
+            # 命题标准已被删除：保留当前值并说明，不能写一个悬空外键
+            kept_fields.append("standard_id（原命题标准已删除，保留当前值）")
+    # status 刻意不还原：把已发布/已归档的卷改回旧状态会绕过发布审批，
+    # 属于状态机越权。这里如实告知，而不是悄悄回滚。
+    kept_fields.append("status（不随回溯回滚，避免绕过发布审批）")
+
     paper.current_version = (paper.current_version or 1) + 1
     version_svc.snapshot(db, paper, user.id, change_note=f"回溯到 v{version}")
     db.commit()
     body = {"id": paper.id, "restored_from": version,
             "current_version": paper.current_version,
-            "item_count": len(restore_items)}
+            "item_count": len(restore_items),
+            "restored_fields": restored_fields,
+            "kept_fields": kept_fields,
+            # 总分一律按**已恢复的题项**重算（题库删题后历史总分不可信），
+            # 与快照值不同就一并回传，让调用方能解释差异
+            "total_score": paper.total_score,
+            "snapshot_total_score": (snapshot.get("paper") or {}).get("total_score")}
+    snap_total = (snapshot.get("paper") or {}).get("total_score")
+    if snap_total is not None and abs(float(snap_total) - float(paper.total_score or 0)) > 0.01:
+        # `_write_items` 按恢复后的题项重算总分，所以两者不同只可能是
+        # 「快照里的部分题目在题库中已被删除、无法还原」
+        body["total_score_note"] = (
+            f"总分已按恢复后的题项重算为 {paper.total_score}，"
+            f"与快照记录的 {snap_total} 不同（部分题目在题库中已删除）")
     if missing:
         body["missing_question_ids"] = missing
         body["warning"] = f"{len(missing)} 道题在题库中已删除，已跳过"

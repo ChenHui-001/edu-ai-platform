@@ -33,7 +33,7 @@
 
         <el-form-item label="题型">
           <el-checkbox-group v-model="form.question_types">
-            <el-checkbox v-for="(l, v) in TYPES" :key="v" :value="v">{{ l }}</el-checkbox>
+            <el-checkbox v-for="(l, v) in TYPE_LABELS" :key="v" :value="v">{{ l }}</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
 
@@ -64,6 +64,11 @@
 
     <el-card shadow="never" class="mt16" v-if="result">
       <template #header><b>组卷结果</b></template>
+      <el-alert v-if="result.relaxations && result.relaxations.length" type="warning"
+                :closable="false" show-icon class="mb16"
+                title="以下条件题库里凑不够，已自动放宽">
+        <div v-for="(r, i) in result.relaxations" :key="i">· {{ r }}</div>
+      </el-alert>
       <el-result icon="success" :title="`组卷成功：${result.total} 题`"
                  :sub-title="`满分 ${result.total_score} 分`">
         <template #extra>
@@ -81,7 +86,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh, MagicStick } from '@element-plus/icons-vue'
-import TYPES from '@/constants/question'
+import { QUESTION_TYPE_ALIAS, QUESTION_TYPE_LABELS as TYPE_LABELS } from '@/constants/question'
 import { learningApi, eduApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
@@ -94,9 +99,16 @@ const generating = ref(false)
 const result = ref(null)
 
 
+/**
+ * 题型选项只用**规范枚举**（QUESTION_TYPE_LABELS），不要用合并了别名的默认导出。
+ *
+ * 合并版里 `fill` 与 `blank` 都映射成「填空题」，渲染出来是两个同名复选框；
+ * 而默认勾选的恰好是别名 `fill` —— 后端按 `type == 'fill'` 查库一条都匹配不到，
+ * 于是「填空题」选项形同虚设（P1-10）。
+ */
 const form = reactive({
   name: '', subject_id: null, grade_id: null, count: 10,
-  question_types: ['single', 'multiple', 'judge', 'fill'],
+  question_types: ['single', 'multiple', 'judge', 'blank'],
   difficulty: '', knowledge_point_ids: []
 })
 
@@ -125,20 +137,32 @@ async function onSubjectChange() {
 function resetForm() {
   Object.assign(form, {
     name: '', subject_id: null, grade_id: null, count: 10,
-    question_types: ['single', 'multiple', 'judge', 'fill'], difficulty: '', knowledge_point_ids: []
+    question_types: ['single', 'multiple', 'judge', 'blank'], difficulty: '', knowledge_point_ids: []
   })
   kps.value = []
   result.value = null
 }
 
+/** 提交前把历史别名归一到后端枚举（`fill`→`blank` 等），避免后端一条都查不到 */
+function normalizeTypes(list) {
+  const out = []
+  for (const t of list || []) {
+    const v = QUESTION_TYPE_ALIAS[t] || t
+    if (v && !out.includes(v)) out.push(v)
+  }
+  return out
+}
+
 async function generate() {
   if (!form.subject_id) return ElMessage.warning('请选择学科')
+  if (!form.question_types.length) return ElMessage.warning('请至少选择一种题型')
   generating.value = true
   result.value = null
   try {
     const gradeId = form.grade_id || currentGradeId()
     const res = await learningApi.customPaper({
       ...form,
+      question_types: normalizeTypes(form.question_types),
       grade_id: gradeId,
       subject_id: resolveSubjectId(subjects.value, form.subject_id, gradeId)
     })

@@ -1,5 +1,13 @@
 # 架构评估报告 · 新芽学堂（edu-ai-platform）
 
+> **这是一份时点快照，不是当前状态的描述。** 下文所有数字（代码行数、端点
+> 数、评分）都取自 2.2.19，项目之后又走了几十个版本：`tests/` 目录被移除后
+> 改由 `qa_audit_suite.py` + `tools/verify_p0_fixes.py` 承担回归，路由层业务
+> 逻辑已大面积下沉到 `services/`，迁移与门禁体系也补齐了（见仓库 `tools/`）。
+> **最新的债务清单与修复进度以 `audit-reports/BACKLOG.md` 为准**；
+> 最近一次全量评估是 `audit-reports/structured-assessment-2.5.19-2026-11-10.md`。
+> 保留本文件是为了留住当时的判断依据与推理过程，请不要据此判断当前实现。
+>
 > 评估对象：`E:/project/management/edu-ai-platform`，版本 **2.2.19**（master @ ec3f013）
 > 评估日期：2026-11-02
 > 评估方法：全量静态扫描（代码规模、端点、模型、依赖、CI 配置）+ 关键链路代码精读（认证、组卷、判分、Agent 编排、LLM 熔断、前端请求层）

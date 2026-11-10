@@ -5,8 +5,9 @@
 import json
 import re
 import threading
+import time
 from datetime import timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -75,10 +76,9 @@ def is_available() -> bool:
     长期报 llm_enabled=false，看起来像配置丢失。鉴权失败（401/403）属于
     配置错误，必须持久反映为不可用，直到管理员改配置触发重载。
 
-    B1 之后熔断状态是**进程无关**的（`services/llm_breaker`）：
-    不再需要遍历 `(_llm_singleton, llm_client)` 两个实例各查一遍 ——
-    两份实例状态曾经会不同步（一处熔断、另一处还在用无效密钥撞 401），
-    现在全进程只有一份本地镜像 + 一份 DB 行，天然一致。
+    B1 之后熔断状态是**进程无关**的（`services/llm_breaker`），
+    而 P1-12 之后进程内也只剩一份客户端（`get_llm()` 返回 `llm_client`），
+    所以这里不需要再去多个实例上分别查状态。
     """
     from app.services import llm_breaker
 
@@ -120,13 +120,48 @@ def resolve_scenario(biz_type: Optional[str]) -> str:
         return SCENARIO_DEFAULT
     return SCENARIO_FAST if str(biz_type).strip() in allowed else SCENARIO_DEFAULT
 
-# 进程级单例，声明必须在 is_available() 之前：函数体在调用时才求值，
-# 但保持在定义前声明可避免「先使用后声明」的阅读困惑与静态工具告警。
-_llm_singleton: Optional["LLMClient"] = None
+
+# `_get_db_value` 的短 TTL 缓存。
+#
+# 为什么需要：本函数每次调用都 `SessionLocal()` 开一个新连接。一次 LLM 调用
+# 的路径是 `resolve_scenario()` → 1 次、`get_client()` 冷启动 → 7~9 次，
+# `/agent/status` 每次刷新 → 2 次。组卷高峰期这些都是纯开销，且把 SQLite
+# 连接池（WAL 单写者）当作热点在读。
+#
+# 为什么是 TTL 而不是请求级缓存：调用方散布在 Agent、API、后台线程里，没有
+# 统一的请求边界可用；2 秒的窗口足以吃掉同一次调用的重复读取，又不会让
+# 「管理员改配置」看起来没生效（保存配置时 `reset_clients()` 会立即清空，
+# 根本不用等 TTL 过期）。
+_DB_CACHE_TTL_SECONDS = 2.0
+_db_cache: Dict[str, Tuple[float, Any]] = {}
+_db_cache_lock = threading.Lock()
+
+
+def clear_config_cache() -> None:
+    """清空配置读缓存（配置变更后必须调用，否则最长 2 秒内读到旧值）。"""
+    with _db_cache_lock:
+        _db_cache.clear()
 
 
 def _get_db_value(key: str, value_type: str, default: Any) -> Any:
-    """从 sys_config 表读取配置值，优先级高于 settings。失败则回退到 settings。"""
+    """从 sys_config 表读取配置值，优先级高于 settings。失败则回退到 settings。
+
+    带 2 秒 TTL 缓存，见 `_DB_CACHE_TTL_SECONDS` 的说明。
+    """
+    now = time.monotonic()
+    with _db_cache_lock:
+        hit = _db_cache.get(key)
+    if hit is not None and now - hit[0] < _DB_CACHE_TTL_SECONDS:
+        return hit[1]
+
+    val = _read_db_value(key, value_type, default)
+    with _db_cache_lock:
+        _db_cache[key] = (now, val)
+    return val
+
+
+def _read_db_value(key: str, value_type: str, default: Any) -> Any:
+    """真正去库里读一次（无缓存）。"""
     val: Any = default
     try:
         from app.core.database import SessionLocal
@@ -215,7 +250,7 @@ class LLMClient:
         #     self._cooldown_until = 0.0     # 限流冷却（429，指数退避，monotonic）
         #     self._rate_limit_streak = 0
         # 三个问题：
-        # 1. 进程里有**两个实例**（模块级 llm_client 与 get_llm() 单例），
+        # 1. 历史上进程里曾有**两个实例**（模块级 llm_client 与 get_llm() 单例），
         #    各熔各的 → 一处熔断、另一处继续撞 401，另半边功能静默拖慢；
         # 2. 多 worker 时各进程各熔各的 → N 倍无谓 401 往返；
         # 3. `_cooldown_until` 存 `time.monotonic()`，跨进程比较无意义。
@@ -395,9 +430,13 @@ class LLMClient:
 
         只清一个场景会出现「题目类用新模型、教案类还连着旧连接池」的
         鬼现象；统一 clear 才能保证一次配置变更对所有调用同时生效。
+
+        同时清 `_get_db_value` 的 TTL 缓存：不清的话，配置刚保存、客户端
+        却拿着缓存里的旧 api_key/base_url 重建，最长 2 秒内「保存了但没生效」。
         """
         self._clients.clear()
         self._fallback_reason = ""
+        clear_config_cache()
 
     def chat(
         self,
@@ -594,11 +633,15 @@ class LLMClient:
 
 
 def get_llm() -> "LLMClient":
-    """进程级 LLMClient 单例（复用 ChatOpenAI 连接池与配置）。"""
-    global _llm_singleton
-    if _llm_singleton is None:
-        _llm_singleton = LLMClient()
-    return _llm_singleton
+    """进程级 LLMClient 单例 —— 与模块级 `llm_client` 是**同一个对象**。
+
+    这里以前会另建一份 `_llm_singleton`，而 `agents/base.py` 用的是模块级
+    `llm_client`，于是进程里同时活着两个实例：配置重载要遍历两遍、
+    `_fallback_reason`/连接池各一份、历史上的熔断状态也是各熔各的
+    （一处熔断、另一处继续拿无效密钥撞 401）。现在统一返回 `llm_client`，
+    「进程内只有一份 LLM 客户端」变成代码事实而不是注释约定。
+    """
+    return llm_client
 
 
 def log_agent_call(

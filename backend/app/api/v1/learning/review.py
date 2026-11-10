@@ -223,7 +223,7 @@ def create_practice(
         if same:
             subject_id = same.id
 
-    paper = grading_service.create_practice_paper(
+    paper, relaxations = grading_service.create_practice_paper(
         db, creator_id=user.id,
         grade_id=grade_id, subject_id=subject_id,
         count=count,
@@ -232,7 +232,12 @@ def create_practice(
         knowledge_point_ids=data.get("knowledge_point_ids"),
     )
     task = grading_service.create_practice_task(db, user.id, paper)
-    return ok({"task_id": task.id, "paper_id": paper.id, "total": len(paper.items)},
+    return ok({"task_id": task.id, "paper_id": paper.id, "total": len(paper.items),
+               # 前端结果卡片要显示「满分 X 分」，原来没回传，页面渲染成
+               # 「满分 undefined 分」
+               "total_score": paper.total_score,
+               # 条件没被满足时如实上报，别让学生以为"要的是填空题、给的也是填空题"
+               "relaxations": relaxations},
               message="练习已生成")
 
 

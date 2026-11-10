@@ -522,7 +522,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -559,14 +559,54 @@ const composing = ref(false)
 const composeProgress = ref(0)
 const composeStage = ref('')
 
+/**
+ * 轮询中止标志：组件卸载（教师切走 / 关标签页）后不再继续查询。
+ *
+ * 后端任务不受影响（状态在 `sys_agent_job`，仍会跑完），这里只是不再对着
+ * 已销毁的组件写响应式状态，也不在别的页面上弹「组卷失败」。
+ */
+let pollAborted = false
+/** 连续网络失败容忍次数：单次抖动不算任务失败 */
+const POLL_MAX_NET_FAIL = 3
+
+function pollAbortError() {
+  const err = new Error('已离开组卷页面，停止查询进度')
+  // 标记已处理：卸载后不要再用全局 toast 打扰用户
+  err.__handled = true
+  return err
+}
+
 async function pollComposeJob(jobId) {
   // 15 分钟上限，与后端 agent_job_state.AGENT_TIMEOUT_SECONDS.paper_compose
   // (900s) 对齐。题库空时并发补题最坏 2 轮 ×240s ≈ 400s+，旧值 10 分钟
   // 会在后端 900s 判定之前先弹错，教师重试后卷子/草稿题重复生成。
   const deadline = Date.now() + 15 * 60 * 1000
+  pollAborted = false
+  let netFail = 0
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 2000))
-    const res = await questionApi.composeJob(jobId)
+    if (pollAborted) throw pollAbortError()
+
+    let res
+    try {
+      res = await questionApi.composeJob(jobId)
+    } catch (e) {
+      // 单次查询失败 ≠ 任务失败。旧实现让异常直接冒到 doCompose 的 catch，
+      // 教师看到「组卷失败」就去重试 —— 而后端任务其实还在跑甚至已经跑完，
+      // 结果是同一个卷子生成两遍、草稿题重复入库（P1-8）。
+      // 网络切换、后端重启瞬间都会触发，容忍连续 3 次再判定。
+      netFail += 1
+      if (netFail >= POLL_MAX_NET_FAIL) {
+        throw new Error(
+          `查询组卷进度连续失败 ${netFail} 次（${e?.message || '网络异常'}）。`
+          + '任务可能仍在后台运行，请先到「我的试卷」确认没有结果再重新组卷，避免重复生成。',
+          { cause: e }
+        )
+      }
+      composeStage.value = `网络抖动，重试中（${netFail}/${POLL_MAX_NET_FAIL}）`
+      continue
+    }
+    netFail = 0
     const d = res.data || {}
     composeProgress.value = Number(d.progress) || 0
     composeStage.value = d.stage || ''
@@ -864,6 +904,10 @@ onMounted(async () => {
     metaLoading.value = false
   }
 })
+
+// 卸载后停止轮询：否则 2 秒一次的查询会持续到 15 分钟上限，
+// 期间还可能往已销毁的组件写 composeProgress，并在新页面上弹错误 toast。
+onUnmounted(() => { pollAborted = true })
 
 async function onGradeChange() {
   form.subject_id = null
