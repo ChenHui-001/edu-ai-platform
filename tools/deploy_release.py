@@ -122,9 +122,7 @@ class Remote:
         self.dry = dry_run
         self.c = None
 
-    def __enter__(self):
-        if self.dry:
-            return self
+    def _connect(self):
         pwd = load_pass()
         if not pwd:
             raise SystemExit(_fail(3, "找不到部署凭据：设 DEPLOY_PASS 或放 deploy_scripts/.deploy_pass"))
@@ -145,6 +143,33 @@ class Remote:
                 f"SSH 不可达（{type(exc).__name__}）。\n"
                 f"    先验证选路：PowerShell `Find-NetRoute -RemoteIPAddress {HOST}`\n"
                 f"    若指向 Meta/mihomo TUN 而非 WLAN，说明本机 /32 直连路由失效（见 GOTCHAS）。"))
+        # ⚠️ keepalive 是必需的，不是优化项。
+        # 实测：服务器上 `docker pull` 1.86GB 镜像耗时较久，期间 SSH 连接被
+        # 空闲超时单向掐断；paramiko **不会立刻报错**，而是在下一条命令
+        # （读 .secret_key）执行时抛 "SSH session not active" —— 报错点与
+        # 真正的断点相隔一条命令，看起来像随机故障。30s 一次心跳即可消除。
+        try:
+            self.c.get_transport().set_keepalive(30)
+        except Exception:  # noqa: BLE001 老版本 paramiko 可能没有该接口
+            pass
+
+    def _ensure_alive(self):
+        """连接被掐断时自动重连一次（长耗时命令之后尤其需要）。"""
+        tr = self.c.get_transport() if self.c else None
+        if tr is not None and tr.is_active():
+            return
+        print("    [自愈] SSH 连接已断开，重连一次…")
+        try:
+            if self.c:
+                self.c.close()
+        except Exception:  # noqa: BLE001
+            pass
+        self._connect()
+
+    def __enter__(self):
+        if self.dry:
+            return self
+        self._connect()
         return self
 
     def __exit__(self, *exc):
@@ -156,6 +181,7 @@ class Remote:
         if self.dry:
             print(f"    $ {cmd}")
             return ""
+        self._ensure_alive()
         # ⚠️ stdout / stderr **必须并发读**。
         # paramiko 的 channel 窗口默认 64KB：只读 stdout 时，若远端往 stderr
         # 写满窗口就会阻塞在 write() 上，命令永不退出 → 本地 read() 永不返回。
@@ -361,16 +387,18 @@ def main():
         print("== 3/6 备份数据库 ==")
         name = backup(remote, old_version, stamp)
 
-        print("== 4/6 拉取镜像 ==")
-        # -q：只要最终 digest，不要每层进度条。既省带宽噪音，也避免长输出
-        # 在 channel 里堆积（并发读 stderr 已修，但输出越小越不容易出问题）。
-        remote.run(f"docker pull -q {image}", timeout=1800)
+        print("== 4/6 读取密钥并拉取镜像 ==")
+        # **先读密钥再拉镜像**：拉取是整个流程里最长的命令（1.86GB），
+        # 把关键读取放在它前面，长命令之后就不再依赖连接存活。
         secret = remote.run(f"cat {BASE_DIR}/.secret_key", quiet=True).strip()
         if not secret and not args.dry_run:
             print("  [!!] 服务器缺 .secret_key，中止（重建会让 JWT 全失效）")
             return 1
         if args.dry_run:
             secret = "$(cat {}/.secret_key)".format(BASE_DIR)
+        # -q：只要最终 digest，不要每层进度条。既省带宽噪音，也避免长输出
+        # 在 channel 里堆积（并发读 stderr 已修，但输出越小越不容易出问题）。
+        remote.run(f"docker pull -q {image}", timeout=1800)
 
         env, src = collect_env(remote)
         print(f"  环境基线：{src}（{len(env)} 项）")
