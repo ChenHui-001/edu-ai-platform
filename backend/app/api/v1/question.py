@@ -1231,10 +1231,20 @@ def _normalize_paper_items(
         if not math.isfinite(score) or score < 0 or score > 1000:
             raise BusinessException(f"题目分值需在 0~1000 之间（id={qid}）")
         section = raw.get("section_name")
+        # 大题结构必须透传：`_write_items` 靠 section_code 分组、section_sort 排序。
+        # 旧实现只产出 section_name，列表页整卷覆盖写后 code/sort 全被写空，
+        # 卷面从「一、选择题」退化成裸题型且改大题名/重构大题失去依据（P1-1）。
+        sec_code = str(raw.get("section_code") or "").strip()[:32] or q.type
+        try:
+            sec_sort = int(raw.get("section_sort") or 0)
+        except (TypeError, ValueError):
+            sec_sort = 0
         prepared.append({
             "question_id": qid,
             "score": round(score, 2),
             "section_name": str(section)[:64] if section else None,
+            "section_code": sec_code,
+            "section_sort": sec_sort,
         })
         total += score
     # 总分为 0 的试卷能建出来，但永远发不出去：`create_task` 里
@@ -1533,6 +1543,10 @@ def get_paper(
         items.append({
             "paper_item_id": it.id, "question_id": q.id, "sort_order": it.sort_order,
             "score": it.score, "section_name": it.section_name,
+            # 大题结构三件套必须回传给前端：列表页「编辑试卷」是整卷覆盖写，
+            # 前端拿不到这三个字段就只能提交 question_id+score，保存后
+            # section_code/sort 被写空 → 标准卷的「一、选择题」退化成裸题型（P1-1）。
+            "section_code": it.section_code, "section_sort": it.section_sort,
             "type": qtype, "type_label": QUESTION_TYPE_LABEL.get(qtype, qtype),
             "stem": q.stem, "options": normalize_options(q.options),
             "answer": _load(q.answer),

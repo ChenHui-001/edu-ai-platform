@@ -592,6 +592,60 @@ def knowledge_effect(
     })
 
 
+@router.get("/teacher/class-weak-points", summary="班级薄弱知识点聚合")
+def class_weak_points(
+    class_id: int,
+    subject_id: Optional[int] = None,
+    limit: int = Query(10, ge=1, le=50),
+    min_answers: int = Query(1, ge=1, le=200, description="样本下限：作答数低于此值不参与排名"),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_teacher),
+    scope: DataScope = Depends(get_data_scope),
+):
+    """把「学生个人掌握度」聚合成「这个班哪个知识点集体没掌握」。
+
+    **不新增表**：`edu_knowledge_mastery` 已经是「学生 × 知识点」的累计正确率，
+    按班级学生集合做 `sum(正确)/sum(总数)` 即可，比拿原始 `Answer` 现算便宜得多，
+    也不会因为历史作答被清理而口径漂移。
+
+    与 `knowledge-effect` 的区别：那个按**知识点**看全校/所教范围的教学效果，
+    这个按**班级**看，直接服务于「这节课讲什么」——教师备课第一句话就是
+    「三班二次函数只有 41% 正确率」。
+
+    `min_answers` 用来挡住「1 个学生做了 1 道题」就被判成班级薄弱点的噪声：
+    样本越小越容易 0% 或 100%，按它排名会得到一份完全随机的清单。
+    """
+    if not scope.is_super:
+        allowed = scope.class_ids()
+        if allowed is not None and class_id not in allowed:
+            raise BusinessException("无权查看该班级数据")
+
+    k = db.get(Class, class_id)
+    if not k:
+        raise NotFoundException("班级不存在")
+
+    # 聚合口径全部收在 services/class_analytics：API 层只做权限与组装
+    # （`check_api_sql` 要求新逻辑不进 API 层，且该口径将来会被年级/学科复用）
+    from app.services import class_analytics
+
+    student_ids = class_analytics.class_student_ids(db, class_id)
+    items = class_analytics.weak_points(
+        db, student_ids, subject_id=subject_id, min_answers=min_answers)
+    all_acc = [i["accuracy"] for i in items]
+    return ok({
+        "class_id": class_id,
+        "class_name": k.name,
+        "items": items[:limit],
+        "summary": {
+            "student_count": len(student_ids),
+            "point_count": len(items),
+            "avg_accuracy": round(sum(all_acc) / len(all_acc), 2) if all_acc else 0,
+            # 低于 60% 的算「班级共性薄弱点」，数量直接决定讲评课要讲几个点
+            "below_60": sum(1 for a in all_acc if a < 60),
+        },
+    })
+
+
 # ================================================================ 管理员端
 @router.get("/admin/overview", summary="系统总览")
 def admin_overview(

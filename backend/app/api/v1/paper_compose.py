@@ -1418,15 +1418,48 @@ def compose_ai(
     若 `count` 未指定，自动采用命题标准的题量结构。
     """
     data = body.model_dump(exclude_unset=True)
+    if not str(data.get("request") or "").strip() and not (
+            data.get("grade_id") and data.get("subject_id")):
+        # 快速失败，不必进 LLM 解析（与 _ai_resolve_params 同一判定，这里只为省一次调用）
+        raise BusinessException("请填写组卷需求描述，或至少选择年级与学科")
+
+    merged, parse_error, request = _ai_resolve_params(db, user, data)
+    if not merged.get("grade_id") or not merged.get("subject_id"):
+        raise BusinessException(
+            "无法从描述中识别年级或学科，请明确指定" +
+            (f"（AI 解析提示：{parse_error}）" if parse_error else ""))
+
+    ctx = _compose_from_payload(db, user, merged)
+    message = ""
+    if parse_error:
+        message = f"AI 参数解析未成功（{parse_error}），已按命题标准与默认难度组卷"
+    elif not request and not ctx.get("standard_fallback"):
+        # 让教师知道"没写描述"不等于"没生效"：结构来自命题标准，不是随手拼的。
+        # ★ 必须排除 fallback 场景：那里根本没有标准，再说"按命题标准生成"
+        #   会与紧随其后的"尚未配置命题标准"自相矛盾（实测同一条 message 里两句并列）。
+        message = "未填写需求描述，已按所选年级学科的命题标准生成题型结构与分值"
+    return ok(_plan_response(ctx, ai_message=message))
+
+
+def _ai_resolve_params(
+    db: Session, user: User, data: Dict[str, Any],
+) -> tuple[Dict[str, Any], str, str]:
+    """把「自然语言 + 少量显式参数」解析成完整组卷参数。
+
+    同步接口 `/compose/ai` 与异步接口 `/compose/ai/async` **必须共用这一份**：
+    旧实现只有同步路径做解析，异步路径把 `grade_id=None` 直接塞给
+    `_compose_from_payload`，导致「只写描述、不选年级」在异步路径 100% 失败
+    （错误提示还是"请选择有效的年级"，与界面承诺完全相反）——P0-3。
+
+    **这里的解析允许失败**：AI 只负责翻译参数，翻译不出来就降级为规则组卷，
+    但年级/学科一个都推不出来时必须报错（交给调用方判定），
+    否则会在 `_grade_subject` 里抛出一句毫无信息量的错。
+
+    返回 `(merged, parse_error, request)`。
+    """
     from app.agents.paper_agent import PaperComposerAgent
 
     request = str(data.get("request") or "").strip()
-    # 允许「不写描述、只选年级+学科」直接出卷：这时 AI 只省掉"翻译自然语言"这一步，
-    # 结构与分值照样由命题标准决定，本质是规则组卷。强制写小作文属于无谓门槛
-    # （用户明确反馈：选好年级科目就该能出卷）。
-    if not request and not (data.get("grade_id") and data.get("subject_id")):
-        raise BusinessException("请填写组卷需求描述，或至少选择年级与学科")
-
     parsed: Dict[str, Any] = {}
     parse_error = ""
     if request:
@@ -1491,22 +1524,7 @@ def compose_ai(
             stage=getattr(anchor_grade, "stage", None),
             subject_name=getattr(anchor_subject, "name", None),
         )
-
-    if not merged.get("grade_id") or not merged.get("subject_id"):
-        raise BusinessException(
-            "无法从描述中识别年级或学科，请明确指定" +
-            (f"（AI 解析提示：{parse_error}）" if parse_error else ""))
-
-    ctx = _compose_from_payload(db, user, merged)
-    message = ""
-    if parse_error:
-        message = f"AI 参数解析未成功（{parse_error}），已按命题标准与默认难度组卷"
-    elif not request and not ctx.get("standard_fallback"):
-        # 让教师知道"没写描述"不等于"没生效"：结构来自命题标准，不是随手拼的。
-        # ★ 必须排除 fallback 场景：那里根本没有标准，再说"按命题标准生成"
-        #   会与紧随其后的"尚未配置命题标准"自相矛盾（实测同一条 message 里两句并列）。
-        message = "未填写需求描述，已按所选年级学科的命题标准生成题型结构与分值"
-    return ok(_plan_response(ctx, ai_message=message))
+    return merged, parse_error, request
 
 
 def _type_ratio_to_sections(
@@ -2097,12 +2115,29 @@ def _recalculate_after_change(
     db.flush()
 
     # 重算每份提交的总分与及格标记
+    untouched = 0
     for sub_id in submission_ids:
         sub = db.get(Submission, sub_id)
         if not sub:
             continue
-        total = round(sum(float(a.score or 0) for a in sub.answers), 2)
+        answers = list(sub.answers or [])
+        if not answers:
+            # **无逐题作答行**（历史造数 / 外部导入）不能重算：`sum([])==0`
+            # 会把总分写成 0，而 objective_score 保留旧值，
+            # 成绩单就变成「总分 0 / 客观分 90 / 已自动批改」三行并列（P1-4）。
+            # 这里跳过并如实上报，交给人工核对。
+            untouched += 1
+            continue
+        # 客观题 = 已判对错（is_correct 非空）；主观题 = 尚未判分（is_correct 为空）。
+        # 旧实现只写 `sub.score`，两个分列留在旧值上，总分与分列自相矛盾。
+        objective = round(sum(
+            float(a.score or 0) for a in answers if a.is_correct is not None), 2)
+        subjective = round(sum(
+            float(a.score or 0) for a in answers if a.is_correct is None), 2)
+        total = round(objective + subjective, 2)
         sub.score = total
+        sub.objective_score = objective
+        sub.subjective_score = subjective
         task = db.get(Task, sub.task_id)
         if task and task.total_score:
             sub.is_passed = total >= float(task.pass_score or 0)
@@ -2111,6 +2146,8 @@ def _recalculate_after_change(
         "affected_submissions": len(submission_ids),
         "recalculated": True,
         "rescored_answers": rescored,
+        # 跳过重算的提交数：没有逐题作答行，总分保持原值不动
+        "skipped_no_answer": untouched,
     }
 
 
@@ -2240,11 +2277,16 @@ def remove_item(
     } for it in remaining]
     db.flush()
     paper.total_score = round(sum(float(i["score"]) for i in items), 2)
+    # 删题后必须重算成绩：作答被级联删除，`Submission.score` 若保持原值，
+    # 就会与「试卷总分已变」对不上（P1-4 两条删题路径口径不一致）。
+    # 剩余题项沿用原 id，作答仍挂在正确行上，可直接复用同一套重算逻辑。
+    rescore = _recalculate_after_change(db, paper, items)
     paper.current_version = (paper.current_version or 1) + 1
     version_svc.snapshot(db, paper, user.id, change_note="移除题目完成")
     db.commit()
     return ok({"id": paper.id, "total_score": paper.total_score,
-               "item_count": len(items), "dropped": dropped},
+               "item_count": len(items), "dropped": dropped,
+               **rescore},
               message=("题目已移除" if not dropped else
                        f"题目已移除，同时作废 {dropped} 条学生作答"))
 
@@ -2857,7 +2899,17 @@ def _run_compose_job(job_id: int) -> None:
             pct = 15 + int(75 * done / max(1, total))
             _touch_job(job_id, progress=pct, stage=f"AI 补题 {done}/{total} 个大题")
 
-        ctx = _compose_from_payload(db, user, params, on_progress=on_progress)
+        # 与同步接口 /compose/ai 共用同一份解析（P0-3）。
+        # 旧实现直接把 task.params 丢给 _compose_from_payload，
+        # 「只写描述、不选年级」在这里必然抛"请选择有效的年级"。
+        merged, parse_error, request = _ai_resolve_params(db, user, params)
+        if not merged.get("grade_id") or not merged.get("subject_id"):
+            raise BusinessException(
+                "无法从描述中识别年级或学科，请明确指定" +
+                (f"（AI 解析提示：{parse_error}）" if parse_error else ""))
+        _touch_job(job_id, progress=12, stage="解析参数完成")
+
+        ctx = _compose_from_payload(db, user, merged, on_progress=on_progress)
         _touch_job(job_id, progress=92, stage="生成报告")
 
         body = _plan_response(ctx)
@@ -2889,7 +2941,8 @@ def compose_ai_async(
 ):
     """提交组卷任务，立即返回 job_id；轮询 `/compose/jobs/{id}` 取结果。
 
-    入参与同步接口 `/compose/ai` 完全一致，只是把等待从 HTTP 请求里挪走。
+    入参与同步接口 `/compose/ai` 完全一致，**包括"只写描述、不选年级学科"**：
+    两者的参数解析共用 `_ai_resolve_params`，异步只是把等待从 HTTP 请求里挪走。
     """
     data = body.model_dump(exclude_unset=True)
     from app.models import AgentJob

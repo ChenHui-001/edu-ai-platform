@@ -393,7 +393,26 @@ function schedulePaperDraft() {
 }
 
 watch(sections, schedulePaperDraft, { deep: true })
-watch(meta, schedulePaperDraft, { deep: true })
+
+/**
+ * 元信息（名称 / 说明 / 时长）改动也必须置 dirty。
+ *
+ * 旧实现只把 meta 的变化写草稿、**不置 dirty**，而保存按钮是 `:disabled="!dirty"`，
+ * 于是「只改名/改时长、不动题目」这个最常见的改卷场景：按钮恒灰、改完返回即丢失，
+ * 全程没有任何提示（P1-2）。
+ *
+ * 用基线快照比对而不是「watch 一律置 dirty」：加载数据本身也会触发 watch，
+ * 那样一进页面就是脏的，保存按钮永远亮着，"有未保存修改"标签也就失去意义。
+ */
+let metaBaseline = null
+const metaSnapshot = () => JSON.stringify({
+  name: meta.name, description: meta.description, duration: meta.duration,
+})
+watch(meta, () => {
+  if (metaBaseline !== null && metaSnapshot() === metaBaseline) return
+  dirty.value = true
+  schedulePaperDraft()
+}, { deep: true })
 
 async function restorePaperDraft() {
   if (paperDraftChecked) return
@@ -444,6 +463,7 @@ async function loadPaper() {
       })
       .catch(() => {})
     applyPreview(data)
+    metaBaseline = metaSnapshot()
     dirty.value = false
     dropWarning.value = ''
     // 只有首次加载会真正弹窗（paperDraftChecked 兜住保存后的重新加载）
@@ -501,6 +521,7 @@ async function doSave() {
     }
     const res = await questionApi.updatePaperItems(paperId, payload)
     const d = res.data || {}
+    metaBaseline = metaSnapshot()
     dirty.value = false
     clearTimeout(paperDraftTimer)
     localStorage.removeItem(PAPER_DRAFT_KEY)
@@ -597,6 +618,13 @@ async function doRestructure() {
   try {
     if (!await confirmAction(
       '按题型重新归组并重排题号（题目本身不变）？', '重构大题', { type: 'info' })) return
+    // 重构后要重新拉库覆盖本地 sections。若此时还有未保存改动，
+    // 直接 refetch 会把它们静默丢掉（页面还显示"已同步"）——P1-3。
+    if (dirty.value && !await confirmAction(
+      '当前有未保存的修改（分值、增删题、换题等）。重构会以服务端数据覆盖本地，'
+      + '这些修改将丢失。\n\n建议先保存再重构。仍要现在重构吗？',
+      '重构会丢弃未保存修改',
+      { type: 'warning', confirmButtonText: '丢弃并重构', cancelButtonText: '先去保存' })) return
   } catch { return }
   try {
     await questionApi.restructurePaper(paperId, {})

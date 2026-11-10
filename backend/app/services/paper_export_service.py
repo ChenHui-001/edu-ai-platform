@@ -110,6 +110,23 @@ def _h(text: Any) -> str:
     return _html.escape(_plain(text), quote=False)
 
 
+def _pdf_text(text: Any) -> str:
+    """`_plain` 之后再转义 `& < >`，专供 reportlab `Paragraph` 使用。
+
+    **为什么必须再转义一次**：`_plain` 会把 `&lt;img src=...&gt;` 反解成真标签，
+    而 reportlab 的 `Paragraph` 是 mini-HTML 解析器——`<img src>` 会让
+    **服务端主动去请求该 URL**（SSRF：探测内网/云元数据/回连攻击者并带入 PDF），
+    畸形标签还会直接抛异常把整份卷子打成 500。
+
+    题干、选项、答案、解析、知识点名、卷名、章节名，只要进 `Paragraph`
+    就必须走这里。docx 走纯文本 API（`add_run`），不能用本函数，
+    否则会打印出 `&lt;` 字面量。
+    """
+    import html as _html
+    # 顺序不能反：先 & 再 < >，否则 `<` 被转成 `&lt;` 后其中的 `&` 又被二次转义
+    return _html.escape(_plain(text), quote=False)
+
+
 def _option_text(options: Any) -> List[str]:
     if not options:
         return []
@@ -146,6 +163,25 @@ def _layout_dims(layout: str):
     if layout == "a3_double":
         return A3_WIDTH, A3_HEIGHT, True
     return A4_WIDTH, A4_HEIGHT, False
+
+
+def _safe_build(doc, story: List[Any], *, kind: str) -> None:
+    """`doc.build()` 兜底：排版期异常一律转成 400，不再冒成 500。
+
+    reportlab 的解析/排版异常种类极多（畸形标签、超宽表格、字体缺失……），
+    任何一条都会让「整份卷子导不出来」且前端只看到「服务器内部错误」。
+    这里统一收敛成可读的业务错误，并把原始异常写进日志供排查。
+    """
+    from app.core.exception import BusinessException
+
+    try:
+        doc.build(story)
+    except Exception as exc:                     # noqa: BLE001 - 兜底必须宽
+        logger.exception("%s 生成失败", kind)
+        raise BusinessException(
+            f"{kind}生成失败：{type(exc).__name__}。"
+            f"请检查题干/答案中是否存在特殊字符或过长内容后再导出。"
+        ) from exc
 
 
 # ---------------------------------------------------------------- HTML
@@ -540,7 +576,7 @@ def build_pdf(preview: Dict[str, Any], *, mode: str = "teacher",
         doc.addPageTemplates([PageTemplate(id="one", frames=[frame], onPage=_decorate)])
 
     story: List[Any] = []
-    story.append(Paragraph(_plain(preview.get("name")), st_title))
+    story.append(Paragraph(_pdf_text(preview.get("name")), st_title))
     story.append(Paragraph(
         f"{preview.get('grade_name') or ''} {preview.get('subject_name') or ''}　"
         f"总分：{preview.get('total_score')}　时间：{preview.get('duration')} 分钟",
@@ -565,7 +601,7 @@ def build_pdf(preview: Dict[str, Any], *, mode: str = "teacher",
     qno = 0
     for sec in preview.get("sections") or []:
         story.append(Paragraph(
-            f"<b>{_plain(sec.get('section_name'))}</b>"
+            f"<b>{_pdf_text(sec.get('section_name'))}</b>"
             f"<font size=9>（共 {sec.get('item_count')} 题，"
             f"共 {sec.get('section_score')} 分）</font>", st_sec))
         for it in sec.get("items") or []:
@@ -573,22 +609,22 @@ def build_pdf(preview: Dict[str, Any], *, mode: str = "teacher",
             block: List[Any] = []
             block.append(Paragraph(
                 f"<b>{qno}.</b><font size=9 color='#555555'>"
-                f"（{it.get('score')}分）</font> {_plain(it.get('stem'))}", st_stem))
+                f"（{it.get('score')}分）</font> {_pdf_text(it.get('stem'))}", st_stem))
             for o in _option_text(it.get("options")):
-                block.append(Paragraph(o, st_opt))
+                block.append(Paragraph(_pdf_text(o), st_opt))
             if mode == "teacher":
                 ans = _answer_text(it.get("answer"), it.get("type"))
-                ana = _plain(it.get("analysis"))
-                txt = f"<b>答案：</b>{ans or '（略）'}"
+                ana = _pdf_text(it.get("analysis"))
+                txt = f"<b>答案：</b>{_pdf_text(ans) or '（略）'}"
                 if ana:
                     txt += f"　<b>解析：</b>{ana}"
                 if it.get("knowledge_point_name"):
-                    txt += f"　<b>知识点：</b>{it['knowledge_point_name']}"
+                    txt += f"　<b>知识点：</b>{_pdf_text(it['knowledge_point_name'])}"
                 block.append(Paragraph(txt, st_ans))
             block.append(Spacer(1, 5))
             story.append(KeepTogether(block))
 
-    doc.build(story)
+    _safe_build(doc, story, kind="试卷 PDF")
     buf.seek(0)
     return buf
 
@@ -636,9 +672,10 @@ def build_answer_sheet(preview: Dict[str, Any], *, layout: str = "a4_single") ->
     st_norm = ParagraphStyle("n", fontName=font, fontSize=10, leading=16)
 
     story: List[Any] = [
-        Paragraph(f"答题卡　{_plain(preview.get('name'))}", st_title),
+        Paragraph(f"答题卡　{_pdf_text(preview.get('name'))}", st_title),
         Paragraph(
-            f"{preview.get('grade_name') or ''} {preview.get('subject_name') or ''}　"
+            f"{_pdf_text(preview.get('grade_name'))} "
+            f"{_pdf_text(preview.get('subject_name'))}　"
             f"总分：{preview.get('total_score')}　时间：{preview.get('duration')} 分钟",
             st_meta),
     ]
@@ -707,7 +744,7 @@ def build_answer_sheet(preview: Dict[str, Any], *, layout: str = "a4_single") ->
             story.append(Paragraph(
                 f"<b>{idx}.</b>（{it.get('score')}分）"
                 f"<font size=9 color='#666666'>"
-                f"{_plain(it.get('stem'))[:80]}</font>", st_norm))
+                f"{_pdf_text(_plain(it.get('stem'))[:80])}</font>", st_norm))
             box_h = max(22 * mm, min(60 * mm, float(it.get("score") or 5) * 4 * mm))
             box = Table([[""]], colWidths=[body_w], rowHeights=[box_h])
             box.setStyle(TableStyle([
@@ -717,6 +754,6 @@ def build_answer_sheet(preview: Dict[str, Any], *, layout: str = "a4_single") ->
             story.append(box)
             story.append(Spacer(1, 6))
 
-    doc.build(story)
+    _safe_build(doc, story, kind="答题卡 PDF")
     buf.seek(0)
     return buf

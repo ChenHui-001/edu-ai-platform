@@ -40,6 +40,33 @@ PROVIDERS = {
 }
 
 
+# ---------------------------------------------------------------- 并发闸门
+# 进程级信号量：把同时在跑的 LLM 调用数压在 `LLM_MAX_CONCURRENCY` 以内。
+# **拿不到就立刻降级，绝不排队** —— 排队会把 HTTP 请求线程一起挂住，
+# 比降级还糟（用户看到的是页面转圈 5 分钟，而不是"AI 暂时不可用"）。
+_gate: Optional[threading.BoundedSemaphore] = None
+_gate_size: int = -1
+_gate_lock = threading.Lock()
+
+
+def _concurrency_gate() -> Optional[threading.BoundedSemaphore]:
+    """惰性构建闸门；`LLM_MAX_CONCURRENCY <= 0` 时返回 None（不限制）。"""
+    global _gate, _gate_size
+    try:
+        size = int(getattr(settings, "LLM_MAX_CONCURRENCY", 8))
+    except (TypeError, ValueError):
+        size = 8
+    if size <= 0:
+        return None
+    with _gate_lock:
+        if _gate is None or size != _gate_size:
+            # BoundedSemaphore 的 release 次数超过 acquire 会抛 ValueError，
+            # 正好帮我们在开发期抓出"漏配对"的调用点。
+            _gate = threading.BoundedSemaphore(size)
+            _gate_size = size
+    return _gate
+
+
 def is_available() -> bool:
     """LLM 是否可用。未配置 Key 或**鉴权已熔断**时走规则引擎。
 
@@ -60,6 +87,7 @@ def is_available() -> bool:
     enabled = _get_db_value("llm_enabled", "bool", settings.LLM_ENABLED)
     api_key = _get_db_value("llm_api_key", "string", settings.LLM_API_KEY)
     return bool(enabled and api_key)
+
 
 # sys_config 里的值优先级高于 settings，但部分参数有**硬上限**（成本/稳定性约束）。
 # 典型场景：v1.0.38 把 LLM_MAX_TOKENS 默认值 4096→2048，老环境 DB 里仍残留 4096，
@@ -407,6 +435,28 @@ class LLMClient:
 
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        # 全局并发闸门：拿不到配额立即降级，不排队（排队会连带挂住 HTTP 线程）。
+        gate = _concurrency_gate()
+        acquired = False
+        if gate is not None:
+            acquired = gate.acquire(blocking=False)
+            if not acquired:
+                reason = ("AI 调用并发已达上限，本次走规则引擎（稍后重试即可，"
+                          "无需修改配置）")
+                log_agent_call(
+                    agent_name=agent_name, user_id=user_id,
+                    input_text=user_prompt[:2000], duration_ms=0,
+                    status="skipped", is_fallback=True,
+                    error_msg=reason, biz_type=biz_type, biz_id=biz_id,
+                )
+                return {
+                    "success": False,
+                    "content": "",
+                    "is_fallback": True,
+                    "reason": reason,
+                    "usage": {},
+                }
+
         # 路由可观测：模型名在「客户端就绪」日志里，这里记录每次调用
         # 实际落到哪个场景，否则运维只能靠猜「我的配置到底生效没有」。
         logger.info(f"LLM 路由: scenario={scenario} biz={biz_type or '-'} agent={agent_name}")
@@ -470,7 +520,11 @@ class LLMClient:
                 "reason": f"模型调用失败：{exc}",
                 "usage": {},
             }
-
+        finally:
+            # 必须在 finally 释放：成功、失败、鉴权熔断三条路径都要把配额还回去，
+            # 漏一条就会让闸门永久少一个槽位，最终整站 AI 全部降级。
+            if acquired:
+                gate.release()
 
     def stream_chat(
         self,

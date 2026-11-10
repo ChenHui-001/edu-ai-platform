@@ -16,6 +16,50 @@ TYPE_LABEL = {
     "short": "简答题", "calc": "计算题", "material": "材料分析题", "composition": "作文题",
 }
 
+# 传入的题型/难度分布可能是「比例」也可能是「题量」，两者语义完全不同。
+# 旧实现一律 `int(v)` 当题量：默认值 `{"single":0.5,"blank":0.2,"short":0.3}`
+# 被截断成 0 → 每个题型都 `continue` → 恒 0 题（P0-4）。
+_RATIO_SUM_TOL = 1.0001
+
+
+def _split_counts(ratio: Dict[str, Any], default_total: int = 10) -> Dict[str, int]:
+    """把「比例」或「题量」统一换算成整数题量，且合计等于 `default_total`。
+
+    判定规则：**数值全在 (0,1] 且合计 ≤ 1** 视为比例，按 `default_total` 换算；
+    否则视为题量，直接取整求和。
+
+    余数补给占比最大的那一档（与 `paper_compose._difficulty_to_ratio` 同一口径），
+    保证 `sum(结果) == 合计`，不会因为四舍五入少出一道题。
+    """
+    nums: Dict[str, float] = {}
+    for k, v in (ratio or {}).items():
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if f > 0:
+            nums[str(k)] = f
+    if not nums:
+        return {}
+
+    total_vals = sum(nums.values())
+    is_ratio = total_vals <= _RATIO_SUM_TOL and max(nums.values()) <= 1.0
+
+    if is_ratio:
+        total_items = max(1, int(default_total))
+        raw = {k: v * total_items / total_vals for k, v in nums.items()}
+    else:
+        total_items = max(1, int(round(total_vals)))
+        raw = dict(nums)
+
+    counts = {k: max(0, int(v)) for k, v in raw.items()}
+    diff = total_items - sum(counts.values())
+    if diff:
+        # 余数补/扣到占比最大的一档
+        top = max(raw, key=lambda k: raw[k])
+        counts[top] = max(0, counts[top] + diff)
+    return {k: v for k, v in counts.items() if v > 0}
+
 
 class PaperComposerAgent(BaseAgent):
     name = "paper_composer"
@@ -149,18 +193,32 @@ class PaperComposerAgent(BaseAgent):
         selected: List[Dict[str, Any]] = []
         coverage: Dict[str, int] = {}
 
-        total_items = sum(int(v) for v in type_ratio.values()) or 10
+        # 题型分布可能是比例也可能是题量，先统一成整数题量（P0-4）
+        type_counts = _split_counts(type_ratio, default_total=10)
+        total_items = sum(type_counts.values()) or 10
         # 每题平均分
         avg = round(total_score / total_items, 1)
 
-        for qtype, qty in type_ratio.items():
-            qty = int(qty)
+        # 难度权重同样可能是比例（0.3/0.5/0.2）也可能是百分制（30/50/20），
+        # 一律按 float 归一化。旧实现 `int(_w)` 把 0.3 截成 0，
+        # 于是每档 `need` 恒为 1，难度分布形同虚设。
+        diff_weights = {}
+        for k, v in (difficulty_ratio or {}).items():
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if f > 0:
+                diff_weights[str(k)] = f
+        diff_total = sum(diff_weights.values()) or 1.0
+
+        for qtype, qty in type_counts.items():
             if qty <= 0:
                 continue
             picked = 0
             # 题型 + 难度双维度抽题
-            for diff, _w in difficulty_ratio.items():
-                need = max(1, round(qty * int(_w) / max(1, sum(difficulty_ratio.values()))))
+            for diff, _w in diff_weights.items():
+                need = max(1, round(qty * _w / diff_total))
                 stmt = select(Question).where(
                     Question.subject_id == subject_id,
                     Question.type == qtype,
@@ -227,11 +285,21 @@ class PaperComposerAgent(BaseAgent):
             diff_count[i["difficulty"]] = diff_count.get(i["difficulty"], 0) + 1
             type_count[i["type"]] = type_count.get(i["type"], 0) + 1
         n = len(items) or 1
+        # 目标占比按 float 归一（比例 0.3 / 百分制 30 两种写法都要能算）
+        w = {}
+        for k, v in (ratio or {}).items():
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if f > 0:
+                w[str(k)] = f
+        w_total = sum(w.values()) or 1.0
         return {
             "difficulty_report": {
                 "distribution": {k: v for k, v in diff_count.items()},
                 "ratio": {k: round(v / n * 100, 1) for k, v in diff_count.items()},
-                "target_ratio": {k: round(int(v) / max(1, sum(ratio.values())) * 100, 1) for k, v in ratio.items()},
+                "target_ratio": {k: round(v / w_total * 100, 1) for k, v in w.items()},
                 "avg_score": round(plan["actual_score"] / n, 2) if n else 0,
             },
             "knowledge_coverage": {
@@ -327,6 +395,11 @@ class PaperComposerAgent(BaseAgent):
             )
             if not qid:
                 continue
+            # ★ 必须判 `paper` 再落库：旧实现这段在 `if save:` 之外，
+            #   save=False（纯预览）时 paper 是 None → `paper.id` 直接 AttributeError，
+            #   整条智能组卷链路崩掉（P0-4）。纯预览本来就不该写 PaperItem。
+            if paper is None:
+                continue
             db.add(
                 PaperItem(
                     paper_id=paper.id, question_id=qid,
@@ -334,8 +407,14 @@ class PaperComposerAgent(BaseAgent):
                     section_name=preview[i]["section_name"],
                 )
             )
+        if paper is not None:
             db.flush()
-            _recount_usage(db, {int(qid)})
+            # 引用计数统一重算一次即可：旧实现逐题 flush+commit+recount+refresh，
+            # N 道题就 N 次全量重算，白烧 I/O 还可能把中间态写进库。
+            _recount_usage(db, {
+                int(q.get("id") or q.get("question_id")) for q in questions
+                if (q.get("id") or q.get("question_id"))
+            })
             db.commit()
             db.refresh(paper)
 

@@ -348,6 +348,8 @@ export const reportApi = {
   studentComparison: (params) => request.get('/report/teacher/student-comparison', { params }),
   studentDetail: (params) => request.get('/report/teacher/student-detail', { params }),
   knowledgeEffect: (params) => request.get('/report/teacher/knowledge-effect', { params }),
+  // 班级薄弱知识点聚合：直接回答「这个班哪个知识点集体没掌握」
+  classWeakPoints: (params) => request.get('/report/teacher/class-weak-points', { params }),
   adminOverview: () => request.get('/report/admin/overview'),
   gradeComparison: () => request.get('/report/admin/grade-comparison'),
   subjectComparison: () => request.get('/report/admin/subject-comparison'),

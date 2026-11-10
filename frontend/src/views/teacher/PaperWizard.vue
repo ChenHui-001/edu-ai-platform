@@ -511,11 +511,11 @@
           </el-form-item>
         </el-form>
         <el-alert type="info" :closable="false" show-icon
-                  title="此处修改仅作用于本次组卷预览，不修改题库原题。" />
+                  title="分值与卷面调整会随试卷保存；题干 / 答案 / 解析 / 难度不修改题库原题，如需永久生效请到「题库管理」编辑。" />
       </template>
       <template #footer>
         <el-button @click="editDrawer = false">取消</el-button>
-        <el-button type="primary" @click="editDrawer = false">确定</el-button>
+        <el-button type="primary" @click="applyEdit">确定</el-button>
       </template>
     </el-drawer>
   </div>
@@ -622,7 +622,26 @@ const composedCtx = ref(null)
 
 const editDrawer = ref(false)
 const editingItem = ref(null)
-let editTarget = null
+/**
+ * 当前正在编辑的题（指向 `previewItems` 里的**同一个对象**）。
+ *
+ * 必须是 ref 并在 `applyEdit` 里重新定位：`previewItems` 会被「重新生成 / 移除」
+ * 整体替换，闭包里持有的旧引用会变成游离对象，`Object.assign` 写进去
+ * 预览里毫无变化——正是 P0-2 那种「看起来成功了其实丢弃」的失败形态。
+ */
+const editTarget = ref(null)
+/** 打开抽屉时的定位键，用于对象被替换后按 question_id 重新找回。 */
+const editAnchor = ref({ questionId: null, sectionCode: '' })
+/** 打开抽屉时五个可编辑字段的快照，用于判断教师到底改了什么。 */
+let editBaseline = null
+/**
+ * 内容类改动的台账：`{ [question_id]: ['题干', '答案'...] }`。
+ *
+ * 为什么要记：`/compose/save` 落库时只带 `question_id + score`，题干/答案/
+ * 解析/难度**永远读题库原值**。如果不在保存前把这件事说明白，教师改完
+ * 点保存、卷子还是原题，就回到 P0-2 那种"看起来成功了"的静默失败。
+ */
+const editedContent = ref({})
 
 // ---------------- 计算属性 ----------------
 const subjects = computed(() =>
@@ -995,9 +1014,84 @@ async function doCompose() {
 function editItem(secCode, idx) {
   const sec = previewSections.value.find(s => s.code === secCode)
   if (!sec) return
-  editTarget = sec.items[idx]
-  editingItem.value = { ...editTarget }
+  const target = sec.items[idx]
+  editTarget.value = target
+  editAnchor.value = {
+    questionId: target?.question_id ?? null,
+    sectionCode: secCode,
+  }
+  editBaseline = JSON.parse(JSON.stringify({
+    stem: target?.stem ?? '',
+    score: target?.score ?? 0,
+    difficulty: target?.difficulty ?? '',
+    answer: target?.answer ?? '',
+    analysis: target?.analysis ?? '',
+  }))
+  editingItem.value = { ...target }
   editDrawer.value = true
+}
+
+/** 把抽屉里的改动写回预览列表。P0-2 修复点：原来「确定」只关窗不回写。 */
+function applyEdit() {
+  const draft = editingItem.value
+  if (!draft) { editDrawer.value = false; return }
+
+  // 先按引用找（previewItems 是 previewSections.items 的来源，通常是同一对象）
+  let target = editTarget.value
+  const stillThere = target && previewItems.value.includes(target)
+  if (!stillThere) {
+    // 对象被替换过（重生成了某题 / 移除了别的题），按 question_id + 大题重新定位
+    const { questionId, sectionCode } = editAnchor.value
+    target = previewItems.value.find(it =>
+      it.question_id === questionId &&
+      (it.section_code || it.type) === sectionCode) || null
+  }
+  if (!target) {
+    ElMessage.warning('这道题已不在卷中（可能已被移除或重新生成），改动未写入')
+    editDrawer.value = false
+    return
+  }
+
+  // 只回写抽屉里真正可编辑的五个字段；不动 question_id / 大题结构
+  const patch = {}
+  for (const key of ['stem', 'score', 'difficulty', 'answer', 'analysis']) {
+    if (draft[key] !== undefined) patch[key] = draft[key]
+  }
+  Object.assign(target, patch)
+  editTarget.value = target
+
+  // 记账：分值能落库，其余四个字段落不了（见 editedContent 注释）
+  const labels = { stem: '题干', answer: '答案', analysis: '解析', difficulty: '难度' }
+  const changed = []
+  for (const key of Object.keys(labels)) {
+    const before = editBaseline ? editBaseline[key] : undefined
+    if (String(draft[key] ?? '') !== String(before ?? '')) changed.push(labels[key])
+  }
+  const qid = target.question_id
+  if (qid != null && changed.length) {
+    editedContent.value = { ...editedContent.value, [qid]: changed }
+  }
+
+  editDrawer.value = false
+}
+
+/** 保存前提示：哪些改动不会进入题库。返回 true 表示继续保存。 */
+async function confirmContentDrift() {
+  const rows = Object.entries(editedContent.value)
+  if (!rows.length) return true
+  const detail = rows
+    .slice(0, 5)
+    .map(([qid, fields]) => `· 第 ${qid} 题：${fields.join('、')}`)
+    .join('\n')
+  const more = rows.length > 5 ? `\n… 共 ${rows.length} 道题` : ''
+  return confirmAction(
+    `你在预览里修改了以下题目的内容：\n${detail}${more}\n\n`
+    + '「分值」会随试卷保存；「题干 / 答案 / 解析 / 难度」保存在题库，'
+    + '本次修改不会写入题库，保存后卷面仍显示题库原题。\n\n'
+    + '如需永久生效，请到「题库管理」修改对应题目后再组卷。\n\n是否继续保存？',
+    '内容改动不会入库',
+    { confirmButtonText: '继续保存', cancelButtonText: '返回修改' },
+  )
 }
 
 function removeLocalItem(secCode, idx) {
@@ -1005,6 +1099,12 @@ function removeLocalItem(secCode, idx) {
   if (!sec) return
   const target = sec.items[idx]
   previewItems.value = previewItems.value.filter(i => i !== target)
+  // 题已离卷，它的内容改动不再需要提示
+  if (target?.question_id != null && editedContent.value[target.question_id]) {
+    const next = { ...editedContent.value }
+    delete next[target.question_id]
+    editedContent.value = next
+  }
 }
 
 // ---------------- 重新生成（单题 / 整大题） ----------------
@@ -1179,6 +1279,8 @@ function restructureLocal() {
 async function doSave() {
   if (!saveForm.name.trim()) return ElMessage.warning('请填写试卷名称')
   if (!previewItems.value.length) return ElMessage.warning('试卷没有题目')
+  // 先讲清楚哪些改动不入库，再保存——否则教师会以为题干改了，实际没改
+  if (!await confirmContentDrift()) return
 
   saving.value = true
   try {

@@ -2,7 +2,11 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- 不锁缩放：`maximum-scale=1, user-scalable=no` 会挡住双指放大，
+       低视力用户与学生端手机看卷面/报表时无法放大，属可访问性缺陷。
+       移动端输入框获得焦点时 iOS 会被动放大，用 CSS 的 font-size>=16px 规避，
+       而不是靠禁用缩放。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>新芽学堂 · 九年义务教育 AI 学习平台</title>
 </head>
 <body>

@@ -74,6 +74,37 @@
       </el-col>
     </el-row>
 
+    <el-card shadow="never" class="mb16">
+      <template #header>
+        <div class="flex-between">
+          <b>班级薄弱知识点（按正确率升序）</b>
+          <div>
+            <el-tag v-if="weakSummary.below_60" size="small" type="danger">
+              低于 60%：{{ weakSummary.below_60 }} 个
+            </el-tag>
+            <el-tag v-if="weakSummary.point_count" size="small" type="info">
+              覆盖 {{ weakSummary.point_count }} 个知识点 / {{ weakSummary.student_count }} 名学生
+            </el-tag>
+          </div>
+        </div>
+      </template>
+      <el-table v-loading="loadingWeak" :data="weakPoints" border stripe max-height="360">
+        <template #empty><TableEmpty text="暂无掌握度数据（学生做过题后才会产生）" /></template>
+        <el-table-column type="index" label="#" width="56" align="center" />
+        <el-table-column prop="name" label="知识点" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="subject_name" label="学科" width="90" />
+        <el-table-column label="正确率" width="170">
+          <template #default="{ row }">
+            <el-progress :percentage="Math.min(row.accuracy || 0, 100)"
+                         :color="effectColor(row.accuracy)" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="weak_students" label="未掌握人数" width="110" align="center" />
+        <el-table-column prop="answer_count" label="作答数" width="90" align="center" />
+        <el-table-column prop="suggestion" label="讲评建议" min-width="220" show-overflow-tooltip />
+      </el-table>
+    </el-card>
+
     <el-card shadow="never">
       <template #header><b>班级横向对比</b></template>
       <el-table v-loading="loading" :data="comparison" border stripe>
@@ -121,8 +152,11 @@ const taskId = ref(null)
 const overview = ref(null)
 const comparison = ref([])
 const effect = ref([])
+const weakPoints = ref([])
+const weakSummary = ref({})
 const loading = ref(false)
 const loadingEffect = ref(false)
+const loadingWeak = ref(false)
 
 const cards = computed(() => overview.value ? [
   { label: '班级人数', value: overview.value.student_count },
@@ -165,6 +199,8 @@ async function loadAll() {
   } finally {
     loading.value = false
   }
+  // 薄弱知识点与任务无关（按班级聚合掌握度），单独加载、失败不影响上面两块
+  loadWeak()
 }
 
 async function loadEffect() {
@@ -178,6 +214,31 @@ async function loadEffect() {
     effect.value = Array.isArray(d) ? d : (d?.items || [])
   } finally {
     loadingEffect.value = false
+  }
+}
+
+/**
+ * 班级薄弱知识点。
+ *
+ * 与「知识点教学效果评估」并列但**不等价**：那个按任务看（要有 task_id），
+ * 这个直接按班级聚合 `edu_knowledge_mastery`，选完班级就能看，
+ * 备课场景用得上（"这个班二次函数只有 41%"）。不依赖 taskId，所以独立加载。
+ */
+async function loadWeak() {
+  if (!classId.value) { weakPoints.value = []; weakSummary.value = {}; return }
+  loadingWeak.value = true
+  try {
+    const res = await reportApi.classWeakPoints({ class_id: classId.value, limit: 10 })
+    const d = res.data || {}
+    weakPoints.value = d.items || []
+    weakSummary.value = d.summary || {}
+  } catch {
+    // 掌握度表为空（新班级还没做过题）时后端正常返回空数组，
+    // 走到这里说明真出错，保留空态即可，不打断整页
+    weakPoints.value = []
+    weakSummary.value = {}
+  } finally {
+    loadingWeak.value = false
   }
 }
 

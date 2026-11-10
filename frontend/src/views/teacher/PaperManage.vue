@@ -827,7 +827,10 @@ async function applyRecommendations() {
   const baseItems = detailItems.value.map(it => ({
     question_id: it.question_id,
     score: it.score,
-    ...(it.section_name ? { section_name: it.section_name } : {})
+    // 同 save()：覆盖写不带大题结构会把整卷分组抹平
+    ...(it.section_code ? { section_code: it.section_code } : {}),
+    ...(it.section_name ? { section_name: it.section_name } : {}),
+    section_sort: Number(it.section_sort) || 0
   }))
   for (const r of selected) {
     if (!r?.question_id || baseItems.some(x => x.question_id === r.question_id)) continue
@@ -972,7 +975,12 @@ async function openDialog(row) {
         type: it.type,
         type_label: it.type_label,
         difficulty: it.difficulty,
-        knowledge_point_name: it.knowledge_point_name
+        knowledge_point_name: it.knowledge_point_name,
+        // 大题结构必须原样带回去：save() 是整卷覆盖写，丢了这三个字段
+        // 就会把标准卷的「一、选择题」抹成裸题型（P1-1）。
+        section_code: it.section_code || null,
+        section_name: it.section_name || null,
+        section_sort: it.section_sort || 0
       }))
     } catch {
       // 详情失败时保留列表行信息，仍可保存基本信息
@@ -1005,7 +1013,11 @@ async function save() {
       description: form.description,
       items: paperItems.value.map(it => ({
         question_id: it.question_id,
-        score: Number(it.score) || 0
+        score: Number(it.score) || 0,
+        // 覆盖写必须带全大题三件套，否则后端 section_code/sort 被写空（P1-1）
+        ...(it.section_code ? { section_code: it.section_code } : {}),
+        ...(it.section_name ? { section_name: it.section_name } : {}),
+        section_sort: Number(it.section_sort) || 0
       }))
     }
     if (form.id) await questionApi.updatePaper(form.id, payload)

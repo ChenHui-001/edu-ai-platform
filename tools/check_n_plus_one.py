@@ -22,7 +22,7 @@
     python tools/check_n_plus_one.py            # 报告
     python tools/check_n_plus_one.py --strict   # 有 A 类即非零退出（CI 用）
 
-退出码：--strict 下发现 A 类问题返回 1，否则 0。
+退出码：--strict 下发现 A 类问题返回 1；--ratchet 下 A 类数量超过基线返回 1。
 """
 import argparse
 import ast
@@ -33,6 +33,14 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 API_DIR = ROOT / "backend" / "app" / "api"
 MODEL_DIR = ROOT / "backend" / "app" / "models"
+
+# A 类（循环内逐条查库）基线，**只许降不许升**。
+#
+# 为什么不用 `--strict` 直接卡死：存量 86 处一次性全部整改不现实，而
+# 「装上去就红」的门禁一定会被注释掉（团队会为了交付把整行删了）。
+# 棘轮的效果等价于冻结现状：新写的循环内查库立刻失败，存量逐批消化。
+# 每修完一批，把这个数字下调到实测值。
+BASELINE_A = 86
 
 DB_CALLS = {"get", "scalar", "scalars", "execute", "query"}
 DB_OBJ_HINT = re.compile(r"^(db|session|_db|sess)$", re.I)
@@ -171,6 +179,8 @@ def scan_fk_no_index():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--strict", action="store_true", help="发现 A 类问题即非零退出")
+    ap.add_argument("--ratchet", action="store_true",
+                    help=f"A 类数量超过基线（{BASELINE_A} 处）即非零退出；只许降不许升")
     args = ap.parse_args()
 
     a = scan_n_plus_one()
@@ -216,6 +226,16 @@ def main():
     if args.strict and a:
         print(f"\n[FAIL] 存在 {len(a)} 处循环内查库，请改为批量预取。")
         return 1
+    if args.ratchet:
+        if len(a) > BASELINE_A:
+            print(f"\n[FAIL] A 类由基线 {BASELINE_A} 处升到 {len(a)} 处 —— 新增了循环内查库。"
+                  f"\n       请改为批量预取（in_ 查询 + 字典映射），或在明确接受代价时上调 BASELINE_A。")
+            return 1
+        if len(a) < BASELINE_A:
+            print(f"\n[PASS] A 类 {len(a)} 处，优于基线 {BASELINE_A} 处。"
+                  f"\n       ★ 请把 tools/check_n_plus_one.py 的 BASELINE_A 下调为 {len(a)}，锁定收益。")
+        else:
+            print(f"\n[PASS] A 类 {len(a)} 处，与基线一致。")
     return 0
 
 

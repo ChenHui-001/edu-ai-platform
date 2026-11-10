@@ -123,6 +123,10 @@ if [ -n "$GATE_PY" ]; then
   # 实测耗时 10s / 0.3s，放进本地门禁不痛。
   "$GATE_PY" tools/check_gen_data_determinism.py || GATE_RC=1
   "$GATE_PY" tools/check_new_code_tests.py || GATE_RC=1
+  # N+1 棘轮：A 类（循环内逐条查库）只许降不许升。
+  # 脚本早就写好了，但此前只在 CI 定时任务里跑，本地改完 API 直接提交，
+  # 到 CI 才发现（或根本没人看）。默认非严格模式只出报告，--ratchet 卡基线。
+  "$GATE_PY" tools/check_n_plus_one.py --ratchet || GATE_RC=1
   # ruff 未安装时 lint_gate 返回 2 —— 那是「环境缺工具」而不是「代码有缺陷」，
   # 与 CI 不同（CI 里会先 pip install ruff，缺了就是流程错）。
   # 本地缺失只告警不阻断，避免为了跑一次交付先折腾环境。
@@ -143,15 +147,31 @@ if [ -n "$GATE_PY" ]; then
   # 「整块模板被复制成两份」「res.data.data 恒 undefined」「裸 ElMessageBox」，
   # 四者 build 与 eslint 全绿、浏览器里才炸。四道合计 <2s，一并前置。
   FE_RC=0
-  for _g in scan_vue_refs scan_vue_dup check_data_data check_bare_messagebox; do
+  # check_css_tokens：CSS 变量自引用 / 未定义引用。此前只在 CI 跑，
+  # 历史上曾因 `--el-color-primary` 被写成自引用导致 primary 按钮全透明，
+  # 本地全绿、上线才发现。与其余四道合并进同一轮（<1s）。
+  for _g in scan_vue_refs scan_vue_dup check_data_data check_bare_messagebox check_css_tokens; do
     "$GATE_PY" "tools/${_g}.py" || FE_RC=1
   done
   if [ "$FE_RC" -ne 0 ]; then
-    die 1 "前端静态普查未通过（白屏引用 / 重复模板块 / res.data.data / 裸消息框），修复后再交付"
+    die 1 "前端静态普查未通过（白屏引用 / 重复模板块 / res.data.data / 裸消息框 / CSS 变量），修复后再交付"
   fi
   ok "前端静态普查通过"
 else
   echo "  ${c_warn}未找到 python，跳过静态门禁${c_reset}"
+fi
+
+# ---------- 0.4 行为回归（接口级） ----------
+# 项目自 2026-10-29 移除 tests/ 后，后端行为回归是真空的：静态门禁只看
+# 「代码长什么样」，看不出「端点串起来还对不对」。这个脚本用临时库 +
+# TestClient 走真实 HTTP，覆盖试卷导出(P0-1)、异步组卷解析(P0-3)、
+# 智能组卷 Agent(P0-4)、覆盖写保留大题结构(P1-1)、删题后成绩重算(P1-4)、
+# 班级薄弱知识点聚合(F-03)，共 21 条断言，约 17s。
+if [ -n "$GATE_PY" ] && [ -f tools/verify_p0_fixes.py ]; then
+  if ! "$GATE_PY" tools/verify_p0_fixes.py; then
+    die 1 "接口级行为回归未通过（试卷导出 / 异步组卷 / Agent 组卷 / 大题结构 / 成绩重算 / 班级薄弱点）"
+  fi
+  ok "接口级行为回归通过"
 fi
 
 # ---------- 0.5 磁盘预检 ----------
