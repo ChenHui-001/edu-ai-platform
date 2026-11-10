@@ -150,6 +150,15 @@ jobs:
         # 且不能 await 后直接走成功分支。统一走 @/utils/confirm 三件套。
         run: python tools/check_bare_messagebox.py
 
+      - name: CSS 变量守护（自引用 / 未定义引用）
+        # `--el-color-primary: var(--el-color-primary)` 这类自引用会形成 CSS 循环，
+        # 计算值变 guaranteed-invalid，引用它的**整条声明**失效：
+        #   · el-button--primary → 背景 transparent + 白字白框 = 看不见的按钮；
+        #   · linear-gradient(...var(--x)...) → 整条 background 失效 → 渐变消失。
+        # 2026-11-09 真实发生过一次（硬编码色批量令牌化时把定义行一起替换了），
+        # 症状是「教学管理等页面按钮透明/白色」，build 与 lint 全部通过。
+        run: python tools/check_css_tokens.py
+
       - name: 单元测试（vitest）
         # 6 个文件 76 个用例，锁六处回归：
         #   date.test.js        —— Safari 解析 "YYYY-MM-DD HH:mm:ss" 与东八区口径

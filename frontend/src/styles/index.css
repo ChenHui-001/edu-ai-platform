@@ -1,5 +1,16 @@
 :root {
-  --el-color-primary: var(--el-color-primary);
+  /* 品牌主色。**这里必须写字面色值，不能写 var(--el-color-primary)**：
+   * 自引用会让这条声明变成 CSS 循环（custom property 自引用 → computed 值
+   * 为 guaranteed-invalid），浏览器直接丢弃它 —— 于是 --el-color-primary
+   * 回落到 Element Plus 默认的 #409eff，而下面 light-3/5/7/9、dark-2 仍是
+   * #2f6fd0 家族，同一套按钮里混进两个色相。
+   * 更糟的是所有 var(--el-color-primary) 的用法全部失效：
+   *   · el-button type="primary" → background 变 transparent、文字是白的
+   *     → 按钮在白底上完全看不见；
+   *   · linear-gradient(...var(--el-color-primary)...) → 整条 background 失效
+   *     → 渐变消失（登录页品牌区即如此）。
+   * 令牌化脚本替换硬编码色时曾把本行一并替换掉，务必保持字面值。 */
+  --el-color-primary: #2f6fd0;
   --el-color-primary-light-3: #6b9ce0;
   --el-color-primary-light-5: #94b6e8;
   --el-color-primary-light-7: #bdd2f1;
