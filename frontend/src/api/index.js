@@ -192,6 +192,9 @@ export const questionApi = {
   // 标准卷要 2 轮，同步请求必然等到前端超时而后端还在跑）。
   composeAiAsync: (data) => request.post('/question/papers/compose/ai/async', data, { timeout: 30000 }),
   composeJob: (id) => request.get(`/question/papers/compose/jobs/${id}`, { timeout: 15000 }),
+  // 取消是"登记请求"，服务端立刻返回；真正的停止发生在 worker 的下一个
+  // 检查点（批次之间）。前端必须继续轮询到终态，不能点完就收工。
+  cancelComposeJob: (id) => request.post(`/question/papers/compose/jobs/${id}/cancel`),
   composePreview: (data) => request.post('/question/papers/compose/preview', data, { timeout: 300000 }),
   composeAi: (data) => request.post('/question/papers/compose/ai', data, { timeout: 300000 }),
   composeSave: (data) => request.post('/question/papers/compose/save', data, { timeout: 300000 }),
@@ -214,6 +217,10 @@ export const questionApi = {
 
   paperVersions: (id) => request.get(`/question/papers/${id}/versions`),
   paperVersionDetail: (id, v) => request.get(`/question/papers/${id}/versions/${v}`),
+  // 版本对比：against 省略即与「当前卷面」比（服务端现算快照，不读最新版本行）
+  diffPaperVersion: (id, v, against) => request.get(
+    `/question/papers/${id}/versions/${v}/diff`,
+    { params: against ? { against } : {} }),
   restorePaperVersion: (id, v, data) =>
     request.post(`/question/papers/${id}/versions/${v}/restore`, data || {}),
 
@@ -429,6 +436,7 @@ export const lessonAiApi = {
     { params: gradeId ? { grade_id: gradeId } : {} }),
   generate: (data) => request.post('/lesson/ai/generate', data),
   job: (id) => request.get(`/lesson/ai/jobs/${id}`),
+  cancelJob: (id) => request.post(`/lesson/ai/jobs/${id}/cancel`),
   jobs: (limit) => request.get('/lesson/ai/jobs', { params: { limit: limit || 20 } }),
   save: (id, data) => request.post(`/lesson/ai/jobs/${id}/save`, data || {}),
   // 导出是二进制下载，不走统一的 JSON 拦截器，直接用 blob

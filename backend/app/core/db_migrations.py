@@ -57,6 +57,9 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
     # v1.0.42: AI 任务进度提示（前后端轮询要给出「正在做什么」）
     ("sys_agent_job", "progress", "INTEGER DEFAULT 0"),
     ("sys_agent_job", "stage", "VARCHAR(64)"),
+    # v2.5.22: AI 长任务可取消（F-04）。协作式取消标志，worker 在检查点响应。
+    # DEFAULT 0 是必须的：老库里已有的 finished 行要读成「未请求取消」。
+    ("sys_agent_job", "cancel_requested", "INTEGER DEFAULT 0"),
     # v1.1.0: 知识点 V2（树治理 / 状态 / 来源 / 创建者）
     ("edu_knowledge_point", "textbook_version", "VARCHAR(64)"),
     ("edu_knowledge_point", "status", "VARCHAR(16) DEFAULT 'published'"),

@@ -2438,6 +2438,49 @@ def get_version(
     })
 
 
+@router.get("/{paper_id}/versions/{version}/diff", summary="版本对比（回溯前先看差异）")
+def diff_version(
+    paper_id: int, version: int,
+    against: str = Query("current", description="current（默认，与当前卷面对比）或版本号"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:list")),
+):
+    """对比某个历史版本与当前（或另一版本）的差异（F-02）。
+
+    为什么值得做：回溯是不可逆操作（有学生提交时还要二次确认），而旧版本
+    抽屉只显示「v3 · 编辑题目 · 18 题」——教师根本不知道 v3 与现在是"差一道题"
+    还是"整卷重排"，只能盲选。快照里已冗余存了题干/答案/解析，算差异是免费的。
+
+    `against=current` 走**现算**快照（`build_snapshot`），不读库里的最新版本行：
+    最新一行可能是「回溯前」这类中间快照，与用户看到的卷面并不一致。
+    """
+    paper = db.get(Paper, paper_id)
+    if not paper:
+        raise NotFoundException("试卷不存在")
+    _assert_readable(db, paper, user)
+
+    before = version_svc.load_snapshot(db, paper_id, version)
+    if before is None:
+        raise NotFoundException("版本不存在")
+
+    target = str(against or "current").strip().lower()
+    if target in ("", "current", "now"):
+        after = version_svc.build_snapshot(db, paper)
+        after_label = f"当前（v{paper.current_version or 1}）"
+    else:
+        try:
+            other = int(target)
+        except (TypeError, ValueError):
+            raise BusinessException("against 必须是 current 或一个版本号")
+        after = version_svc.load_snapshot(db, paper_id, other)
+        if after is None:
+            raise NotFoundException("用于对比的版本不存在")
+        after_label = f"v{other}"
+
+    return ok(version_svc.diff_snapshots(
+        before, after, before_label=f"v{version}", after_label=after_label))
+
+
 @router.post("/{paper_id}/versions/{version}/restore", summary="回溯到指定版本")
 def restore_version(
     paper_id: int, version: int, body: RestoreVersionIn = Body(default_factory=dict),
@@ -2939,16 +2982,40 @@ def _fail_job(job_id: int, message: str) -> None:
     _touch_job(job_id, status="failed", error=message[:2000], finished_at=now_local())
 
 
+def _cancelled_job(job_id: int) -> None:
+    """把任务落成 `cancelled`（F-04）。
+
+    与 `_fail_job` 分开：取消不是故障，`error` 留空、`progress` 停在原位，
+    否则前端会把"你点了取消"渲染成红色错误，也会污染任务成功率统计。
+    """
+    _touch_job(job_id, status="cancelled", stage="已取消",
+               error=None, finished_at=now_local())
+
+
 def _run_compose_job(job_id: int) -> None:
     """后台执行组卷。独立 Session —— 请求结束 Session 就关了。"""
     from app.core.database import SessionLocal
     from app.models import AgentJob, User
+    from app.services import agent_job_state
 
     db = SessionLocal()
+
+    def check_cancel() -> None:
+        """检查点：已请求取消就抛 `JobCancelled` 中断。
+
+        只能在**批次之间**检查 —— LLM 往返本身不可中断（同步 HTTP 调用），
+        所以取消的实际延迟 = 当前批次剩余时间（实测单批 60~100s）。
+        这一点必须在前端如实说明，不能让用户以为点了就立刻停。
+        """
+        if agent_job_state.cancel_requested(db, job_id):
+            raise agent_job_state.JobCancelled()
+
     try:
         job = db.get(AgentJob, job_id)
         if not job:
             return
+        # 排队期就被取消：连 running 都不用写，直接落 cancelled
+        check_cancel()
         job.status = "running"
         job.started_at = now_local()
         job.progress = 5
@@ -2962,6 +3029,7 @@ def _run_compose_job(job_id: int) -> None:
 
         def on_progress(done: int, total: int) -> None:
             # 补题占 15%~90%：那里是大头，其余阶段（解析/报告/落库）都很快
+            check_cancel()
             pct = 15 + int(75 * done / max(1, total))
             _touch_job(job_id, progress=pct, stage=f"AI 补题 {done}/{total} 个大题")
 
@@ -2981,6 +3049,10 @@ def _run_compose_job(job_id: int) -> None:
         body = _plan_response(ctx)
         payload = json.dumps(body, ensure_ascii=False, default=str)
 
+        # 落结果前再查一次：卷子已经生成、用户却在这几十毫秒里点了取消，
+        # 让他白等一张不要的卷子没有意义
+        check_cancel()
+
         # 重新取一次：期间 on_progress 用别的连接改过这一行（旧对象可能过期）
         db.expire_all()
         job = db.get(AgentJob, job_id)
@@ -2991,6 +3063,9 @@ def _run_compose_job(job_id: int) -> None:
             job.stage = "完成"
             job.finished_at = now_local()
             db.commit()
+    except agent_job_state.JobCancelled:
+        logger.info(f"组卷任务 {job_id} 已被用户取消")
+        _cancelled_job(job_id)
     except BusinessException as exc:
         _fail_job(job_id, str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -3052,3 +3127,41 @@ def get_compose_job(
     # 僵尸任务判定：进程重启会丢后台线程，status 永停 running。
     # 判据单点定义在 agent_job_state（与 /agent/jobs 同一套）。
     return ok(agent_job_state.apply_timeout(job, d))
+
+
+@router.post("/compose/jobs/{job_id}/cancel", summary="取消组卷任务")
+def cancel_compose_job(
+    job_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:ai")),
+):
+    """请求取消组卷任务（F-04）。
+
+    **协作式取消，不是立刻杀线程**：LLM 往返是同步 HTTP 调用，无法中断。
+    这里只登记请求，worker 在批次边界（`on_progress`）看到就中止并写
+    `cancelled`。前端必须继续轮询到终态，不能点完就当作已停止。
+
+    幂等：已结束 / 已登记过取消都返回 200 + 说明，不报错 —— 用户连点两下
+    取消按钮不该看到红色报错。
+    """
+    from app.models import AgentJob
+    from app.services import agent_job_state
+
+    job = db.get(AgentJob, job_id)
+    if not job or job.agent != COMPOSE_JOB_AGENT:
+        raise NotFoundException("任务不存在")
+    if job.user_id != user.id and "sys_admin" not in user.role_codes:
+        raise PermissionException("无权操作该任务")
+
+    # 僵尸任务直接说清楚：对一个后台线程早已消失的任务登记取消，
+    # 用户会看到"正在等待当前批次结束"，而那个批次永远不会结束。
+    if agent_job_state.is_timed_out(
+            job.status, job.created_at,
+            timeout_seconds=agent_job_state.timeout_for(job.agent)):
+        raise BusinessException(
+            "任务已超时中断（后台线程已丢失），无需取消，请直接重新组卷")
+
+    res = agent_job_state.request_cancel(db, job)
+    data = {"status": job.status}
+    data.update({"accepted": res.get("accepted"), "message": res.get("message"),
+                 "cancel_requested": int(job.cancel_requested or 0)})
+    return ok(data, message=res.get("message") or "已处理")

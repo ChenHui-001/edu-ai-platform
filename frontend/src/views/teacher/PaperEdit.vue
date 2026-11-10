@@ -228,8 +228,9 @@
         <el-table-column prop="item_count" label="题量" width="70" />
         <el-table-column prop="total_score" label="总分" width="70" />
         <el-table-column prop="created_at" label="时间" width="150" />
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="操作" width="132" fixed="right">
           <template #default="{ row }">
+            <el-button text size="small" @click="openDiff(row)">对比</el-button>
             <el-button text size="small" type="primary"
                        :disabled="row.version === paper.current_version"
                        @click="doRestore(row)">回溯</el-button>
@@ -239,8 +240,73 @@
       <el-empty v-if="!versions.length" description="暂无版本记录" />
       <div class="version-hint">
         回溯不会删除历史：每次改动都产生新版本，可随时再切回。
+        点「对比」可先看清这个版本与当前卷面差在哪。
       </div>
     </el-drawer>
+
+    <!-- 版本对比（F-02）：回溯是不可逆操作，选之前先看清差异 -->
+    <el-dialog v-model="diffDialog" title="版本对比" width="860px" top="6vh">
+      <div v-loading="diffLoading" class="diff-wrap">
+        <el-alert v-if="diff.summary" :title="diff.summary" :closable="false" show-icon
+                  :type="diff.has_changes ? 'warning' : 'success'" />
+        <div v-else class="muted">暂无差异数据</div>
+
+        <template v-if="diff.paper_changes && diff.paper_changes.length">
+          <h4 class="diff-title">卷面信息</h4>
+          <el-table :data="diff.paper_changes" size="small">
+            <el-table-column prop="label" label="字段" width="110" />
+            <el-table-column label="对比版本" min-width="200">
+              <template #default="{ row }">{{ cellText(row.before) }}</template>
+            </el-table-column>
+            <el-table-column label="当前/目标" min-width="200">
+              <template #default="{ row }">{{ cellText(row.after) }}</template>
+            </el-table-column>
+          </el-table>
+        </template>
+
+        <template v-if="diffItems.changed.length">
+          <h4 class="diff-title">题目改动（{{ diffItems.changed.length }}）</h4>
+          <div v-for="c in diffItems.changed" :key="'chg' + c.question_id" class="diff-item">
+            <div class="diff-stem">{{ truncate(c.stem, 90) }}</div>
+            <div v-for="(f, i) in c.changes" :key="i" class="diff-line">
+              <span class="diff-label">{{ f.label }}</span>
+              <span class="diff-before">{{ cellText(f.before) }}</span>
+              <span class="diff-arrow">→</span>
+              <span class="diff-after">{{ cellText(f.after) }}</span>
+            </div>
+          </div>
+        </template>
+
+        <template v-if="diffItems.added.length">
+          <h4 class="diff-title">新增题目（{{ diffItems.added.length }}）</h4>
+          <div v-for="a in diffItems.added" :key="'add' + a.question_id" class="diff-item">
+            <span class="diff-tag add">+{{ a.score }}分</span>
+            {{ truncate(a.stem, 90) }}
+            <span class="muted">· {{ a.section_name || '未分组' }}</span>
+          </div>
+        </template>
+
+        <template v-if="diffItems.removed.length">
+          <h4 class="diff-title">移除题目（{{ diffItems.removed.length }}）</h4>
+          <div v-for="r in diffItems.removed" :key="'rm' + r.question_id" class="diff-item">
+            <span class="diff-tag rm">-{{ r.score }}分</span>
+            {{ truncate(r.stem, 90) }}
+            <span class="muted">· {{ r.section_name || '未分组' }}</span>
+          </div>
+        </template>
+
+        <div v-if="diffItems.unchanged" class="muted diff-unchanged">
+          另有 {{ diffItems.unchanged }} 题无变化
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="diffDialog = false">关闭</el-button>
+        <el-button v-if="diffTarget && diffTarget.version !== paper.current_version"
+                   type="primary" @click="restoreFromDiff">
+          回溯到此版本
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -807,6 +873,51 @@ async function openVersions() {
   }
 }
 
+// ---------------- 版本对比（F-02） ----------------
+const diffDialog = ref(false)
+const diffLoading = ref(false)
+/** 当前对比的历史版本行（「回溯到此版本」要用） */
+const diffTarget = ref(null)
+const diff = ref({})
+const diffItems = computed(() => {
+  const it = diff.value.items || {}
+  return {
+    added: it.added || [],
+    removed: it.removed || [],
+    changed: it.changed || [],
+    unchanged: it.unchanged || 0,
+  }
+})
+
+/** 差异里的空值统一显示成「（空）」：留白会让人以为字段不存在 */
+function cellText(value) {
+  if (value === null || value === undefined || value === '') return '（空）'
+  return value
+}
+
+async function openDiff(row) {
+  diffTarget.value = row
+  diff.value = {}
+  diffDialog.value = true
+  diffLoading.value = true
+  try {
+    const res = await questionApi.diffPaperVersion(paperId, row.version)
+    diff.value = res.data || {}
+  } catch (e) {
+    toastIfUnhandled(e, '加载版本差异失败')
+  } finally {
+    diffLoading.value = false
+  }
+}
+
+/** 看完差异再回溯：关掉对比框，走与「回溯」按钮完全相同的流程（含二次确认） */
+async function restoreFromDiff() {
+  const row = diffTarget.value
+  if (!row) return
+  diffDialog.value = false
+  await doRestore(row)
+}
+
 /** 卷级字段 → 中文名。后端回传的是列名，直接展示等于把实现细节丢给教师 */
 const RESTORE_FIELD_LABELS = {
   name: '试卷名称', duration: '考试时长', description: '命题说明',
@@ -946,4 +1057,34 @@ function goBack() {
 .cand-stem { font-size: 12px; }
 .pick-hint { float: left; line-height: 32px; color: var(--el-text-color-secondary); font-size: 13px; }
 .version-hint { margin-top: 12px; font-size: 12px; color: var(--el-text-color-secondary); }
+
+/* 版本对比：差异要一眼看出「从什么改成什么」，所以 before 用灰色删除线语义、
+   after 用主色，箭头固定宽度保证多行对齐 */
+.diff-wrap { max-height: 62vh; overflow-y: auto; }
+.diff-title {
+  margin: 16px 0 8px; font-size: 13px; font-weight: 600;
+  color: var(--el-text-color-regular);
+}
+.diff-item {
+  padding: 8px 0; font-size: 13px; line-height: 1.7;
+  border-bottom: 1px dashed var(--el-border-color-lighter);
+}
+.diff-stem { margin-bottom: 4px; color: var(--el-text-color-regular); }
+.diff-line { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.diff-label { flex: 0 0 64px; color: var(--el-text-color-secondary); }
+.diff-before {
+  flex: 1 1 0; min-width: 0; color: var(--el-text-color-placeholder);
+  text-decoration: line-through; word-break: break-all;
+}
+.diff-arrow { flex: 0 0 16px; text-align: center; color: var(--el-text-color-secondary); }
+.diff-after {
+  flex: 1 1 0; min-width: 0; color: var(--el-color-primary); word-break: break-all;
+}
+.diff-tag {
+  display: inline-block; min-width: 44px; margin-right: 6px; padding: 0 6px;
+  border-radius: 8px; font-size: 12px; text-align: center;
+}
+.diff-tag.add { color: var(--el-color-success); background: var(--el-color-success-light-9); }
+.diff-tag.rm { color: var(--el-color-danger); background: var(--el-color-danger-light-9); }
+.diff-unchanged { margin-top: 10px; font-size: 12px; }
 </style>

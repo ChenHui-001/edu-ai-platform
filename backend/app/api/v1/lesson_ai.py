@@ -86,6 +86,9 @@ def _job_progress(job: AgentJob) -> Dict[str, Any]:
         "progress": pct,
         "stage": job.stage or _hint(pct),
         "error": agent_job_state.timeout_message() if timed_out else job.error,
+        # 取消请求已登记、worker 还没到检查点：前端据此把「停止」按钮切成
+        # 「正在取消…」并继续轮询，而不是让用户以为点了没反应再连点
+        "cancel_requested": int(getattr(job, "cancel_requested", 0) or 0),
         "created_at": job.created_at.strftime("%Y-%m-%d %H:%M:%S") if job.created_at else None,
         "finished_at": (job.finished_at.strftime("%Y-%m-%d %H:%M:%S")
                         if job.finished_at else None),
@@ -111,6 +114,16 @@ def _run_lesson_job(job_id: int) -> None:
     db = SessionLocal()
     job: Optional[AgentJob] = None
 
+    def check_cancel() -> None:
+        """检查点：已请求取消就中断（F-04）。
+
+        教案生成主体是一次 `LessonPlanAgent().run()`，内部没有可插入的批次
+        边界，所以检查点只有两处：开工前、出结果前后。取消的实际效果是
+        **不保存结果**（LLM 那一次往返已经花掉了），这一点在接口文案里写明。
+        """
+        if agent_job_state.cancel_requested(db, job_id):
+            raise agent_job_state.JobCancelled()
+
     def update(pct: int, stage: str) -> None:
         """进度回调：独立提交，确保前端轮询立刻能看到变化。"""
         nonlocal job
@@ -129,6 +142,7 @@ def _run_lesson_job(job_id: int) -> None:
         job = db.get(AgentJob, job_id)
         if not job:
             return
+        check_cancel()   # 排队期就取消：连 running 都不必写
         job.status = "running"
         job.started_at = now_local()
         job.progress = 5
@@ -138,6 +152,8 @@ def _run_lesson_job(job_id: int) -> None:
         params = json.loads(job.params or "{}")
         res = LessonPlanAgent().run(db, user_id=job.user_id, **params)
 
+        # 出结果后再查一次：用户在最后几秒点了取消，就别把教案写进结果里
+        check_cancel()
         job = db.get(AgentJob, job_id)
         if job is None:
             return
@@ -152,6 +168,14 @@ def _run_lesson_job(job_id: int) -> None:
             job.status = "failed"
             job.error = (res.get("message") or "教案生成失败")[:500]
             job.stage = "生成失败"
+    except agent_job_state.JobCancelled:
+        logger.info("AI 教案任务 %s 已被用户取消", job_id)
+        job = db.get(AgentJob, job_id)
+        if job is not None:
+            job.status = "cancelled"
+            job.stage = "已取消"
+            job.error = None
+            db.commit()
     except Exception as exc:  # noqa: BLE001
         logger.exception("AI 教案任务 %s 执行失败", job_id)
         try:
@@ -280,6 +304,33 @@ def get_lesson_job(
     if job.user_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("无权查看该任务")
     return ok(_job_progress(job))
+
+
+@router.post("/jobs/{job_id}/cancel", summary="取消 AI 教案生成任务")
+def cancel_lesson_job(
+    job_id: int, db: Session = Depends(get_db),
+    user: User = Depends(get_current_teacher),
+):
+    """请求取消教案生成（F-04，与组卷共用 `agent_job_state` 的同一套语义）。
+
+    教案生成是一次 LLM 往返，不可中断，所以取消的**实际效果是不落结果**：
+    已经花掉的 token 收不回来，但不会把一份用户不要的教案写进结果库。
+    """
+    job = db.get(AgentJob, job_id)
+    if not job or job.agent != "lesson":
+        raise NotFoundException("任务不存在")
+    if job.user_id != user.id and "sys_admin" not in user.role_codes:
+        raise PermissionException("无权操作该任务")
+    if agent_job_state.is_timed_out(
+            job.status, job.created_at,
+            timeout_seconds=agent_job_state.timeout_for(job.agent)):
+        raise BusinessException("任务已超时中断，无需取消，请重新提交")
+
+    res = agent_job_state.request_cancel(db, job)
+    return ok({"status": job.status, "accepted": res.get("accepted"),
+               "cancel_requested": int(job.cancel_requested or 0),
+               "message": res.get("message")},
+              message=res.get("message") or "已处理")
 
 
 @router.get("/jobs", summary="我的 AI 教案生成记录")

@@ -3,7 +3,7 @@
 > **本文件是唯一入口。** 其他 `audit-reports/*.md` 只作为「当时的证据与复现记录」保留，
 > 新发现一律往这里加一行，不再新开报告。修复进度以本文件的「状态」列为准。
 >
-> 基线：`VERSION=2.5.21`，master（2026-11-10 第二轮修复后）
+> 基线：`VERSION=2.5.22`，master（2026-11-10 第三轮：P1 收尾 + F-02/F-04）
 > 来源：`paper-analysis-2026-11-10.md`（P0×4 / P1×11 / P2×20）+ `structured-assessment-2.5.19-2026-11-10.md`（§5.5）
 > 状态图例：`已修` = 本轮已改并验证；`待修` = 确认存在未处理；`待评估` = 需先确认影响面
 
@@ -18,7 +18,7 @@
 | P0-3 | AI 一键组卷「只写描述、不选年级学科」异步路径 100% 失败 | `api/v1/paper_compose.py` | **已修** | 抽出 `_ai_resolve_params()`，同步 `/compose/ai` 与异步 `/compose/ai/async` 共用；修正 `compose_ai_async` docstring。反向验证：`出一份一年级数学期中卷` → 解析出 grade=1 / subject=2（不依赖 LLM） |
 | P0-4 | 智能组卷 Agent 默认比例被 `int()` 截断 → 恒 0 题 + `NoneType` 崩溃 | `agents/paper_agent.py` | **已修** | 新增 `_split_counts()` 区分「比例/题量」并保证合计对齐；难度权重按 float 归一；`_ai_fill` 的 `PaperItem` 写入加 `paper is not None` 守卫，逐题 commit 改为一轮。反向验证：默认参数 10 题、`save=False` 不崩 |
 | P0-5 | 列表页「编辑试卷」整卷覆盖写 → 抹平标准卷大题结构；删题后成绩不重算 | `PaperManage.vue` / `question.py` / `paper_compose.py` | **已修** | 详情接口回传 `section_code/section_sort`；前端 `openDialog`/`save`/`applyRecommendations` 全链路透传；`_normalize_paper_items` 保留三件套 |
-| P0-6 | 无自动化行为回归，35 项修复无用例护航 | `tools/` / `backend/qa_audit_suite.py` | **已补** | 新增 `tools/verify_p0_fixes.py`（32 条接口级断言，临时库 + TestClient 走真实 HTTP，约 20s），覆盖 P0-1/3/4、P1-1/4/9/10、F-03，已接入 `auto_ship.sh` 的「0.4 行为回归」段 |
+| P0-6 | 无自动化行为回归，35 项修复无用例护航 | `tools/` / `backend/qa_audit_suite.py` | **已补** | 新增 `tools/verify_p0_fixes.py`（43 条接口级断言，临时库 + TestClient 走真实 HTTP，约 22s），覆盖 P0-1/3/4、P1-1/4/9/10、F-02/03/04，已接入 `auto_ship.sh` 的「0.4 行为回归」段 |
 
 ## P1 — 限制迭代速度与规模
 
@@ -73,8 +73,8 @@
 |---|---|:---:|
 | F-01 | 35 项整理为单一 backlog（本文件） | **已完成** |
 | F-03 | 班级维度薄弱知识点聚合（`GET /report/teacher/class-weak-points` + 教学报表页新卡片） | **已完成** |
-| F-02 | 试卷版本 diff 可视化 | 待做 |
-| F-04 | AI 长任务可取消 + 结果持久化 | 待做 |
+| F-02 | 试卷版本 diff 可视化 | **已完成** |
+| F-04 | AI 长任务可取消 + 结果持久化 | **已完成**（组卷全链路 + 教案后端，见下） |
 | F-05 | 导出异步化 | 待做（第 3 批） |
 | F-06 | AI 配置按 biz_type 细化预算 | 待做 |
 | F-07 | 通知订阅偏好 | 待做 |
@@ -83,6 +83,25 @@
 > 按班级学生集合做 `sum(正确)/sum(总数)`；`min_answers` 挡住「1 人 1 题」的噪声；
 > 正确率分档给出讲评建议。与 `knowledge-effect` 的区别是**不依赖 task_id**，
 > 选完班级即可看，直接服务备课。
+
+> **F-02 实现要点**：`GET /papers/{id}/versions/{v}/diff?against=current`，逻辑在
+> `paper_version_service.diff_snapshots()`。`against=current` 走**现算**快照
+> （`build_snapshot`）而不是读最新版本行 —— 最新一行可能是「回溯前」这类中间快照，
+> 与用户看到的卷面不一致。差异含卷面字段 + 题目新增/移除/改动（分值、大题、题序、
+> 题干、答案、解析、难度），长文本只回传 80 字摘要（一份卷的全文轻松上百 KB）。
+> 不虚报变更：分值 5/5.0 视为相等，`difficulty_ratio` 按 JSON 键序归一后比较。
+> 前端版本抽屉每行加「对比」，对比框里可直接「回溯到此版本」（复用同一套二次确认）。
+
+> **F-04 实现要点**：`sys_agent_job` 加 `cancel_requested`（补列迁移 + DEFAULT 0），
+> `agent_job_state` 增加 `request_cancel()/cancel_requested()/JobCancelled`。
+> **取消是协作式的，不是杀线程**：LLM 往返是同步 HTTP 调用不可中断，接口只登记标志，
+> worker 在批次边界（`on_progress`）看到才中止，落 `status='cancelled'` 且**不写 error**
+> （取消不是故障，不能被算进失败率）。接口只改 `cancel_requested` 与 `stage`，
+> **不改 status** —— 单一写入者是 worker，避免"接口写 cancelled、worker 又写回 running"。
+> 组卷：`POST /question/papers/compose/jobs/{id}/cancel` + 前端「停止」按钮（点完继续轮询到终态）。
+> 教案：`POST /lesson/ai/jobs/{id}/cancel`，检查点在开工前与出结果前（实际效果是**不落结果**，
+> token 已花掉）；**该端点目前没有前端消费方**（教案 AI 生成页未接线），仅后端可用。
+> 结果持久化本已具备（`job.result` 落库），无需改动。
 
 ## 验证脚本（可重跑，用于反向验证修复）
 

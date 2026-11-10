@@ -317,6 +317,13 @@ class AgentJob(Base):
     params: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="请求参数 JSON")
     result: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="结果 JSON")
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 取消请求（协作式，F-04）。线程是 daemon 且在 LLM 往返里不可中断，
+    # 所以「取消」只能落成一次**请求**：接口置位，worker 在检查点
+    # （批次之间 / 阶段边界）看到就中止并写 status='cancelled'。
+    # 不用布尔语义的 nullable=False 布尔列，是因为 SQLite 给老库补列时
+    # DEFAULT 0 才能让存量行语义正确（NULL 会被读成"未知"）。
+    cancel_requested: Mapped[int] = mapped_column(
+        Integer, default=0, comment="1=已请求取消（worker 在检查点响应）")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

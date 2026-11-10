@@ -83,6 +83,82 @@ REAP_GRACE_SECONDS = 600
 
 STATUS_RUNNING = ("pending", "running")
 
+# 终态：进入其中任一状态后，取消请求不再有效（幂等返回现状，不翻转状态）。
+# 注意 `success` 与 `succeeded` 并存是历史遗留 —— 教案侧写 `success`，
+# 组卷/出题侧写 `succeeded`，两个都得算终态，否则「已完成的教案任务」会被
+# 判成"还能取消"，接口把 cancel_requested 置位后没人消费，前端一直等取消成功。
+STATUS_TERMINAL = ("succeeded", "success", "failed", "cancelled")
+
+STATUS_CANCELLED = "cancelled"
+
+
+class JobCancelled(Exception):
+    """worker 在检查点发现「已请求取消」，用这个异常中断执行。
+
+    不用通用 Exception：`_run_*_job` 的 except 分支要能区分
+    「用户主动取消」与「真的出错」。混成一种的话，取消会在日志里记成
+    ERROR、前端弹出「组卷失败」—— 用户明明点了取消，却被报成系统故障。
+    """
+
+
+def is_terminal(status: Any) -> bool:
+    return str(status or "") in STATUS_TERMINAL
+
+
+def cancel_requested(db: Any, job_id: int) -> bool:
+    """任务是否已被请求取消（**读库**，不用调用方手里的 ORM 对象）。
+
+    为什么不用 `job.cancel_requested`：worker 的 Session 在长事务里持有一份
+    旧快照，取消请求由另一个请求线程写入，旧对象上看不到 —— 这正是"取消按了
+    没用、任务继续跑到超时"的经典成因。这里每次开一条廉价 SQL 重新读。
+    """
+    from sqlalchemy import text
+
+    try:
+        row = db.execute(
+            text("SELECT cancel_requested FROM sys_agent_job WHERE id = :id"),
+            {"id": int(job_id)},
+        ).first()
+    except Exception:  # noqa: BLE001  读失败按未取消处理：宁可多跑，不可误杀
+        return False
+    return bool(row and int(row[0] or 0))
+
+
+def request_cancel(db: Any, job: Any) -> Dict[str, Any]:
+    """登记取消请求。返回 `{accepted, status, message}`。
+
+    **不改 status**：worker 还持有 job 行，两边同时写会互相覆盖。
+    请求只置 `cancel_requested`，状态由 worker 自己写 `cancelled` ——
+    单一写入者，避免"接口写了 cancelled、worker 又写回 running"的翻转。
+
+    幂等：重复请求返回 `accepted=False` 并说明原因，不报错。
+    """
+    if job is None:
+        return {"accepted": False, "status": None, "message": "任务不存在"}
+    status = str(getattr(job, "status", "") or "")
+    if is_terminal(status):
+        return {
+            "accepted": False, "status": status,
+            "message": "任务已结束，无需取消",
+        }
+    if int(getattr(job, "cancel_requested", 0) or 0) == 1:
+        return {
+            "accepted": False, "status": status,
+            "message": "取消请求已登记，正在等待当前批次结束",
+        }
+    job.cancel_requested = 1
+    # stage 一并更新，前端轮询立刻能看到"正在取消"，不用等到 worker 检查点
+    job.stage = "正在取消（等待当前批次结束）"
+    db.commit()
+    return {
+        "accepted": True, "status": status,
+        "message": "已请求取消。当前批次结束后任务会停止，已生成的中间结果不会落库",
+    }
+
+
+def cancel_requested_message() -> str:
+    return "任务已取消"
+
 
 def is_timed_out(
     status: Optional[str], created_at: Optional[datetime],

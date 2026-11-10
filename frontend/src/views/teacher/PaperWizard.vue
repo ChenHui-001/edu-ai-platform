@@ -292,7 +292,15 @@
         <div v-if="composing && form.mode === 'ai'" class="compose-progress">
           <el-progress :percentage="composeProgress" :stroke-width="8"
                        :striped="true" :striped-flow="true" style="width:260px" />
-          <span class="muted">{{ composeStage || '正在生成…' }}（预计 1~3 分钟，可先切到其他页面）</span>
+          <span class="muted">
+            {{ composeStage || '正在生成…' }}（预计 1~3 分钟，可先切到其他页面）
+          </span>
+          <!-- 取消不是立刻停：LLM 往返不可中断，实际停止点在下个批次边界。
+               按钮文案与提示都写「正在取消」，避免用户以为点了没反应 -->
+          <el-button size="small" :loading="cancelling" :disabled="cancelling"
+                     @click="cancelCompose">
+            {{ cancelling ? '正在取消…' : '停止' }}
+          </el-button>
         </div>
         <el-button type="primary" size="large" :loading="composing"
                    :disabled="composeDisabled" @click="doCompose">
@@ -558,6 +566,36 @@ const composing = ref(false)
 // 异步组卷进度（只有 AI 模式走任务队列，自定义组卷是纯题库抽题、很快）
 const composeProgress = ref(0)
 const composeStage = ref('')
+/** 当前轮询的 job_id（0=没有在跑的任务），取消按钮要用 */
+let currentJobId = 0
+/** 已发出取消请求、仍在等 worker 到检查点 */
+const cancelling = ref(false)
+
+/**
+ * 请求取消当前组卷任务（F-04）。
+ *
+ * 服务端是**协作式取消**：只登记标志，worker 在批次边界看到才停。
+ * 所以这里既不能立刻关轮询、也不能把 composing 置 false —— 一旦提前收工，
+ * 后台任务继续跑、结果照样落库，用户却以为已经停了。
+ */
+async function cancelCompose() {
+  if (!currentJobId || cancelling.value) return
+  cancelling.value = true
+  composeStage.value = '正在取消…'
+  try {
+    const res = await questionApi.cancelComposeJob(currentJobId)
+    const d = res.data || {}
+    if (d.accepted === false) {
+      // 已结束 / 已登记过 / 已超时：如实转述后端的话，不要假装取消成功
+      ElMessage.info(d.message || '任务已结束，无需取消')
+    } else {
+      ElMessage.info('已请求取消，当前批次结束后停止')
+    }
+  } catch (e) {
+    cancelling.value = false
+    toastIfUnhandled(e, '取消失败')
+  }
+}
 
 /**
  * 轮询中止标志：组件卸载（教师切走 / 关标签页）后不再继续查询。
@@ -610,6 +648,13 @@ async function pollComposeJob(jobId) {
     const d = res.data || {}
     composeProgress.value = Number(d.progress) || 0
     composeStage.value = d.stage || ''
+    if (d.status === 'cancelled') {
+      // 用户主动取消不是故障：不走「组卷失败」那条提示
+      const err = new Error('已取消组卷')
+      err.__handled = true
+      err.__cancelled = true
+      throw err
+    }
     if (d.status === 'succeeded') return d.result || {}
     if (d.status === 'failed') throw new Error(d.error || '组卷任务失败')
   }
@@ -1018,6 +1063,7 @@ async function doCompose() {
   composing.value = true
   composeProgress.value = 0
   composeStage.value = ''
+  cancelling.value = false
   try {
     const payload = buildPayload()
     let data
@@ -1026,7 +1072,8 @@ async function doCompose() {
       // 用户可以切走、刷新页面也不影响（任务在后端跑，状态在 sys_agent_job）。
       const submit = await questionApi.composeAiAsync({ ...payload, request: form.request })
       composeStage.value = '排队中'
-      data = await pollComposeJob((submit.data || {}).job_id)
+      currentJobId = Number((submit.data || {}).job_id) || 0
+      data = await pollComposeJob(currentJobId)
     } else {
       data = (await questionApi.composePreview(payload)).data || {}
     }
@@ -1048,9 +1095,16 @@ async function doCompose() {
       ElMessage.warning('没有抽到题目，请检查题库或调整参数')
     }
   } catch (e) {
+    if (e?.__cancelled) {
+      // 取消：说清楚"什么都没生成"，避免用户以为有一份半成品卷子
+      ElMessage.info('已取消组卷，未生成试卷（题库与草稿均无变化）')
+      return
+    }
     toastIfUnhandled(e, '组卷失败')
   } finally {
     composing.value = false
+    cancelling.value = false
+    currentJobId = 0
   }
 }
 

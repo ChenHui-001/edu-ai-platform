@@ -36,8 +36,8 @@ from app.core.database import SessionLocal  # noqa: E402
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
-    Answer, Class, Grade, KnowledgeMastery, KnowledgePoint, Paper, PaperItem,
-    Question, Role, Subject, Submission, Task, User,
+    AgentJob, Answer, Class, Grade, KnowledgeMastery, KnowledgePoint, Paper,
+    PaperItem, Question, Role, Subject, Submission, Task, User,
 )
 
 FAILED = []
@@ -322,6 +322,92 @@ def main():
         finally:
             db.close()
         check("放宽只丢题型，年级绝不放宽", same_grade, f"paper={d2.get('paper_id')}")
+
+        print("\n[F-04] AI 长任务可取消：登记 → worker 检查点 → 落 cancelled")
+        from app.api.v1.paper_compose import _run_compose_job
+        db = SessionLocal()
+        try:
+            job = AgentJob(user_id=ctx["teacher_id"], agent="paper_compose",
+                           status="running", progress=30, stage="AI 补题 2/5",
+                           params="{}")
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            jid = job.id
+        finally:
+            db.close()
+
+        r = client.post(api + f"/question/papers/compose/jobs/{jid}/cancel", headers=H)
+        body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        d = body.get("data") or {}
+        check("取消请求被受理", r.status_code == 200 and d.get("accepted") is True,
+              f"HTTP {r.status_code} {body.get('message')}")
+        db = SessionLocal()
+        try:
+            j = db.get(AgentJob, jid)
+            check("只置标志、不改 status（单一写入者是 worker）",
+                  int(j.cancel_requested or 0) == 1 and j.status == "running",
+                  f"cancel_requested={j.cancel_requested} status={j.status}")
+        finally:
+            db.close()
+
+        r = client.post(api + f"/question/papers/compose/jobs/{jid}/cancel", headers=H)
+        d = r.json().get("data") or {}
+        check("重复取消幂等（不报错、不重复受理）",
+              r.status_code == 200 and d.get("accepted") is False, str(d.get("message")))
+
+        # 直接驱动 worker：检查点在开工处，必须立刻落 cancelled 且不写结果
+        _run_compose_job(jid)
+        db = SessionLocal()
+        try:
+            j = db.get(AgentJob, jid)
+            check("worker 在检查点响应取消", j.status == "cancelled",
+                  f"status={j.status} stage={j.stage}")
+            check("取消不写结果、不记 error（不是故障）",
+                  not j.result and not j.error, f"result={bool(j.result)} error={j.error}")
+        finally:
+            db.close()
+
+        db = SessionLocal()
+        try:
+            done = AgentJob(user_id=ctx["teacher_id"], agent="paper_compose",
+                            status="succeeded", progress=100, params="{}")
+            db.add(done)
+            db.commit()
+            db.refresh(done)
+            done_id = done.id
+        finally:
+            db.close()
+        r = client.post(api + f"/question/papers/compose/jobs/{done_id}/cancel", headers=H)
+        d = r.json().get("data") or {}
+        check("已完成的任务拒绝取消（不翻转状态）",
+              r.status_code == 200 and d.get("accepted") is False
+              and d.get("status") == "succeeded", str(d.get("message")))
+
+        print("\n[F-02] 版本对比：能算出「与当前卷面差在哪」")
+        vr = client.get(api + f"/question/papers/{pid}/versions", headers=H)
+        vlist = (vr.json().get("data") or {}).get("items") or []
+        oldest = min((v["version"] for v in vlist), default=None)
+        check("版本列表非空", bool(vlist), f"{len(vlist)} 条，最旧 v{oldest}")
+        if oldest is not None:
+            r = client.get(api + f"/question/papers/{pid}/versions/{oldest}/diff",
+                           headers=H, params={"against": "current"})
+            d = r.json().get("data") or {}
+            items = d.get("items") or {}
+            check("对比接口可用", r.status_code == 200 and bool(d.get("summary")),
+                  f"HTTP {r.status_code} {d.get('summary')}")
+            # 这轮前面已经「删过一道题」，最旧版本必然比现在多题
+            check("能识别出被移除的题目", bool(items.get("removed")), str(
+                [x.get("question_id") for x in (items.get("removed") or [])]))
+            check("差异结构齐全（added/removed/changed/unchanged）",
+                  all(k in items for k in ("added", "removed", "changed", "unchanged")),
+                  str(sorted(items.keys())))
+
+            same = client.get(api + f"/question/papers/{pid}/versions/{oldest}/diff",
+                              headers=H, params={"against": str(oldest)})
+            sd = same.json().get("data") or {}
+            check("同一版本自比 = 无差异（不虚报变更）",
+                  sd.get("has_changes") is False, str(sd.get("summary")))
 
     # ---------------------------------------------------------------- F-03
     print("\n[F-03] 班级薄弱知识点聚合")
