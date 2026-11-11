@@ -303,7 +303,9 @@ def chat_stream(
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("流式对话路由失败")
-            yield _sse({"type": "error", "message": str(exc)[:200]})
+            # 不能回显原文：LLM/HTTP 报错常带完整 request headers（含 API Key）
+            from app.agents.base import public_error_message
+            yield _sse({"type": "error", "message": public_error_message(exc)})
             return
 
         intent = result.get("intent") or "chat"
@@ -644,7 +646,10 @@ def _run_job(job_id: int) -> None:
         job = db.get(AgentJob, job_id)
         if job:
             job.status = "failed"
-            job.error = str(exc)[:500]
+            # job.error 会经轮询接口回给前端，同样只能放脱敏文案；
+            # 原始异常已在上面 logger.exception 里完整落日志。
+            from app.agents.base import public_error_message
+            job.error = public_error_message(exc)
     finally:
         job.finished_at = now_local()
         try:

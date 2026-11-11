@@ -199,14 +199,16 @@ def verify_frontend():
 
     print("\n=== 3. 前端四处契约修复（静态断言）===")
     pm = read("views/teacher/PaperManage.vue")
-    # 审计 #16 把解包收敛到 composables/useAgentEnvelope.js，断言跟着搬过去：
-    # 页面只负责调用，判定逻辑在 composable 里锁住。否则逻辑本身没错，
-    # 静态断言却因为「盯着旧写法」变成假红。
-    check("PaperManage 走统一解包，不再多解一层 res.data",
-          "parseAgentEnvelope(res)" in pm and "res.data.data" not in pm)
-    env = read("composables/useAgentEnvelope.js")
-    check("统一解包用 code/success 判定成功",
-          "envelope.code === 200" in env and "envelope.success !== false" in env)
+    # 这条守的是 P0-2 的**真正原因**：页面把 `res.data` 又解了一层，
+    # 于是 `envelope.success` 恒为 undefined，卷子明明落库却弹「组卷失败」。
+    # 原来的写法断言 `parseAgentEnvelope(res) in pm`，而那个 composable 的
+    # 最后一个消费方正是 PaperManage 里那段从未被触达的 AI 组卷死代码
+    # （P2-3 已删）。断言盯着"某个辅助函数有没有被调用"，一旦这段代码被清理
+    # 就变成假红 —— 现在改为直接盯"有没有人再手动多解一层"，与实现形式解耦。
+    check("PaperManage 不再手动多解一层 res.data",
+          "res.data.data" not in pm and "parseAgentEnvelope" not in pm)
+    check("AgentGenerate 也不多解一层",
+          "res.data.data" not in read("views/agent/AgentGenerate.vue"))
 
     ag = read("views/agent/AgentGenerate.vue")
     check("AgentGenerate 发的是 request（不是 requirement）",

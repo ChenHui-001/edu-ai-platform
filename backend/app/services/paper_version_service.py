@@ -13,8 +13,10 @@ import logging
 from typing import Any, Dict, Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.exception import ConflictException
 from app.models import Paper, PaperVersion
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,10 @@ logger = logging.getLogger(__name__)
 # 只保留最近 N 条，外加 version 最小的那条（首次组卷的原始结构，回溯时常被当作
 # 「回到最初」的锚点）。删除不影响版本号递增：后续仍按 max(version)+1 生成。
 KEEP_RECENT_VERSIONS = 20
+
+# 版本号撞车后的重试次数。3 次足够：撞车只在「同一份卷子被两处同时写」时发生，
+# 每次重试都会读到更大的 max(version)，连续 3 次撞车说明不是偶发竞争而是真出问题。
+_VERSION_RETRY = 3
 
 
 def _prune_versions(db: Session, paper_id: int) -> int:
@@ -275,29 +281,63 @@ def snapshot(db: Session, paper: Paper, user_id: Optional[int],
 
     不 commit——由调用方统一提交，保证「改卷 + 快照」在同一事务里，
     不会出现"改了但没快照"或"有快照但没改"的中间态。
+
+    **版本号必须重试**（P2-19）：`max(version)+1` 是「先读后写」，两个人同时
+    编辑同一份卷子（同一老师的两个标签页、或协同场景）会算出同一个号，
+    后写入的那个撞 `uq_paper_version` 唯一约束，表现为随机冒出的 400
+    「数据冲突」。旧实现只做了一次 `existing >= current` 的兜底，
+    只能挡住「同一请求里连续两次 snapshot」，挡不住并发。
+    这里用 SAVEPOINT 包裹每次尝试：失败只回滚这条 INSERT，
+    调用方在本次请求里已经做过的改卷操作不受影响。
     """
     db.flush()  # 保证 paper.items 读到最新
+    # 快照内容与版本号无关，只在循环外算一次：循环里重算是纯浪费
+    # （一份卷的 build_snapshot 要遍历全部题项并序列化）。
+    data = build_snapshot(db, paper)
+
+    last_exc: Optional[Exception] = None
+    for _attempt in range(_VERSION_RETRY):
+        version = _pick_version(db, paper)
+        row = PaperVersion(
+            paper_id=paper.id,
+            version=version,
+            snapshot=json.dumps(data, ensure_ascii=False),
+            change_note=change_note[:255] or None,
+            item_count=len(data["items"]),
+            total_score=float(data["paper"]["total_score"] or 0),
+            created_by=user_id,
+        )
+        try:
+            with db.begin_nested():
+                db.add(row)
+                db.flush()
+        except IntegrityError as exc:  # 唯一约束撞车 → 重新取号再试
+            last_exc = exc
+            logger.warning(
+                "试卷 %s 版本号 %s 撞车，重试（%s）", paper.id, version, exc)
+            continue
+        paper.current_version = version
+        db.flush()
+        # 裁剪必须在 flush 之后：此时新版本已入库，按 version 倒序切片才是准的。
+        _prune_versions(db, paper.id)
+        return row
+
+    logger.error("试卷 %s 版本号连续 %s 次撞车，放弃", paper.id, _VERSION_RETRY)
+    raise ConflictException(
+        "该试卷正在被其他操作修改，请刷新后重试",
+        detail={"paper_id": paper.id, "retry_exhausted": True},
+    ) from last_exc
+
+
+def _pick_version(db: Session, paper: Paper) -> int:
+    """算下一个版本号：取的 max 必须来自**库**，不能只用内存里的 current_version。
+
+    内存值可能是本请求早先推进过的（一次保存会写两条快照：编辑题目 + 编辑完成），
+    所以取两者较大值；再用库里实际的 max 兜住并发写入。
+    """
     current = paper.current_version or 1
-    # 同版本号重复写入时递增，避免唯一约束冲突（例如连续两次 snapshot）
     existing = db.scalar(select(func.max(PaperVersion.version)).where(
         PaperVersion.paper_id == paper.id)) or 0
-    version = max(current, existing + 1) if existing >= current else current
-
-    data = build_snapshot(db, paper)
-    row = PaperVersion(
-        paper_id=paper.id,
-        version=version,
-        snapshot=json.dumps(data, ensure_ascii=False),
-        change_note=change_note[:255] or None,
-        item_count=len(data["items"]),
-        total_score=float(data["paper"]["total_score"] or 0),
-        created_by=user_id,
-    )
-    db.add(row)
-    paper.current_version = version
-    db.flush()
-    # 裁剪必须在 flush 之后：此时新版本已入库，按 version 倒序切片才是准的。
-    _prune_versions(db, paper.id)
-    return row
+    return max(current, existing + 1)
 
 

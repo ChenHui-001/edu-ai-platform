@@ -1,6 +1,6 @@
 """统一异常处理。"""
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -54,6 +54,21 @@ class ConflictException(AppException):
     def __init__(self, message: str = "该数据已被他人修改，请刷新后重试",
                  detail: Any = None):
         super().__init__(message, 409, detail)
+
+
+class RateLimitException(AppException):
+    """频率超限（P2-16）。
+
+    必须与 `BusinessException`(400) 分开：
+      - 400 在前端是「你填错了」，用户会去改输入，怎么改都没用；
+      - 429 才表示「等一会儿再试」，且这是唯一能让前端/网关做自动退避的信号。
+    旧实现一律 400，导致前端把"请求过于频繁"当参数错误弹提示，
+    用户反复点（反而让限流窗口更久）。
+    """
+
+    def __init__(self, message: str = "请求过于频繁，请稍后再试",
+                 retry_after: Optional[int] = None):
+        super().__init__(message, 429, {"retry_after": retry_after} if retry_after else None)
 
 
 def _body(code: int, message: str, detail: Any = None) -> Dict[str, Any]:
@@ -129,8 +144,15 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppException)
     async def handle_app_exception(request: Request, exc: AppException):
         logger.warning(f"业务异常 {request.method} {request.url.path}: {exc.message}")
+        headers = None
+        if exc.code == 429:
+            # 429 必须带 Retry-After，否则标准客户端（含 axios 重试库、网关）
+            # 不知道该等多久，只能立刻重试，反而把限流窗口不断续期。
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            headers = {"Retry-After": str(detail.get("retry_after") or 60)}
         return JSONResponse(
-            status_code=exc.code, content=_body(exc.code, exc.message, exc.detail)
+            status_code=exc.code, content=_body(exc.code, exc.message, exc.detail),
+            headers=headers,
         )
 
     @app.exception_handler(StarletteHTTPException)

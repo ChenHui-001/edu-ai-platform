@@ -1584,6 +1584,10 @@ def create_paper(
         name=name, grade_id=grade.id, subject_id=subject.id,
         total_score=total, duration=duration, creator_id=user.id,
         source="manual", difficulty_ratio=_dump_json_field(data.get("difficulty_ratio")),
+        # 命题说明（P2-1）：模型里一直有这个字段、编辑页也一直在提交，
+        # 但创建/更新两条路径都没写，于是「说明」永远存不进去 —— 导出卷头
+        # 与打印页的命题说明恒为空。截断长度与 AI 组卷路径保持一致（2000）。
+        description=(str(data.get("description") or "")[:2000] or None),
     )
     db.add(paper)
     db.flush()
@@ -1616,6 +1620,10 @@ def update_paper(
 
     if "name" in data:
         paper.name = _validate_paper_name(data.get("name"))
+    if "description" in data:
+        # 允许清空：/papers/{id} 的语义是「按传入字段更新」，
+        # 传空串表示用户主动删掉说明，不能被 `or None` 之外的处理误判成"没传"。
+        paper.description = (str(data.get("description") or "")[:2000] or None)
     effective_grade = paper.grade_id
     effective_subject = paper.subject_id
     if "grade_id" in data or "subject_id" in data:
@@ -1881,6 +1889,8 @@ def share_paper(
 @router.get("/papers/{paper_id}/export", summary="导出试卷（Excel/Word/PDF/HTML）")
 def export_paper(
     paper_id: int, fmt: str = Query("excel", pattern="^(excel|word|pdf|html)$"),
+    mode: str = Query("teacher", pattern="^(teacher|student)$",
+                      description="teacher=教师卷（含答案解析）/ student=学生卷"),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:export")),
 ):
@@ -1892,6 +1902,10 @@ def export_paper(
         · `fmt=pdf` 返回的其实是 HTML，前端按 `.pdf` 保存 → 文件打不开；
         · 题干里的 `&lt;script&gt;` 会被拼进 HTML，导出页可执行脚本（存储型 XSS）。
       改为一处渲染，两种问题同时消失。
+
+    `mode=student`（P2-18）出**不带答案解析**的学生卷：这里原先写死
+    `mode="teacher"`，教师想印一份考场卷只能导出后手工删答案——
+    而试卷预览接口早就支持 `mode=student`，导出却不支持，两条路径口径不一致。
     """
     paper = db.get(Paper, paper_id)
     if not paper:
@@ -1920,12 +1934,15 @@ def export_paper(
             ws.append([f"{idx}. （{it.score}分）{q.stem}"])
             if opt_text:
                 ws.append([f"    {opt_text}"])
-            # 答案在库里是 JSON 文本（多选存 ["A","B"]），必须解码后再写，
-            # 否则导出成品会出现 `答案：["A", "B"]` 这种带方括号引号的原文
-            ans = _load(q.answer)
-            ws.append([f"    答案：{_answer_display(ans)}"])
-            if q.analysis:
-                ws.append([f"    解析：{q.analysis}"])
+            if mode == "teacher":
+                # 学生卷（考场用）不能带答案与解析：这是导出侧唯一的
+                # 「答案泄露」入口，必须跟 mode 一起走。
+                # 答案在库里是 JSON 文本（多选存 ["A","B"]），必须解码后再写，
+                # 否则导出成品会出现 `答案：["A", "B"]` 这种带方括号引号的原文
+                ans = _load(q.answer)
+                ws.append([f"    答案：{_answer_display(ans)}"])
+                if q.analysis:
+                    ws.append([f"    解析：{q.analysis}"])
             ws.append([])
             idx += 1
         buf = io.BytesIO()
@@ -1933,29 +1950,29 @@ def export_paper(
         buf.seek(0)
         return StreamingResponse(
             buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}.xlsx"},
+            headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}_{mode}.xlsx"},
         )
 
     # word / pdf / html → 统一走 paper_export_service（含 HTML 转义与真实 PDF）
     from app.api.v1.paper_compose import _build_preview
     from app.services.paper_export_service import build_docx, build_pdf, build_print_html
 
-    preview = _build_preview(db, paper, mode="teacher")
+    preview = _build_preview(db, paper, mode=mode)
     if fmt == "word":
-        buf = build_docx(preview, mode="teacher")
+        buf = build_docx(preview, mode=mode)
         return StreamingResponse(
             buf,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition":
-                     f"attachment; filename=paper_{paper_id}.docx"},
+                     f"attachment; filename=paper_{paper_id}_{mode}.docx"},
         )
     if fmt == "pdf":
-        buf = build_pdf(preview, mode="teacher")
+        buf = build_pdf(preview, mode=mode)
         return StreamingResponse(
             buf, media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}.pdf"},
+            headers={"Content-Disposition": f"attachment; filename=paper_{paper_id}_{mode}.pdf"},
         )
-    html = build_print_html(preview, mode="teacher")
+    html = build_print_html(preview, mode=mode)
     return StreamingResponse(
         io.BytesIO(html.encode("utf-8")), media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": f"inline; filename=paper_{paper_id}.html"},

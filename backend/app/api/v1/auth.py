@@ -15,7 +15,7 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exception import AuthException, BusinessException
+from app.core.exception import AuthException, BusinessException, RateLimitException
 from app.core.security import (
     create_access_token, create_refresh_token, decode_token, generate_captcha,
     hash_password,
@@ -480,7 +480,7 @@ def _check_reset_request_rate(db: Session, target: str) -> None:
     from app.services.rate_limit import check_and_hit, key_digest
 
     if not check_and_hit(db, key_digest("reset", target), 5, 600):
-        raise BusinessException("请求过于频繁，请 10 分钟后再试")
+        raise RateLimitException("请求过于频繁，请 10 分钟后再试", retry_after=600)
 
 
 def _check_reset_ip_rate(db: Session, request: Optional[Request]) -> None:
@@ -496,7 +496,7 @@ def _check_reset_ip_rate(db: Session, request: Optional[Request]) -> None:
     from app.services.rate_limit import check_and_hit, key_digest
 
     if not check_and_hit(db, key_digest("reset_ip", get_client_ip(request)), 20, 3600):
-        raise BusinessException("请求过于频繁，请稍后再试")
+        raise RateLimitException("请求过于频繁，请稍后再试", retry_after=3600)
 
 
 def _smtp_config(db: Session) -> Dict[str, str]:

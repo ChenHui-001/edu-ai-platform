@@ -60,10 +60,15 @@
     <el-card shadow="never">
       <div v-if="canWrite" class="batch-bar">
         <span class="muted">已选 {{ selection.length }} 份</span>
-        <el-button size="small" :disabled="!selection.length" @click="batchCopy">批量复制</el-button>
-        <el-button v-if="canShare" size="small" :disabled="!selection.length"
+        <!-- 批量操作是慢请求（逐份校验+落库），没有 loading 与互斥时连点
+             会把同一批试卷提交两遍：复制出双份、删除报「已不存在」 -->
+        <el-button size="small" :loading="batchRunning" :disabled="!selection.length || batchRunning"
+                   @click="batchCopy">批量复制</el-button>
+        <el-button v-if="canShare" size="small" :disabled="!selection.length || batchRunning"
                    @click="openBatchShare">批量共享</el-button>
-        <el-button size="small" type="danger" plain :disabled="!selection.length"
+        <el-button size="small" type="danger" plain
+                   :loading="batchRunning && batchAction === 'delete'"
+                   :disabled="!selection.length || batchRunning"
                    @click="batchDelete">批量删除</el-button>
       </div>
 
@@ -130,16 +135,24 @@
                          @click="toggleArchive(row)">
                 {{ row.status === 'archived' ? '恢复' : '停用' }}
               </el-button>
-              <el-dropdown v-if="canExport" trigger="click" :disabled="exportingId != null"
-                           @command="(fmt) => exportPaper(row, fmt)">
+              <!-- 不再用单个 exportingId 做全局锁（P2-6）：那个锁会让
+                   "正在导出 A"时点 B 的导出**毫无反应**（dropdown 被 disabled），
+                   用户只会觉得按钮坏了。改为按「行 + 版本」记进行中，
+                   不同行可以并行导出，同一行重复点才拦。 -->
+              <el-dropdown v-if="canExport" trigger="click"
+                           @command="(cmd) => exportPaper(row, cmd)">
                 <el-button link type="warning" size="small"
-                           :loading="exportingId === row.id">导出</el-button>
+                           :loading="isExporting(row.id)">导出</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="excel">Excel</el-dropdown-item>
-                    <el-dropdown-item command="word">Word</el-dropdown-item>
-                    <el-dropdown-item command="pdf">PDF</el-dropdown-item>
-                    <el-dropdown-item command="html">HTML</el-dropdown-item>
+                    <el-dropdown-item command="excel">Excel（教师卷）</el-dropdown-item>
+                    <el-dropdown-item command="word">Word（教师卷）</el-dropdown-item>
+                    <el-dropdown-item command="pdf">PDF（教师卷）</el-dropdown-item>
+                    <el-dropdown-item command="html">HTML（教师卷）</el-dropdown-item>
+                    <el-dropdown-item command="excel:student" divided>
+                      Excel（学生卷·无答案）
+                    </el-dropdown-item>
+                    <el-dropdown-item command="pdf:student">PDF（学生卷·无答案）</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -295,7 +308,14 @@
             </div>
           </div>
         </template>
-        <el-empty v-else-if="!detailLoading" description="试卷详情加载失败" :image-size="70" />
+        <!-- 加载失败必须是**可达**状态（P2-5）：旧实现把列表行先塞进
+             detailPaper，于是这个 v-else-if 永远不会命中 —— 详情接口 500 时
+             抽屉里显示的是列表缓存的名字加上 0 道题，看起来"这卷子没题目" -->
+        <el-empty v-else-if="detailError" description="试卷详情加载失败" :image-size="70">
+          <el-button size="small" type="primary" @click="openDetail({ id: detailRowId })">
+            重新加载
+          </el-button>
+        </el-empty>
       </div>
       <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
@@ -433,66 +453,6 @@
       </template>
     </el-dialog>
 
-    <!-- AI 智能组卷 -->
-    <el-dialog v-model="aiDlg" title="AI 智能组卷" width="640px">
-      <el-alert type="info" :closable="false" class="mb12"
-                title="用自然语言描述需求，AI 自动解析并组卷。示例：生成七年级数学一元一次方程的试卷，10 题，难度中等偏难" />
-      <el-form :model="aiForm" label-width="90px">
-        <el-row :gutter="10">
-          <el-col :span="12">
-            <el-form-item label="学科" required>
-              <el-select v-model="aiForm.subject_id" style="width:100%" @change="onAiSubjectChange">
-                <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id">
-                  <span>{{ s.name }}</span>
-                  <span v-if="s.grade_count > 1" class="ai-grade-count">{{ s.grade_count }} 个年级</span>
-                </el-option>
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="年级">
-              <el-select v-model="aiForm.grade_id" clearable style="width:100%"
-                         @change="onAiGradeChange">
-                <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="需求描述">
-          <el-input v-model="aiReq" type="textarea" :rows="3"
-                    placeholder="如：生成八年级物理期中试卷，选择填空，20 题，60 分钟" />
-        </el-form-item>
-        <el-form-item label="快捷模板">
-          <el-button v-for="t in templates" :key="t" size="small" class="mr4"
-                     @click="aiReq = t">{{ t.slice(0, 12) }}…</el-button>
-        </el-form-item>
-      </el-form>
-
-      <div v-if="aiResult" class="ai-panel">
-        <el-divider content-position="left">
-          <b>组卷结果</b>
-          <el-tag size="small" class="ml4" :type="aiResult.paper?.id ? 'success' : 'warning'">
-            {{ aiResult.paper?.id ? '已入库' : '仅预览（未入库）' }}
-          </el-tag>
-        </el-divider>
-        <p><b>试卷名称：</b>{{ aiResult.paper?.name }}</p>
-        <p><b>题目数量：</b>{{ aiResult.paper?.item_count ?? '-' }}</p>
-        <p><b>总分：</b>{{ aiResult.paper?.total_score ?? '-' }}</p>
-        <p v-if="aiResult.difficulty_report || aiResult.analysis">
-          <b>难度分析：</b>{{ aiResult.analysis || aiResult.difficulty_report }}
-        </p>
-        <p v-if="aiResult.knowledge_coverage"><b>知识点覆盖：</b>{{ aiResult.knowledge_coverage }}</p>
-        <p v-if="aiResult.paper?.id" class="mt8">
-          <el-button type="success" size="small" @click="useResult">使用该试卷</el-button>
-        </p>
-      </div>
-
-      <template #footer>
-        <el-button @click="aiDlg = false">关闭</el-button>
-        <el-button type="primary" :loading="aiLoading" :icon="MagicStick" @click="runAI">开始组卷</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 共享 -->
     <el-dialog v-model="shareDlg" title="共享试卷" width="500px">
       <el-form label-width="90px">
@@ -524,12 +484,11 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus, Search, Refresh, MagicStick } from '@element-plus/icons-vue'
-import { questionApi, eduApi, agentApi } from '@/api'
+import { questionApi, eduApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import TYPE_LABEL from '@/constants/question'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { downloadBlob } from '@/utils/download'
-import { parseAgentEnvelope } from '@/composables/useAgentEnvelope'
 import { confirmAction, promptAction } from '@/utils/confirm'
 import { toastIfUnhandled } from '@/utils/notify'
 
@@ -718,17 +677,30 @@ function onSelectionChange(val) { selection.value = val || [] }
 // 导出是慢请求（大卷 + 服务端渲染），没有 loading 态时用户点一次没反应就会连点，
 // 结果是同一份卷子被并发生成多遍（reaudit3 P2-11）。
 const EXPORT_EXT = { excel: 'xlsx', word: 'docx', pdf: 'pdf', html: 'html' }
-const exportingId = ref(null)
-async function exportPaper(row, fmt = 'excel') {
-  if (exportingId.value != null) return
-  exportingId.value = row.id
+// 进行中的导出键：`${rowId}:${mode}`。用数组而不是 Set 是为了让
+// 模板里的 includes 判断保持响应式（Set 的变异不会触发依赖更新）。
+const exportingKeys = ref([])
+function isExporting(rowId, mode) {
+  return mode
+    ? exportingKeys.value.includes(`${rowId}:${mode}`)
+    : exportingKeys.value.some(k => k.startsWith(`${rowId}:`))
+}
+async function exportPaper(row, cmd = 'excel') {
+  const [fmt, mode = 'teacher'] = String(cmd).split(':')
+  const key = `${row.id}:${mode}`
+  if (exportingKeys.value.includes(key)) return
+  exportingKeys.value = [...exportingKeys.value, key]
   const ext = EXPORT_EXT[fmt] || 'xlsx'
+  // 学生卷单独命名：同一份卷子导出两版时不会在下载目录里互相覆盖
+  const suffix = mode === 'student' ? '（学生卷）' : ''
   try {
-    await downloadBlob(questionApi.exportPaper(row.id, fmt), `试卷-${row.name}.${ext}`)
+    await downloadBlob(
+      questionApi.exportPaper(row.id, fmt, mode),
+      `试卷-${row.name}${suffix}.${ext}`)
   } catch (e) {
     toastIfUnhandled(e, '导出失败')
   } finally {
-    exportingId.value = null
+    exportingKeys.value = exportingKeys.value.filter(k => k !== key)
   }
 }
 
@@ -737,6 +709,8 @@ const detailVisible = ref(false)
 const detailPaper = ref(null)
 const detailItems = ref([])
 const detailLoading = ref(false)
+const detailError = ref(false)
+const detailRowId = ref(0)
 const aiAnalyzeLoading = ref(false)
 const aiAnalysis = ref(null)
 const aiRecommendLoading = ref(false)
@@ -762,7 +736,12 @@ const aiCoverage = computed(() => {
 
 async function openDetail(row) {
   detailVisible.value = true
-  detailPaper.value = row
+  // 记下 id 供"重新加载"重入（失败时 detailPaper 会被置空，拿不到 row）
+  detailRowId.value = row?.id ?? detailRowId.value
+  detailError.value = false
+  // 注意这里**不预填 detailPaper**：预填会让「加载失败」空态永远不可达，
+  // 也会让用户对着"看起来加载成功、其实没有题目"的抽屉做判断。
+  detailPaper.value = null
   detailItems.value = []
   aiAnalysis.value = null
   aiRecommendItems.value = []
@@ -774,9 +753,9 @@ async function openDetail(row) {
     const d = res.data || {}
     detailPaper.value = d
     detailItems.value = d.items || []
-  } catch {
-    detailPaper.value = row
-    detailItems.value = []
+  } catch (e) {
+    detailError.value = true
+    toastIfUnhandled(e, '加载试卷详情失败')
   } finally {
     detailLoading.value = false
   }
@@ -1082,6 +1061,9 @@ async function removePaper(row) {
 
 // ---------------- 批量操作 ----------------
 const batchRunning = ref(false)
+// 当前正在跑的批量动作（'' / 'copy' / 'delete' / 'share'）：
+// 让「删除」按钮只在自己那一次转圈，而不是三个按钮一起转。
+const batchAction = ref('')
 
 function batchIds() { return selection.value.map(p => p.id) }
 
@@ -1111,12 +1093,16 @@ function reportBatchResult(data, prefix) {
 }
 
 async function runPaperBatch(action, payload, confirmText) {
+  // 入口互斥：按钮的 disabled 只管住"看得见的那一下"，
+  // 键盘回车 / 手快双击仍可能进来两次（P2-2）。
+  if (batchRunning.value) return false
   if (!ensureSelection()) return false
   const ids = batchIds()
   try {
     if (!await confirmAction(confirmText || `确认对 ${ids.length} 份试卷执行批量操作？`,
       '批量操作确认', { type: 'warning' })) return false
   } catch { return false }
+  batchAction.value = action
   batchRunning.value = true
   try {
     const res = await questionApi.paperBatch({ action, ids, payload: payload || {} })
@@ -1125,6 +1111,7 @@ async function runPaperBatch(action, payload, confirmText) {
     return true
   } finally {
     batchRunning.value = false
+    batchAction.value = ''
   }
 }
 
@@ -1186,95 +1173,23 @@ async function doShare() {
   }
 }
 
-// ---------------- AI 智能组卷（保留旧逻辑） ----------------
-const aiDlg = ref(false)
-const aiLoading = ref(false)
-const aiResult = ref(null)
-const aiReq = ref('')
-const aiForm = reactive({ subject_id: null, grade_id: null })
-
-const templates = [
-  '生成七年级数学一元一次方程专项练习卷，10 题，难度中等',
-  '生成八年级物理期中试卷，包含选择填空，20 题，60 分钟',
-  '生成九年级英语完形填空专项卷，15 题，难度偏难',
-  '生成七年级生物细胞单元测试卷，20 题，基础难度'
-]
-
-function openAI() {
-  aiResult.value = null
-  aiReq.value = templates[0]
-  aiForm.grade_id = query.grade_id || null
-  aiForm.subject_id = query.subject_id || null
-  syncAiSubjectByGrade()
-  aiDlg.value = true
-}
-
-// subjects 是 distinct 后的去重列表（带 same_name_grade_ids），
-// 后端入库要精确到年级的 subject_id，切换年级时必须同步换。
-function syncAiSubjectByGrade() {
-  if (!aiForm.subject_id) return
-  const s = subjects.value.find(x =>
-    x.id === aiForm.subject_id || (x.same_name_ids || []).includes(aiForm.subject_id))
-  if (!s) return
-  if (!aiForm.grade_id) { aiForm.subject_id = s.id; return }
-  const idx = (s.same_name_grade_ids || []).indexOf(aiForm.grade_id)
-  if (idx >= 0) aiForm.subject_id = s.same_name_ids[idx]
-}
-
-function onAiGradeChange() { syncAiSubjectByGrade() }
-function onAiSubjectChange() { /* 学科变了不动年级 */ }
-
-async function runAI() {
-  if (!aiReq.value) return ElMessage.warning('请输入组卷需求')
-  if (!aiForm.subject_id) return ElMessage.warning('请选择学科')
-  syncAiSubjectByGrade()
-  aiLoading.value = true
-  try {
-    const res = await agentApi.paperComposer({
-      request: aiReq.value, save: true,
-      subject_id: aiForm.subject_id, grade_id: aiForm.grade_id
-    })
-    // request.js 的响应拦截器已经 `return res`（即 response.data），拿到的
-    // **就是**统一信封 `{code, message, success, data}`。此前又取了一次
-    // `res?.data`，等于解到 payload 层，再读 `envelope.success` 恒为 undefined
-    // → 试卷明明已落库却恒弹「组卷请求失败」，诱导教师重复点、重复建卷。
-    const { ok: succeeded, message, data: payload } = parseAgentEnvelope(res)
-    if (!succeeded) {
-      ElMessage.error(message || '组卷请求失败')
-    } else if (!payload.paper?.id) {
-      ElMessage.warning(payload.tip || message
-        || '未生成试卷：题库可用题目不足，请先补充题目')
-    } else {
-      ElMessage.success(payload.tip || message || '组卷完成')
-    }
-    aiResult.value = payload
-    await refreshAll()
-  } catch (e) {
-    toastIfUnhandled(e, '组卷请求异常')
-  } finally {
-    aiLoading.value = false
-  }
-}
-
-function useResult() {
-  aiDlg.value = false
-  const p = aiResult.value?.paper || {}
-  ElMessage.success(
-    p.id
-      ? `已创建试卷「${p.name}」（${p.item_count} 题 / ${p.total_score} 分），可在列表查看`
-      : '本次仅生成预览，题库可用题目不足，未创建试卷'
-  )
-}
-
 onMounted(async () => {
+  // 三个筛选下拉的数据与列表本身**没有依赖关系**（列表只依赖 query），
+  // 旧实现把它们 `await` 在 refreshAll 之前且无兜底：任意一个请求失败
+  // （比如 peopleBrief 权限抖动、grades 超时），`await Promise.all` 直接抛出，
+  // 后面的 refreshAll 永远不执行 —— 页面表现为"表格永远空白、只有骨架"，
+  // 用户以为一份试卷都没有（P2-4）。
+  // 现在各自兜底 + 全部完成后再刷列表，单个失败只影响它自己的下拉。
   const [g, s, t] = await Promise.all([
-    eduApi.grades(),
-    eduApi.subjects({ distinct: true }),
+    eduApi.grades().catch(e => { toastIfUnhandled(e, '加载年级失败'); return null }),
+    eduApi.subjects({ distinct: true })
+      .catch(e => { toastIfUnhandled(e, '加载学科失败'); return null }),
     eduApi.peopleBrief({ identity: 'teacher' })
+      .catch(e => { toastIfUnhandled(e, '加载教师列表失败'); return null })
   ])
-  grades.value = g.data || []
-  subjects.value = s.data || []
-  teachers.value = t.data?.items || []
+  grades.value = g?.data || []
+  subjects.value = s?.data || []
+  teachers.value = t?.data?.items || []
   await refreshAll()
 })
 </script>
@@ -1336,7 +1251,6 @@ onMounted(async () => {
 .item-meta { font-size: 12px; line-height: 1.7; }
 
 .picker-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ai-grade-count { float: right; color: var(--el-text-color-secondary); font-size: 12px; }
 
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .ml4 { margin-left: 4px; }

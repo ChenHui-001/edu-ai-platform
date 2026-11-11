@@ -9,9 +9,31 @@
 不会静默丢字段。逐字段强类型化请在各自业务模块评审时单独做，
 不要在这里批量猜类型 —— 猜错会把原本宽松的入参变成 422。
 """
+import logging
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
+
+logger = logging.getLogger(__name__)
+
+
+class _WarnUnknownExtra(BaseModel):
+    """收到**未声明**字段时记一条 warning（P2-15）。
+
+    `extra="allow"` 保住向后兼容（新前端加字段不会 422），代价是拼错的字段名
+    会被静默接收然后静默忽略 —— 表现是「我明明传了 avoid_recent，怎么没生效」。
+    这里不改收窄策略（模块顶部的约定：不批量猜类型），只把「被吞掉」变成
+    日志里可见的事实：出现这条 warning 就说明调用方与契约已经不一致了。
+    """
+
+    @model_validator(mode="after")
+    def _warn_unknown_extra(self):
+        extra = self.model_extra or {}
+        if extra:
+            logger.warning(
+                "%s 收到未声明字段 %s（不会生效，检查是否拼写错误或契约已变更）",
+                type(self).__name__, sorted(extra))
+        return self
 
 
 class ComposeRegenerateIn(BaseModel):
@@ -26,10 +48,30 @@ class ComposeRegenerateIn(BaseModel):
     index: Any = None
     section_code: Any = None
 
-class ComposePreviewIn(BaseModel):
-    """按年级/学科/知识点/题型/分值/难度抽题。"""
+class ComposePreviewIn(_WarnUnknownExtra):
+    """按年级/学科/知识点/题型/分值/难度抽题。
+
+    字段取自 `_compose_from_payload()` 实际读取的键。**类型仍是 Any**：
+    这个端点同时被向导页、AI 异步任务、脚本三处调用，入参形态不一
+    （`sections` 可能是 list 也可能是 dict，`grade_id` 可能来自 URL 字符串），
+    在这里强类型化只会把原本能用的调用变成 422。
+    """
 
     model_config = ConfigDict(extra="allow")
+
+    grade_id: Any = None
+    subject_id: Any = None
+    standard_id: Any = None
+    sections: Any = None
+    total_score: Any = None
+    duration: Any = None
+    source: Any = None
+    difficulty_ratio: Any = None
+    knowledge_point_ids: Any = None
+    avoid_recent: Any = None
+    avoid_duplicate_kp: Any = None
+    mode: Any = None
+    description: Any = None
 
 
 class ComposeAiIn(BaseModel):
@@ -41,8 +83,12 @@ class ComposeAiIn(BaseModel):
     grade_id: Any = None
     subject_id: Any = None
 
-class ComposeSaveIn(BaseModel):
-    """把预览结果落库。"""
+class ComposeSaveIn(_WarnUnknownExtra):
+    """把预览结果落库。
+
+    既能收「编辑后的 items」，也能收完整的组卷参数（服务端重跑引擎），
+    所以字段是预览入参的超集。
+    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -52,7 +98,17 @@ class ComposeSaveIn(BaseModel):
     description: Any = None
     exam_type: Any = None
     mode: Any = None
+    # 与 ComposePreviewIn 对齐：不传 items 时按这些参数重跑引擎
+    grade_id: Any = None
+    subject_id: Any = None
+    standard_id: Any = None
+    sections: Any = None
+    total_score: Any = None
+    source: Any = None
+    difficulty_ratio: Any = None
+    knowledge_point_ids: Any = None
     avoid_recent: Any = None
+    avoid_duplicate_kp: Any = None
 
 class UpdateItemsIn(BaseModel):
     """整卷题目覆盖写。"""
@@ -310,6 +366,9 @@ class CreatePaperIn(BaseModel):
     duration: Any = None
     items: Any = None
     difficulty_ratio: Any = None
+    # 显式声明：`extra="allow"` 下不声明也能透传，但 OpenAPI 里看不到这个字段，
+    # 前端改字段时无从确认后端到底支不支持（P2-1 的说明一直是"改了没反应"）。
+    description: Any = None
 
 class UpdatePaperIn(BaseModel):
     """update_paper"""
@@ -322,6 +381,7 @@ class UpdatePaperIn(BaseModel):
     difficulty_ratio: Any = None
     grade_id: Any = None
     subject_id: Any = None
+    description: Any = None
 
 class ArchivePaperIn(BaseModel):
     """停用试卷（body 传 archived=false 则恢复）。"""

@@ -13,7 +13,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_client_ip, get_current_teacher, get_current_user
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exception import BusinessException, NotFoundException, PermissionException
+from app.core.exception import (
+    BusinessException, NotFoundException, PermissionException, RateLimitException,
+)
 from app.models import Attachment, User
 from app.utils.common import PageParams, dictify, now_local, ok
 
@@ -101,7 +103,8 @@ def public_upload(
     # 键用加盐哈希：这张表曾被写入明文的来源 IP（也就能被当作访问者清单），
     # 且键由匿名调用方控制，明文入库既涉隐私又便于刷键撑表。
     if not check_and_hit(db, key_digest("pubupload", ip), 10, 600):
-        raise BusinessException("上传过于频繁，请 10 分钟后再试")
+        # 429 而不是 400：前端据此提示「稍后再试」而不是「你填错了」
+        raise RateLimitException("上传过于频繁，请 10 分钟后再试", retry_after=600)
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:

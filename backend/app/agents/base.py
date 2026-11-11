@@ -13,6 +13,31 @@ from app.core.logger import get_logger
 logger = get_logger("agent-base")
 
 
+def public_error_message(exc: BaseException) -> str:
+    """把内部异常折叠成一句用户可读的失败原因（P2-14）。
+
+    为什么不能直接回显 `str(exc)`：LLM SDK 与 HTTP 客户端的报错经常把
+    **请求 URL、完整 request headers（含 Authorization: Bearer sk-...）、
+    上游响应体**整段打出来，直接展示给教师等于把 API Key 与内网地址
+    摆在页面上。原始异常仍完整写进日志与 `sys_agent_call.error_msg`（管理员可查）。
+    """
+    text = f"{type(exc).__name__} {exc}".lower()
+    if any(k in text for k in ("timeout", "timed out", "readtimeout")):
+        return "调用模型超时，请稍后重试或减少题量"
+    if any(k in text for k in ("api key", "api_key", "unauthorized", "401",
+                               "authentication", "invalid token")):
+        return "模型鉴权失败，请联系管理员检查 AI 配置"
+    if any(k in text for k in ("429", "rate limit", "ratelimit", "quota",
+                               "insufficient")):
+        return "模型调用频率受限或额度不足，请稍后重试"
+    if any(k in text for k in ("connection", "connect", "network", "dns",
+                               "ssl", "proxy", "unreachable")):
+        return "无法连接模型服务，请检查网络后重试"
+    if any(k in text for k in ("json", "decode", "parse")):
+        return "模型返回内容无法解析，请重试"
+    return "执行失败，请稍后重试；若持续失败请联系管理员"
+
+
 class AgentResult(TypedDict, total=False):
     """Agent 统一返回结构。"""
 
@@ -61,7 +86,8 @@ class BaseAgent:
                 biz_type=self.name,
             )
             return AgentResult(
-                success=False, data=None, message=f"{self.display_name}执行失败：{exc}",
+                success=False, data=None,
+                message=f"{self.display_name}{public_error_message(exc)}",
                 agent=self.name, duration_ms=int((time.perf_counter() - start) * 1000),
             )
 

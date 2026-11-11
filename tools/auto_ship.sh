@@ -172,7 +172,7 @@ if [ -n "$GATE_PY" ] && [ -f tools/verify_p0_fixes.py ]; then
   if ! "$GATE_PY" tools/verify_p0_fixes.py; then
     die 1 "接口级行为回归未通过（导出 / 组卷 / 大题结构 / 成绩重算 / 版本 / 自测卷 / 取消 / 报表缓存）"
   fi
-  ok "接口级行为回归通过（65 条断言）"
+  ok "接口级行为回归通过（80 条断言）"
 fi
 
 # ---------- 0.4b 高价值场景回归（P-06） ----------

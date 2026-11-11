@@ -986,6 +986,15 @@ async function loadKnowledgeTree() {
   }
 }
 
+// 第 2 步的「考试时长」与保存对话框的时长必须是同一个值（P2-12）。
+// 旧实现两个输入框各绑一个变量：在第 2 步把 90 改成 60，保存时用的是
+// `saveForm.duration`（还是 90），卷子落库时长与用户所见不一致，
+// 而两处都显示"合理值"，肉眼看不出来。这里让第 2 步成为唯一写入方，
+// 保存对话框只做只读回显 + 允许临门再改（改了会写回 form，见 savePaper）。
+watch(() => form.duration, (v) => {
+  if (Number(v) > 0) saveForm.duration = Number(v)
+})
+
 function onStandardChange() {
   const std = currentStandard.value
   if (!std) return
@@ -1386,7 +1395,8 @@ async function doSave() {
       ...buildPayload(),
       name: saveForm.name.trim(),
       description: saveForm.description,
-      duration: saveForm.duration,
+      // 以输入框当前值为准并回写 form：两边都不会出现"看到 60、存成 90"
+      duration: Number(saveForm.duration) || form.duration,
       mode: form.mode,
       items: previewItems.value.map(i => ({
         question_id: i.question_id,

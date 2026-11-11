@@ -941,13 +941,40 @@ def _seed_class_flow(db: Session, grade, cls, bank: List[tuple]) -> bool:
     db.add(practice)
     db.flush()
     db.add(TaskAssignment(task_id=practice.id, student_id=students[0].id))
-    db.add(Submission(
+    db.flush()
+    practice_sub = Submission(
         task_id=practice.id, student_id=students[0].id, attempt=1,
         status=GradeStatus.AUTO_GRADED.value, score=90.0, objective_score=90.0,
         subjective_score=0.0, duration_seconds=900, is_passed=True,
         switch_count=0, submit_count=1,
         submit_time=now - timedelta(hours=20), grade_time=now - timedelta(hours=20),
-    ))
+    )
+    db.add(practice_sub)
+    db.flush()
+    # 逐题作答行必须一起造（P2-13）：只写 `score=90` 而不写 Answer，
+    # 会得到「有分无作答行」的提交 —— 成绩单里点进去一道题都没有，
+    # 而且 `_recalculate_after_change` 遇到这种提交只能跳过（skipped_no_answer），
+    # 改卷后分数永远不跟着变。做法与上面那份考试提交一致：按题项逐条写。
+    practice_items = db.scalars(
+        select(PaperItem).where(PaperItem.paper_id == paper.id)
+        .order_by(PaperItem.sort_order)
+    ).all()
+    earned = 0.0
+    for idx, it in enumerate(practice_items):
+        # 留一道错题，让「错题本」演示页有内容可看
+        ok = idx < len(practice_items) - 1
+        sc = float(it.score) if ok else 0.0
+        earned += sc
+        db.add(Answer(
+            submission_id=practice_sub.id, paper_item_id=it.id,
+            question_id=it.question_id, content="A" if ok else "",
+            is_correct=ok, score=sc, full_score=float(it.score),
+            grader_type="auto",
+        ))
+    # 分数以真实作答为准，避免又出现「分数与作答道数对不上」
+    practice_sub.score = earned
+    practice_sub.objective_score = earned
+    practice_sub.is_passed = earned >= float(practice.total_score or 0) * 0.6
     return True
 
 

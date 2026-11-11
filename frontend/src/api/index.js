@@ -150,8 +150,10 @@ export const questionApi = {
     { params, responseType: 'blob' }),
   downloadTemplate: () => request.get('/question/questions/template',
     { responseType: 'blob' }),
-  exportPaper: (id, fmt = 'excel') => request.get(`/question/papers/${id}/export`,
-    { params: { fmt }, responseType: 'blob' }),
+  // mode: teacher（默认，含答案解析）/ student（学生卷，不含答案解析）
+  exportPaper: (id, fmt = 'excel', mode = 'teacher') =>
+    request.get(`/question/papers/${id}/export`,
+      { params: { fmt, mode }, responseType: 'blob' }),
   papers: (params) => request.get('/question/papers', { params }),
   // 试卷 V2：统计 / 批量 / AI（契约 docs/PAPER_V2.md）
   paperStats: (params) => request.get('/question/papers/stats', { params }),

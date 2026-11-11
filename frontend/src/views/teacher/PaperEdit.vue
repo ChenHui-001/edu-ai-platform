@@ -72,6 +72,23 @@
       </div>
     </el-alert>
 
+    <!-- 卷面体检（P2-9）：后端 `_build_preview` 一直在返回 issues，
+         前端此前完全丢弃，等于体检报告只写进接口没人看。
+         error 级会直接影响打印（重复题、作文不在末题、总分不符），
+         必须显式出现在编辑页，而不是等老师打印出来才发现。 -->
+    <el-alert v-if="issues.length" :type="issuesError.length ? 'error' : 'warning'"
+              :closable="false" show-icon class="gap-alert">
+      <template #title>
+        卷面体检发现 {{ issues.length }} 处问题
+        （{{ issuesError.length }} 处必须处理）
+      </template>
+      <div v-for="(it, i) in issues" :key="it.code + i">
+        <el-tag size="small" :type="it.level === 'error' ? 'danger' : 'warning'"
+                class="issue-tag">{{ it.level === 'error' ? '必须处理' : '建议调整' }}</el-tag>
+        {{ it.message }}
+      </div>
+    </el-alert>
+
     <!-- 题项列表：按大题分组 -->
     <el-card shadow="never" class="items-card">
       <template #header>
@@ -311,7 +328,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -346,6 +363,8 @@ const paper = ref({})
 const meta = reactive({ name: '', description: '', duration: 90 })
 const sections = ref([])
 const gaps = ref([])
+const issues = ref([])
+const issuesError = computed(() => issues.value.filter(i => i.level === 'error'))
 
 const detailDrawer = ref(false)
 const currentItem = ref(null)
@@ -430,6 +449,8 @@ function applyPreview(data) {
   sections.value = secs
   // gap 报告存在 generation_params 里；后端 preview 顶层不直接给 gaps
   gaps.value = (data.generation_params && data.generation_params.gaps) || []
+  // 卷面体检结果是 preview 的顶层字段（后端每次都算），别丢（P2-9）
+  issues.value = Array.isArray(data.issues) ? data.issues : []
 }
 
 // ---------------- 加载 ----------------
@@ -480,6 +501,11 @@ watch(meta, () => {
   schedulePaperDraft()
 }, { deep: true })
 
+// P2-11：离开页面必须撤掉防抖定时器。否则：改了两处 → 立刻点返回 →
+// 2 秒后定时器仍然触发，把已经离开的那个页面的数据写进 localStorage。
+// 更糟的是它写的是**旧快照**，用户下次进来"恢复草稿"拿到的是自己已经放弃的版本。
+onUnmounted(() => clearTimeout(paperDraftTimer))
+
 async function restorePaperDraft() {
   if (paperDraftChecked) return
   paperDraftChecked = true
@@ -493,11 +519,19 @@ async function restorePaperDraft() {
   }
   const count = (draft.sections || []).reduce((a, x) => a + ((x.items || []).length), 0)
   if (!count) { localStorage.removeItem(PAPER_DRAFT_KEY); return }
-  try {
-    if (!await confirmAction(
-      `检测到 ${new Date(draft.savedAt).toLocaleString()} 未保存的试卷修改（共 ${count} 题），是否恢复？`,
-      '恢复草稿', { type: 'info', confirmButtonText: '恢复', cancelButtonText: '丢弃' })) return
-  } catch {
+  // 这里是一个"二选一才能离开"的对话框：`confirmAction` 在取消/关闭时
+  // 都返回 false，两者无法区分。所以禁掉 Esc 与点遮罩关闭，逼用户明确表态 ——
+  // 否则"随手按 Esc"会等价于"丢弃"，把还没保存的半小时改动删掉。
+  const restore = await confirmAction(
+    `检测到 ${new Date(draft.savedAt).toLocaleString()} 未保存的试卷修改（共 ${count} 题），是否恢复？`,
+    '恢复草稿', {
+      type: 'info', confirmButtonText: '恢复', cancelButtonText: '丢弃',
+      closeOnClickModal: false, closeOnPressEscape: false,
+    })
+  if (!restore) {
+    // 选了「丢弃」就必须真的删掉（P2-10）：旧实现只判断返回值就 return，
+    // localStorage 里那条草稿原封不动，下次进页面又问一遍 ——
+    // 用户会以为"我明明点过丢弃了，怎么还弹"。
     localStorage.removeItem(PAPER_DRAFT_KEY)
     return
   }
@@ -758,7 +792,9 @@ async function loadCandidates() {
       qtype: qFilter.qtype || undefined,
       difficulty: qFilter.difficulty || undefined,
       keyword: qFilter.keyword || undefined,
-      page: 1, size: 30
+      // 后端分页参数是 page/page_size（见同文件另一处调用）：写成 size 会被
+      // 当作未声明参数**静默忽略**，结果永远只出默认 10 条且无人报错（P2-7）。
+      page: 1, page_size: 30
     })
     candidates.value = res.data?.items || []
   } catch (e) {
@@ -1003,6 +1039,8 @@ function goBack() {
 .meta-form :deep(.el-form-item) { margin-bottom: 12px; }
 .stat-inline { color: var(--el-text-color-secondary); font-size: 13px; }
 .stat-inline b { color: var(--el-color-primary); }
+
+.issue-tag { margin-right: 6px; }
 
 .gap-alert { margin-bottom: 14px; }
 .items-card { margin-bottom: 16px; }

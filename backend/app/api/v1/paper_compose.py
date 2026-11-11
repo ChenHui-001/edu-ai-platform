@@ -1673,6 +1673,10 @@ def compose_save(
             "knowledge_point_ids": ctx["kp_ids"],
             "standard_id": std.id if std else None,
             "avoid_recent": bool(data.get("avoid_recent", True)),
+            # 缺口必须一起落库（P2-8）：前端编辑页的「缺口提示」读的就是
+            # 这里，而旧实现只在**本次响应**里返回 gaps，页面一刷新就没了，
+            # 教师只在下单那一瞬间看得到「第 3 大题还差 2 题」。
+            "gaps": ctx["plan"].gaps,
         }, ensure_ascii=False),
         creator_id=user.id,
         source="ai" if (data.get("mode") == "ai") else "manual",
