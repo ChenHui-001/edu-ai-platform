@@ -90,8 +90,8 @@ REGISTRY = {
 # 带 `@pytest.mark.parametrize` 的函数会在运行时展开成多条，
 # 拿运行数做基线会让同一次改动在两个口径间来回对不上。
 BASELINE = {
-    "pytest_cases": 71,   # def test_* 个数（运行 73 passed，含 2 条参数化展开）
-    "vitest_cases": 118,  # 6.5：+theme 8、+responsive 9、+paperWizard 草稿 6
+    "pytest_cases": 72,   # def test_* 个数（运行 74 passed，含 2 条参数化展开；+AI 题强制 draft）
+    "vitest_cases": 119,  # 6.5：+theme 8、+responsive 9、+paperWizard 草稿 6、+agentResult is_fallback 1
 }
 
 PYTEST_FILE = "backend/qa_audit_suite.py"

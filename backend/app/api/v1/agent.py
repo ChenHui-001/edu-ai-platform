@@ -93,6 +93,24 @@ def _warn_if_slow(res: dict, agent: str) -> None:
                        agent, ms / 1000, SLOW_CALL_MS / 1000)
 
 
+def _agent_payload(res: Dict[str, Any]) -> Dict[str, Any]:
+    """data 载荷 + 降级标记（is_fallback）。
+
+    信封里的 is_fallback 此前只被 /agent/chat 透传；出题/组卷等 6 个端点
+    返回 ok(res.get("data")) 时把它丢了 —— 前端 AgentGenerate 的
+    `result.value?.is_fallback` 永远是 undefined，模型不可用降级成规则引擎时
+    页面毫无提示，教师把规则引擎的产出当成 AI 产出（U-03 的漏改面）。
+    合并进 data 而不是扩信封：不动 ok() 的 schema，旧调用方零感知。
+    """
+    data = dict(res.get("data") or {})
+    # 只在真降级时写入：正常路径的 data 保持原样（否则空载荷 {} 会变成
+    # {is_fallback:false}，前端 hasNoOutput 的「空对象 = 无产出」判定失效，
+    # P1-2 的「空结果弹生成成功」会回归）。
+    if res.get("is_fallback"):
+        data["is_fallback"] = True
+    return data
+
+
 def _llm_runtime_config() -> Dict[str, Any]:
     """LLM 运行态配置（sys_config 优先，回退 .env）。
 
@@ -430,7 +448,7 @@ def question_generator(
     # 否则前端 res.data.data 必崩（典型契约漂移）
     if not res.get("success"):
         return fail(res.get("message", "题目生成失败"))
-    return ok(res.get("data"), message=res.get("message", "生成完成"))
+    return ok(_agent_payload(res), message=res.get("message", "生成完成"))
 
 
 @router.post("/paper-composer", summary="智能组卷 Agent")
@@ -469,7 +487,7 @@ def paper_composer(
         _audit_write(db, user, "AI 组卷入库",
                      f"subject={subject_id} "
                      f"paper_id={(res.get('data') or {}).get('paper_id')}")
-    return ok(res.get("data"), message=res.get("message", "组卷完成"))
+    return ok(_agent_payload(res), message=res.get("message", "组卷完成"))
 
 
 @router.post("/grading", summary="智能批改 Agent")
@@ -485,7 +503,7 @@ def agent_grading(
     _warn_if_slow(res, "grading")
     if not res.get("success"):
         return fail(res.get("message", "批改失败"))
-    return ok(res.get("data"), message="批改完成")
+    return ok(_agent_payload(res), message="批改完成")
 
 
 @router.post("/study-planner", summary="学习规划 Agent")
@@ -514,7 +532,7 @@ def study_planner(
     _warn_if_slow(res, "study_planner")
     if not res.get("success"):
         return fail(res.get("message", "学习规划失败"))
-    return ok(res.get("data"), message=res.get("message", "规划完成"))
+    return ok(_agent_payload(res), message=res.get("message", "规划完成"))
 
 
 @router.post("/tutor", summary="答疑助教 Agent")
@@ -541,7 +559,7 @@ def tutor(
     )
     if not res.get("success"):
         return fail(res.get("message", "答疑失败"))
-    return ok(res.get("data"), message=res.get("message", "解答完成"))
+    return ok(_agent_payload(res), message=res.get("message", "解答完成"))
 
 
 @router.post("/note-organizer", summary="笔记整理 Agent")
@@ -587,7 +605,7 @@ def note_organizer(
         _audit_write(db, user, "AI 整理笔记写回", f"note_id={note_id}")
     if not res.get("success"):
         return fail(res.get("message", "笔记整理失败"))
-    return ok(res.get("data"), message=res.get("message", "整理完成"))
+    return ok(_agent_payload(res), message=res.get("message", "整理完成"))
 
 
 # ---------------------------------------------------------------- 异步任务（长任务）

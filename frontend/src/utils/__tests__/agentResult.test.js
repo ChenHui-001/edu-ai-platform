@@ -53,4 +53,11 @@ describe('hasNoOutput', () => {
   it('空对象算空产出', () => {
     expect(hasNoOutput({})).toBe(true)
   })
+
+  it('is_fallback 是标记键不是产出：单独存在仍算空产出（2026-11-11 回归）', () => {
+    // 后端降级时把 is_fallback 合进 data，不能因此把空结果判成"有产出"
+    expect(hasNoOutput({ is_fallback: true })).toBe(true)
+    expect(hasNoOutput({ is_fallback: false })).toBe(true)
+    expect(hasNoOutput({ is_fallback: true, questions: [{ stem: 'x' }] })).toBe(false)
+  })
 })

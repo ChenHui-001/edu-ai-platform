@@ -481,6 +481,7 @@ def _prepare_question(
     score = _validate_score(data.get("score"))
     status = _validate_q_status(data.get("status"))
     bank_type = _validate_bank_type(data.get("bank_type"))
+    source_val = _validate_source(data.get("source"))
     kp_id = None
     if data.get("knowledge_point_id") not in (None, ""):
         kp = _validate_knowledge_point(
@@ -489,6 +490,15 @@ def _prepare_question(
     # 公共题库：非审核角色创建/发布一律进待审核（draft），修复「教师可自行上架公共题」
     if bank_type == QuestionBankType.PUBLIC.value and status == "published" \
             and not _can_audit(user):
+        status = QuestionStatus.DRAFT.value
+
+    # AI 生成的题必须先进待审核库：Agent 内部落库路径（question_agent.execute）
+    # 写的是 status="draft"（tip 明确说「已进入待审核库，审核通过后方可上架」），
+    # 但 AI 出题页「保存到私有题库」走本入口时 payload 不带 status，落库默认
+    # published —— 同一批 AI 题两条路径两种终态，未经教师核对就直接上架
+    # （生产实测 2026-11-11：AI 出的多选题带着自相矛盾的答案直接进了可用题库，
+    # id 574~581）。凡 source 以 ai 开头（ai / ai_fill），一律收敛为 draft。
+    if status == QuestionStatus.PUBLISHED.value and str(source_val or "").startswith("ai"):
         status = QuestionStatus.DRAFT.value
 
     # 选项在写入口就归一化成唯一契约形状（任意历史/外部形状 → [{key,text}]）。
@@ -508,7 +518,7 @@ def _prepare_question(
         knowledge_point_id=kp_id,
         bank_type=bank_type,
         owner_id=user.id, status=status,
-        fingerprint=_fingerprint(stem), source=_validate_source(data.get("source")),
+        fingerprint=_fingerprint(stem), source=source_val,
     )
 
 

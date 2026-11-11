@@ -30,5 +30,7 @@ export function hasNoOutput(payload) {
   // 按空产出处理 —— 宁可提示"没产出、请重试"，也不要把残缺数据渲染成成功页。
   const has = (k) => Object.prototype.hasOwnProperty.call(payload, k)
   if (has('questions') || has('items')) return true
-  return Object.keys(payload).length === 0
+  // is_fallback 是后端信封合入的标记键，不是产出内容：忽略后再判空
+  const keys = Object.keys(payload).filter((k) => k !== 'is_fallback')
+  return keys.length === 0
 }

@@ -509,6 +509,35 @@ def test_batch_create_partial_success_and_in_batch_dedup(db_session):
     assert sorted(indexed) == sorted(r.id for r in rows)
 
 
+def test_batch_create_ai_source_forces_draft(db_session):
+    """AI 生成的题即使调用方带 status=published 也必须落 draft。
+
+    AI 出题页「保存到私有题库」走 batch-create 且 payload 不带 status，
+    默认 published —— 未经教师核对的 AI 题直接上架（生产实测 2026-11-11，
+    多选题带着自相矛盾的答案进了可用题库）。与 Agent 内部 save 路径的
+    status="draft" 语义对齐：source 以 ai 开头一律收敛为 draft。
+    """
+    from app.models import Question
+
+    s = db_session
+    g, subj, u = _seed_basic(s)
+    res, _ = _call_batch_create(s, u, [
+        {"stem": "AI 题上架尝试", "grade_id": g.id, "subject_id": subj.id,
+         "source": "ai", "status": "published"},
+        {"stem": "组卷补题上架尝试", "grade_id": g.id, "subject_id": subj.id,
+         "source": "ai_fill", "status": "published"},
+        # 手工录入不受影响：无 source 默认 published（教师对自己录入的题负责）
+        {"stem": "手工题保持原语义", "grade_id": g.id, "subject_id": subj.id},
+    ])
+    body = res["data"]
+    assert len(body["done"]) == 3
+    rows = {r.id: r for r in s.scalars(
+        select(Question).where(Question.owner_id == u.id)).all()}
+    assert rows[body["done"][0]].status == "draft"
+    assert rows[body["done"][1]].status == "draft"
+    assert rows[body["done"][2]].status == "published"
+
+
 def test_batch_create_public_question_waits_for_audit(db_session):
     """批量入口必须复用单题审核口径：非审核角色建公共题一律落 draft。"""
     from app.models import Question

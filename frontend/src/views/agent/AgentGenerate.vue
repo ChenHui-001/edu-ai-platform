@@ -660,7 +660,9 @@ async function pollJob(id, timeoutMs) {
     await new Promise(r => setTimeout(r, 2000))
     const res = await agentApi.job(id)
     const j = res.data || {}
-    if (j.status === 'success') return j.result
+    // succeeded 是历史拼写（旧版组卷任务写入），读取侧必须继续认，
+    // 否则 2.5.19 时代的存量任务永远轮不到终态、前端假超时
+    if (j.status === 'success' || j.status === 'succeeded') return j.result
     if (j.status === 'failed') throw new Error(j.error || '生成失败')
   }
   throw new Error(`任务超时（${Math.round(timeoutMs / 60000)} 分钟），请到任务列表查看`)
@@ -696,7 +698,11 @@ async function run() {
         // 否则前端先放弃而后台线程仍在跑，教师重试会重复生成。
         const waitMs = isQuestion ? 6 * 60 * 1000 : 15 * 60 * 1000
         const jobResult = await pollJob(jobId.value, waitMs)
-        result.value = jobResult?.data || jobResult || {}
+        // 后台任务在 result 列里存的是 Agent 信封（{success,data,is_fallback}）：
+        // 取内层 data，但 is_fallback 在信封上，要手动带过去
+        const payload = jobResult?.data || jobResult || {}
+        if (jobResult?.is_fallback) payload.is_fallback = true
+        result.value = payload
         if (hasNoOutput(result.value)) {
           ElMessage.warning('任务已结束但未产出内容，请调整条件后重试')
         } else {
@@ -780,7 +786,9 @@ function buildQuestionPayload(q) {
     knowledge_point_id: kpId,
     grade_id: gradeId,
     subject_id: q.subject_id || qForm.subject_id || null,
-    // AI 结果来自公共/生成场景，统一保存为当前用户私有题，避免公共题审核语义
+    // AI 生成的题先进待审核库（与 Agent 内部落库语义一致），教师核对后
+    // 在题库页上架。后端对 source 以 ai 开头也会兜底强制 draft（双保险）。
+    status: 'draft',
     bank_type: 'private',
     // 溯源：标明这几道题是 AI 生成的。此前后端固定写 source="manual"，
     // 「清理 AI 草稿题」定时任务按 source like 'ai%' 统计却永远算不到它们，
@@ -801,8 +809,8 @@ async function saveAll() {
   // 二次确认：明确保存到「我的私有题库」，避免误解为公共题库
   try {
     if (!await confirmAction(
-      `将把 ${qs.length} 道 AI 生成题保存到你自己的私有题库（private），保存后仅你本人可见与选用。请先核对题目与答案。`,
-      '确认保存', { type: 'warning', confirmButtonText: '保存到私有题库', cancelButtonText: '再检查一下' })) return
+      `将把 ${qs.length} 道 AI 生成题保存到你的私有题库，状态为「待审核」（draft）——AI 可能出错，请先核对题目与答案，确认无误后在题库页上架使用。`,
+      '确认保存', { type: 'warning', confirmButtonText: '保存（待审核）', cancelButtonText: '再检查一下' })) return
   } catch { return }
   saving.value = true
   let okCount = 0

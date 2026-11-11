@@ -359,6 +359,26 @@
 > 「任务恢复」弹过窗就不再问「草稿恢复」（连弹两个确认框太吵）；
 > 保存成功即 `clearDraft()`。恢复期间暂停自动保存，避免默认值反向覆盖草稿。
 
+## 用户反馈排查（2026-11-11：AI 智能模块 · AI 出题组卷）
+
+| 编号 | 内容 | 状态 |
+|---|---|:---:|
+| UF-01 | **AI 题未经审核直接上架**：「保存到私有题库」走 `/questions/batch-create`，payload 不带 status，落库默认 published —— 与 Agent 内部 `status="draft"`（待审核）语义冲突。生产实证：2026-11-11 15:44/15:48 生成的 8 道题（id 574~581）全部直接 published，其中一道多选题选项 C 明显降序却被标为正确答案（解析自相矛盾），未核对即进可用题库 | **已修**（见下） |
+| UF-02 | **降级提示完全失效**：出题/组卷/批改/规划/答疑/笔记 6 个端点返回 `ok(res.get("data"))` 时丢掉信封里的 `is_fallback`（只有 /agent/chat 透传）—— 模型不可用降级成规则引擎时，AgentGenerate 页面的「规则引擎」标签与 AiFallbackNotice 永远不出现，教师把规则引擎产出当成 AI 产出（U-03 的漏改面） | **已修**（见下） |
+| UF-03 | 前端 `pollJob` 只认 `success`/`failed`，不认历史拼写 `succeeded`（旧版组卷任务写入的终态）—— 2.5.19 时代的存量任务若被轮询会假超时 | **已修**（读取侧兼容，一行） |
+
+> **UF-01 实现要点**：`_prepare_question` 对 `source` 以 `ai` 开头（ai / ai_fill）一律收敛
+> 为 draft —— 后端兜底 + 前端 `buildQuestionPayload` 显式传 `status:'draft'` 双保险。
+> 手工录入（无 source）保持默认 published 不变，教师对自己录入的题负责。
+> 保存确认弹窗文案同步改为「状态为待审核，确认无误后在题库页上架」。
+> **模型幻觉的答案错误无法靠代码根治**，审核闸门 + 保存时的核对提醒是当前防线。
+
+> **UF-02 实现要点**：新增 `_agent_payload(res)` 把 `is_fallback` 合并进 data（只在
+> 真降级时写入 —— 正常路径 data 原样，避免空载荷 `{}` 变成 `{is_fallback:false}`
+> 导致前端 `hasNoOutput` 的空判定失效、P1-2 回归）；`hasNoOutput` 同步忽略
+> `is_fallback` 键。异步路径 `jobResult.data` 解包时也把信封上的 `is_fallback`
+> 手动带到 payload。
+
 ## 验证脚本（可重跑，用于反向验证修复）
 
 | 脚本 | 覆盖 | 运行 |
