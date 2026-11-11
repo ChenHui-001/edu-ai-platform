@@ -4,9 +4,9 @@
 """
 import html
 import io
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from app.api.deps import (
 from app.core.database import get_db
 from app.core.exception import NotFoundException
 from app.models import KnowledgePoint, Question, User, WrongQuestion
+from app.schemas.learning import WrongQuestionUpdateIn
 from app.utils.common import PageParams, dictify, load_json, now_local, ok
 from app.utils.options import normalize_options
 
@@ -70,17 +71,19 @@ def list_wrong(
 
 @router.put("/wrong-questions/{wid}", summary="标注错因 / 标记掌握")
 def update_wrong(
-    wid: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    wid: int, data: WrongQuestionUpdateIn, db: Session = Depends(get_db),
     user: User = Depends(get_current_student_self),
 ):
     w = db.get(WrongQuestion, wid)
     if not w or w.student_id != user.id:
         raise NotFoundException("错题记录不存在")
-    if "error_reason" in data:
-        w.error_reason = data["error_reason"]
-    if "is_mastered" in data:
-        w.is_mastered = bool(data["is_mastered"])
-        w.mastered_at = now_local() if data["is_mastered"] else None
+    # exclude_unset：缺省 = 不动，显式 null = 撤销原标注（错因可以清空）
+    patch = data.model_dump(exclude_unset=True)
+    if "error_reason" in patch:
+        w.error_reason = patch["error_reason"]
+    if "is_mastered" in patch:
+        w.is_mastered = bool(patch["is_mastered"])
+        w.mastered_at = now_local() if patch["is_mastered"] else None
     db.commit()
     return ok(message="已更新")
 

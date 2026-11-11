@@ -19,6 +19,7 @@ from app.core.exception import BusinessException, NotFoundException, PermissionE
 from app.schemas.agent import PaperComposerRequest
 from app.core.rate_limit import check_agent_rate
 from app.models import AgentCallLog, User
+from app.services import agent_job_state
 from app.utils.common import PageParams, dictify, fail, now_local, ok
 
 import logging
@@ -602,7 +603,7 @@ def _run_job(job_id: int) -> None:
         job = db.get(AgentJob, job_id)
         if not job:
             return
-        job.status = "running"
+        job.status = agent_job_state.STATUS_RUNNING[1]
         job.started_at = now_local()
         db.commit()
 
@@ -638,14 +639,15 @@ def _run_job(job_id: int) -> None:
             )
 
         job.result = json.dumps(res, ensure_ascii=False, default=str)
-        job.status = "success" if res.get("success") else "failed"
+        job.status = (agent_job_state.STATUS_SUCCEEDED if res.get("success")
+                      else agent_job_state.STATUS_FAILED)
         job.error = None if res.get("success") else (res.get("message") or "")[:500]
         _warn_if_slow(res, f"job:{job.agent}")
     except Exception as exc:  # noqa: BLE001
         logger.exception("异步任务 %s 执行失败", job_id)
         job = db.get(AgentJob, job_id)
         if job:
-            job.status = "failed"
+            job.status = agent_job_state.STATUS_FAILED
             # job.error 会经轮询接口回给前端，同样只能放脱敏文案；
             # 原始异常已在上面 logger.exception 里完整落日志。
             from app.agents.base import public_error_message
@@ -703,7 +705,6 @@ def get_job(
     job_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
     from app.models import AgentJob
-    from app.services import agent_job_state
 
     job = db.get(AgentJob, job_id)
     if not job:
@@ -725,7 +726,6 @@ def list_jobs(
     db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
 ):
     from app.models import AgentJob
-    from app.services import agent_job_state
 
     base = select(AgentJob).where(AgentJob.user_id == user.id)
     # B2：按状态筛选要在**库里**先过滤，再叠加超时判定 —— 但僵尸任务在库里的
@@ -740,7 +740,7 @@ def list_jobs(
 
         cutoff = now_local() - timedelta(seconds=agent_job_state.JOB_TIMEOUT_SECONDS)
         base = base.where(or_(
-            AgentJob.status == "failed",
+            AgentJob.status == agent_job_state.STATUS_FAILED,
             (AgentJob.status.in_(agent_job_state.STATUS_RUNNING))
             & (AgentJob.created_at < cutoff),
         ))

@@ -83,13 +83,27 @@ REAP_GRACE_SECONDS = 600
 
 STATUS_RUNNING = ("pending", "running")
 
-# 终态：进入其中任一状态后，取消请求不再有效（幂等返回现状，不翻转状态）。
-# 注意 `success` 与 `succeeded` 并存是历史遗留 —— 教案侧写 `success`，
-# 组卷/出题侧写 `succeeded`，两个都得算终态，否则「已完成的教案任务」会被
-# 判成"还能取消"，接口把 cancel_requested 置位后没人消费，前端一直等取消成功。
-STATUS_TERMINAL = ("succeeded", "success", "failed", "cancelled")
-
+# ---------------------------------------------------------------- 状态词表（Q-07）
+# `sys_agent_job.status` 历史上被两处写成了不同拼写：教案/通用 Agent 写
+# `success`，组卷写 `succeeded`。于是每处"是不是已经结束"的判断都得同时列两种，
+# 漏一个就会把已完成的任务判成"还能取消"（接口置位 cancel_requested 后没人消费，
+# 前端一直等取消成功），或者把结果读成空。
+#
+# 收敛方式：**写入侧只认常量**，读取侧仍把历史拼写当终态（存量行不会因为
+# 代码升级而改写，DB 里两种拼写会长期共存）。新增代码禁止再写字面量，
+# 由 `tools/check_job_status_literals.py` 守着。
+STATUS_SUCCEEDED = "success"      # 唯一合法的"成功"写值
+STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
+STATUS_PENDING = "pending"
+
+# 历史别名：读取侧必须继续认，写入侧**不许**再写。
+STATUS_SUCCEEDED_LEGACY = "succeeded"
+
+# 终态：进入其中任一状态后，取消请求不再有效（幂等返回现状，不翻转状态）。
+STATUS_TERMINAL = (
+    STATUS_SUCCEEDED, STATUS_SUCCEEDED_LEGACY, STATUS_FAILED, STATUS_CANCELLED,
+)
 
 
 class JobCancelled(Exception):

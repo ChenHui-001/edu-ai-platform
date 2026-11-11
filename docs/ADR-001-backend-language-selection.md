@@ -3,13 +3,13 @@
 - **状态**：已决策（暂不迁移）
 - **日期**：2026-11-02
 - **决策者**：项目负责人
-- **相关**：`docs/ARCHITECTURE_ASSESSMENT_2026-11.md`
+- **相关**：`docs/STATUS.md`（现状卡）、`docs/archive/ARCHITECTURE_ASSESSMENT_2026-11.md`（决策时点的评估）
 
 ---
 
 ## 背景
 
-系统当前为 FastAPI（Python 3.11）单体，v2.2.19，后端 32,082 行 / 272 端点 / 49 表，单 worker + SQLite WAL 部署。提出评估「整体改用 Go + Gin/Echo 是否更合理、性能与资源占用是否显著改善」。
+决策时点（2026-11-02，v2.2.19）的系统形态为 FastAPI（Python 3.11）单体，后端 32,082 行 / 272 端点 / 49 表，单 worker + SQLite WAL 部署。**这些数字会过期，当前实测值见 `docs/STATUS.md`**；架构形态（单体 + 单 worker + SQLite）未变。提出评估「整体改用 Go + Gin/Echo 是否更合理、性能与资源占用是否显著改善」。
 
 ## 决策
 

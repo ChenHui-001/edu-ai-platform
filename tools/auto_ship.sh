@@ -8,13 +8,15 @@
 # 设计原则：**校验不过就不提交、不推送**（fail fast，绝不带病上线）
 #
 # ⚠️ 2026-10-29 起测试体系（tests/ 与 CI 的 e2e job）已移除。原来的
-#    「端到端回归」换成三件事，门槛降低但**不是零**：
-#      1) 十三道静态门禁（后端九道：硬编码地址/弱断言/时间契约/模型外键/
-#         迁移列/响应体/裸 SQL/定时任务注册/ruff + 造数确定性 + 用例覆盖；
-#         前端四道：模板引用/重复模板/res.data.data/裸消息框）
-#      2) 导库 + create_all 建表 + 路由数下限（拦住语法错、循环导入、模型断裂）
-#      3) CI 的 compileall + 镜像构建仍会独立跑一次
-#    代价要说清楚：**行为回归已无自动化覆盖**，改业务逻辑后必须人工点一遍相关页面。
+#    「端到端回归」换成四件事，门槛降低但**不是零**：
+#      1) 静态门禁（后端：硬编码地址/弱断言/时间契约/模型外键/迁移列/响应体/
+#         裸 SQL/定时任务注册/status 字面量/造数确定性/用例覆盖/N+1 棘轮/ruff；
+#         前端：模板引用/重复模板/res.data.data/裸消息框/CSS 变量；
+#         文档：现状卡自洽 + 版本基线漂移。道数以 tools/status_snapshot.py 为准）
+#      2) 接口级行为回归（tools/verify_p0_fixes.py）+ 高价值场景回归（6 个脚本）
+#      3) 导库 + create_all 建表 + 路由数下限（拦住语法错、循环导入、模型断裂）
+#      4) CI 的 compileall + 镜像构建仍会独立跑一次
+#    代价要说清楚：**页面级行为回归已无自动化覆盖**，改业务逻辑后必须人工点一遍相关页面。
 #
 # ★ 镜像唯一来源 = CI 构建的 ghcr 多架构镜像（ghcr.io/chenhui-001/edu-ai-platform）
 #   本机**不编译任何镜像**：校验用源码直跑，正式镜像等 CI 发布后 pull。
@@ -118,6 +120,8 @@ if [ -n "$GATE_PY" ]; then
   "$GATE_PY" tools/check_schema_bodies.py || GATE_RC=1
   "$GATE_PY" tools/check_api_sql.py || GATE_RC=1
   "$GATE_PY" tools/check_job_handlers.py || GATE_RC=1
+  # Q-07：sys_agent_job.status 只许用 agent_job_state 常量（success/succeeded 两套拼写曾致终态误判）
+  "$GATE_PY" tools/check_job_status_literals.py || GATE_RC=1
   # 演示造数确定性（两次生成指纹一致）与「关键模块必须有测试 import」：
   # 两者都只在 CI 跑过，本地漏跑就会「提交后等 2 分钟才知道红」。
   # 实测耗时 10s / 0.3s，放进本地门禁不痛。
@@ -169,10 +173,15 @@ fi
 # 版本对比(F-02)、班级薄弱点(F-03)、任务取消(F-04)、请求体默认值(BUG-026)、
 # 报表缓存(P-07：命中/refresh 绕过后写回/跨用户不串键/深拷贝/容量上限)。
 if [ -n "$GATE_PY" ] && [ -f tools/verify_p0_fixes.py ]; then
-  if ! "$GATE_PY" tools/verify_p0_fixes.py; then
-    die 1 "接口级行为回归未通过（导出 / 组卷 / 大题结构 / 成绩重算 / 版本 / 自测卷 / 取消 / 报表缓存）"
+  # 断言条数从输出里数，不在脚本里写死 —— 写死过一次 80，加到 92 时没人改，
+  # 那句 ✔ 就变成假的了。
+  _vlog="/tmp/auto_ship_verify_p0.log"
+  if ! "$GATE_PY" tools/verify_p0_fixes.py > "$_vlog" 2>&1; then
+    tail -30 "$_vlog" 2>/dev/null
+    die 1 "接口级行为回归未通过（导出 / 组卷 / 大题结构 / 成绩重算 / 版本 / 自测卷 / 取消 / 报表缓存 / 写接口契约）"
   fi
-  ok "接口级行为回归通过（80 条断言）"
+  _vn="$(grep -cE '^[[:space:]]+(PASS|FAIL)' "$_vlog" || true)"
+  ok "接口级行为回归通过（${_vn} 条断言）"
 fi
 
 # ---------- 0.4b 高价值场景回归（P-06） ----------
@@ -265,6 +274,28 @@ if [ -n "$BUMP" ]; then
   echo "$NEW" > VERSION
   ok "VERSION: $VERSION -> $NEW"
   VERSION="$NEW"
+fi
+
+# ---------- 0d. 文档基线（Q-02） ----------
+# 必须在 bump **之后**跑：bump 改了 VERSION，现状卡上的数字（版本/用例数/
+# 端点断言数）当场过期。放在 bump 之前校验，等于校验一个即将被改掉的版本。
+#
+# 两件事：
+#   1) --write 重算 docs/STATUS.md 里的 auto 区块（幂等，无变化就不产生 diff）
+#   2) check_doc_versions 拦住"文档自己写死当前版本号"——这是「文档基线漂移」
+#      的唯一机械防线，README 曾经写死过 2.0.0，RELEASE_CONSISTENCY 曾有一张
+#      停在 2.1.12 的现状表，两次都是 CI 全绿而读者被误导。
+if [ -n "$GATE_PY" ]; then
+  step "0d/5  文档基线一致性"
+  # --write 是幂等的：数字没变就不产生 diff。dry-run 下也会重算这张卡
+  # （与 bump 会改 VERSION 同理：卡片是 VERSION 的派生品，不是独立状态）。
+  if ! "$GATE_PY" tools/status_snapshot.py --write; then
+    die 1 "现状卡重算失败（docs/STATUS.md 或 tools/status_snapshot.py 有问题）"
+  fi
+  ok "现状卡已重算"
+  if ! "$GATE_PY" tools/check_doc_versions.py; then
+    die 1 "文档版本基线漂移：非归档文档写死了当前版本号，改成指向 docs/STATUS.md"
+  fi
 fi
 
 # ---------- 1. 冒烟校验（取代原端到端回归） ----------

@@ -72,9 +72,9 @@ def _hint(pct: int) -> str:
 def _job_progress(job: AgentJob) -> Dict[str, Any]:
     """把任务状态整理成前端轮询所需的完整结构。"""
     pct = int(job.progress or 0)
-    if job.status == "success":
+    if job.status == agent_job_state.STATUS_SUCCEEDED:
         pct = 100
-    elif job.status == "failed":
+    elif job.status == agent_job_state.STATUS_FAILED:
         pct = min(pct, 99)
 
     # 僵尸任务：进程重启导致后台线程丢失，status 永远停在 running。
@@ -143,7 +143,7 @@ def _run_lesson_job(job_id: int) -> None:
         if not job:
             return
         check_cancel()   # 排队期就取消：连 running 都不必写
-        job.status = "running"
+        job.status = agent_job_state.STATUS_RUNNING[1]
         job.started_at = now_local()
         job.progress = 5
         job.stage = "解析教学条件"
@@ -159,20 +159,20 @@ def _run_lesson_job(job_id: int) -> None:
             return
         if res.get("success"):
             job.result = json.dumps(res.get("data"), ensure_ascii=False, default=str)
-            job.status = "success"
+            job.status = agent_job_state.STATUS_SUCCEEDED
             job.error = None
             job.progress = 100
             job.stage = "生成完成"
         else:
             # 失败也要留下可读原因：Agent 的 message 已经是面向用户的中文
-            job.status = "failed"
+            job.status = agent_job_state.STATUS_FAILED
             job.error = (res.get("message") or "教案生成失败")[:500]
             job.stage = "生成失败"
     except agent_job_state.JobCancelled:
         logger.info("AI 教案任务 %s 已被用户取消", job_id)
         job = db.get(AgentJob, job_id)
         if job is not None:
-            job.status = "cancelled"
+            job.status = agent_job_state.STATUS_CANCELLED
             job.stage = "已取消"
             job.error = None
             db.commit()
@@ -181,7 +181,7 @@ def _run_lesson_job(job_id: int) -> None:
         try:
             job = db.get(AgentJob, job_id)
             if job:
-                job.status = "failed"
+                job.status = agent_job_state.STATUS_FAILED
                 job.error = f"生成失败：{exc}"[:500]
                 job.stage = "生成失败"
         except Exception:  # noqa: BLE001
@@ -376,7 +376,7 @@ def save_lesson_from_job(
         raise NotFoundException("任务不存在")
     if job.user_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("无权保存该任务的结果")
-    if job.status != "success" or not job.result:
+    if job.status != agent_job_state.STATUS_SUCCEEDED or not job.result:
         raise BusinessException("该任务尚未生成成功，无法保存")
 
     try:
@@ -493,7 +493,7 @@ def export_lesson(
         raise NotFoundException("任务不存在")
     if job.user_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("无权导出该任务的结果")
-    if job.status != "success" or not job.result:
+    if job.status != agent_job_state.STATUS_SUCCEEDED or not job.result:
         raise BusinessException("该任务尚未生成成功，无法导出")
 
     try:

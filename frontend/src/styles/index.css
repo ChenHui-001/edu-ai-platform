@@ -107,25 +107,12 @@ body {
   margin-top: 6px;
 }
 
-.ai-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 12px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  color: #fff;
-}
-
-.fallback-tip {
-  padding: 8px 12px;
-  border-radius: 6px;
-  background: #fdf6ec;
-  color: #b88230;
-  font-size: 12px;
-  border: 1px solid #f5dab1;
-}
+/* 已删除两个零引用类（Q-08）：
+   · .ai-badge —— 全仓库无任何模板使用；
+   · .fallback-tip —— 「AI 降级为规则引擎」的提示，实际有 3 个页面已在用
+     `el-alert type=warning`（KnowledgeManage / AgentLogs / AgentChat），
+     保留这个 class 只会让后来者以为是"官方写法"再造一套。
+     统一口径见 BACKLOG U-03：一律用 el-alert，不再复活该 class。 */
 
 .markdown-body {
   line-height: 1.8;

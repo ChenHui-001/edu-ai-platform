@@ -236,27 +236,19 @@ curl -s http://localhost/api/v1/health | jq .version
 
 ---
 
-## 八、当前状态（2.1.12）
+## 八、当前状态
 
-| 项 | 值 |
-|---|---|
-| VERSION | `2.1.12` |
-| commit | `f983deb`（第二批性能修复：N+1 / 超取 / 聚合下推） |
-| ghcr 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.1.12` |
-| manifest index digest | `sha256:ddaf57f556e68ae2747d151cc5dc4bb22e79b6b464f877b8ccedb7099bc5bd79` |
-| amd64 子镜像 | `sha256:213261b88bf44c683a94f6a796273d1fcd1ed14c95b175d835f12f4eb34a9c21` |
-| arm64 子镜像 | `sha256:179d53cec34598f28fb2c467d777839754a5b9b23fba339b17f2ce993222c65e` |
-| CI | `f983deb` 全 job success（前端构建 / 后端检查 / 210 项 e2e / 镜像构建 / 发布三步） |
-| 本地容器 | `2.1.12`，`Up (healthy)`，`/app/BUILD_INFO commit=f983deb` |
-| 服务器容器 | `186.241.77.194:8081` 容器 `Up (healthy)`，`BUILD_INFO commit=f983deb` |
-| 四层一致性 | `verify_consistency.py --host` → **通过 11 / 不一致 0** |
-| 生产接口抽验 | `/health`、`/auth/login`、`/question/questions/stats`、`/edu/knowledge/stats`、`/task/my/tasks`、`/system/users`、`/logs/operation`、`/report/student/overview` 全部 HTTP 200 |
+**本节不再维护版本快照。** 曾经的「当前状态」表格长期没跟着发版更新，
+读者据此以为线上还在跑那张表上的版本，而实际早已是 2.x 尾部 —— 这正是
+`audit-reports/structured-assessment-2.5.19` 里点名的「文档基线漂移」。
+现状统一由 [`docs/STATUS.md`](STATUS.md) 提供（版本号部分还由
+`tools/check_doc_versions.py` 门禁强制）。
 
-> 最近一次发布（2.1.12）的四闸门结果作为流程有效性参照：
-> 全量 e2e **863 项 / 通过 849 / 失败 0 / 环境跳过 14**，零回归；
-> CI 全部 job success；四层 fingerprint 逐一比对 `11/11`。
+四道闸门的**流程**（本文 §四/§五）不变，只是不在这里记录某一次的具体结果。
 
-### 2.1.12 的「sha256 不一致」排查记录（重要教训）
+---
+
+### 附：2.1.12 的「sha256 不一致」排查记录（历史教训，勿当作现状）
 
 首轮 `verify_consistency.py --host` 报 `两端关键文件 sha256: 不一致 ['app/api/v1/grading.py', 'VERSION']`。
 四层 commit 却完全一致 —— 这个组合本身就是线索：**commit 一致而文件内容不同，说明参与比对的容器不是镜像本身**。

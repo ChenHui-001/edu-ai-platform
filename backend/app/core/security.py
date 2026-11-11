@@ -241,6 +241,18 @@ def revoke_user_tokens(db: Session, user_id: int) -> None:
     的坑，这里刻意避开时区换算。
 
     覆盖写而非追加：一个用户一行，重复改密只留最新水位。
+
+    ## 判定是**严格小于**，别改成 `<=`
+
+    `is_user_token_revoked` 用 `iat_precise < invalid_before_ts`。改成 `<=`
+    会把「改密后同一时刻新登录」的令牌也一并杀掉 —— 那正是
+    `iat_precise`（浮点签发时刻）这个字段存在的理由。
+
+    代价是：**时钟粒度粗的平台上，"签发"与"吊销"落在同一 tick 会判不出来**。
+    Windows 的 `time.time()` 粒度约 15.6ms（400 次紧邻调用可能只返回 1 个值），
+    本机测试若在签发后立刻吊销，`issued == W` → 不判吊销 → 断言偶发红
+    （`tools/verify_bugfix_256.py` 真的这么红过一次）。生产在 Linux（ns 级）
+    不受影响；本机测试用 `advance_clock_tick()` 跨过 tick 再断言。
     """
     ts = time.time()
     # 记录自身 TTL 要覆盖最长寿命令牌（refresh 默认 7 天），

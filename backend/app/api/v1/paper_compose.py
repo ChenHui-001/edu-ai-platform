@@ -48,6 +48,7 @@ from app.models import (
     PaperShare, PaperStatus, PaperVersion, Question, SharePermission,
     ShareScope, Subject, Submission, Task, User,
 )
+from app.services import agent_job_state
 from app.schemas.legacy_bodies import (
     ComposeAiAsyncIn,
     ComposeAiIn,
@@ -2983,7 +2984,8 @@ def _touch_job(job_id: int, **fields: Any) -> None:
 
 
 def _fail_job(job_id: int, message: str) -> None:
-    _touch_job(job_id, status="failed", error=message[:2000], finished_at=now_local())
+    _touch_job(job_id, status=agent_job_state.STATUS_FAILED, error=message[:2000],
+               finished_at=now_local())
 
 
 def _cancelled_job(job_id: int) -> None:
@@ -2992,7 +2994,7 @@ def _cancelled_job(job_id: int) -> None:
     与 `_fail_job` 分开：取消不是故障，`error` 留空、`progress` 停在原位，
     否则前端会把"你点了取消"渲染成红色错误，也会污染任务成功率统计。
     """
-    _touch_job(job_id, status="cancelled", stage="已取消",
+    _touch_job(job_id, status=agent_job_state.STATUS_CANCELLED, stage="已取消",
                error=None, finished_at=now_local())
 
 
@@ -3000,7 +3002,6 @@ def _run_compose_job(job_id: int) -> None:
     """后台执行组卷。独立 Session —— 请求结束 Session 就关了。"""
     from app.core.database import SessionLocal
     from app.models import AgentJob, User
-    from app.services import agent_job_state
 
     db = SessionLocal()
 
@@ -3020,7 +3021,7 @@ def _run_compose_job(job_id: int) -> None:
             return
         # 排队期就被取消：连 running 都不用写，直接落 cancelled
         check_cancel()
-        job.status = "running"
+        job.status = agent_job_state.STATUS_RUNNING[1]
         job.started_at = now_local()
         job.progress = 5
         job.stage = "解析参数"
@@ -3062,7 +3063,8 @@ def _run_compose_job(job_id: int) -> None:
         job = db.get(AgentJob, job_id)
         if job:
             job.result = payload
-            job.status = "succeeded"
+            # 写值统一走常量（Q-07）：历史上这里写 succeeded、教案侧写 success
+            job.status = agent_job_state.STATUS_SUCCEEDED
             job.progress = 100
             job.stage = "完成"
             job.finished_at = now_local()

@@ -11,11 +11,39 @@
 import os
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 FAILED = []
+
+
+def advance_clock_tick(min_gap=0.03):
+    """把系统时钟推进到下一个 tick 再继续，返回推进后的时刻。
+
+    ## 为什么需要（一次真实偶发失败）
+
+    水位判定是**严格小于**：`iat_precise < invalid_before_ts` → 已吊销。
+    那意味着「令牌签发」与「写水位」必须落在**不同的 tick** 里，
+    "先签发、后吊销"才判得出来。
+
+    而 Windows 上 `time.time()` 的粒度受系统定时器限制（实测 Python 3.12
+    在本机：400 次紧邻调用只返回 **1 个**不同值，即 ~15.6ms 一个 tick）。
+    两者的间隔只有几次 SELECT + 两次 JWT 签名，完全可能落在同一 tick，
+    于是 `issued == W`，严格小于不成立 → 判成"未吊销" → 断言随机红。
+
+    这条断言在发版流水线里红过一次、单独跑 6 次又全绿，就是它。
+    生产跑 Linux（ns 级时钟）不会有这个问题，所以修测试而不是改判定语义：
+    把 `<` 改成 `<=` 会让「改密后同一 tick 内新登录」也被误杀，
+    那正是 `iat_precise` 这个字段存在的原因。
+    """
+    t0 = time.time()
+    time.sleep(min_gap)
+    t1 = time.time()
+    if t1 <= t0:
+        print(f"  WARN  系统时钟未推进（{t0} -> {t1}），时间相关断言可能不稳")
+    return t1
 
 
 def check(name, ok, detail=""):
@@ -142,6 +170,8 @@ def verify_backend():
 
     # 刻意不等跨秒：改密后立即重签 / 立刻重登是真实场景。
     # JWT 标准 iat 只有整秒精度，若拿它与浮点水位直接比，新令牌必被误杀。
+    # 但要让"旧令牌被拦"这条判得出来，签发与写水位必须跨 tick（见 helper 注释）。
+    advance_clock_tick()
     auth_service.change_password(db, user, "OldPass@2026!Xy", "NewPass@2026!Xy")
     check("改密后 access 立即失效",
           is_user_token_revoked(db, p_access))
@@ -162,6 +192,7 @@ def verify_backend():
     check("部署前签发的旧格式令牌仍被水位拦下（无安全空窗）",
           is_user_token_revoked(db, legacy_old))
 
+    advance_clock_tick()
     auth_service.reset_password_by_admin(db, user.id, "ResetPass@2026!Xy")
     check("管理员重置后新令牌也失效",
           is_user_token_revoked(db, fresh))
@@ -182,6 +213,7 @@ def verify_backend():
                                .where(UserTokenRevocation.user_id == user.id))) < 1e11)
 
     # 直接调 revoke_user_tokens 的独立行为（找回密码走这条路）
+    advance_clock_tick()
     revoke_user_tokens(db, user.id)
     check("find-password 用的独立吊销入口生效",
           is_user_token_revoked(db, fresh2))

@@ -26,7 +26,12 @@ API_DIR = os.path.join(ROOT, "backend", "app", "api", "v1")
 # total < BASELINE 时必须同步下调本常量（否则 CI 红）——这样基线只会单向
 # 收紧，不会出现"迁完存量忘了改常量、门禁永远停在旧上限"的假进步
 # （第三轮复审 §5.3：三道门禁都只锁不增长、没有任何推动下降的机制）。
-BASELINE = 63
+#
+# 变更记录：
+#   63 → 58  Q-04 迁移学生学习域与附件 5 处（schemas/learning.py：
+#            NoteCreateIn / NoteUpdateIn / NoteShareIn /
+#            WrongQuestionUpdateIn / AttachmentBindIn）
+BASELINE = 58
 # 目的地：迁到这个数就算还清。CI 会在未达标时提示还差多少。
 TARGET = 40
 PATTERN = re.compile(r"Dict\s*\[[^\[\]]*\]\s*=\s*Body\s*\(")

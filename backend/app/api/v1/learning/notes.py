@@ -3,9 +3,9 @@
 由原1333 行的 api/v1/grading.py 拆分而来，路由前缀 /learning 保持不变。
 """
 import html
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from app.agents.rag import delete_note_index
 from app.core.database import get_db
 from app.core.exception import NotFoundException, PermissionException
 from app.models import Note, Subject, User
+from app.schemas.learning import NoteCreateIn, NoteShareIn, NoteUpdateIn
 from app.utils.common import PageParams, dictify, load_json, now_local, ok
 
 router = APIRouter()
@@ -144,15 +145,15 @@ def get_note(
 
 @router.post("/notes", summary="创建笔记")
 def create_note(
-    background: BackgroundTasks, data: Dict[str, Any] = Body(...),
+    background: BackgroundTasks, data: NoteCreateIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_student_self),
 ):
     note = Note(
-        title=data.get("title") or "未命名笔记", content=data.get("content", ""),
-        format=data.get("format", "markdown"), student_id=user.id,
-        subject_id=data.get("subject_id"), knowledge_point_id=data.get("knowledge_point_id"),
-        tags=",".join(data["tags"]) if isinstance(data.get("tags"), list) else data.get("tags"),
+        title=data.title or "未命名笔记", content=data.content or "",
+        format=data.format or "markdown", student_id=user.id,
+        subject_id=data.subject_id, knowledge_point_id=data.knowledge_point_id,
+        tags=",".join(data.tags) if isinstance(data.tags, list) else data.tags,
     )
     db.add(note)
     db.commit()
@@ -165,20 +166,24 @@ def create_note(
 
 @router.put("/notes/{note_id}", summary="更新笔记")
 def update_note(
-    note_id: int, background: BackgroundTasks, data: Dict[str, Any] = Body(...),
+    note_id: int, background: BackgroundTasks, data: NoteUpdateIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_student_self),
 ):
     note = db.get(Note, note_id)
     if not note or note.student_id != user.id:
         raise NotFoundException("笔记不存在")
+    # exclude_unset 是这里的**语义核心**：缺省字段 = 不动该列，
+    # 显式 null = 清空该列。用 `is not None` 判断会导致标题永远清不空。
+    patch = data.model_dump(exclude_unset=True)
     for f in ("title", "content", "format", "subject_id", "knowledge_point_id"):
-        if f in data:
-            setattr(note, f, data[f])
-    if "tags" in data:
-        note.tags = ",".join(data["tags"]) if isinstance(data["tags"], list) else data["tags"]
-    if "is_favorite" in data:
-        note.is_favorite = bool(data["is_favorite"])
+        if f in patch:
+            setattr(note, f, patch[f])
+    if "tags" in patch:
+        tags = patch["tags"]
+        note.tags = ",".join(tags) if isinstance(tags, list) else tags
+    if "is_favorite" in patch:
+        note.is_favorite = bool(patch["is_favorite"])
     db.commit()
     background.add_task(_index_note_bg, note.id, note.title, note.content,
                         note.student_id, note.subject_id or 0)
@@ -201,14 +206,19 @@ def delete_note(
 
 @router.put("/notes/{note_id}/share", summary="分享笔记给同学")
 def share_note(
-    note_id: int, data: Dict[str, Any] = Body(default={}),
+    note_id: int, data: Optional[NoteShareIn] = None,
     db: Session = Depends(get_db), user: User = Depends(get_current_student_self),
 ):
-    """设置笔记为共享/取消共享，共享后同班同学可在「共享笔记」列表查看。"""
+    """设置笔记为共享/取消共享，共享后同班同学可在「共享笔记」列表查看。
+
+    body 可整个不带（`data is None`）—— 旧契约是 `Body(default={})` +
+    `.get("shared", True)`，即"不带 body 等于分享"。这里保持同一语义，
+    不把"少传一个 body"从 200 变成 422。
+    """
     note = db.get(Note, note_id)
     if not note or note.student_id != user.id:
         raise NotFoundException("笔记不存在")
-    note.is_shared = bool(data.get("shared", True))
+    note.is_shared = (data.shared if data else True)
     db.commit()
     return ok({"is_shared": note.is_shared},
               message="已分享给同班同学" if note.is_shared else "已取消分享")

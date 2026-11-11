@@ -5,6 +5,11 @@
 > 覆盖「教 - 学 - 练 - 考 - 评 - 改」全教学流程，内置 6 大 AI Agent 协作智能引擎。
 > 单体架构 + Docker 一键部署，2 核 4G 服务器即可支撑 500 人同时在线。
 
+> **要「现在是什么状态」？看 [`docs/STATUS.md`](docs/STATUS.md)。**
+> 那份文档是唯一声明当前版本 / 端点数 / 表数 / 用例数的地方，且这些数字由脚本
+> 重算、门禁强制与代码一致。本文只讲"系统是什么、怎么用"，不写具体版本号。
+> 缺陷与改进进度看 [`audit-reports/BACKLOG.md`](audit-reports/BACKLOG.md)。
+
 ---
 
 ## 功能概览
@@ -136,7 +141,7 @@ npm run dev
 > - 生产环境必须在 `.env` 中显式设置至少 32 位随机 `SECRET_KEY`，否则应用会拒绝启动；`DEBUG` 请保持 `false`。
 > - 默认账号仅用于本地体验/首次初始化，部署后请立即修改管理员口令；登录页默认不再展示演示账号口令（`VITE_SHOW_DEMO_ACCOUNTS=false`）。
 > - 生产环境请设置 `SEED_DEMO_DATA=false`：空库不会创建 teacher1/stu731 等已知口令演示账号，只保留 admin 与基础数据。
-> - 详细修复记录见 [docs/FIX_RECORD_2026-10-22.md](docs/FIX_RECORD_2026-10-22.md)。
+> - 早期修复记录见 [docs/archive/](docs/archive/)（历史证据，不代表当前状态）。
 > - 交付规则：每次运行时代码提交后必须同步 Docker Hub（版本标签 + latest + sha），见 [docs/DELIVERY_RULES.md](docs/DELIVERY_RULES.md)。
 
 ---
@@ -235,7 +240,7 @@ python tools/check_four_layer.py          # 退出码 0 一致 / 1 漂移 / 2 �
 python tools/check_four_layer.py --json   # 机读，便于接到监控
 ```
 
-输出示例（服务器落后时会明确指出来）：
+输出示例（服务器落后时会明确指出来；下面的版本号只是示例，别当现状）：
 
 ```
 层                  版本    指纹     判定  说明

@@ -2,10 +2,10 @@
 import hashlib
 import os
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from app.core.exception import (
     BusinessException, NotFoundException, PermissionException, RateLimitException,
 )
 from app.models import Attachment, User
+from app.schemas.learning import AttachmentBindIn
 from app.utils.common import PageParams, dictify, now_local, ok
 
 router = APIRouter(prefix="/attachments", tags=["附件管理"])
@@ -376,7 +377,7 @@ def _assert_biz_owned(
 
 @router.put("/{att_id}/bind", summary="绑定业务（转正式附件）")
 def bind(
-    att_id: int, data: Dict[str, Any] = Body(...), db: Session = Depends(get_db),
+    att_id: int, data: AttachmentBindIn, db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     att = db.get(Attachment, att_id)
@@ -384,8 +385,8 @@ def bind(
         raise NotFoundException("附件不存在")
     if att.uploader_id != user.id and "sys_admin" not in user.role_codes:
         raise PermissionException("无权操作该附件")
-    biz_type = data.get("biz_type")
-    biz_id = data.get("biz_id")
+    biz_type = data.biz_type
+    biz_id = data.biz_id
     _assert_biz_owned(db, biz_type, biz_id, user)
     att.biz_type = biz_type
     att.biz_id = biz_id

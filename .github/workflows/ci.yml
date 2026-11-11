@@ -55,6 +55,11 @@ jobs:
           # 定时任务 func_path 是否真的注册到 JOB_HANDLERS：漏注册时任务
           # 每天 05:00 失败 + 给全体管理员发通知，而静态扫描看不出来。
           python tools/check_job_handlers.py
+          python tools/check_job_status_literals.py
+          # Q-02：非归档文档不许自己写死「当前版本号」。README 曾写死 2.0.0、
+          # RELEASE_CONSISTENCY 曾有一张停在 2.1.12 的现状表，两次都是 CI 全绿
+          # 而读者被误导。版本号唯一出处 = VERSION，文档只许指向 docs/STATUS.md。
+          python tools/check_doc_versions.py
           pip install -q ruff
           python tools/lint_gate.py
 
@@ -85,6 +90,18 @@ jobs:
           mkdir -p data
           pip install -q pytest
           python -m pytest qa_audit_suite.py -q
+
+      - name: 现状卡数字与实际一致（Q-02）
+        # docs/STATUS.md 的 auto 区块由 tools/status_snapshot.py 生成，里面是
+        # 路由数/表数/用例数/断言数这些**会自然变化**的数字。规则是卡必须跟着
+        # 代码走：改了代码却没重算卡，这里就红。
+        #
+        # 放在 pytest 安装**之后**：count_pytest() 要跑 `--collect-only`，
+        # 缺 pytest 会静默返回 None，卡上的「后端用例」变成 "—"，报出来的却是
+        # "数字不一致" —— 那种红比不红更浪费时间。
+        #
+        # 用 --check 而不是 --write：CI 不该改工作区。
+        run: python tools/status_snapshot.py --check
 
       - name: 应用导入与建表检查
         # ⚠️ 这一步曾经**靠一个无关的副作用**才能通过：`core/logger.py` 默认

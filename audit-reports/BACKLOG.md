@@ -150,11 +150,95 @@
 > 引 Redis 会破坏「单镜像 + SQLite」部署承诺（多 worker 化那天见 P1-15）。
 > 前端：教学报表页「刷新」按钮带 `refresh=1`，切班级/切任务仍吃缓存。
 
+## 代码质量进度（评估报告 §6.3）
+
+| 编号 | 内容 | 状态 |
+|---|---|:---:|
+| Q-01 | 核心路径的自动化断言 | **已兑现**（`verify_p0_fixes.py`，条数以运行为准，见下） |
+| Q-02 | 单一「现状卡」`docs/STATUS.md` + 数字可重算 + 版本号门禁 | **已完成**（见下） |
+| Q-03 | 历史文档归档（`docs/archive/`、`audit-reports/archive/`），一级目录只留活的 | **已完成** |
+| Q-04 | 裸 `Dict[str, Any] = Body(...)` 迁 Pydantic（本批 5 处，基线 63→58） | **已完成**（见下） |
+| Q-05 | 拆 `paper_compose.py`（3171 行） | **暂缓**（见下） |
+| Q-06 | 引入 Alembic 迁移框架 | **暂缓**（见下） |
+| Q-07 | `sys_agent_job.status` 词表收敛 + 门禁 | **已完成**（见下） |
+| Q-08 | 死代码/孤儿资产清理（`PaperManage` AI 组卷块、`useAgentEnvelope`、`.ai-badge`、`verify_kp_fix.py`） | **已完成** |
+
+> **Q-01 判定**：评估报告建议「为核心路径补自动化断言」。实测已有的
+> `tools/verify_p0_fixes.py` 已覆盖 P0×4 + P1-1/4/5/6/9/11 + F-02/F-03/F-04 +
+> BUG-026 + P-07 + P2 批次，且**已进 `auto_ship.sh` 每发版必跑**——
+> 这一项不是"没做"，是"做了但报告没看到"。本轮只做两件收尾：
+> ① 把断言条数从写死改成数 PASS 行（写死过一次 65，加到 80 时没人改）；
+> ② 补 `[Q-04]` 段 12 条，盯住"裸 Dict 迁 Pydantic"最容易改坏的两种语义。
+
+> **Q-02 实现要点**：`docs/STATUS.md` 是**唯一**声明当前状态的文档，其数字块
+> 由 `tools/status_snapshot.py --write` 生成（路由/表/用例/断言/迁移/门禁数），
+> `--check` 给 CI 判红（CI 不改工作区）。两道门禁配套：
+> ① `status_snapshot.py --check` —— 卡上数字必须等于实测，改了代码没重算就红；
+> ② `tools/check_doc_versions.py` —— **非归档文档不许自己写死当前版本号**。
+> 后者拦的是三种真实漂移：README 曾在快速开始里写死 `2.0.0`（照着抄会拉到
+> 一年前的镜像）、`RELEASE_CONSISTENCY` 曾有一张停在 2.1.12 的「当前状态」表、
+> 架构/需求文档头部写死 `版本基线：2.0.4`。规则刻意收窄（只查"当前/最新/基线"
+> 这类**声明性**措辞 + `| 版本 | 2.x.y |` 快照表行），「已于 2.4.1 修复」
+> 这类变更史不查——那跟漂移无关，管起来只会逼人写一堆无意义豁免。
+> 反向验证：往 `QUICKSTART.md` 追加一行「当前版本：2.5.13」→ RC=1 并指出行号。
+> 两处统计口径踩过坑：接口断言数源码 `check(` 是 75、实际跑 80（BUG-026 那段
+> `for` 跑 4 遍），发版门禁数按字面量数会漏掉前端普查那句
+> `for _g in ... ; do`（少算 5 道）。
+
+> **Q-04 实现要点**：新增 `backend/app/schemas/learning.py`，迁 5 处写接口
+> （`NoteCreateIn / NoteUpdateIn / NoteShareIn / WrongQuestionUpdateIn /
+> AttachmentBindIn`），`check_schema_bodies` 基线同步 **63 → 58**（棘轮语义：
+> 实测降了不改基线也红）。两处语义坑：
+> ① **`exclude_unset` 是迁移的核心**。旧实现 `if "title" in data` 天然区分
+> 「没传」与「传了 null」；改写成 `if body.title is not None` 会让"撤销学科关联"
+> 这类操作静默失效。调用方一律 `model_dump(exclude_unset=True)`。
+> ② **NOT NULL 列显式传 null 必须 422，不能落到 SQL 层**。`{"content": null}`
+> 原先会抛 `IntegrityError`，前端只看到"数据完整性错误"。`NoteUpdateIn` 加了
+> `model_validator`，判据是 `model_fields_set`（客户端真发了这个键）而不是
+> `is None`——不传时它不在集合里，属"不改这一列"，必须放行。
+> 另有两条兼容性保留：`NoteShareIn.shared` 默认 `True`（旧契约
+> `Body(default={})` + `.get("shared", True)`，不带 body 等于分享，改成必填
+> 会把"少传 body"从 200 变 422）；`AttachmentBindIn` 不做 `biz_type`/`biz_id`
+> 成对校验（既有调用方确实先建后绑，只传 biz_type）。
+
+> **Q-05 暂缓理由**：`paper_compose.py` 3171 行确实过大，但**同一个 router 里
+> 端点顺序是语义**（`/library/list` 必须注册在 `/{paper_id}` 之前，否则被后者
+> 吃掉）。跨文件拆分需要 reincluder 并重排路由，还要重新验证组卷/重生/保存预览
+> 三条最脆的链路——一次做不完，硬做会把当轮改动风险放大。建议单独立项、
+> 配一轮完整人工回归，而不是塞进"代码质量收尾"里顺手动。
+>
+> **Q-06 暂缓理由**：引 Alembic 与「无迁移框架 / 单镜像 + SQLite / 34 条幂等
+> 补列」这套硬约束直接冲突，收益只在多实例部署时才显现。当前是单容器单 worker，
+> `create_all + db_migrations._COLUMNS` 配合 `check_migration_columns` 门禁
+> 已能守住"模型列与库列一致"。多实例化那天（见 P1-15）再评估。
+
+> **Q-07 实现要点**：`sys_agent_job.status` 存在两套拼写（教案/通用 Agent 写
+> `success`、组卷写 `succeeded`），导致**每一处**终态判断都要列两种，漏一个就
+> 出现"已完成的任务还能取消"或"有结果却提示失败"。收敛到
+> `services/agent_job_state`：写入侧只用 `STATUS_SUCCEEDED="success"`，
+> 读取侧用 `STATUS_TERMINAL`（含历史别名 `succeeded`，存量行不改写）。
+> 新增门禁 `tools/check_job_status_literals.py`（已进 `auto_ship` + CI），
+> 拦 `job.status = "..."` / `AgentJob.status == "..."` / `_touch_job(status=...)`
+> 三种写法（第三种是写状态的唯一间接入口，绕过它等于绕过门禁）。
+> 反向验证：把一处改回 `"succeeded"` → RC=1 并打印文件名:行号。
+
+> **Q-08 清理清单**：`PaperManage.vue` 里已废弃的 AI 组卷块（模板 2762 字符 +
+> 脚本 2481 字符）、因失去最后一个消费方而变成孤儿的 `useAgentEnvelope.js`、
+> `styles/index.css` 的 `.ai-badge`/`.fallback-tip`（原地留注释说明为何不复活）、
+> `deploy_scripts/verify_kp_fix.py` 与 `backend/VERSION` 空目录。
+> **踩到的坑**：删掉 AI 组卷块后 `verify_bugfix_256` 里
+> `assert "parseAgentEnvelope(res)" in pm` 立刻假红——它盯的是**实现形式**而不是
+> bug 本身。改成 `assert "res.data.data" not in pm`（盯"信封被正确解包"这件事）。
+> 教训：静态断言别锚在"某个辅助函数被调用"，否则清理死代码就会假红。
+
 ## 验证脚本（可重跑，用于反向验证修复）
 
 | 脚本 | 覆盖 | 运行 |
 |---|---|---|
-| `tools/verify_p0_fixes.py` | **接口级**：P0-1 导出 / P0-3 异步组卷 / P0-4 Agent 组卷 / P1-1 大题结构 / P1-4 成绩重算 / P1-9 版本乐观锁 / P1-10 自测卷题型 / F-02 版本对比 / F-03 班级薄弱点 / F-04 任务取消 / BUG-026 空 body / P-07 报表缓存 / P2 批次（说明、学生卷导出、限流 429、脱敏、围栏）（**80 条断言**） | `python tools/verify_p0_fixes.py` |
+| `tools/verify_p0_fixes.py` | **接口级**：P0-1 导出 / P0-3 异步组卷 / P0-4 Agent 组卷 / P1-1 大题结构 / P1-4 成绩重算 / P1-9 版本乐观锁 / P1-10 自测卷题型 / F-02 版本对比 / F-03 班级薄弱点 / F-04 任务取消 / BUG-026 空 body / P-07 报表缓存 / P2 批次（说明、学生卷导出、限流 429、脱敏、围栏）/ **Q-04 写接口契约（92 条断言，以运行输出为准）** | `python tools/verify_p0_fixes.py` |
+| `tools/status_snapshot.py` | Q-02 现状卡：重算 `docs/STATUS.md` 的实测数字（`--write` 回写 / `--check` 判红） | `python tools/status_snapshot.py --check` |
+| `tools/check_doc_versions.py` | Q-02 文档版本基线：非归档文档不许写死「当前版本」；现状卡版本必须等于 `VERSION` | `python tools/check_doc_versions.py` |
+| `tools/check_job_status_literals.py` | Q-07 `sys_agent_job.status` 只许用 `agent_job_state` 常量 | `python tools/check_job_status_literals.py` |
 | `tools/verify_pdf_export_safety.py` | P0-1 恶意题干导出 PDF/答题卡不崩、输出合法 PDF | `python tools/verify_pdf_export_safety.py` |
 | `tools/probe_pdf_ssrf.py` | P0-1 SSRF 实证：旧写法会连接外部 URL，新实现 0 次连接 | `python tools/probe_pdf_ssrf.py` |
 | `tools/verify_compose_async_parse.py` | P0-3 异步路径复用解析；只写描述可推出年级学科；显式选择优先 | `python tools/verify_compose_async_parse.py` |

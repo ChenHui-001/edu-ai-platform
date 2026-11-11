@@ -1,4 +1,7 @@
-"""接口级行为回归（**65 条断言**）：P0 与 P1/F 系列修复走真实 HTTP 路径。
+"""接口级行为回归：P0 与 P1/F/P2/Q 系列修复走真实 HTTP 路径。
+
+断言条数**不在任何地方写死**（`auto_ship` 与 `docs/STATUS.md` 都数运行输出里的
+PASS 行）——写死过一次 65，加到 80 时没人改，卡上数字就变成假的了。
 
 与 `.audit_tmp/verify_p0_*.py`（直调函数）互补：那些验证「函数行为对不对」，
 这个验证「端点串起来还对不对」——中间隔着依赖注入、权限、序列化、
@@ -6,7 +9,8 @@
 
 覆盖：P0-1 导出 / P0-3 异步组卷 / P0-4 Agent 组卷 / P1-1 大题结构 /
 P1-4 成绩重算 / P1-9 版本乐观锁 / P1-10 自测卷题型 / F-02 版本对比 /
-F-03 班级薄弱点 / F-04 任务取消 / BUG-026 空 body 500 / P-07 报表缓存。
+F-03 班级薄弱点 / F-04 任务取消 / BUG-026 空 body 500 / P-07 报表缓存 /
+P2 试卷说明·导出 mode·429 脱敏·提示词围栏 / Q-04 裸 Dict→Pydantic 语义不变。
 
 用法：python tools/verify_p0_fixes.py        （退出码 0 = 全通过）
 环境：临时库 + 关 LLM + 关验证码，不碰项目 data/。
@@ -40,8 +44,9 @@ from app.core.database import SessionLocal  # noqa: E402
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
-    AgentJob, Answer, Class, Grade, KnowledgeMastery, KnowledgePoint, Paper,
-    PaperItem, Question, Role, Subject, Submission, Task, User,
+    AgentJob, Answer, Attachment, Class, Grade, KnowledgeMastery, KnowledgePoint,
+    Paper, PaperItem, Question, Role, Subject, Submission, Task, User,
+    WrongQuestion,
 )
 
 FAILED = []
@@ -70,6 +75,11 @@ def seed():
         admin_role = db.query(Role).filter(Role.code == "sys_admin").first()
         if admin_role:
             teacher.roles = [admin_role]
+        # 学生也要真角色：`get_current_student` 判的是 role_codes（读 DB），
+        # 只给 token 里写 role="student" 会 403「需要学生权限」。
+        stu_role = db.query(Role).filter(Role.code == "student").first()
+        if stu_role:
+            stu.roles = [stu_role]
         db.add_all([teacher, stu])
         db.commit()
         db.refresh(teacher)
@@ -149,14 +159,28 @@ def seed():
                                     wrong_count=total - right))
         db.commit()
 
+        # Q-04 用：错题本一行 + 临时附件一行。两者都是为了验证
+        # 「裸 Dict 迁到 Pydantic 后语义没变」——尤其是 null 与「没传」的区别，
+        # 那种差别只在真实 HTTP 请求体上才暴露得出来。
+        wrong = WrongQuestion(student_id=stu.id, question_id=qs[0].id,
+                              subject_id=s.id, wrong_answer="B", error_count=1,
+                              error_reason="粗心")
+        att = Attachment(filename="q04.txt", stored_name="q04_stored.txt",
+                         file_path="/tmp/q04_stored.txt", file_size=3,
+                         file_type="txt", uploader_id=stu.id)
+        db.add_all([wrong, att])
+        db.commit()
+        db.refresh(wrong)
+        db.refresh(att)
+
         return {
             "teacher_id": teacher.id, "paper_id": paper.id, "class_id": klass.id,
             "item_ids": [i.id for i in items], "task_id": task.id, "sub_id": sub.id,
             "stu_id": stu.id, "grade_id": g.id, "subject_id": s.id,
+            "wrong_id": wrong.id, "att_id": att.id, "q1_id": qs[0].id,
         }
     finally:
         db.close()
-
 
 def main():
     with TestClient(app) as client:
@@ -640,6 +664,87 @@ def main():
     check("班级概览缓存前后内容一致",
           (o1.json().get("data") or {}) == (o2.json().get("data") or {}))
     report_cache.reset_stats()
+
+    print("\n[Q-04] 裸 Dict → Pydantic 后语义不变（笔记 / 错题本 / 附件绑定）")
+    # 这一节盯的是**迁移最容易改坏的两种语义**：
+    #   a) 「没传字段」和「传了 null」必须仍然可区分（靠 exclude_unset）；
+    #   b) 不带 body 的请求必须仍然 200（旧契约是 Body(default={})）。
+    # 只跑 create+update 各一次是抓不到的 —— 那两种情况恰恰都不出现。
+    HS = {"Authorization": f"Bearer {create_access_token(ctx['stu_id'], role='student')}"}
+    notes = api + "/learning/notes"
+
+    n1 = client.post(notes, headers=HS,
+                     json={"title": "Q04 数组标签", "content": "正文",
+                           "tags": ["函数", "易错"], "subject_id": ctx["subject_id"]})
+    n1_id = (n1.json().get("data") or {}).get("id")
+    check("创建笔记（tags 为数组）", n1.status_code == 200, f"HTTP {n1.status_code}")
+    d1 = client.get(f"{notes}/{n1_id}", headers=HS).json().get("data") or {}
+    check("tags 数组落库为逗号串", d1.get("tags") == ["函数", "易错"], str(d1.get("tags")))
+
+    n2 = client.post(notes, headers=HS, json={"title": "Q04 串标签", "tags": "阅读,文言"})
+    n2_id = (n2.json().get("data") or {}).get("id")
+    d2 = client.get(f"{notes}/{n2_id}", headers=HS).json().get("data") or {}
+    check("创建笔记（tags 为逗号串）不丢标签",
+          d2.get("tags") == ["阅读", "文言"], str(d2.get("tags")))
+
+    # 显式 null = 清空；不传 = 不动。两者必须能区分，否则「撤销学科关联」
+    # 这类操作会静默失效（旧实现 `if "subject_id" in data` 天然支持）。
+    r_null = client.put(f"{notes}/{n1_id}", headers=HS, json={"subject_id": None})
+    d3 = client.get(f"{notes}/{n1_id}", headers=HS).json().get("data") or {}
+    check("更新笔记：显式 null 能清空可空列（subject_id）",
+          r_null.status_code == 200 and d3.get("subject_id") is None,
+          f"HTTP {r_null.status_code}, subject_id={d3.get('subject_id')!r}")
+    client.put(f"{notes}/{n1_id}", headers=HS, json={"title": "改回来"})
+    client.put(f"{notes}/{n1_id}", headers=HS, json={"content": "只改正文"})
+    d4 = client.get(f"{notes}/{n1_id}", headers=HS).json().get("data") or {}
+    check("更新笔记：不传 title 时标题保持不变", d4.get("title") == "改回来",
+          f"title={d4.get('title')!r}")
+    # NOT NULL 列显式传 null → 422（带字段名），不能落到 SQL 层变 IntegrityError
+    r_bad = client.put(f"{notes}/{n1_id}", headers=HS, json={"content": None})
+    check("更新笔记：NOT NULL 列传 null 得到 422 而非 400/IntegrityError",
+          r_bad.status_code == 422 and "content" in r_bad.text,
+          f"HTTP {r_bad.status_code}")
+
+    # 不带 body：旧契约 Body(default={}) + .get("shared", True) → 等于分享
+    r_no_body = client.put(f"{notes}/{n2_id}/share", headers=HS)
+    check("分享笔记：不带 body 仍然 200 且默认共享",
+          r_no_body.status_code == 200
+          and (r_no_body.json().get("data") or {}).get("is_shared") is True,
+          f"HTTP {r_no_body.status_code}, {r_no_body.text[:80]}")
+    r_off = client.put(f"{notes}/{n2_id}/share", headers=HS, json={"shared": False})
+    check("分享笔记：shared=false 能取消共享",
+          (r_off.json().get("data") or {}).get("is_shared") is False,
+          r_off.text[:80])
+
+    wq = f"{api}/learning/wrong-questions/{ctx['wrong_id']}"
+    r_m = client.put(wq, headers=HS, json={"is_mastered": True})
+    d5 = client.get(f"{api}/learning/wrong-questions", headers=HS).json().get("data") or {}
+    row = next((x for x in (d5.get("items") or []) if x.get("id") == ctx["wrong_id"]), {})
+    check("标注错题：is_mastered=true 写入 mastered_at",
+          r_m.status_code == 200 and row.get("is_mastered") is True
+          and row.get("last_wrong_at") is not None and bool(row.get("is_mastered")),
+          f"HTTP {r_m.status_code}, is_mastered={row.get('is_mastered')}")
+    r_clear = client.put(wq, headers=HS, json={"error_reason": None})
+    d6 = client.get(f"{api}/learning/wrong-questions", headers=HS).json().get("data") or {}
+    row6 = next((x for x in (d6.get("items") or []) if x.get("id") == ctx["wrong_id"]), {})
+    check("标注错题：error_reason 传 null 可清空",
+          r_clear.status_code == 200 and row6.get("error_reason") in (None, ""),
+          f"error_reason={row6.get('error_reason')!r}")
+
+    r_bind = client.put(f"{api}/attachments/{ctx['att_id']}/bind", headers=HS,
+                        json={"biz_type": "question", "biz_id": ctx["q1_id"]})
+    check("附件绑定：biz_type/biz_id 生效且转正式",
+          r_bind.status_code == 200, f"HTTP {r_bind.status_code}, {r_bind.text[:80]}")
+    db = SessionLocal()
+    try:
+        bound = db.get(Attachment, ctx["att_id"])
+        check("附件绑定后 is_temp=False 且 biz 已写入",
+              bound is not None and bound.is_temp is False
+              and bound.biz_type == "question" and bound.biz_id == ctx["q1_id"],
+              f"is_temp={getattr(bound, 'is_temp', None)}, "
+              f"biz={getattr(bound, 'biz_type', None)}/{getattr(bound, 'biz_id', None)}")
+    finally:
+        db.close()
 
     print()
     if FAILED:
