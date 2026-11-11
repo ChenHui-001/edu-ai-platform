@@ -1024,5 +1024,112 @@ def test_notify_many_counts_only_sent(db_session):
     db_session.commit()
 
 
+# ===================== 导出异步化的文件与时效（F-05） =====================
+def test_export_job_options_rejects_unknown_kind():
+    """类型写错必须在提交时就拒，不能渲染出一个空文件还标成功。"""
+    from app.services import export_job as ej
+
+    with pytest.raises(ValueError):
+        ej.options_for("xlsx")
+
+
+def test_export_job_answer_sheet_forces_student_mode():
+    """答题卡没有"教师卷"，学生卷模式是唯一正确语义。"""
+    from app.services import export_job as ej
+
+    assert ej.options_for(ej.KIND_ANSWER_SHEET, mode="teacher")["mode"] == "student"
+    assert ej.options_for(ej.KIND_PDF, mode="teacher")["mode"] == "teacher"
+
+
+def test_export_job_target_path_inside_dir_and_unique(tmp_path, monkeypatch):
+    """落盘名带 job_id + 随机后缀：既防枚举，也防同一任务重跑互相覆盖。"""
+    import os
+
+    from app.core.config import settings
+    from app.services import export_job as ej
+
+    monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+    p1, name = ej.target_path(7, ej.KIND_DOCX)
+    p2, _ = ej.target_path(7, ej.KIND_DOCX)
+    assert os.path.dirname(os.path.abspath(p1)) == str(tmp_path)
+    assert os.path.basename(p1).startswith("job7_")
+    assert p1 != p2
+    assert name.endswith(".docx")
+
+
+def _seed_export_job(db_session, tmp_path, monkeypatch, *, age_minutes=0):
+    """造一条已完成的导出任务 + 一个真实存在的文件，返回 (job, user, path)。"""
+    import json as _json
+    import os
+    from datetime import timedelta
+
+    from app.core.config import settings
+    from app.models import AgentJob, User
+    from app.services import agent_job_state, export_job as ej
+    from app.utils.common import now_local
+
+    monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+    user = User(username=f"exp_u{age_minutes}", password="x", real_name="导出",
+                status="active", identity="teacher")
+    db_session.add(user)
+    db_session.commit()
+
+    job = AgentJob(user_id=user.id, agent=ej.EXPORT_JOB_AGENT,
+                   status=agent_job_state.STATUS_SUCCEEDED, progress=100,
+                   stage="完成", params="{}")
+    db_session.add(job)
+    db_session.commit()
+
+    res = ej.write_file(job.id, ej.KIND_DOCX, b"PK\x03\x04fake", filename="p.docx")
+    job.result = _json.dumps(res, ensure_ascii=False)
+    job.finished_at = now_local() - timedelta(minutes=age_minutes)
+    db_session.commit()
+    return job, user, os.path.join(str(tmp_path), res["file"])
+
+
+def test_export_job_download_ok(db_session, tmp_path, monkeypatch):
+    from app.services import export_job as ej
+
+    job, user, path = _seed_export_job(db_session, tmp_path, monkeypatch)
+    got_path, filename, media = ej.resolve_download(job.id, user, db_session)
+    assert got_path == path and filename == "p.docx"
+    assert media.startswith("application/vnd.openxmlformats")
+
+
+def test_export_job_download_expired_returns_410(db_session, tmp_path, monkeypatch):
+    """过期必须明确 410，让前端提示"请重新导出"；不能给个空文件。"""
+    import os
+
+    from fastapi import HTTPException
+
+    from app.services import export_job as ej
+
+    job, user, path = _seed_export_job(db_session, tmp_path, monkeypatch,
+                                       age_minutes=ej.TTL_MINUTES + 1)
+    with pytest.raises(HTTPException) as exc:
+        ej.resolve_download(job.id, user, db_session)
+    assert exc.value.status_code == 410
+    # 只删文件、不删 job 行：任务记录是"导出过什么"的溯源
+    assert ej.cleanup_expired(db_session) == 1
+    assert not os.path.exists(path)
+
+
+def test_export_job_download_rejects_other_user(db_session, tmp_path, monkeypatch):
+    """试卷里含答案 —— 知道 job_id 就能下载别人导出好的文件是实打实的泄露。"""
+    from fastapi import HTTPException
+
+    from app.models import User
+    from app.services import export_job as ej
+
+    job, _owner, _path = _seed_export_job(db_session, tmp_path, monkeypatch)
+    other = User(username="exp_other", password="x", real_name="别人",
+                 status="active", identity="teacher")
+    db_session.add(other)
+    db_session.commit()
+    with pytest.raises(HTTPException) as exc:
+        ej.resolve_download(job.id, other, db_session)
+    assert exc.value.status_code == 403
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

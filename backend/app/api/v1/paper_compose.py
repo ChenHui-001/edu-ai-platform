@@ -33,7 +33,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated, Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, noload
 
@@ -49,6 +50,7 @@ from app.models import (
     ShareScope, Subject, Submission, Task, User,
 )
 from app.services import agent_job_state
+from app.services import export_job
 from app.schemas.legacy_bodies import (
     ComposeAiAsyncIn,
     ComposeAiIn,
@@ -2945,6 +2947,167 @@ def export_html(
         io.BytesIO(html.encode("utf-8")), media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": f"inline; filename=paper_{paper_id}.html"},
     )
+
+
+# ---------------------------------------------------------------- 导出（异步，F-05）
+# 同步端点保持不动（小卷用它们更快，且契约已在用）；异步版只是把「渲染 +
+# 生成文件」从请求线程挪到后台线程，再给一个 30 分钟有效的下载链接。
+# 复用 sys_agent_job：不新增表，也不必再造一套轮询协议。
+class ExportJobIn(BaseModel):
+    """导出任务入参。`kind` 决定产物，其余字段与同步端点同名同义。"""
+    model_config = ConfigDict(extra="ignore")
+
+    kind: str = Field(default="pdf", description="docx / pdf / answer_sheet")
+    mode: str = Field(default="teacher", pattern="^(teacher|student)$")
+    layout: str = Field(default="a4_single", pattern="^(a3_double|a4_single)$")
+    with_seal_line: bool = True
+    with_page_number: bool = True
+
+    @field_validator("kind")
+    @classmethod
+    def _known_kind(cls, v: str) -> str:
+        if v not in export_job.KINDS:
+            raise ValueError(f"kind 只支持 {'/'.join(export_job.KINDS)}")
+        return v
+
+
+def _run_export_job(job_id: int) -> None:
+    """后台渲染导出文件。独立 Session —— 请求一结束原来的就关了。"""
+    from app.core.database import SessionLocal
+    from app.models import AgentJob
+
+    db = SessionLocal()
+    try:
+        job = db.get(AgentJob, job_id)
+        if not job:
+            return
+        params = json.loads(job.params or "{}")
+        job.status = agent_job_state.STATUS_RUNNING[1]
+        job.started_at = now_local()
+        job.progress = 10
+        job.stage = "准备数据"
+        db.commit()
+
+        paper = db.get(Paper, int(params.get("paper_id") or 0))
+        if not paper:
+            raise BusinessException("试卷不存在（可能已被删除）")
+
+        kind = str(params.get("kind") or export_job.KIND_PDF)
+        mode = str(params.get("mode") or "teacher")
+        layout = str(params.get("layout") or "a4_single")
+        seal = bool(params.get("with_seal_line", True))
+        page_no = bool(params.get("with_page_number", True))
+
+        preview = _build_preview(db, paper, mode=mode)
+        _touch_job(job_id, progress=45, stage="渲染文件")
+
+        if kind == export_job.KIND_ANSWER_SHEET:
+            buf = build_answer_sheet(preview, layout=layout)
+            ext = "pdf"
+            fname = f"paper_{paper.id}_answersheet.pdf"
+        elif kind == export_job.KIND_DOCX:
+            buf = build_docx(preview, mode=mode, layout=layout,
+                             with_seal_line=seal, with_page_number=page_no)
+            ext = "docx"
+            fname = f"paper_{paper.id}_{mode}.docx"
+        else:
+            buf = build_pdf(preview, mode=mode, layout=layout,
+                            with_seal_line=seal, with_page_number=page_no)
+            ext = "pdf"
+            fname = f"paper_{paper.id}_{mode}.pdf"
+
+        data = buf.getvalue() if hasattr(buf, "getvalue") else bytes(buf)
+        _touch_job(job_id, progress=85, stage="写入文件")
+        result = export_job.write_file(job_id, kind, data, filename=fname)
+        result["ext"] = ext
+
+        db.expire_all()
+        job = db.get(AgentJob, job_id)
+        if job:
+            job.result = json.dumps(result, ensure_ascii=False)
+            job.status = agent_job_state.STATUS_SUCCEEDED
+            job.progress = 100
+            job.stage = "完成"
+            job.finished_at = now_local()
+            db.commit()
+    except agent_job_state.JobCancelled:
+        logger.info(f"导出任务 {job_id} 已被用户取消")
+        _cancelled_job(job_id)
+    except BusinessException as exc:
+        _fail_job(job_id, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"异步导出失败（job={job_id}）")
+        _fail_job(job_id, f"{type(exc).__name__}: {exc}")
+    finally:
+        db.close()
+
+
+@router.post("/{paper_id}/export/jobs", summary="提交导出任务（异步，推荐）")
+def create_export_job(
+    paper_id: int,
+    body: ExportJobIn = Body(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:export")),
+):
+    """提交导出任务，立即返回 job_id；轮询 `GET /export/jobs/{id}` 取下载链接。
+
+    权限**在提交时**校验（`_requested_export` 会走 `_assert_readable`），
+    下载时再校验一次属主 —— 只靠前者的话，一个知道 job_id 的人就能拿到
+    别人导出好的卷子（卷子含答案）。
+    """
+    from app.models import AgentJob
+
+    paper = _requested_export(db, paper_id, user)
+    opts = export_job.options_for(
+        body.kind, body.mode, body.layout,
+        body.with_seal_line, body.with_page_number)
+    # 顺手清理过期文件：不引调度任务，每次导出做一点，成本可忽略
+    export_job.cleanup_expired(db)
+
+    params = {"paper_id": paper.id}
+    params.update(opts)
+    job = AgentJob(
+        user_id=user.id, agent=export_job.EXPORT_JOB_AGENT,
+        status=agent_job_state.STATUS_PENDING, progress=0, stage="排队中",
+        params=json.dumps(params, ensure_ascii=False),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    threading.Thread(target=_run_export_job, args=(job.id,), daemon=True).start()
+    return ok({"job_id": job.id, "status": job.status,
+               "poll": f"/question/papers/export/jobs/{job.id}"},
+              message=f"已提交导出，请轮询 /question/papers/export/jobs/{job.id}")
+
+
+@router.get("/export/jobs/{job_id}", summary="查询导出任务状态")
+def get_export_job(
+    job_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:export")),
+):
+    from app.models import AgentJob
+
+    job = db.get(AgentJob, job_id)
+    if not job or job.agent != export_job.EXPORT_JOB_AGENT:
+        raise NotFoundException("导出任务不存在")
+    if job.user_id != user.id and "sys_admin" not in user.role_codes:
+        raise PermissionException("无权查看该导出任务")
+
+    d = dictify(job)
+    d["result"] = json.loads(job.result) if job.result else None
+    return ok(agent_job_state.apply_timeout(
+        job, d, timeout_seconds=agent_job_state.timeout_for(job.agent)))
+
+
+@router.get("/export/jobs/{job_id}/file", summary="下载导出文件（30 分钟有效）")
+def download_export_job(
+    job_id: int, db: Session = Depends(get_db),
+    user: User = Depends(require_perm("paper:export")),
+):
+    """短时效下载：过期回 410，未完成回 409，非属主回 403。"""
+    path, filename, media_type = export_job.resolve_download(job_id, user, db)
+    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 # ---------------------------------------------------------------- 异步组卷

@@ -245,6 +245,11 @@ export const questionApi = {
   // 打印 HTML：取文本后在浏览器新窗口渲染（避免 window.open 直连 401）
   exportPrintHtml: (id, params) => request.get(`/question/papers/${id}/export/html`,
     { params, responseType: 'text' }),
+  // 异步导出（F-05）：提交 → 轮询 → 短时效下载。编排在 utils/exportJob.js
+  createExportJob: (id, data) => request.post(`/question/papers/${id}/export/jobs`, data),
+  exportJob: (jobId) => request.get(`/question/papers/export/jobs/${jobId}`),
+  downloadExportJob: (jobId) => request.get(`/question/papers/export/jobs/${jobId}/file`,
+    { responseType: 'blob' }),
 }
 
 // ---------------- 作业与考试 ----------------

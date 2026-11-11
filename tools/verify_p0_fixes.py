@@ -18,6 +18,7 @@ P2 试卷说明·导出 mode·429 脱敏·提示词围栏 / Q-04 裸 Dict→Pyda
 import os
 import sys
 import tempfile
+import time
 
 BACKEND = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend")
 sys.path.insert(0, BACKEND)
@@ -212,7 +213,6 @@ def main():
                 status, stage, err = d.get("status"), d.get("stage") or "", d.get("error") or ""
                 if status in ("succeeded", "success", "failed"):
                     break
-                import time
                 time.sleep(0.5)
             check("后台任务成功（不再报『请选择有效的年级』）",
                   status in ("succeeded", "success"),
@@ -791,6 +791,42 @@ def main():
           (client.get(ai, headers=H).json().get("data") or {})
           .get("biz_budgets", {}).get("router") == {"max_tokens": 256})
     client.put(ai, headers=H, json={"llm_biz_budgets": {}, "llm_fast_biz_types": ""})
+
+    print("\n[F-05] 导出异步化：提交→轮询→下载，文件短时效")
+    # 这节的断言重点是「异步之后仍然拿得到正确的字节」：只测 job 变 success
+    # 是不够的，渲染链路中间断了照样是 success + 空文件。
+    ej_url = f"{api}/question/papers/{pid}/export/jobs"
+    r_ej = client.post(ej_url, headers=H, json={"kind": "docx", "mode": "teacher"})
+    ej = r_ej.json().get("data") or {}
+    check("提交导出任务返回 job_id", r_ej.status_code == 200 and ej.get("job_id"),
+          f"HTTP {r_ej.status_code}, {r_ej.text[:100]}")
+    ej_id = ej.get("job_id")
+
+    st_url = f"{api}/question/papers/export/jobs/{ej_id}"
+    final = {}
+    for _ in range(60):
+        time.sleep(0.5)
+        final = (client.get(st_url, headers=H).json().get("data") or {})
+        if final.get("status") in ("success", "succeeded", "failed", "cancelled"):
+            break
+    check("导出任务跑到终态（不是永远 running）",
+          final.get("status") in ("success", "succeeded"),
+          f"status={final.get('status')}, error={str(final.get('error'))[:80]}")
+    res = final.get("result") or {}
+    check("结果带下载链接 / 文件名 / 大小",
+          bool(res.get("download_url")) and bool(res.get("filename"))
+          and int(res.get("size") or 0) > 0, str(res)[:120])
+    r_dl = client.get(f"{api}{res.get('download_url')}", headers=H)
+    check("下载文件字节数与结果一致",
+          r_dl.status_code == 200 and len(r_dl.content) == int(res.get("size") or -1),
+          f"HTTP {r_dl.status_code}, {len(r_dl.content)} bytes")
+
+    r_deny = client.get(st_url, headers=SH)
+    check("学生（无 paper:export）查不到该导出任务",
+          r_deny.status_code in (401, 403), f"HTTP {r_deny.status_code}")
+    r_bad_kind = client.post(ej_url, headers=H, json={"kind": "xlsx"})
+    check("未知导出类型 → 422（不是默默出个空文件）",
+          r_bad_kind.status_code == 422, f"HTTP {r_bad_kind.status_code}")
 
     print("\n[F-07] 通知订阅偏好：能关的真的不发，锁定的关不掉")
     # 只断言「接口回了 200」是不够的：偏好存进去了却没用上，正是这类功能

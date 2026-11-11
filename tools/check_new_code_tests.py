@@ -59,6 +59,12 @@ REGISTRY = {
     "backend/app/utils/answer.py": ["backend/qa_audit_suite.py"],
     # 后端：通知唯一写入出口 + 订阅偏好（"关掉了却照发"肉眼看不出来）
     "backend/app/services/notification.py": ["backend/qa_audit_suite.py"],
+    # 后端：导出文件的落盘名/时效/属主校验（404 变 200 就是泄题）
+    "backend/app/services/export_job.py": ["backend/qa_audit_suite.py"],
+    # 前端：导出任务轮询编排（按非终态结束 = 下载到空文件）
+    "frontend/src/utils/exportJob.js": [
+        "frontend/src/utils/__tests__/exportJob.test.js",
+    ],
     # 部署：supervisord FATAL → 容器退出（否则 Up + 全站 502）
     "deploy/fatal_guard.py": ["backend/qa_audit_suite.py"],
     # 工具：四层一致性合议（服务器落后不能被其它层绿灯掩盖）
@@ -72,8 +78,8 @@ REGISTRY = {
 # 带 `@pytest.mark.parametrize` 的函数会在运行时展开成多条，
 # 拿运行数做基线会让同一次改动在两个口径间来回对不上。
 BASELINE = {
-    "pytest_cases": 65,   # def test_* 个数（运行 67 passed，含 2 条参数化展开）
-    "vitest_cases": 76,
+    "pytest_cases": 71,   # def test_* 个数（运行 73 passed，含 2 条参数化展开）
+    "vitest_cases": 87,
 }
 
 PYTEST_FILE = "backend/qa_audit_suite.py"

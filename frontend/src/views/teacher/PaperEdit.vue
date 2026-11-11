@@ -12,7 +12,9 @@
       </div>
       <div class="head-actions">
         <el-dropdown trigger="click" :disabled="exporting" @command="onExport">
-          <el-button :icon="Download" :loading="exporting">导出<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <el-button :icon="Download" :loading="exporting">
+            {{ exportStage || '导出' }}<el-icon v-if="!exportStage" class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="docx-teacher">Word 教师卷（含答案）</el-dropdown-item>
@@ -337,6 +339,7 @@ import {
 } from '@element-plus/icons-vue'
 import { questionApi } from '@/api'
 import { alertAction, confirmAction } from '@/utils/confirm'
+import { exportProgressText, runExportJob } from '@/utils/exportJob'
 import { toastIfUnhandled } from '@/utils/notify'
 
 const route = useRoute()
@@ -841,12 +844,16 @@ function doAddItems() {
 }
 
 // ---------------- 导出 ----------------
-// 6 种导出全是慢请求（PDF 要服务端渲染整卷），必须给出 loading 并挡住连点，
-// 否则同一份卷子会被并发生成多遍（reaudit3 P2-11）。
+// 6 种导出全是慢请求（PDF 要服务端渲染整卷），必须挡住连点，否则同一份卷子
+// 会被并发生成多遍（reaudit3 P2-11）。docx/pdf/答题卡走**异步任务**
+// （F-05）：提交后轮询进度，完成后从 30 分钟有效的链接下载 —— 请求线程不再
+// 被整卷渲染占住，用户也能看见「渲染中」而不是一个转圈的按钮。
 const exporting = ref(false)
+const exportStage = ref('')
 async function onExport(cmd) {
   if (exporting.value) return
   exporting.value = true
+  exportStage.value = ''
   try {
     if (cmd === 'html') {
       // 走 axios 带 Token 取 HTML 文本，再写入新窗口；直接 window.open 会 401
@@ -859,13 +866,14 @@ async function onExport(cmd) {
       return
     }
     if (cmd === 'answer-sheet') {
-      downloadBlob(await questionApi.exportAnswerSheet(paperId, {}),
-        `${meta.name || '试卷'}_答题卡.pdf`, 'application/pdf')
+      const res = await runExportJob(questionApi, paperId, { kind: 'answer_sheet' },
+        { onProgress: (j) => { exportStage.value = exportProgressText(j) } })
+      downloadBlob(res, `${meta.name || '试卷'}_答题卡.pdf`, 'application/pdf')
       return
     }
     const [kind, mode] = cmd.split('-')
-    const fn = kind === 'pdf' ? questionApi.exportPdf : questionApi.exportDocx
-    const res = await fn(paperId, { mode })
+    const res = await runExportJob(questionApi, paperId, { kind, mode },
+      { onProgress: (j) => { exportStage.value = exportProgressText(j) } })
     downloadBlob(res,
       `${meta.name || '试卷'}_${mode === 'teacher' ? '教师卷' : '学生卷'}.${kind}`,
       kind === 'pdf' ? 'application/pdf' : 'application/octet-stream')
@@ -873,6 +881,7 @@ async function onExport(cmd) {
     toastIfUnhandled(e, '导出失败')
   } finally {
     exporting.value = false
+    exportStage.value = ''
   }
 }
 

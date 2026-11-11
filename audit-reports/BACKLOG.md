@@ -90,7 +90,7 @@
 | F-03 | 班级维度薄弱知识点聚合（`GET /report/teacher/class-weak-points` + 教学报表页新卡片） | **已完成** |
 | F-02 | 试卷版本 diff 可视化 | **已完成** |
 | F-04 | AI 长任务可取消 + 结果持久化 | **已完成**（组卷全链路 + 教案后端，见下） |
-| F-05 | 导出异步化 | 待做（第 3 批） |
+| F-05 | 导出异步化 | **已完成**（见下） |
 | F-06 | AI 配置按 biz_type 细化预算 | **已完成**（见下） |
 | F-07 | 通知订阅偏好 | **已完成**（见下） |
 
@@ -145,6 +145,22 @@
 > 前端文案直接用它，不能拿人数顶替。
 > 端点 `GET/PUT /system/notification-prefs`，未知类别 **400** 而不是静默忽略
 > （前端把 `security` 打成 `securty` 时静默忽略，用户会以为"关掉了"，实际一条没少发）。
+
+> **F-05 实现要点**：`services/export_job.py`（落盘/时效/属主）+ 三个端点
+> `POST /papers/{id}/export/jobs`、`GET /papers/export/jobs/{id}`、
+> `GET /papers/export/jobs/{id}/file`。**同步端点保留不动** —— 小卷用它们更快，
+> 契约也已在用；异步版只是把「渲染 + 生成文件」从请求线程挪到后台线程。
+> 五条约定：① 复用 `sys_agent_job`，不新增表/队列/Redis；② 文件写
+> `settings.EXPORT_DIR`（`data/exports`），**30 分钟过期**，过期回 410；
+> ③ 清理不引调度任务 —— 每次新任务顺手清一次，否则为了清临时文件又多一处
+> 需要人工对齐的定时任务注册表；④ **下载时二次校验属主**，只靠提交时的
+> `paper:export` 会让「知道 job_id 就能拿别人导出好的卷子」，而卷子含答案；
+> ⑤ 前端 `utils/exportJob.js` 抽成独立模块：按**终态**判断结束（`failed`/
+> `cancelled` 也是响应）、轮询有上限（后台线程会随进程重启消失）、
+> 下载放在 success 之后。
+> 顺带修掉 `verify_p0_fixes.py` 里一处潜伏的 `UnboundLocalError`：函数内
+> `import time` 让 `time` 变成整个函数的局部名，一旦它前面那个分支被跳过，
+> 后面新加的轮询就会把 `time` 当未绑定变量。
 
 ## 性能优化进度（评估报告 §6.2）
 
