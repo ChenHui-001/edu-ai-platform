@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   composeBlockReason, requiresGradeSubject, buildComposePayload,
   isComposeButtonDisabled, sectionScoreTotal, sectionScoreLabel, AI_MODE_SOURCE,
+  saveDraft, loadDraft, clearDraft, draftAgeText, draftSummaryText,
+  DRAFT_STORAGE_KEY, DRAFT_RESTORE_MAX_STEP,
 } from '../paperWizard'
 
 /**
@@ -193,5 +195,62 @@ describe('sectionScoreLabel（大题结构文案）', () => {
     expect(sectionScoreLabel({
       count: 3, score_per: 7, score_pattern: [6, 7, 8],
     })).toBe('3题 6/7/8')
+  })
+})
+
+
+/* ---------------- 组卷草稿（6.5 操作流程） ---------------- */
+describe('组卷草稿', () => {
+  it('save/load 往返保留 form、step 与 savedAt', () => {
+    localStorage.clear()
+    const form = { mode: 'custom', grade_id: 7, sections: [{ type: 'single', count: 5 }] }
+    expect(saveDraft(form, 1, 1000)).toBe(true)
+    const d = loadDraft()
+    expect(d.form.grade_id).toBe(7)
+    expect(d.form.sections).toHaveLength(1)
+    expect(d.step).toBe(1)
+    expect(d.savedAt).toBe(1000)
+    clearDraft()
+    expect(localStorage.getItem(DRAFT_STORAGE_KEY)).toBeNull()
+  })
+
+  it('脏 JSON 与缺失字段不抛错：返回 null 或补全默认值', () => {
+    localStorage.setItem(DRAFT_STORAGE_KEY, '{broken json')
+    expect(loadDraft()).toBeNull()
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ form: { grade_id: 7 } }))
+    const d = loadDraft()
+    expect(d.form.sections).toEqual([])
+    expect(d.step).toBe(0)
+    clearDraft()
+  })
+
+  it('form 缺失或非对象的草稿视为无效', () => {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ step: 2 }))
+    expect(loadDraft()).toBeNull()
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ form: 'oops' }))
+    expect(loadDraft()).toBeNull()
+    clearDraft()
+  })
+
+  it('恢复步骤封顶到参数步：预览/保存步的题目在内存里还原不了', () => {
+    expect(DRAFT_RESTORE_MAX_STEP).toBe(1)
+  })
+
+  it('draftAgeText 相对时间分档', () => {
+    const now = 1000000
+    expect(draftAgeText(now - 30, now)).toBe('刚刚')
+    expect(draftAgeText(now - 5 * 60000, now)).toBe('5 分钟前')
+    expect(draftAgeText(now - 3 * 3600000, now)).toBe('3 小时前')
+    expect(draftAgeText(now - 2 * 86400000, now)).toBe('2 天前')
+    expect(draftAgeText(null, now)).toBe('未知时间')
+    expect(draftAgeText('abc', now)).toBe('未知时间')
+  })
+
+  it('draftSummaryText 带模式与保存时间', () => {
+    const now = 1000000
+    expect(draftSummaryText({ form: { mode: 'ai' }, savedAt: now - 120000 }, now))
+      .toBe('2 分钟前保存 · AI 一键模式')
+    expect(draftSummaryText({ form: { mode: 'custom' }, savedAt: now }, now))
+      .toBe('刚刚保存 · 自定义模式')
   })
 })

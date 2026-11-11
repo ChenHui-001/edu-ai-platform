@@ -29,25 +29,25 @@
 
     <el-row :gutter="12" class="mb12">
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value stat-value--sm">{{ total }}</div>
           <div class="stat-label">收藏总数</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value stat-value--sm">{{ tags.length }}</div>
           <div class="stat-label">标签数</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value stat-value--sm">{{ typeCount }}</div>
           <div class="stat-label">题型种类</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value stat-value--sm" style="color:var(--el-color-success)">{{ recentCount }}</div>
           <div class="stat-label">近 7 天新增</div>
         </div>
@@ -208,13 +208,6 @@ onMounted(load)
 <style scoped>
 .filter-card { margin-bottom: 16px; }
 .mb12 { margin-bottom: 12px; }
-.stat-card {
-  text-align: center;
-  padding: 16px;
-  background: var(--el-fill-color-light);
-  border-radius: 8px;
-}
-.stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .fav-card { margin-bottom: 12px; }
 .fav-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .ml4 { margin-left: 4px; }

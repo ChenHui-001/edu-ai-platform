@@ -136,6 +136,7 @@ import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject
 import ExportButton from '@/components/ExportButton.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import { pickMessage } from '@/utils/notify'
+import { chartColor } from '@/utils/theme'
 
 const overview = ref(null)
 /** 加载失败信息（null=正常）：页面级 ErrorState 就地重试（U-05） */
@@ -150,7 +151,7 @@ const subjectId = ref(null)
 const sugLoading = ref(false)
 
 const cards = computed(() => overview.value ? [
-  { label: '累计做题', value: overview.value.question_total, color: '#2f6fd0' },
+  { label: '累计做题', value: overview.value.question_total, color: chartColor('primary') },
   { label: '总体正确率', value: `${overview.value.accuracy}%`, color: '#67c23a' },
   { label: '未掌握错题', value: overview.value.wrong_unmastered, color: '#f56c6c' },
   { label: '今日学习(分)', value: overview.value.study_minutes_today, color: '#e6a23c' },
@@ -164,7 +165,7 @@ const trendOption = computed(() => ({
            axisLabel: { rotate: 30, fontSize: 10 } },
   yAxis: { type: 'value', name: '分数' },
   series: [{ type: 'line', smooth: true, data: trend.value.map(t => t.score),
-             itemStyle: { color: '#2f6fd0' }, areaStyle: { opacity: 0.12 } }]
+             itemStyle: { color: chartColor('primary') }, areaStyle: { opacity: 0.12 } }]
 }))
 
 const radarOption = computed(() => {
@@ -173,7 +174,7 @@ const radarOption = computed(() => {
     tooltip: {},
     radar: { indicator: items.map(i => ({ name: (i.name || i.subject_name || '').slice(0, 7), max: 100 })), radius: '62%' },
     series: [{ type: 'radar', data: [{ value: items.map(i => i.mastery ?? i.value), name: '掌握度' }],
-               areaStyle: { opacity: 0.25, color: '#2f6fd0' } }]
+               areaStyle: { opacity: 0.25, color: chartColor('primary') } }]
   }
 })
 

@@ -69,6 +69,14 @@ REGISTRY = {
     "frontend/src/utils/leaveGuard.js": [
         "frontend/src/utils/__tests__/leaveGuard.test.js",
     ],
+    # 前端：主题取色（ECharts 拿不到 CSS 变量，回落值不能是空串）
+    "frontend/src/utils/theme.js": [
+        "frontend/src/utils/__tests__/theme.test.js",
+    ],
+    # 前端：断点口径与移动端单元格取值（0/false 不能被占位符吞掉）
+    "frontend/src/utils/responsive.js": [
+        "frontend/src/utils/__tests__/responsive.test.js",
+    ],
     # 部署：supervisord FATAL → 容器退出（否则 Up + 全站 502）
     "deploy/fatal_guard.py": ["backend/qa_audit_suite.py"],
     # 工具：四层一致性合议（服务器落后不能被其它层绿灯掩盖）
@@ -83,7 +91,7 @@ REGISTRY = {
 # 拿运行数做基线会让同一次改动在两个口径间来回对不上。
 BASELINE = {
     "pytest_cases": 71,   # def test_* 个数（运行 73 passed，含 2 条参数化展开）
-    "vitest_cases": 95,
+    "vitest_cases": 118,  # 6.5：+theme 8、+responsive 9、+paperWizard 草稿 6
 }
 
 PYTEST_FILE = "backend/qa_audit_suite.py"

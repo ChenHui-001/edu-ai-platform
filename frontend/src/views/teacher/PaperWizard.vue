@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h2 class="page-title">新建试卷</h2>
-        <p class="page-sub">按湖北省学业水平考试标准组卷 · 支持自定义参数与 AI 智能一键出卷</p>
+        <p class="page-sub">按湖北省学业水平考试标准组卷 · 支持自定义参数与 AI 智能一键出卷 · 修改已有试卷请从试卷管理列表进编辑页</p>
       </div>
       <div>
         <el-button :icon="Back" @click="goBack">返回试卷管理</el-button>
@@ -12,6 +12,8 @@
 
     <!-- 步骤条 -->
     <el-card shadow="never" class="step-card">
+      <!-- el-steps 只画节点不报数字；显式进度文案让「现在第几步」不用数节点 -->
+      <div class="step-progress">第 {{ step + 1 }} / {{ STEP_TOTAL }} 步 · {{ stepNames[step] }}</div>
       <el-steps :active="step" align-center finish-status="success">
         <el-step title="选择模式" description="自定义 / AI 一键" />
         <el-step title="设定参数" description="年级学科·题型分值·难度" />
@@ -549,6 +551,7 @@ import {
   sectionScoreTotal,
   sectionScoreLabel,
   AI_MODE_SOURCE,
+  saveDraft, loadDraft, clearDraft, draftAgeText, DRAFT_RESTORE_MAX_STEP,
 } from '@/utils/paperWizard'
 
 const router = useRouter()
@@ -562,6 +565,9 @@ const typeLabel = {
 const diffLabel = { easy: '简单', medium: '中等', hard: '困难' }
 
 const step = ref(0)
+/** 向导总步数与各步名称（步骤进度文案用） */
+const STEP_TOTAL = 4
+const stepNames = ['选择模式', '设定参数', '预览调整', '保存试卷']
 const metaLoading = ref(false)
 const composing = ref(false)
 // 异步组卷进度（只有 AI 模式走任务队列，自定义组卷是纯题库抽题、很快）
@@ -696,6 +702,55 @@ const form = reactive({
 })
 
 const saveForm = reactive({ name: '', description: '', duration: 90, after: 'edit' })
+
+/* ---------------- 组卷草稿（6.5 操作流程） ----------------
+ * 参数配置自动存 localStorage，误关页面后下次进来问一次是否恢复。
+ * 只存 form（含大题配置），不存预览题目——预览是后端内存态，存不了。 */
+let draftTimer = null
+/** 恢复弹窗期间停止自动保存，避免刚恢复就用自己的默认值覆盖草稿 */
+let draftRestoring = false
+function scheduleDraftSave() {
+  if (draftRestoring) return
+  // 一进页面就落盘的「空配置」没有恢复价值，反而会让下次进入弹无用窗：
+  // 什么都没选且停在第一步时视为未开始，清掉旧草稿即可
+  if (step.value === 0 && !form.grade_id && !form.subject_id && !String(form.request || '').trim()) {
+    if (draftTimer) clearTimeout(draftTimer)
+    clearDraft()
+    return
+  }
+  if (draftTimer) clearTimeout(draftTimer)
+  draftTimer = setTimeout(() => saveDraft(form, step.value, Date.now()), 800)
+}
+// 深度监听 form（大题/难度等嵌套对象都在里面）与步进，都 debounce 落盘
+watch(form, scheduleDraftSave, { deep: true })
+watch(step, scheduleDraftSave)
+
+/**
+ * 进页面时若本机有未提交的组卷草稿，问一次是否恢复。
+ * 只在「任务恢复」没弹过窗时问（两个弹窗连着来太吵）；恢复只回填参数，
+ * 最多到「设定参数」步——预览题在内存里，还原不了。
+ */
+async function maybeRestoreDraft() {
+  const draft = loadDraft()
+  if (!draft) return
+  const go = await confirmAction(
+    `检测到上次未提交的组卷配置（${draftAgeText(draft.savedAt)}保存）。要恢复继续填吗？`,
+    '恢复组卷草稿',
+    { confirmButtonText: '恢复', cancelButtonText: '重新开始' }
+  )
+  if (!go) {
+    clearDraft()
+    return
+  }
+  draftRestoring = true
+  try {
+    Object.assign(form, draft.form)
+    step.value = Math.min(draft.step || 0, DRAFT_RESTORE_MAX_STEP)
+    if (form.grade_id) await loadKnowledgeTree()
+  } finally {
+    draftRestoring = false
+  }
+}
 
 /**
  * 切到 AI 模式时把「出题来源」归位。
@@ -959,7 +1014,9 @@ onMounted(async () => {
   } finally {
     metaLoading.value = false
   }
-  await maybeResumeCompose()
+  // 任务恢复与草稿恢复都弹窗，连着弹太吵：恢复了任务就不再问草稿
+  const jobResumed = await maybeResumeCompose()
+  if (!jobResumed) await maybeRestoreDraft()
 })
 
 /**
@@ -970,7 +1027,7 @@ onMounted(async () => {
  */
 async function maybeResumeCompose() {
   const pendingJobId = takeRememberedJob(WIZARD_JOB_KEY)
-  if (!pendingJobId) return
+  if (!pendingJobId) return false
   const go = await confirmAction(
     `检测到上次提交的组卷任务（#${pendingJobId}）还没取结果，它可能仍在后台运行。要接着等它完成吗？`,
     '恢复组卷任务',
@@ -978,14 +1035,16 @@ async function maybeResumeCompose() {
   )
   if (!go) {
     ElMessage.info('已放弃恢复；若任务已完成，可到「我的试卷」查看结果')
-    return
+    return false
   }
   await resumeCompose(pendingJobId)
+  return true
 }
 
 // 卸载后停止轮询：否则 2 秒一次的查询会持续到 15 分钟上限，
 // 期间还可能往已销毁的组件写 composeProgress，并在新页面上弹错误 toast。
-onUnmounted(() => { pollAborted = true })
+// 顺带取消未落盘的草稿定时器。
+onUnmounted(() => { pollAborted = true; if (draftTimer) clearTimeout(draftTimer) })
 
 async function onGradeChange() {
   form.subject_id = null
@@ -1475,6 +1534,7 @@ async function doSave() {
     }
     const res = await questionApi.composeSave(payload)
     ElMessage.success('试卷已保存')
+    clearDraft()
     const newId = res.data?.id
     if (saveForm.after === 'edit' && newId) {
       router.push(`/teacher/papers/${newId}/edit`)
@@ -1492,7 +1552,6 @@ function goBack() { router.push('/teacher/papers') }
 </script>
 
 <style scoped>
-.page-sub { margin: 4px 0 0; color: var(--el-text-color-secondary); font-size: 13px; }
 .step-card { margin-bottom: 16px; }
 .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .mode-card {
@@ -1587,4 +1646,11 @@ function goBack() { router.push('/teacher/papers') }
 
 .compose-progress { display: flex; align-items: center; gap: 10px; margin-right: 12px; }
 .compose-progress .muted { font-size: 12px; color: var(--el-text-color-secondary); }
+
+.step-progress {
+  text-align: center;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 10px;
+}
 </style>

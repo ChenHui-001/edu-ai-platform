@@ -322,6 +322,43 @@
 > 用户以为"点了没反应"。现在补一条常驻说明，写清两个真实原因
 > （推理耗尽预算导致正文为空、条件过窄抽不到题）与两条出路（放宽条件 / 换模型）。
 
+## UI 布局专项进度（评估报告 §6.5）
+
+| 编号 | 内容 | 状态 |
+|---|---|:---:|
+| L-01 | 视觉令牌：图表色 / 菜单底色 CSS 变量化，ECharts 经 `utils/theme.js` 取真实色值 | **已完成**（13 处 `#2f6fd0` 字面量收敛；MasteryMap 的 Element 默认蓝 `#409eff` 一并统一） |
+| L-02 | 信息层级：面包屑两级化（分组 → 页面）；学习中心 15 项拆「学 / 练 / 测 / 评」四组 | **已完成**（`MainLayout` 支持二级 `el-sub-menu`，`MENU_GROUPS` 单一来源） |
+| L-03 | 统计卡变体：`.stat-card--flat` 收敛学生端 5 页重复的 scoped 定义；`.stat-label`、`.page-sub` 同步提为全局 | **已完成**（改一处生效全站） |
+| L-04 | 响应式：断点口径对齐 Element Plus 栅格（768/992/1200），`TableCards` 移动端表格卡片化 | **已完成**（ScoreCenter + Practice 历史抽屉接入；抽屉手机全屏） |
+| L-05 | 页面结构：试卷域三入口页头职责说明（管理 / 新建 / 编辑互相指路） | **已完成**（学生端自主组卷本来就有说明条） |
+| L-06 | 操作流程：组卷向导 localStorage 草稿 + 「第 N / 共 M 步」进度文案 | **已完成**（见下） |
+
+> **L-01/L-03 实现要点**：ECharts 画在 canvas 上拿不到 CSS 变量，必须 JS 读
+> `getComputedStyle` 拿真实色值（`chartColor()`），读不到回落固定值、绝不返回空串。
+> el-menu 的 `background-color` 同理需要真实色值，传 `var()` 内部派生色会静默失效
+> （`menuBg()`）。`.stat-card--flat` / `.stat-label` / `.page-sub` 原本在 2~7 个
+> scoped style 里各写一份且参数不一致（12px vs 13px、margin 4px vs 0），统一后以
+> 全局值为准 —— 属预期视觉收敛。
+
+> **L-04 实现要点**：断点数字对齐 Element Plus 栅格（xs<768、md≥992、lg≥1200），
+> 否则 `el-col :md` 的横排点和手写 `@media` 的堆叠点错开 —— SystemSetting 曾同时
+> 存在 991 与 992 两种写法，KnowledgeLibrary 的 `max-width: 992px` 还会在恰好 992px
+> 视口与栅格布局重叠 1px 窗口。CSS 变量不能用于 `@media`，口径由 `utils/responsive.js`
+> 的 `BREAKPOINTS`（JS）+ `index.css --bp-*`（文档）双写对齐，「<断点」查询串减
+> 0.02px 与栅格严格互补。Login/AgentChat 的 900、GradingCenter 的 1100 是页级例外
+> （品牌面板最小宽度 / 题目体三列），两处都加了指针注释。
+> `TableCards` 设计成**零破坏包装**：桌面端默认插槽原样透传既有 `el-table`，
+> 移动端按 `columns`（与桌面列同名字段）渲染卡片，支持 `#cell-<prop>` 与 `#actions`
+> 插槽；`formatCellValue` 只对 null/undefined/'' 显示占位符，0 和 false 原样保留。
+
+> **L-06 实现要点**：草稿只存 `form`（含大题配置）进 localStorage
+> （`edu:paperWizardDraft`），**不存预览题目**——预览是后端内存态（无 paper_id），
+> 存了也还原不了，因此恢复封顶到「设定参数」步（`DRAFT_RESTORE_MAX_STEP = 1`）。
+> 恢复后按年级重拉知识点树（`watch` 不会触发 `@change` 处理器）。
+> 三个防吵细节：什么都没选就退出视为「未开始」，清旧草稿不留垃圾；
+> 「任务恢复」弹过窗就不再问「草稿恢复」（连弹两个确认框太吵）；
+> 保存成功即 `clearDraft()`。恢复期间暂停自动保存，避免默认值反向覆盖草稿。
+
 ## 验证脚本（可重跑，用于反向验证修复）
 
 | 脚本 | 覆盖 | 运行 |

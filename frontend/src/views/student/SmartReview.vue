@@ -148,6 +148,7 @@ import EChart from '@/components/EChart.vue'
 import { Refresh, MagicStick } from '@element-plus/icons-vue'
 import { learningApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
+import { chartColor } from '@/utils/theme'
 
 const plans = ref([])
 const planData = ref({})
@@ -171,7 +172,7 @@ const radarOption = computed(() => {
     series: [{
       type: 'radar',
       data: [{ value: items.map(i => i.mastery), name: '掌握度' }],
-      areaStyle: { opacity: 0.25, color: '#2f6fd0' }
+      areaStyle: { opacity: 0.25, color: chartColor('primary') }
     }]
   }
 })

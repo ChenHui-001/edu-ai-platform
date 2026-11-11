@@ -245,6 +245,7 @@ import { Cpu, Tickets, ChatLineRound, Compass, MagicStick,
 import EChart from '@/components/EChart.vue'
 import { gradingApi, reportApi, taskApi } from '@/api'
 import { useUserStore } from '@/store/user'
+import { chartColor } from '@/utils/theme'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -325,7 +326,7 @@ const trendOption = computed(() => ({
   yAxis: { type: 'value', max: 100, name: '得分率(%)' },
   series: [{
     type: 'line', smooth: true, data: trend.value.map(t => t.rate),
-    itemStyle: { color: '#2f6fd0' }, areaStyle: { opacity: 0.15 }
+    itemStyle: { color: chartColor('primary') }, areaStyle: { opacity: 0.15 }
   }]
 }))
 

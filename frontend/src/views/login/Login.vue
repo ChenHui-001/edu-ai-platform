@@ -483,6 +483,8 @@ onMounted(loadCaptcha)
 
 .brand-compact { display: none; }
 
+/* 页级例外断点（非全站口径）：900 是品牌左面板的最小可用宽度，
+   小于它整个面板收起、换 compact 品牌条。全站断点见 index.css --bp-*。 */
 @media (max-width: 900px) {
   .login-left { display: none; }
   .login-right { flex-direction: column; justify-content: center; }

@@ -4,6 +4,7 @@
     <div class="page-header pm-header">
       <div class="pm-title-wrap">
         <h2 class="page-title">试卷管理</h2>
+        <p class="page-sub">试卷库总览与版本管理 · 新建走「新建试卷」向导；单卷题目调整进「编辑」</p>
         <div class="pm-stats" v-loading="statsLoading">
           <div v-for="c in statCards" :key="c.label" class="stat-card pm-stat">
             <div class="stat-value">{{ c.value }}</div>

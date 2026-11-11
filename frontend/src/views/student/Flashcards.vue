@@ -13,25 +13,25 @@
 
     <el-row :gutter="16" class="mb16">
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value">{{ cards.length }}</div>
           <div class="stat-label">闪卡总数</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" style="color:var(--el-color-success)">{{ knownCount }}</div>
           <div class="stat-label">已认识</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" style="color:var(--el-color-danger)">{{ unknownCount }}</div>
           <div class="stat-label">待复习</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" style="color:var(--el-color-warning)">{{ weakCount }}</div>
           <div class="stat-label">薄弱知识点</div>
         </div>
@@ -176,8 +176,6 @@ onMounted(async () => {
 <style scoped>
 .mb16 { margin-bottom: 16px; }
 .ml8 { margin-left: 8px; }
-.stat-card { text-align: center; padding: 16px; background: var(--el-fill-color-light); border-radius: 8px; }
-.stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .flashcard-area { display: flex; flex-direction: column; align-items: center; padding: 20px 0; }
 .progress-bar { width: 100%; max-width: 500px; margin-bottom: 16px; }
 .card-counter { font-size: 14px; color: var(--el-text-color-secondary); margin-bottom: 16px; }

@@ -7,25 +7,25 @@
 
     <el-row :gutter="16" class="mb16">
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value">{{ goals.length }}</div>
           <div class="stat-label">进行中目标</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" style="color:var(--el-color-danger)">{{ maxStreak }}</div>
           <div class="stat-label">最长连续打卡</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" style="color:var(--el-color-success)">{{ todayCheckedCount }}</div>
           <div class="stat-label">今日已打卡</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value">{{ totalCheckinDays }}</div>
           <div class="stat-label">累计打卡天数</div>
         </div>
@@ -231,8 +231,6 @@ onMounted(load)
 
 <style scoped>
 .mb16 { margin-bottom: 16px; }
-.stat-card { text-align: center; padding: 16px; background: var(--el-fill-color-light); border-radius: 8px; }
-.stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .calendar-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
 .calendar-cell { aspect-ratio: 1; border-radius: 4px; background: var(--el-fill-color-light); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; color: #c0c4cc; }
 .calendar-cell.checked { background: var(--el-color-success); color: #fff; }

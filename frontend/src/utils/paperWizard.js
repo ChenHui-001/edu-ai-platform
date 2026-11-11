@@ -121,3 +121,61 @@ export function buildComposePayload(form, { sections, knowledgePointIds = [] } =
     avoid_duplicate_kp: form.avoid_duplicate_kp,
   }
 }
+
+/* ---------------- 组卷草稿（6.5 操作流程） ----------------
+ * 目的：向导填了一半关掉/误退时，配置不丢。localStorage 只存「参数」，
+ * 不存预览题目 —— 预览是后端内存态（无 paper_id），存了也没法还原。
+ * 因此恢复时最多回到「设定参数」这一步（见 DRAFT_RESTORE_MAX_STEP）。 */
+
+export const DRAFT_STORAGE_KEY = 'edu:paperWizardDraft'
+
+/** 预览(2)/保存(3)步依赖内存态题目，草稿无法还原，恢复时封顶到参数步 */
+export const DRAFT_RESTORE_MAX_STEP = 1
+
+/** 保存草稿；localStorage 满/被禁时静默失败（草稿是锦上添花，不因它报错） */
+export function saveDraft(form, step, savedAt) {
+  try {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ form, step, savedAt }))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 读取草稿；不存在或脏数据返回 null（绝不抛错——恢复流程不能炸页面） */
+export function loadDraft() {
+  try {
+    const raw = localStorage.getItem(DRAFT_STORAGE_KEY)
+    if (!raw) return null
+    const draft = JSON.parse(raw)
+    if (!draft || typeof draft.form !== 'object' || draft.form === null) return null
+    if (!Array.isArray(draft.form.sections)) draft.form.sections = []
+    if (typeof draft.step !== 'number') draft.step = 0
+    return draft
+  } catch {
+    return null
+  }
+}
+
+export function clearDraft() {
+  try {
+    localStorage.removeItem(DRAFT_STORAGE_KEY)
+  } catch { /* 同上，静默 */ }
+}
+
+/** 草稿保存时间的相对文案：「刚刚 / 5 分钟前 / 3 小时前 / 2 天前 / 未知时间」 */
+export function draftAgeText(savedAt, now = Date.now()) {
+  const t = Number(savedAt)
+  if (!t || Number.isNaN(t)) return '未知时间'
+  const diff = Math.max(0, now - t)
+  if (diff < 60000) return '刚刚'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`
+  return `${Math.floor(diff / 86400000)} 天前`
+}
+
+/** 恢复确认弹窗用的一句话摘要 */
+export function draftSummaryText(draft, now = Date.now()) {
+  const modeText = draft?.form?.mode === 'ai' ? 'AI 一键' : '自定义'
+  return `${draftAgeText(draft?.savedAt, now)}保存 · ${modeText}模式`
+}

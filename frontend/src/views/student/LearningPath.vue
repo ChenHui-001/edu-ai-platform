@@ -13,25 +13,25 @@
 
     <el-row :gutter="16" class="mb16" v-loading="loading">
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value">{{ data.avg_mastery || 0 }}%</div>
           <div class="stat-label">平均掌握度</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" style="color:var(--el-color-danger)">{{ data.weak_count || 0 }}</div>
           <div class="stat-label">薄弱知识点</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" style="color:var(--el-color-success)">{{ data.mastered_count || 0 }}</div>
           <div class="stat-label">已精通知识点</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value">{{ data.total_kps || 0 }}</div>
           <div class="stat-label">学习知识点总数</div>
         </div>
@@ -138,8 +138,6 @@ onMounted(async () => {
 <style scoped>
 .mb16 { margin-bottom: 16px; }
 .ml8 { margin-left: 8px; }
-.stat-card { text-align: center; padding: 16px; background: var(--el-fill-color-light); border-radius: 8px; }
-.stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .flex-between { display: flex; align-items: center; justify-content: space-between; }
 .ai-advice { font-size: 14px; line-height: 1.8; color: var(--el-text-color-primary); white-space: pre-wrap; }
 .path-timeline { display: flex; flex-direction: column; gap: 0; }

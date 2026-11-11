@@ -54,20 +54,45 @@ def scan_template(tpl):
     # ---- B. 同 (handler + 文案) 的按钮 ----
     # 仅在「同一父容器」内比较：列表行内的操作按钮与弹窗底部的操作按钮
     # 文案/handler 相同是正常设计（作用于不同对象），不是复制残留。
+    #
+    # 归属判定用**栈式解析**而不是「按钮前最近一个开标签」：后者分不清
+    # 「容器已闭合」——桌面 el-table 里和一个已闭合 el-table 之后的两个
+    # 同名按钮会被误判成同容器（TableCards 的桌面/移动双分支各有一份
+    # 操作按钮是互斥渲染的正常设计，曾因此误报）。
+    container_open_re = re.compile(
+        r'<(el-dialog|el-drawer|el-table|el-card|el-col)\b[^>]*?>', re.S)
+    container_close_re = re.compile(r'</(el-dialog|el-drawer|el-table|el-card|el-col)>')
+    events = []
+    for m in container_open_re.finditer(tpl):
+        events.append((m.start(), 'open', m.group(1)))
+    for m in container_close_re.finditer(tpl):
+        events.append((m.start(), 'close', m.group(1)))
+    # 同一位置先处理 close 再处理 open（`</x><x>` 的兄弟序列）
+    events.sort(key=lambda e: (e[0], 0 if e[1] == 'close' else 1))
+
+    btn_re = re.compile(r'<(?:el-button|button)\b([^>]*)>(.*?)</(?:el-button|button)>',
+                        re.S)
     btns = defaultdict(list)
-    container_re = re.compile(
-        r'<(el-dialog|el-drawer|el-table|el-card|el-col)\b[^>]*>', re.S)
-    for m in re.finditer(r'<(?:el-button|button)\b([^>]*)>(.*?)</(?:el-button|button)>',
-                         tpl, re.S):
+    stack = []          # [(tag, open_pos)]，当前位置仍在容器内的开标签
+    ei = 0
+    for m in btn_re.finditer(tpl):
+        while ei < len(events) and events[ei][0] < m.start():
+            kind, tag = events[ei][1], events[ei][2]
+            if kind == 'open':
+                stack.append((tag, events[ei][0]))
+            else:
+                # 容忍个别漏写闭合：从栈顶向下找同名弹出
+                for i in range(len(stack) - 1, -1, -1):
+                    if stack[i][0] == tag:
+                        del stack[i]
+                        break
+            ei += 1
         attrs, inner = m.group(1), m.group(2)
         ev = re.findall(r'@(?:click|dblclick|change)="([^"(]+)', attrs)
         label = _strip_tags(re.sub(r'<[^>]+>', ' ', inner))
         if not ev or not label:
             continue
-        # 取最近一个容器标签作为归属键
-        containers = list(container_re.finditer(tpl, 0, m.start()))
-        owner = containers[-1].group(1) + '@' + str(containers[-1].start()) \
-            if containers else 'root'
+        owner = '%s@%d' % stack[-1] if stack else 'root'
         line = tpl[:m.start()].count('\n') + 1
         btns[(owner, tuple(ev), label)].append(line)
     for (owner, ev, label), lines in sorted(btns.items()):

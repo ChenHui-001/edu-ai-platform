@@ -108,6 +108,7 @@ import { downloadBlob } from '@/utils/download'
 import ExportButton from '@/components/ExportButton.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import { pickMessage } from '@/utils/notify'
+import { chartColor } from '@/utils/theme'
 
 const overview = ref(null)
 /** 加载失败信息（null=正常）：页面级 ErrorState 就地重试（U-05） */
@@ -151,7 +152,7 @@ const subjectOption = computed(() => ({
   yAxis: { type: 'value', name: '题目数' },
   series: [
     { name: '题目数', type: 'bar', data: subjects.value.map(s => s.question_count),
-      itemStyle: { color: '#2f6fd0' }, barMaxWidth: 28 },
+      itemStyle: { color: chartColor('primary') }, barMaxWidth: 28 },
     { name: '笔记数', type: 'line', data: subjects.value.map(s => s.note_count),
       itemStyle: { color: '#e6a23c' } }
   ]

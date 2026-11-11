@@ -119,6 +119,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import EChart from '@/components/EChart.vue'
 import { reportApi, eduApi } from '@/api'
+import { chartColor } from '@/utils/theme'
 
 const route = useRoute()
 const classes = ref([])
@@ -172,7 +173,7 @@ const trendOption = computed(() => {
     },
     series: [{
       type: 'line', smooth: true, data: trend.map(t => t.score_rate ?? 0),
-      itemStyle: { color: '#2f6fd0' }, areaStyle: { opacity: 0.12 }
+      itemStyle: { color: chartColor('primary') }, areaStyle: { opacity: 0.12 }
     }]
   }
 })
@@ -187,7 +188,7 @@ const radarOption = computed(() => {
     },
     series: [{
       type: 'radar', data: [{ value: items.map(i => i.mastery), name: '掌握度' }],
-      areaStyle: { opacity: 0.25, color: '#2f6fd0' }
+      areaStyle: { opacity: 0.25, color: chartColor('primary') }
     }]
   }
 })

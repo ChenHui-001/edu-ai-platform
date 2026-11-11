@@ -145,6 +145,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { Search, Refresh, Cpu } from '@element-plus/icons-vue'
 import { agentApi } from '@/api'
+import { chartColor } from '@/utils/theme'
 
 const list = ref([])
 const agents = ref([])
@@ -172,7 +173,7 @@ function statusMeta(s) {
 const cards = computed(() => {
   if (!list.value.length) return []
   return [
-    { label: '本页调用数', value: list.value.length, color: '#2f6fd0' },
+    { label: '本页调用数', value: list.value.length, color: chartColor('primary') },
     { label: '成功数', value: list.value.filter(r => r.status === 'success').length, color: '#67c23a' },
     { label: '空正文', value: list.value.filter(r => r.status === 'empty').length, color: '#e6a23c' },
     { label: '失败数', value: list.value.filter(r => r.status !== 'success' && r.status !== 'empty').length, color: '#f56c6c' },

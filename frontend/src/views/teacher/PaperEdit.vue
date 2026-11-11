@@ -9,6 +9,7 @@
           <span v-if="paper.exam_type"> · {{ examTypeLabel[paper.exam_type] || paper.exam_type }}</span>
           <span class="ver-tag">v{{ paper.current_version || 1 }}</span>
         </p>
+        <p class="page-sub">在此微调题目与分值（保存生成新版本）；整卷参数重配请回「新建试卷」向导</p>
       </div>
       <div class="head-actions">
         <el-dropdown trigger="click" :disabled="exporting" @command="onExport">
@@ -1036,7 +1037,6 @@ function goBack() {
 .paper-edit { padding-bottom: 84px; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .page-title { margin: 0 0 4px; font-size: 20px; }
-.page-sub { margin: 0; color: var(--el-text-color-secondary); font-size: 13px; }
 .ver-tag {
   margin-left: 8px; padding: 0 7px; border-radius: 8px;
   background: var(--el-color-primary-light-9); color: var(--el-color-primary);

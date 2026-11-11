@@ -78,6 +78,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import EChart from '@/components/EChart.vue'
 import { reportApi, eduApi } from '@/api'
+import { chartColor } from '@/utils/theme'
 
 const router = useRouter()
 const classes = ref([])
@@ -125,7 +126,7 @@ const rankOption = computed(() => {
     },
     series: [{
       type: 'bar', data: sorted.map(s => s.avg_score_rate || 0).reverse(),
-      itemStyle: { color: '#2f6fd0' }, barMaxWidth: 16,
+      itemStyle: { color: chartColor('primary') }, barMaxWidth: 16,
       label: { show: true, position: 'right', fontSize: 11 }
     }]
   }

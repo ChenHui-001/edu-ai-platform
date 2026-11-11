@@ -754,6 +754,8 @@ onBeforeUnmount(() => {
 .total { color: var(--el-color-primary); font-size: 20px; }
 .footer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* 页级例外断点（非全站口径，见 index.css --bp-*）：题目体左（题干）
+   右（判分列）双列在 <1100 挤压判分列，改上下堆叠 */
 @media (max-width: 1100px) {
   .q-body { flex-direction: column; }
   .q-col.q-grade { width: 100%; }

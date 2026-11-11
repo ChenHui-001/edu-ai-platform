@@ -161,8 +161,10 @@ code {
 }
 .hint { font-size: 12px; color: var(--el-text-color-secondary); }
 
-/* 卡片在 <md 断点堆叠时补上纵向间距（el-row 的 gutter 只管横向） */
-@media (max-width: 991px) {
+/* 卡片在 <md 断点堆叠时补上纵向间距（el-row 的 gutter 只管横向）。
+   必须用 992（Element Plus 栅格 md 起点）而不是 991：卡片由 el-col :md
+   在 ≥992 时横排，@media 若写成 991，在 991~992 之间会漏掉这 1px 窗口。 */
+@media (max-width: 991.98px) {
   .col-stack { margin-top: 16px; }
 }
 

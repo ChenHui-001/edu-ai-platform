@@ -18,6 +18,35 @@
   --el-color-primary-dark-2: #2558a6;
   --page-bg: #f4f6fa;
   --card-shadow: 0 2px 12px rgba(31, 45, 61, 0.06);
+
+  /* ---------------- 图表与画布色（6.5 视觉一致性） ----------------
+   * ECharts 画在 <canvas> 上，拿不到 CSS 变量 —— 所以颜色必须由 JS 读出
+   * 真实色值再传进去（`utils/theme.js` 的 `chartColor()`）。
+   * 此前 `#2f6fd0` 字面量散落在 10 个视图里（ECharts 配置 + 统计数字色），
+   * 同一次换色要改 10 个文件；`MasteryMap` 更还留着 Element 默认的 #409eff，
+   * 同一个学生端里出现两种蓝。
+   * 加新色请只加在这里，然后由 `chartColor('xxx')` 取用。 */
+  --chart-primary: #2f6fd0;
+  --chart-weak: #e6a23c;
+  --chart-strong: #67c23a;
+
+  /* 侧边栏底色。**el-menu 需要真实色值**（内部据此算 hover/active 的明暗），
+   * 传 var() 会让这些派生色静默失效，所以 MainLayout 用
+   * getComputedStyle 读这个变量再交给组件 —— 单一来源仍然在这里。 */
+  --menu-bg: #1f2d3d;
+
+  /* ---------------- 断点口径（6.5 响应式适配） ----------------
+   * CSS 变量不能用于 @media 条件，这三个值的作用是「唯一口径」：
+   * JS（`utils/responsive.js` 的 useIsMobile）从这里取值，CSS 的 @media
+   * 必须手写相同的数字。**数值对齐 Element Plus 栅格断点**（xs<768、
+   * sm≥768、md≥992、lg≥1200），否则 `el-col :md` 的堆叠点和手写
+   * @media 的堆叠点会错开 —— SystemSetting 曾出现 991 与 992 两种写法，
+   * 就是这个坑的实证。
+   * 页级例外（有意为之，勿随手合并）：Login/AgentChat 900（品牌面板收起）、
+   * GradingCenter 1100（题目体三列布局）。 */
+  --bp-mobile: 768px;   /* < 768 手机 */
+  --bp-tablet: 992px;   /* < 992 平板（= el-col 的 md 起点减 1px） */
+  --bp-wide: 1200px;    /* < 1200 窄桌面（= el-col 的 lg 起点减 1px） */
 }
 
 * { box-sizing: border-box; }
@@ -56,6 +85,15 @@ body {
   margin: 0;
 }
 
+/* 页头副标题：一句话说明本页职责 / 入口关系。
+ * 此前在 PaperWizard / PaperEdit 各自 scoped 里定义且 margin 不一致
+ * （4px 0 0 与 0），提升为全站唯一来源。 */
+.page-sub {
+  margin: 4px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
 .filter-card {
   margin-bottom: 16px;
 }
@@ -79,6 +117,23 @@ body {
 .stat-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(31, 45, 61, 0.1);
+}
+
+/* 轻量统计块：灰底、居中、无阴影、小内距。
+ * 学生端 5 个页面（Flashcards / LearningPath / MasteryMap / MyFavorites /
+ * StudyGoals）此前各自 scoped 里写了一模一样的 4 行，改一次要改 5 处。
+ * 与默认 `.stat-card` 并列，用类名区分而不是再复制一遍样式。 */
+.stat-card--flat {
+  text-align: center;
+  padding: 16px;
+  background: var(--el-fill-color-light);
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.stat-card--flat:hover {
+  transform: none;
+  box-shadow: none;
 }
 
 /* ---------------- 统计卡（全站唯一来源） ----------------

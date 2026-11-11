@@ -25,14 +25,35 @@
               <el-icon><component :is="iconOf(group.icon)" /></el-icon>
               <span>{{ group.title }}</span>
             </template>
-            <el-menu-item
-              v-for="item in group.items"
-              :key="item.path"
-              :index="item.path"
-            >
-              <el-icon><component :is="iconOf(item.icon)" /></el-icon>
-              <template #title>{{ item.title }}</template>
-            </el-menu-item>
+            <!-- 二级分组（学习中心 15 项按「学 / 练 / 测 / 评」归拢）。
+                 一级组仍是一层 el-sub-menu，只有登记了 subs 的组会多一层。 -->
+            <template v-if="group.subs">
+              <el-sub-menu
+                v-for="sub in group.subs"
+                :key="group.title + '-' + sub.title"
+                :index="group.title + '-' + sub.title"
+              >
+                <template #title><span class="sub-title">{{ sub.title }}</span></template>
+                <el-menu-item
+                  v-for="item in sub.items"
+                  :key="item.path"
+                  :index="item.path"
+                >
+                  <el-icon><component :is="iconOf(item.icon)" /></el-icon>
+                  <template #title>{{ item.title }}</template>
+                </el-menu-item>
+              </el-sub-menu>
+            </template>
+            <template v-else>
+              <el-menu-item
+                v-for="item in group.items"
+                :key="item.path"
+                :index="item.path"
+              >
+                <el-icon><component :is="iconOf(item.icon)" /></el-icon>
+                <template #title>{{ item.title }}</template>
+              </el-menu-item>
+            </template>
           </el-sub-menu>
         </el-menu>
       </el-scrollbar>
@@ -45,6 +66,9 @@
             <Fold v-if="!collapsed" /><Expand v-else />
           </el-icon>
           <el-breadcrumb separator="/">
+            <!-- 两级：分组 / 当前页。此前只有当前页标题，用户看不出自己在哪一组，
+                 也无法从面包屑反推「同一组的其它页面在哪」。 -->
+            <el-breadcrumb-item v-if="currentGroupLabel">{{ currentGroupLabel }}</el-breadcrumb-item>
             <el-breadcrumb-item>{{ route.meta.title || '首页' }}</el-breadcrumb-item>
           </el-breadcrumb>
         </div>
@@ -165,6 +189,7 @@ import {
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
 import { agentApi, systemApi } from '@/api'
+import { menuBg } from '@/utils/theme'
 import VersionInfo from '@/components/VersionInfo.vue'
 import { confirmAction } from '@/utils/confirm'
 
@@ -176,9 +201,57 @@ const userStore = useUserStore()
 // 此前写死 Element 默认蓝 #409eff，而全站按钮/链接是品牌蓝 #2f6fd0 ——
 // 全局布局最显眼的位置用的是"另一套蓝"。light-3 是品牌色的浅化梯度，
 // 在深底上对比度足够（直接上 #2f6fd0 会偏暗、按下不清晰）。
-const MENU_BG = '#1f2d3d'
+const MENU_BG = menuBg()
 const MENU_TEXT = '#bfcbd9'
 const MENU_ACTIVE = 'var(--el-color-primary-light-3)'
+
+/**
+ * 侧边栏分组配置（顺序即优先级：一个路由只归入**第一个**命中的分组）。
+ *
+ * - `prefixes`：按路径前缀归组，而不是逐条硬编码 path 列表。新增路由自动
+ *   落入对应分组，忘记登记会在 DEV 控制台 warn，而不是"静默消失"。
+ * - `onlyIdentity`：按身份隐藏（学习中心是学生个人空间）。
+ * - `subs`：可选的二级分组。**只给学习中心用** —— 学生端 15 个页面平铺在
+ *   一个组里，找「错题本」要在 15 项里扫一遍；按「学 → 练 → 测 → 评」归拢后
+ *   每组 1~5 项，符合学生的心智顺序（先学、再练、然后测、最后看评价）。
+ *
+ * AI 组必须排在「系统管理」之前，否则 `/admin/agent-logs` 会被系统管理抢走。
+ */
+const MENU_GROUPS = [
+  {
+    title: '教学资源',
+    icon: 'Collection',
+    prefixes: ['/admin/grades', '/admin/subjects', '/admin/knowledge',
+               '/admin/classes', '/admin/teaching-matrix']
+  },
+  { title: '题库试卷', icon: 'Notebook', prefixes: ['/teacher/questions', '/teacher/papers'] },
+  { title: '教学管理', icon: 'EditPen', prefixes: ['/teacher/tasks', '/teacher/grading', '/teacher/lessons'] },
+  { title: '学情分析', icon: 'TrendCharts', prefixes: ['/teacher/analysis', '/teacher/students', '/teacher/reports'] },
+  {
+    title: '学习中心',
+    icon: 'Reading',
+    prefixes: ['/student/'],
+    onlyIdentity: 'student',
+    subs: [
+      {
+        title: '学',
+        prefixes: ['/student/knowledge', '/student/path', '/student/notes',
+                   '/student/flashcard', '/student/favorites']
+      },
+      {
+        title: '练',
+        prefixes: ['/student/practice', '/student/custom', '/student/wrong', '/student/review']
+      },
+      { title: '测', prefixes: ['/student/exams'] },
+      {
+        title: '评',
+        prefixes: ['/student/report', '/student/scores', '/student/mastery', '/student/goals']
+      }
+    ]
+  },
+  { title: 'AI 智能', icon: 'MagicStick', prefixes: ['/agent/', '/admin/agent-logs'] },
+  { title: '系统管理', icon: 'Setting', prefixes: ['/admin/'] }
+]
 
 // 图标名字符串 → 图标组件（菜单元数据与路由 meta 共用这份映射）
 const ICONS = {
@@ -293,17 +366,7 @@ const menuGroups = computed(() => {
   // 分组顺序即优先级：一个路由只归入**第一个**命中的分组。
     // AI 组必须排在「系统管理」之前，否则 /admin/agent-logs 这类
     // 物理路径在 /admin/ 下的页面会被系统管理抢走。
-  const groups = [
-    { title: '教学资源', icon: 'Collection', prefixes: ['/admin/grades', '/admin/subjects', '/admin/knowledge', '/admin/classes', '/admin/teaching-matrix'] },
-    { title: '题库试卷', icon: 'Notebook', prefixes: ['/teacher/questions', '/teacher/papers'] },
-    { title: '教学管理', icon: 'EditPen', prefixes: ['/teacher/tasks', '/teacher/grading', '/teacher/lessons'] },
-    { title: '学情分析', icon: 'TrendCharts', prefixes: ['/teacher/analysis', '/teacher/students', '/teacher/reports'] },
-    // 学习中心是学生个人空间：管理员/教师即便持有 student:* 权限点，
-    // 进入后也只会看到全空的个人数据（无班级、无作业），故按身份隐藏。
-    { title: '学习中心', icon: 'Reading', prefixes: ['/student/'], onlyIdentity: 'student' },
-    { title: 'AI 智能', icon: 'MagicStick', prefixes: ['/agent/', '/admin/agent-logs'] },
-    { title: '系统管理', icon: 'Setting', prefixes: ['/admin/'] }
-  ]
+  const groups = MENU_GROUPS
 
   const matched = new Set()
   const result = []
@@ -317,7 +380,25 @@ const menuGroups = computed(() => {
       matched.add(r.path)
       items.push({ path: r.path, title: r.meta.title, icon: r.meta.icon || 'Document' })
     }
-    if (items.length) result.push({ title: g.title, icon: g.icon, items })
+    if (!items.length) continue
+
+    if (g.subs) {
+      // 二级分组：按 subs 顺序分配，未命中任何 sub 的落到「其他」
+      // （宁可多一个显眼的「其他」，也不要静默丢菜单项）
+      const subs = []
+      const taken = new Set()
+      for (const sub of g.subs) {
+        const subItems = items.filter(it => !taken.has(it.path)
+          && sub.prefixes.some(p => it.path === p || it.path.startsWith(p)))
+        subItems.forEach(it => taken.add(it.path))
+        if (subItems.length) subs.push({ title: sub.title, items: subItems })
+      }
+      const restItems = items.filter(it => !taken.has(it.path))
+      if (restItems.length) subs.push({ title: '其他', items: restItems })
+      result.push({ title: g.title, icon: g.icon, subs })
+    } else {
+      result.push({ title: g.title, icon: g.icon, items })
+    }
   }
 
   // 不再提供「其他」兜底分组：兜底组的唯一实际内容曾是 /403 与 404 兜底页
@@ -331,6 +412,28 @@ const menuGroups = computed(() => {
     )
   }
   return result
+})
+
+/**
+ * 面包屑第一级：当前页所属分组，二级分组拼成「学习中心 · 练」。
+ *
+ * 直接查 MENU_GROUPS 的 prefixes，而不是查 `menuGroups` 的 items：
+ * 后者只有"当前用户可见的路由"，详情页（`/student/exam/123`）与隐藏路由
+ * 都不在列表里，会退化成单级面包屑。前缀匹配对这两类都成立。
+ *
+ * 但身份隐藏要尊重：教师看不到「学习中心」，他的面包屑就不该出现这个分组。
+ */
+const currentGroupLabel = computed(() => {
+  const path = route.path
+  const hit = (prefixes) => (prefixes || []).some(p => path === p || path.startsWith(p))
+  const visible = new Set(menuGroups.value.map(g => g.title))
+  for (const g of MENU_GROUPS) {
+    if (!hit(g.prefixes)) continue
+    if (!visible.has(g.title)) return ''
+    const sub = (g.subs || []).find(x => hit(x.prefixes))
+    return sub ? `${g.title} · ${sub.title}` : g.title
+  }
+  return ''
 })
 
 function formatTime(t) {
@@ -479,6 +582,9 @@ onBeforeUnmount(() => {
 }
 
 .notif-header-actions { display: flex; gap: 12px; font-weight: 400; }
+
+/* 二级分组标题（学 / 练 / 测 / 评）：比一级组弱一点，靠层级区分而不是靠颜色 */
+.sub-title { font-size: 13px; opacity: 0.92; }
 
 /* 通知设置弹窗：左文右开关，说明文字两行内说完 */
 .pref-list { display: flex; flex-direction: column; min-height: 120px; }

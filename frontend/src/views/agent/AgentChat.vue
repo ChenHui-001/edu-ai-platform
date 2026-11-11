@@ -550,5 +550,6 @@ onMounted(async () => {
 .filters { display: flex; gap: 8px; margin-bottom: 8px; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }
 .tip { font-size: 11px; color: #c0c4cc; margin-top: 6px; text-align: right; }
+/* 页级例外断点（非全站口径，见 index.css --bp-*）：窄屏收起侧栏、气泡放宽 */
 @media (max-width: 900px) { .side { display: none; } .bubble { max-width: 94%; } }
 </style>

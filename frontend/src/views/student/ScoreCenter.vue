@@ -17,7 +17,8 @@
     />
 
     <el-row :gutter="16" class="mb16" v-if="summary && !loadError">
-      <el-col :span="5" v-for="c in cards" :key="c.label">
+      <!-- 手机上统计卡两两一行（:xs），≥768 保持原 5/24 宽布局 -->
+      <el-col :xs="12" :span="5" v-for="c in cards" :key="c.label">
         <div class="stat-card">
           <div class="stat-value" :style="{ color: c.color }">{{ c.value }}</div>
           <div class="stat-label">{{ c.label }}</div>
@@ -26,49 +27,75 @@
     </el-row>
 
     <el-row :gutter="16">
-      <el-col :span="16">
+      <!-- 手机上记录表与趋势图上下堆叠（:xs），≥768 保持原 16/8 布局 -->
+      <el-col :xs="24" :span="16">
         <el-card shadow="never">
           <template #header><b>成绩记录</b></template>
-          <el-table v-loading="loading" :data="list" border stripe>
-            <template #empty><TableEmpty text="暂无成绩记录" /></template>
-            <el-table-column prop="task_title" label="任务名称" min-width="200" show-overflow-tooltip />
-            <el-table-column label="类型" width="90">
-              <template #default="{ row }">
-                <el-tag size="small" :type="row.type === 'exam' ? 'danger' : 'primary'">
-                  {{ row.type_label }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="得分" width="120">
-              <template #default="{ row }">
-                <span class="score" :class="scoreClass(row)">{{ row.score ?? '-' }}</span>
-                <span class="tip">/ {{ row.total_score }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="class_rank" label="班级排名" width="100" align="center">
-              <template #default="{ row }">{{ row.class_rank ? `第 ${row.class_rank} 名` : '-' }}</template>
-            </el-table-column>
-            <el-table-column label="结果" width="90">
-              <template #default="{ row }">
-                <el-tag :type="row.is_passed ? 'success' : 'danger'" size="small">
-                  {{ row.is_passed ? '及格' : '不及格' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="submit_time" label="提交时间" width="160" />
-            <el-table-column label="操作" width="110">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="viewDetail(row)">查看解析</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+          <!-- 桌面端渲染下方 el-table 原样；手机端按列定义渲染成卡片，
+               7 列带操作的表格在手机上横向滚动基本没法用 -->
+          <TableCards :rows="list" :columns="recordColumns" :loading="loading">
+            <el-table v-loading="loading" :data="list" border stripe>
+              <template #empty><TableEmpty text="暂无成绩记录" /></template>
+              <el-table-column prop="task_title" label="任务名称" min-width="200" show-overflow-tooltip />
+              <el-table-column label="类型" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.type === 'exam' ? 'danger' : 'primary'">
+                    {{ row.type_label }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="得分" width="120">
+                <template #default="{ row }">
+                  <span class="score" :class="scoreClass(row)">{{ row.score ?? '-' }}</span>
+                  <span class="tip">/ {{ row.total_score }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="class_rank" label="班级排名" width="100" align="center">
+                <template #default="{ row }">{{ row.class_rank ? `第 ${row.class_rank} 名` : '-' }}</template>
+              </el-table-column>
+              <el-table-column label="结果" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="row.is_passed ? 'success' : 'danger'" size="small">
+                    {{ row.is_passed ? '及格' : '不及格' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="submit_time" label="提交时间" width="160" />
+              <el-table-column label="操作" width="110">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="viewDetail(row)">查看解析</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <!-- 以下为手机卡片视图的自定义列 -->
+            <template #cell-type="{ row }">
+              <el-tag size="small" :type="row.type === 'exam' ? 'danger' : 'primary'">
+                {{ row.type_label }}
+              </el-tag>
+            </template>
+            <template #cell-score="{ row }">
+              <span class="score" :class="scoreClass(row)">{{ row.score ?? '-' }}</span>
+              <span class="tip">/ {{ row.total_score }}</span>
+            </template>
+            <template #cell-class_rank="{ row }">
+              {{ row.class_rank ? `第 ${row.class_rank} 名` : '-' }}
+            </template>
+            <template #cell-is_passed="{ row }">
+              <el-tag :type="row.is_passed ? 'success' : 'danger'" size="small">
+                {{ row.is_passed ? '及格' : '不及格' }}
+              </el-tag>
+            </template>
+            <template #actions="{ row }">
+              <el-button link type="primary" @click="viewDetail(row)">查看解析</el-button>
+            </template>
+          </TableCards>
 
           <el-pagination class="mt16" background layout="total, prev, pager, next"
                          :total="total" v-model:current-page="query.page" @current-change="load" />
         </el-card>
       </el-col>
 
-      <el-col :span="8">
+      <el-col :xs="24" :span="8">
         <el-card shadow="never">
           <template #header><b>成绩趋势</b></template>
           <EChart v-if="list.length" :option="trendOption" style="height: 300px" />
@@ -106,15 +133,27 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import EChart from '@/components/EChart.vue'
+import TableCards from '@/components/TableCards.vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { taskApi, reportApi } from '@/api'
 import ExportButton from '@/components/ExportButton.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import { pickMessage } from '@/utils/notify'
+import { chartColor } from '@/utils/theme'
 
 const list = ref([])
 const results = ref([])
 const detail = ref(null)
+
+// 手机卡片视图的列定义（与桌面 el-table 的列保持同名字段）
+const recordColumns = [
+  { prop: 'task_title', label: '任务名称' },
+  { prop: 'type', label: '类型' },
+  { prop: 'score', label: '得分' },
+  { prop: 'class_rank', label: '班级排名' },
+  { prop: 'is_passed', label: '结果' },
+  { prop: 'submit_time', label: '提交时间' },
+]
 const summary = ref(null)
 const total = ref(0)
 const loading = ref(false)
@@ -126,7 +165,7 @@ const detailDlg = ref(false)
 const query = reactive({ page: 1, page_size: 20 })
 
 const cards = computed(() => summary.value ? [
-  { label: '参考次数', value: summary.value.count, color: '#2f6fd0' },
+  { label: '参考次数', value: summary.value.count, color: chartColor('primary') },
   { label: '平均分', value: summary.value.avg_score, color: '#67c23a' },
   { label: '最高分', value: summary.value.max_score, color: '#67c23a' },
   { label: '最低分', value: summary.value.min_score, color: '#f56c6c' },
@@ -143,7 +182,7 @@ const trendOption = computed(() => {
     yAxis: { type: 'value', name: '分数' },
     series: [{
       type: 'line', smooth: true, data: data.map(t => t.score),
-      itemStyle: { color: '#2f6fd0' }, areaStyle: { opacity: 0.12 }
+      itemStyle: { color: chartColor('primary') }, areaStyle: { opacity: 0.12 }
     }]
   }
 })

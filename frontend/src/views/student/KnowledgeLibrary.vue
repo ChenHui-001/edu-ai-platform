@@ -201,7 +201,9 @@ onBeforeUnmount(clearPreview)
 .node-label { display: flex; align-items: center; gap: 8px; }
 .detail-title { display: flex; align-items: center; gap: 10px; }
 .desc { color: var(--el-text-color-regular); line-height: 1.7; }
-@media (max-width: 992px) {
+/* 必须用 991.98px：树/详情由 el-col :md 在 ≥992 横排，
+   写 max-width: 992px 会在恰好 992px 视口与栅格布局重叠 1px 窗口 */
+@media (max-width: 991.98px) {
   .tree-col { border-right: 0; border-bottom: 1px solid var(--el-border-color-lighter); margin-bottom: 16px; }
 }
 </style>

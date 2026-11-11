@@ -9,7 +9,8 @@
     <el-card v-if="!paper" shadow="never" class="filter-card">
       <el-form :model="form" label-width="100px">
         <el-row :gutter="16">
-          <el-col :span="12">
+          <!-- 手机上两个下拉各占一整行 -->
+          <el-col :xs="24" :span="12">
             <el-form-item label="学科">
               <el-select v-model="form.subject_id" placeholder="选择学科" style="width:100%"
                          @change="onSubjectChange">
@@ -17,7 +18,7 @@
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :xs="24" :span="12">
             <el-form-item label="年级">
               <el-select v-model="form.grade_id" placeholder="全部年级" clearable style="width:100%">
                 <el-option v-for="g in grades" :key="g.id" :label="g.name" :value="g.id" />
@@ -149,26 +150,37 @@
     </template>
 
     <!-- 历史 -->
-    <el-drawer v-model="historyDrawer" title="练习历史" size="55%">
-      <el-table v-loading="historyLoading" :data="history" border stripe>
-        <template #empty><TableEmpty text="暂无练习记录" /></template>
-        <el-table-column prop="name" label="练习名称" min-width="180" show-overflow-tooltip />
-        <el-table-column label="得分" width="130">
-          <template #default="{ row }">
-            <span :class="row.score >= 60 ? 'text-success' : 'text-danger'">{{ row.score ?? '-' }}</span>
-            <span class="tip"> / {{ row.total_score }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="正确率" width="120">
-          <template #default="{ row }">{{ row.accuracy }}%</template>
-        </el-table-column>
-        <el-table-column prop="created_at" label="时间" width="170" />
-        <el-table-column label="操作" width="100">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="viewHistory(row)">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+    <!-- 历史：手机上抽屉全屏，表格按列定义渲染成卡片 -->
+    <el-drawer v-model="historyDrawer" :size="historyDrawerSize" title="练习历史">
+      <TableCards :rows="history" :columns="historyColumns" :loading="historyLoading">
+        <el-table v-loading="historyLoading" :data="history" border stripe>
+          <template #empty><TableEmpty text="暂无练习记录" /></template>
+          <el-table-column prop="name" label="练习名称" min-width="180" show-overflow-tooltip />
+          <el-table-column label="得分" width="130">
+            <template #default="{ row }">
+              <span :class="row.score >= 60 ? 'text-success' : 'text-danger'">{{ row.score ?? '-' }}</span>
+              <span class="tip"> / {{ row.total_score }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="正确率" width="120">
+            <template #default="{ row }">{{ row.accuracy }}%</template>
+          </el-table-column>
+          <el-table-column prop="created_at" label="时间" width="170" />
+          <el-table-column label="操作" width="100">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="viewHistory(row)">详情</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <template #cell-score="{ row }">
+          <span :class="row.score >= 60 ? 'text-success' : 'text-danger'">{{ row.score ?? '-' }}</span>
+          <span class="tip"> / {{ row.total_score }}</span>
+        </template>
+        <template #cell-accuracy="{ row }">{{ row.accuracy }}%</template>
+        <template #actions="{ row }">
+          <el-button link type="primary" @click="viewHistory(row)">详情</el-button>
+        </template>
+      </TableCards>
     </el-drawer>
 
     <!-- 番茄钟（练习时显示） -->
@@ -185,6 +197,8 @@ import TYPES from '@/constants/question'
 import { taskApi, learningApi, eduApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 import PomodoroTimer from '@/components/PomodoroTimer.vue'
+import TableCards from '@/components/TableCards.vue'
+import { useIsMobile } from '@/utils/responsive'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { confirmAction } from '@/utils/confirm'
 
@@ -207,6 +221,16 @@ const submitting = ref(false)
 const generating = ref(false)
 const historyLoading = ref(false)
 const historyDrawer = ref(false)
+// 手机上 55% 抽屉放不下卡片列表，改全屏；桌面保持原宽度
+const isMobile = useIsMobile()
+const historyDrawerSize = computed(() => (isMobile.value ? '100%' : '55%'))
+// 手机卡片视图的列定义（与桌面 el-table 的列保持同名字段）
+const historyColumns = [
+  { prop: 'name', label: '练习名称' },
+  { prop: 'score', label: '得分' },
+  { prop: 'accuracy', label: '正确率' },
+  { prop: 'created_at', label: '时间' },
+]
 
 const answers = ref({})
 const multiAnswers = ref({})

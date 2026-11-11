@@ -13,25 +13,25 @@
 
     <el-row :gutter="16" class="mb16" v-loading="loading">
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" :style="{ color: avgColor }">{{ data.avg_mastery || 0 }}%</div>
           <div class="stat-label">平均掌握度</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" style="color:var(--el-color-danger)">{{ data.weak_points?.length || 0 }}</div>
           <div class="stat-label">薄弱知识点</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value" style="color:var(--el-color-success)">{{ data.strong_points?.length || 0 }}</div>
           <div class="stat-label">已精通知识点</div>
         </div>
       </el-col>
       <el-col :span="6">
-        <div class="stat-card">
+        <div class="stat-card--flat">
           <div class="stat-value">{{ data.items?.length || 0 }}</div>
           <div class="stat-label">学习知识点总数</div>
         </div>
@@ -97,6 +97,7 @@ import { Refresh, Edit } from '@element-plus/icons-vue'
 import echarts from '@/utils/echarts'
 import { learningApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
+import { chartColor, withAlpha } from '@/utils/theme'
 
 const router = useRouter()
 const loading = ref(false)
@@ -159,7 +160,7 @@ function renderCharts() {
       },
       series: [{
         type: 'radar',
-        data: [{ value: top.map(i => i.mastery), name: '掌握度', areaStyle: { color: 'rgba(64,158,255,0.2)' }, lineStyle: { color: '#409eff' }, itemStyle: { color: '#409eff' } }]
+        data: [{ value: top.map(i => i.mastery), name: '掌握度', areaStyle: { color: withAlpha(chartColor('primary'), 0.2) }, lineStyle: { color: chartColor('primary') }, itemStyle: { color: chartColor('primary') } }]
       }]
     })
   }
@@ -219,13 +220,6 @@ onUnmounted(() => {
 .mb16 { margin-bottom: 16px; }
 .mt16 { margin-top: 16px; }
 .ml8 { margin-left: 8px; }
-.stat-card {
-  text-align: center;
-  padding: 16px;
-  background: var(--el-fill-color-light);
-  border-radius: 8px;
-}
-.stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 .flex-between { display: flex; align-items: center; justify-content: space-between; }
 .weak-list { display: flex; flex-direction: column; gap: 8px; }
 .weak-item {
