@@ -45,7 +45,7 @@ from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     AgentJob, Answer, Attachment, Class, Grade, KnowledgeMastery, KnowledgePoint,
-    Paper, PaperItem, Question, Role, Subject, Submission, Task, User,
+    Notification, Paper, PaperItem, Question, Role, Subject, Submission, Task, User,
     WrongQuestion,
 )
 
@@ -745,6 +745,126 @@ def main():
               f"biz={getattr(bound, 'biz_type', None)}/{getattr(bound, 'biz_id', None)}")
     finally:
         db.close()
+
+    print("\n[F-06] AI 配置：场景路由可保存 + 按业务类型预算")
+    # 这一节盯的是「配置项存在、UI 有说明、保存却不生效」那类缺口：
+    # AiConfigIn 早先没声明快场景四项，Pydantic 默认 extra="ignore" 把它们
+    # 静默丢掉 —— 前端发过来是白发的，只能直接改库。断言必须走真实 HTTP，
+    # 直接调 save_ai_config 是测不出这个的。
+    ai = api + "/system/ai-config"
+    r_save = client.put(ai, headers=H, json={
+        "llm_fast_biz_types": "question_generate,question_variants",
+        "llm_fast_reasoning_effort": "low",
+        "llm_biz_budgets": {"question_generate": {"temperature": 0.3, "max_tokens": 6144},
+                            "router": {"max_tokens": 256}},
+    })
+    check("AI 配置保存带场景路由与预算覆盖", r_save.status_code == 200,
+          f"HTTP {r_save.status_code}, {r_save.text[:120]}")
+    ai_cfg = (client.get(ai, headers=H).json().get("data") or {})
+    cfg_map = ai_cfg.get("config") or {}
+    check("快场景业务类型真的存进去了（不被 Pydantic 静默丢弃）",
+          cfg_map.get("LLM_FAST_BIZ_TYPES") == "question_generate,question_variants",
+          str(cfg_map.get("LLM_FAST_BIZ_TYPES")))
+    check("快场景推理档真的存进去了",
+          cfg_map.get("LLM_FAST_REASONING_EFFORT") == "low",
+          str(cfg_map.get("LLM_FAST_REASONING_EFFORT")))
+    check("预算覆盖按对象回传（前端不必自己 JSON.parse）",
+          (ai_cfg.get("biz_budgets") or {}).get("question_generate")
+          == {"temperature": 0.3, "max_tokens": 6144},
+          str(ai_cfg.get("biz_budgets")))
+    check("回传了已知 biz_type 清单（供下拉）",
+          "question_generate" in (ai_cfg.get("biz_types") or []),
+          str((ai_cfg.get("biz_types") or [])[:3]))
+    # 写坏的配置必须在**保存时**报错，而不是静默回落到全局配置
+    r_bad = client.put(ai, headers=H, json={"llm_biz_budgets": "{不是 JSON"})
+    check("非法预算 JSON → 400（不是静默成功）", r_bad.status_code == 400,
+          f"HTTP {r_bad.status_code}, {r_bad.text[:100]}")
+    r_bad2 = client.put(ai, headers=H, json={"llm_biz_budgets": {"router": {"max_tokens": 10}}})
+    check("越界 max_tokens → 400 且提示范围",
+          r_bad2.status_code == 400 and "64" in r_bad2.text,
+          f"HTTP {r_bad2.status_code}, {r_bad2.text[:100]}")
+    r_bad3 = client.put(ai, headers=H, json={"llm_biz_budgets": {"router": {"foo": 1}}})
+    check("未知字段 → 400（不静默忽略）",
+          r_bad3.status_code == 400 and "foo" in r_bad3.text,
+          f"HTTP {r_bad3.status_code}, {r_bad3.text[:100]}")
+    check("保存失败不改动已存配置（仍是上一次的合法值）",
+          (client.get(ai, headers=H).json().get("data") or {})
+          .get("biz_budgets", {}).get("router") == {"max_tokens": 256})
+    client.put(ai, headers=H, json={"llm_biz_budgets": {}, "llm_fast_biz_types": ""})
+
+    print("\n[F-07] 通知订阅偏好：能关的真的不发，锁定的关不掉")
+    # 只断言「接口回了 200」是不够的：偏好存进去了却没用上，正是这类功能
+    # 最典型的假完成。所以每条开关都真发一次通知，数 Notification 表。
+    from app.services import notification as notify_svc
+
+    def _sent_count(uid):
+        db = SessionLocal()
+        try:
+            return db.query(Notification).filter(Notification.user_id == uid).count()
+        finally:
+            db.close()
+
+    def _emit(uid, **kw):
+        """按给定参数发一条通知，返回是否真的落库。"""
+        db = SessionLocal()
+        try:
+            row = notify_svc.notify(db, uid, **kw)
+            db.commit()
+            return row is not None
+        finally:
+            db.close()
+
+    np_url = api + "/system/notification-prefs"
+    r_pref = client.get(np_url, headers=H)
+    d_pref = r_pref.json().get("data") or {}
+    prefs0 = d_pref.get("prefs") or {}
+    check("默认全开（升级无需回填：没有记录也返回 6 个 True）",
+          r_pref.status_code == 200 and len(d_pref.get("categories") or []) == 6
+          and len(prefs0) == 6 and all(v is True for v in prefs0.values()),
+          f"HTTP {r_pref.status_code}, {prefs0}")
+    check("安全提醒被标为锁定（前端据此置灰）",
+          (d_pref.get("locked") or []) == ["security"], str(d_pref.get("locked")))
+
+    r_off = client.put(np_url, headers=H, json={"prefs": {"grade": False}})
+    prefs1 = (r_off.json().get("data") or {}).get("prefs") or {}
+    check("关闭「成绩」只影响该类，其余保持开启（部分更新）",
+          r_off.status_code == 200 and prefs1.get("grade") is False
+          and prefs1.get("task") is True and prefs1.get("review") is True,
+          str(prefs1))
+
+    base = _sent_count(ctx["teacher_id"])
+    sent_grade = _emit(ctx["teacher_id"], title="成绩已发布", type="system",
+                       biz_type="grading", category=notify_svc.CATEGORY_GRADE)
+    check("关闭后真的不发该类通知（不是只存了个开关）",
+          sent_grade is False and _sent_count(ctx["teacher_id"]) == base,
+          f"sent={sent_grade}, 条数 {base} -> {_sent_count(ctx['teacher_id'])}")
+    sent_task = _emit(ctx["teacher_id"], title="新作业发布", type="exam",
+                      biz_type="task", category=notify_svc.CATEGORY_TASK)
+    check("未关闭的类别照常发送", sent_task is True)
+
+    r_lock = client.put(np_url, headers=H, json={"prefs": {"security": False}})
+    prefs2 = (r_lock.json().get("data") or {}).get("prefs") or {}
+    check("安全提醒提交关闭被忽略（仍是 True，且不报错）",
+          r_lock.status_code == 200 and prefs2.get("security") is True,
+          f"HTTP {r_lock.status_code}, {prefs2}")
+    sent_sec = _emit(ctx["teacher_id"], title="异常登录提醒", type="system",
+                     biz_type="login_abnormal", category=notify_svc.CATEGORY_SECURITY)
+    check("安全提醒永远发送（能被静默关掉的告警等于没有告警）", sent_sec is True)
+
+    r_unknown = client.put(np_url, headers=H, json={"prefs": {"securty": False}})
+    check("未知类别 → 400（拼错不该静默当没关）",
+          r_unknown.status_code == 400 and "securty" in r_unknown.text,
+          f"HTTP {r_unknown.status_code}, {r_unknown.text[:80]}")
+
+    r_other = client.get(np_url, headers={"Authorization": f"Bearer {create_access_token(ctx['stu_id'], role='student')}"})
+    check("别的用户不受影响（偏好按 user_id 隔离）",
+          all(v is True for v in ((r_other.json().get("data") or {}).get("prefs") or {}).values()),
+          str(((r_other.json().get("data") or {}).get("prefs") or {})))
+
+    client.put(np_url, headers=H, json={"prefs": {"grade": True}})
+    sent_back = _emit(ctx["teacher_id"], title="成绩已发布", type="system",
+                      biz_type="grading", category=notify_svc.CATEGORY_GRADE)
+    check("重新打开后恢复发送（可逆）", sent_back is True)
 
     print()
     if FAILED:

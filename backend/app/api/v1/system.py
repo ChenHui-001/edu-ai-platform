@@ -2,7 +2,7 @@
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.models import (
     LessonPlan, Notification, Paper, Permission, Question, Role, RolePermission,
     Submission, SysConfig, Task, TeachingAssignment, User, UserRole,
 )
+from app.services import notification as notify_svc
 from app.utils.common import PageParams, dictify, now_local, ok
 
 router = APIRouter(prefix="/system", tags=["系统管理"])
@@ -519,6 +520,50 @@ def read_all(db: Session = Depends(get_db), user: User = Depends(get_current_use
     return ok(message="全部已读")
 
 
+# ---------------------------------------------------------------- 通知订阅偏好（F-07）
+class NotifyPrefsIn(BaseModel):
+    """通知订阅偏好。`prefs` 是 `{category: bool}` 的**部分**更新表。
+
+    未出现的类别保持原值；未知类别**直接 400** 而不是静默忽略 —— 前端把
+    `security` 打成 `securty` 时静默忽略，用户会以为"关掉了"，实际一条没少发。
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    prefs: Dict[str, bool] = Field(default_factory=dict)
+
+
+def _prefs_payload(db: Session, user_id: int) -> Dict[str, Any]:
+    return {
+        "prefs": notify_svc.load_prefs(db, user_id),
+        "categories": notify_svc.describe_categories(),
+        "locked": sorted(notify_svc.LOCKED_KEYS),
+    }
+
+
+@router.get("/notification-prefs", summary="我的通知订阅偏好")
+def get_notification_prefs(
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    return ok(_prefs_payload(db, user.id))
+
+
+@router.put("/notification-prefs", summary="保存通知订阅偏好")
+def save_notification_prefs(
+    body: NotifyPrefsIn, db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    unknown = [k for k in (body.prefs or {}) if k not in notify_svc.CATEGORY_KEYS]
+    if unknown:
+        raise BusinessException(
+            "未知的通知类别：" + "、".join(unknown)
+            + "；可用类别：" + "、".join(notify_svc.CATEGORY_KEYS)
+        )
+    # 锁定类别提交 false 会被忽略（不报错）：前端把开关置灰后仍可能带上原值，
+    # 为此返回 400 会让"整页保存"因一个不可改的字段而失败。
+    notify_svc.save_prefs(db, user.id, body.prefs or {})
+    return ok(_prefs_payload(db, user.id), message="已保存")
+
+
 # ---------------------------------------------------------------- 配置
 def _mask_dsn(url: str) -> str:
     """数据库连接串脱敏：保留协议/账号/主机/库名，只抹掉密码。
@@ -707,6 +752,16 @@ class AiConfigIn(BaseModel):
     llm_temperature: Optional[float] = None
     llm_max_tokens: Optional[int] = None
     llm_timeout: Optional[int] = None
+    # 场景路由（P1-12）。**此前没有声明**，而 Pydantic 默认 `extra="ignore"`
+    # 会把它们静默丢掉 —— 也就是说这两个多版本里，前端/脚本把
+    # `llm_fast_biz_types` 发过来是白发的，只能直接改数据库才生效。
+    # 「配置项存在、UI 有说明、保存却不生效」是最难查的一类缺口。
+    llm_model_fast: Optional[str] = None
+    llm_base_url_fast: Optional[str] = None
+    llm_fast_biz_types: Optional[str] = None
+    llm_fast_reasoning_effort: Optional[str] = None
+    # F-06：允许发对象（前端按表格编辑后直接给 dict）或 JSON 串（脚本）。
+    llm_biz_budgets: Optional[Any] = None
 
 
 @router.put("/ai-config", summary="保存 AI 大模型配置")

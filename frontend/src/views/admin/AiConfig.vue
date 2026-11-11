@@ -137,6 +137,104 @@
       </el-result>
     </el-card>
 
+    <!-- 场景路由：题目类走独立「快场景」模型 -->
+    <el-card shadow="never" class="mt16">
+      <template #header>
+        <div class="card-header">
+          <b>场景路由</b>
+          <el-tag size="small" type="info">题目类任务用独立模型 / 低推理档</el-tag>
+        </div>
+      </template>
+      <el-form label-width="150px" style="max-width: 720px">
+        <el-form-item label="快场景业务类型">
+          <el-select v-model="fastBizTypes" multiple filterable allow-create
+                     default-first-option style="width: 100%"
+                     placeholder="留空 = 关闭路由，全部走上面的全局模型">
+            <el-option v-for="t in bizTypes" :key="t" :label="bizLabel(t)" :value="t" />
+          </el-select>
+          <div class="form-tip">
+            只有列出的业务类型走下面这份独立配置；全部清空即恢复默认（生产回滚开关）。
+          </div>
+        </el-form-item>
+        <el-form-item label="快场景模型">
+          <el-input v-model="form.llm_model_fast" placeholder="留空 = 复用主模型" clearable />
+        </el-form-item>
+        <el-form-item label="快场景 API 地址">
+          <el-input v-model="form.llm_base_url_fast"
+                    placeholder="留空 = 复用主 API 地址；跨厂商时才需要填" clearable />
+        </el-form-item>
+        <el-form-item label="快场景推理档">
+          <el-select v-model="form.llm_fast_reasoning_effort" clearable
+                     placeholder="留空 = 不传该参数（兼容不认识的网关）" style="width: 100%">
+            <el-option label="low（推荐：省推理 token，正文更不容易被挤空）" value="low" />
+            <el-option label="medium" value="medium" />
+            <el-option label="high" value="high" />
+            <el-option label="minimal" value="minimal" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <!-- 按业务类型细化预算 -->
+    <el-card shadow="never" class="mt16">
+      <template #header>
+        <div class="card-header">
+          <b>按业务类型细化预算</b>
+          <el-button size="small" :icon="Plus" @click="addBudgetRow">新增一行</el-button>
+        </div>
+      </template>
+      <el-alert type="info" :closable="false" class="mb16"
+                title="留空的字段表示沿用上面的全局配置；配了才生效，全部删掉即关闭该功能。" />
+      <el-table :data="budgetRows" border size="small">
+        <template #empty>
+          <TableEmpty text="尚未配置，所有业务走全局预算" />
+        </template>
+        <el-table-column label="业务类型" width="200">
+          <template #default="{ row }">
+            <el-select v-model="row.biz_type" size="small" filterable allow-create
+                       default-first-option placeholder="选择或输入">
+              <el-option v-for="t in bizTypes" :key="t" :label="bizLabel(t)" :value="t" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="温度" width="150">
+          <template #default="{ row }">
+            <el-input-number v-model="row.temperature" :min="0" :max="2" :step="0.1"
+                             size="small" controls-position="right" placeholder="沿用" />
+          </template>
+        </el-table-column>
+        <el-table-column label="最大输出 Token" width="180">
+          <template #default="{ row }">
+            <el-input-number v-model="row.max_tokens" :min="64"
+                             :max="maxTokensCap || 32768" :step="256"
+                             size="small" controls-position="right" placeholder="沿用" />
+          </template>
+        </el-table-column>
+        <el-table-column label="推理档" width="200">
+          <template #default="{ row }">
+            <el-select v-model="row.reasoning_effort" size="small" clearable
+                       placeholder="沿用">
+              <el-option label="沿用（场景默认）" :value="null" />
+              <el-option label="low" value="low" />
+              <el-option label="medium" value="medium" />
+              <el-option label="high" value="high" />
+              <el-option label="minimal" value="minimal" />
+              <el-option label="显式不传（覆盖场景默认）" value="" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" align="center">
+          <template #default="{ $index }">
+            <el-button link type="danger" @click="removeBudgetRow($index)">移除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="form-tip" style="margin-left: 0; margin-top: 8px;">
+        典型用法：出题 <code>question_generate</code> 低温度 + 大预算；
+        路由 <code>router</code> 只给几百 token；答疑 <code>tutor</code> 温度略高。
+      </div>
+    </el-card>
+
     <!-- 提供商说明 -->
     <el-card shadow="never" class="mt16">
       <template #header><b>提供商说明</b></template>
@@ -157,7 +255,7 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { Refresh, Connection, Check, Cpu } from '@element-plus/icons-vue'
+import { Refresh, Connection, Check, Cpu, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import request from '@/api/request'
 import { confirmAction } from '@/utils/confirm'
@@ -174,6 +272,11 @@ const testResult = ref(null)
 const apiKeyConfigured = ref(null)
 // 勾选后保存提交 llm_api_key:''（显式清除）；不勾选且未输入则不提交该字段
 const clearKey = ref(false)
+// 场景路由的业务类型是「多选 + 自由输入」，后端存逗号串，这里用数组编辑
+const fastBizTypes = ref([])
+// 按业务类型细化预算（F-06）：后端存 JSON 对象，这里用行表格编辑
+const budgetRows = ref([])
+const bizTypes = ref([])
 
 const form = ref({
   llm_enabled: true,
@@ -183,7 +286,10 @@ const form = ref({
   llm_model: '',
   llm_temperature: 0.7,
   llm_max_tokens: 4096,
-  llm_timeout: 60
+  llm_timeout: 60,
+  llm_model_fast: '',
+  llm_base_url_fast: '',
+  llm_fast_reasoning_effort: ''
 })
 
 // Key 是否已配置：优先用后端 key_configured，旧后端则用掩码 Key 判断
@@ -197,6 +303,53 @@ const keyConfigured = computed(() => {
 })
 
 function metaOf(key) { return meta.value?.[key] || {} }
+
+// biz_type 的中文说明：只影响下拉里的显示，未列出的值照样可以手填
+const BIZ_LABELS = {
+  question_generate: '出题 / 组卷补题（question_generate）',
+  question_variants: '变式题（question_variants）',
+  grading: '智能批改（grading）',
+  paper_parse: '试卷解析（paper_parse）',
+  lesson_head: '教案·目标（lesson_head）',
+  lesson_body: '教案·正文（lesson_body）',
+  study_plan: '学习规划（study_plan）',
+  tutor: '答疑助教（tutor）',
+  router: '意图路由（router）',
+  note: '笔记整理（note）'
+}
+function bizLabel(t) { return BIZ_LABELS[t] || t }
+
+function addBudgetRow() {
+  budgetRows.value.push({
+    biz_type: '',
+    temperature: null,
+    max_tokens: null,
+    reasoning_effort: null
+  })
+}
+function removeBudgetRow(index) { budgetRows.value.splice(index, 1) }
+
+/** 行表格 → 后端要的 `{biz_type: {字段}}`；留空字段直接不出现（= 沿用全局）。 */
+function buildBudgets() {
+  const out = {}
+  for (const row of budgetRows.value) {
+    const biz = String(row.biz_type || '').trim()
+    if (!biz) continue
+    const spec = {}
+    if (row.temperature !== null && row.temperature !== undefined && row.temperature !== '') {
+      spec.temperature = Number(row.temperature)
+    }
+    if (row.max_tokens !== null && row.max_tokens !== undefined && row.max_tokens !== '') {
+      spec.max_tokens = Number(row.max_tokens)
+    }
+    // '' 是**有意义**的取值（显式不传推理档），不能用真值判断丢掉
+    if (row.reasoning_effort !== null && row.reasoning_effort !== undefined) {
+      spec.reasoning_effort = String(row.reasoning_effort)
+    }
+    if (Object.keys(spec).length) out[biz] = spec
+  }
+  return out
+}
 
 const providerSourceLabel = computed(() =>
   metaOf('llm_provider').has_db_value ? '数据库配置' : '环境变量/默认值')
@@ -273,8 +426,21 @@ async function load() {
       llm_model: c.LLM_MODEL || '',
       llm_temperature: c.LLM_TEMPERATURE ?? 0.7,
       llm_max_tokens: c.LLM_MAX_TOKENS ?? 4096,
-      llm_timeout: c.LLM_TIMEOUT ?? 60
+      llm_timeout: c.LLM_TIMEOUT ?? 60,
+      llm_model_fast: c.LLM_MODEL_FAST || '',
+      llm_base_url_fast: c.LLM_BASE_URL_FAST || '',
+      llm_fast_reasoning_effort: c.LLM_FAST_REASONING_EFFORT || ''
     }
+    fastBizTypes.value = String(c.LLM_FAST_BIZ_TYPES || '')
+      .split(',').map(s => s.trim()).filter(Boolean)
+    // 预算覆盖：后端已解析好（坏数据返回空表），前端不自己 JSON.parse
+    budgetRows.value = Object.entries(data.biz_budgets || {}).map(([biz, spec]) => ({
+      biz_type: biz,
+      temperature: spec.temperature ?? null,
+      max_tokens: spec.max_tokens ?? null,
+      reasoning_effort: spec.reasoning_effort ?? null
+    }))
+    bizTypes.value = data.biz_types || []
     clearKey.value = false
   } finally {
     loading.value = false
@@ -304,11 +470,31 @@ async function save() {
   }
 
   // 组装 payload：未输入且未勾选清除 → 不带 llm_api_key（避免空值误清）
+  const budgets = buildBudgets()
+  // 同一 biz_type 配两行时，后一行会静默覆盖前一行 —— 与其让管理员
+  // 对着"配了没生效"排查，不如保存前直接拦下。
+  const seen = new Set()
+  for (const row of budgetRows.value) {
+    const biz = String(row.biz_type || '').trim()
+    if (!biz) continue
+    if (seen.has(biz)) {
+      return ElMessage.warning(`业务类型 ${biz} 配了多行，请合并后再保存`)
+    }
+    seen.add(biz)
+  }
+  if (form.value.llm_max_tokens && maxTokensCap.value
+      && Number(form.value.llm_max_tokens) > Number(maxTokensCap.value)) {
+    // 后端会收敛，但这里先说清楚，避免"保存了却不是这个数"
+    ElMessage.warning(`最大输出超过后端上限 ${maxTokensCap.value}，保存后会被收敛`)
+  }
+
   const payload = { ...form.value }
   delete payload.llm_api_key
   const newKey = form.value.llm_api_key.trim()
   if (newKey) payload.llm_api_key = newKey
   else if (clearKey.value) payload.llm_api_key = ''
+  payload.llm_fast_biz_types = fastBizTypes.value.join(',')
+  payload.llm_biz_budgets = budgets
 
   saving.value = true
   try {

@@ -13,9 +13,9 @@ from app.core.security import (
 )
 from app.core.logger import get_logger
 from app.models import (
-    LoginLog, Notification, Permission, Registration, Role, User, UserRole,
-    UserStatus,
+    LoginLog, Permission, Registration, Role, User, UserRole, UserStatus,
 )
+from app.services import notification as notify_svc
 from app.utils.common import now_local
 
 logger = get_logger("auth")
@@ -85,15 +85,14 @@ def register_user(
         .where(Role.code == "sys_admin", User.status == UserStatus.ACTIVE.value)
     ).all()
     for aid in admin_ids:
-        db.add(
-            Notification(
-                user_id=aid,
-                title="新的注册申请待审批",
-                content=f"用户 {real_name}（{username}）提交了{'教师' if identity == 'teacher' else '学生'}注册申请",
-                type="audit",
-                biz_type="registration",
-                biz_id=user.id,
-            )
+        notify_svc.notify(
+            db, aid,
+            title="新的注册申请待审批",
+            content=f"用户 {real_name}（{username}）提交了{'教师' if identity == 'teacher' else '学生'}注册申请",
+            type="audit",
+            biz_type="registration",
+            biz_id=user.id,
+            category=notify_svc.CATEGORY_AUDIT,
         )
     db.commit()
     db.refresh(user)
@@ -121,19 +120,18 @@ def audit_registration(
     reg.audit_reason = reason
     user.status = reg.status
 
-    db.add(
-        Notification(
-            user_id=user.id,
-            title="注册审批结果通知",
-            content=(
-                "你的注册申请已通过审批，欢迎使用系统。"
-                if approved
-                else f"你的注册申请未通过审核。原因：{reason or '资料不符合要求'}"
-            ),
-            type="audit",
-            biz_type="registration",
-            biz_id=reg.id,
-        )
+    notify_svc.notify(
+        db, user.id,
+        title="注册审批结果通知",
+        content=(
+            "你的注册申请已通过审批，欢迎使用系统。"
+            if approved
+            else f"你的注册申请未通过审核。原因：{reason or '资料不符合要求'}"
+        ),
+        type="audit",
+        biz_type="registration",
+        biz_id=reg.id,
+        category=notify_svc.CATEGORY_AUDIT,
     )
     db.commit()
     db.refresh(user)
@@ -228,19 +226,19 @@ def authenticate(
         # 必须用赋值前取到的 prev_ip：user.last_login_ip 在上面 8 行处已经被
         # 写成本次 IP，再读它打出来的永远是「X -> X」，唯一的溯源线索作废。
         logger.warning(f"用户 {username} 异地登录：{prev_ip} -> {ip}")
-        db.add(
-            Notification(
-                user_id=user.id,
-                title="异常登录提醒",
-                content=(
-                    f"检测到您的账号在新 IP（{ip}，上次为 {prev_ip}）登录，"
-                    "如非本人操作请立即修改密码。"
-                ),
-                type="system",
-            )
+        # security 类别**锁定不可关**：能被静默关掉的登录告警等于没有告警。
+        notify_svc.notify(
+            db, user.id,
+            title="异常登录提醒",
+            content=(
+                f"检测到您的账号在新 IP（{ip}，上次为 {prev_ip}）登录，"
+                "如非本人操作请立即修改密码。"
+            ),
+            type="system",
+            biz_type="login_abnormal",
+            category=notify_svc.CATEGORY_SECURITY,
         )
         db.commit()
-
     token = create_access_token(user.id, role=",".join(user.role_codes), extra={"name": user.real_name})
     return user, token, create_refresh_token(user.id)
 

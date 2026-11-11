@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.models import AgentCallLog
-from app.services import llm_breaker
+from app.services import biz_budget, llm_breaker
 from app.utils.common import now_local
 
 logger = get_logger("llm")
@@ -206,6 +206,30 @@ def _apply_cap(key: str, value: Any) -> Any:
     return value
 
 
+# ------------------------------------------------ 按 biz_type 细化预算（F-06）
+def resolve_biz_budget(biz_type: Optional[str]) -> Dict[str, Any]:
+    """取该 biz_type 的预算覆盖（`{temperature/max_tokens/reasoning_effort}`）。
+
+    没配 / 配置写坏了 / 读库失败一律返回 `{}`，即「走全局配置」——
+    一个格式错误的覆盖表绝不能把整站 AI 变成不可用。写坏时记 warning，
+    管理员在配置页保存时就会被拦下（保存路径会校验），所以这里只兜底。
+
+    缓存沿用 `_get_db_value` 的 2s TTL：组卷高峰期同一批题会重复问同一件事。
+    """
+    if not biz_type:
+        return {}
+    raw = _get_db_value(biz_budget.CONFIG_KEY, "string", "")
+    if not str(raw or "").strip():
+        return {}
+    try:
+        table = biz_budget.normalize(raw)
+    except biz_budget.BizBudgetError as exc:
+        logger.warning(f"{biz_budget.CONFIG_KEY} 配置非法，本次按全局配置处理: {exc}")
+        return {}
+    return table.get(str(biz_type).strip(), {})
+
+
+
 class LLMClient:
     """OpenAI 兼容协议客户端，懒加载 langchain-openai。
 
@@ -333,8 +357,12 @@ class LLMClient:
             logger.info("LLM 调用成功，限流冷却与退避计数已清零")
             llm_breaker.clear_rate_limit_async()
 
-    def get_client(self, scenario: str = SCENARIO_DEFAULT):
+    def get_client(self, scenario: str = SCENARIO_DEFAULT,
+                   budget: Optional[Dict[str, Any]] = None):
         """按场景获取 LangChain ChatOpenAI 实例（失败返回 None）。
+
+        `budget` 是该 biz_type 的预算覆盖（见 `resolve_biz_budget`）：三个可选项
+        `temperature` / `max_tokens` / `reasoning_effort`，缺省即用全局配置。
 
         检查顺序很重要：**熔断/冷却判断必须在返回缓存客户端之前**。
         反过来的话，进程里已有缓存客户端时永远查不到熔断标记，
@@ -357,7 +385,12 @@ class LLMClient:
                     f"（连续第 {state['streak']} 次退避，期间使用规则引擎）")
                 logger.warning(self._fallback_reason)
                 return None
-        cached = self._clients.get(scenario)
+        # 缓存键必须带上预算指纹：同一个场景下，出题（t=0.3/mt=6144）与
+        # 路由（mt=256）是不同的客户端。只按 scenario 缓存会让后配的那个
+        # biz_type 静默用上前一个的参数 —— 表现为「配了没生效」，实测很难查。
+        budget = budget or {}
+        cache_key = (scenario, tuple(sorted(budget.items())))
+        cached = self._clients.get(cache_key)
         if cached is not None:
             return cached
         if not is_available():
@@ -371,8 +404,16 @@ class LLMClient:
             api_key = _get_db_value("llm_api_key", "string", settings.LLM_API_KEY)
             base_url = _get_db_value("llm_base_url", "string", settings.LLM_BASE_URL) or cfg["base_url"]
             model = _get_db_value("llm_model", "string", settings.LLM_MODEL) or cfg["default_model"]
-            temperature = _get_db_value("llm_temperature", "float", settings.LLM_TEMPERATURE)
-            max_tokens = _get_db_value("llm_max_tokens", "int", settings.LLM_MAX_TOKENS)
+            # 预算覆盖优先；覆盖值同样要过代码级硬顶（`_CAPS`）——
+            # 否则「按业务类型放宽」就成了绕过成本上限的后门。
+            if biz_budget.F_TEMPERATURE in budget:
+                temperature = budget[biz_budget.F_TEMPERATURE]
+            else:
+                temperature = _get_db_value("llm_temperature", "float", settings.LLM_TEMPERATURE)
+            if biz_budget.F_MAX_TOKENS in budget:
+                max_tokens = _apply_cap("llm_max_tokens", budget[biz_budget.F_MAX_TOKENS])
+            else:
+                max_tokens = _get_db_value("llm_max_tokens", "int", settings.LLM_MAX_TOKENS)
             timeout = _get_db_value("llm_timeout", "int", settings.LLM_TIMEOUT)
 
             # 快场景覆盖：可独立指定模型 / API 地址（留空则复用主配置），
@@ -391,6 +432,10 @@ class LLMClient:
                     model = str(fast_model).strip()
                 if str(fast_base or "").strip():
                     base_url = str(fast_base).strip()
+            # biz_type 级的 effort 比场景默认更细，优先；
+            # 允许显式写 ""（抵消快场景的默认档，给不认该字段的网关用）。
+            if biz_budget.F_EFFORT in budget:
+                effort = str(budget[biz_budget.F_EFFORT] or "").strip()
 
             kwargs: Dict[str, Any] = {}
             if effort:
@@ -411,10 +456,12 @@ class LLMClient:
                 max_retries=1,
                 **kwargs,
             )
-            self._clients[scenario] = client
+            self._clients[cache_key] = client
             logger.info(
                 f"LLM 客户端就绪: {scenario} / {provider} / {model}"
-                + (f" / reasoning_effort={effort}" if effort else ""))
+                f" / temperature={temperature} / max_tokens={max_tokens}"
+                + (f" / reasoning_effort={effort}" if effort else "")
+                + (f" / biz_budget={budget}" if budget else ""))
             return client
         except ImportError as exc:
             self._fallback_reason = f"langchain-openai 未安装: {exc}"
@@ -450,7 +497,9 @@ class LLMClient:
     ) -> Dict[str, Any]:
         """调用大模型，返回 {success, content, is_fallback, reason, usage}。"""
         scenario = resolve_scenario(biz_type)
-        client = self.get_client(scenario)
+        # 预算覆盖按 biz_type 取（F-06）：没配就是 {}，等于全局配置。
+        budget = resolve_biz_budget(biz_type)
+        client = self.get_client(scenario, budget)
         if client is None:
             # 客户端不可用（未配置 key / 初始化失败）时同样要写日志，
             # 否则「AI 调用日志」页面在降级期间完全空白，
@@ -497,8 +546,10 @@ class LLMClient:
                 }
 
         # 路由可观测：模型名在「客户端就绪」日志里，这里记录每次调用
-        # 实际落到哪个场景，否则运维只能靠猜「我的配置到底生效没有」。
-        logger.info(f"LLM 路由: scenario={scenario} biz={biz_type or '-'} agent={agent_name}")
+        # 实际落到哪个场景、用了哪些覆盖参数，否则运维只能靠猜
+        # 「我的配置到底生效没有」。
+        logger.info(f"LLM 路由: scenario={scenario} biz={biz_type or '-'} "
+                    f"budget={budget or '-'} agent={agent_name}")
         start = time.perf_counter()
         try:
             resp = client.invoke(
@@ -572,13 +623,18 @@ class LLMClient:
         *,
         user_id: Optional[int] = None,
         agent_name: str = "llm_stream",
+        biz_type: Optional[str] = None,
     ):
         """流式调用大模型，逐 token yield 文本片段。
 
         与 chat() 的差异：不返回结构化结果，由调用方拼接；同样写调用日志
         （总耗时与 token 用量在结束时补记），保证「AI 调用日志」页面完整。
+
+        `biz_type` 与 chat() 同义：决定场景路由与预算覆盖。此前没有这个参数，
+        答疑流式（`tutor`）就永远用全局预算，管理员给 tutor 配的覆盖会静默失效。
         """
-        client = self.get_client()
+        client = self.get_client(resolve_scenario(biz_type),
+                                 resolve_biz_budget(biz_type))
         if client is None:
             yield {"type": "fallback", "reason": self._fallback_reason or "LLM 不可用"}
             return

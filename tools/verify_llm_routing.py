@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""场景级模型路由（方案 C）回归验证 —— 不触真实大模型、不写库。
+"""场景级模型路由 + 按 biz_type 细化预算回归验证 —— 不触真实大模型、不写库。
 
 覆盖：
   1. biz_type 路由判定（快场景白名单 / 默认场景 / 关闭路由）
@@ -9,9 +9,12 @@
   4. 两个场景各自缓存、互不串味；reset_clients 全清
   5. 熔断短路在双场景缓存下仍然生效（不能绕过）
   6. chat() 确实把 biz_type 解析后的场景传给了 get_client
+  7. 按 biz_type 细化预算（F-06）：覆盖全局 / 缺省回落 / 硬顶收敛 /
+     effort 覆盖与显式关闭 / 缓存键含预算指纹 / 坏配置不炸
 
 用法：python tools/verify_llm_routing.py
 """
+import json
 import os
 import sys
 import types
@@ -40,6 +43,7 @@ except ImportError:
 
 from app.agents import llm as llm_mod  # noqa: E402
 from app.agents.llm import LLMClient, resolve_scenario  # noqa: E402
+from app.services import biz_budget  # noqa: E402
 
 BASE = {
     "llm_provider": "custom",
@@ -50,6 +54,10 @@ BASE = {
     "llm_base_url_fast": "",
     "llm_fast_biz_types": "question_generate,question_variants",
     "llm_fast_reasoning_effort": "low",
+    # 全局预算，用于验证「覆盖优先、缺省回落」
+    "llm_temperature": 0.7,
+    "llm_max_tokens": 4096,
+    "llm_biz_budgets": "",
 }
 
 
@@ -174,12 +182,113 @@ def main():
         # 让 get_client 返回 None 走降级分支：不触真实 invoke，
         # 也不写调用日志（log_agent_call 是异步落库），只验证场景解析。
         with patch.object(c, "get_client",
-                          side_effect=lambda s: (seen.setdefault("s", s), None)[1]), \
+                          side_effect=lambda s, b=None: (seen.setdefault("s", s),
+                                                         seen.setdefault("b", b), None)[2]), \
                 patch.object(llm_mod, "log_agent_call", return_value=None):
             r = c.chat("sys", "user", biz_type="question_generate")
         check("chat(question_generate) 解析为 fast",
               seen.get("s") == llm_mod.SCENARIO_FAST, str(seen))
         check("降级分支仍返回 is_fallback=True", r.get("is_fallback") is True)
+
+    print("\n=== 7. 按 biz_type 细化预算（F-06） ===")
+    budgets = json.dumps({
+        "question_generate": {"temperature": 0.3, "max_tokens": 6144},
+        "router": {"max_tokens": 256},
+    })
+    with Probe({"llm_biz_budgets": budgets}) as p:
+        check("resolve_biz_budget 取到该 biz 的覆盖",
+              llm_mod.resolve_biz_budget("question_generate")
+              == {"temperature": 0.3, "max_tokens": 6144},
+              str(llm_mod.resolve_biz_budget("question_generate")))
+        check("未配置的 biz_type 返回空表（= 走全局）",
+              llm_mod.resolve_biz_budget("lesson_body") == {})
+        check("biz_type 为 None 时返回空表",
+              llm_mod.resolve_biz_budget(None) == {})
+
+        c = LLMClient()
+        c.get_client(resolve_scenario("question_generate"),
+                     llm_mod.resolve_biz_budget("question_generate"))
+        c.get_client(resolve_scenario("router"),
+                     llm_mod.resolve_biz_budget("router"))
+        c.get_client(resolve_scenario("lesson_body"),
+                     llm_mod.resolve_biz_budget("lesson_body"))
+        gen, router, lesson = p.calls[0], p.calls[1], p.calls[2]
+        check("出题用覆盖的温度", gen.get("temperature") == 0.3, str(gen.get("temperature")))
+        check("出题用覆盖的 max_tokens", gen.get("max_tokens") == 6144,
+              str(gen.get("max_tokens")))
+        check("路由只给 256 token（不再按出题预算预留）",
+              router.get("max_tokens") == 256, str(router.get("max_tokens")))
+        check("路由未配温度 → 回落全局 0.7",
+              router.get("temperature") == 0.7, str(router.get("temperature")))
+        check("未配置的 biz_type 完全走全局",
+              lesson.get("temperature") == 0.7 and lesson.get("max_tokens") == 4096,
+              str({k: lesson.get(k) for k in ("temperature", "max_tokens")}))
+
+    # 硬顶：覆盖值不能成为绕过成本上限的后门
+    old_caps = dict(llm_mod._CAPS)
+    llm_mod._CAPS["llm_max_tokens"] = 2048
+    try:
+        with Probe({"llm_biz_budgets": json.dumps(
+                {"question_generate": {"max_tokens": 8192}})}) as p:
+            LLMClient().get_client("fast",
+                                   llm_mod.resolve_biz_budget("question_generate"))
+            check("覆盖的 max_tokens 也被代码级硬顶收敛",
+                  p.calls[0].get("max_tokens") == 2048,
+                  str(p.calls[0].get("max_tokens")))
+    finally:
+        llm_mod._CAPS.clear()
+        llm_mod._CAPS.update(old_caps)
+
+    # effort：biz 覆盖优先于快场景默认；"" 表示显式关闭
+    with Probe({"llm_biz_budgets": json.dumps(
+            {"question_generate": {"reasoning_effort": "high"},
+             "router": {"reasoning_effort": ""}})}) as p:
+        c = LLMClient()
+        c.get_client("fast", llm_mod.resolve_biz_budget("question_generate"))
+        c.get_client("fast", llm_mod.resolve_biz_budget("router"))
+        check("biz 级 effort 覆盖快场景默认档",
+              p.calls[0].get("reasoning_effort") == "high",
+              str(p.calls[0].get("reasoning_effort")))
+        check("effort 显式为空 → 不传该参数（抵消场景默认）",
+              "reasoning_effort" not in p.calls[1]
+              and "model_kwargs" not in p.calls[1],
+              str(p.calls[1].get("reasoning_effort")))
+
+    # 缓存键：同场景不同预算必须各自构造，否则「配了没生效」
+    with Probe({"llm_biz_budgets": budgets}) as p:
+        c = LLMClient()
+        b1 = llm_mod.resolve_biz_budget("question_generate")
+        b2 = llm_mod.resolve_biz_budget("router")
+        c.get_client("fast", b1)
+        c.get_client("fast", b1)
+        c.get_client("fast", b2)
+        check("同预算二次调用复用客户端", len(p.calls) == 2, str(len(p.calls)))
+        c.get_client("fast", b2)
+        check("不同预算各自缓存（不串用上一个的参数）",
+              len(p.calls) == 2, str(len(p.calls)))
+
+    # 坏配置不能让整站 AI 不可用
+    with Probe({"llm_biz_budgets": "{不是 JSON"}) as p:
+        check("非法 JSON → 空表（按全局配置，不抛异常）",
+              llm_mod.resolve_biz_budget("question_generate") == {})
+    with Probe({"llm_biz_budgets": json.dumps({"router": {"max_tokens": "很多"}})}) as p:
+        check("字段类型非法 → 空表（不炸）",
+              llm_mod.resolve_biz_budget("router") == {})
+    with Probe({"llm_biz_budgets": ""}) as p:
+        c = LLMClient()
+        c.get_client("fast", llm_mod.resolve_biz_budget("question_generate"))
+        check("清空配置 → 回到全局预算（可回滚）",
+              p.calls[0].get("max_tokens") == 4096
+              and p.calls[0].get("temperature") == 0.7,
+              str({k: p.calls[0].get(k) for k in ("max_tokens", "temperature")}))
+
+    # 配置页字段名与读取侧 key 必须一致：不一致的后果是「管理员保存成功、
+    # 读取侧永远读到空」，而且两边各自都"看起来正常"，极难排查。
+    from app.services.ai_config_service import _FIELDS
+    check("配置页字段名 == 读取侧 key（llm_biz_budgets）",
+          biz_budget.CONFIG_KEY in _FIELDS
+          and _FIELDS[biz_budget.CONFIG_KEY]["key"] == biz_budget.CONFIG_KEY,
+          biz_budget.CONFIG_KEY)
 
     print("\n" + "=" * 60)
     if FAILED:
@@ -187,7 +296,7 @@ def main():
         for f in FAILED:
             print("  -", f)
         return 1
-    print("全部通过：场景级模型路由按预期工作")
+    print("全部通过：场景级路由与按业务类型预算按预期工作")
     return 0
 
 

@@ -17,6 +17,8 @@ from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (Answer, KnowledgePoint, Question, Submission, Task, User)
 from app.services import grading_service
+from app.services import notification as notify_cat
+from app.services.notification import notify
 from app.utils.common import PageParams, dictify, load_json, now_local, ok
 
 from .learning import learning_router  # noqa: F401  兼容旧导出路径
@@ -303,11 +305,10 @@ def reject_submission(
     sub.is_passed = None
     sub.grade_time = None
     sub.comment = data.get("reason", "答案不合格，请重新提交")
-    db.add(__import__("app.models", fromlist=["Notification"]).Notification(
-        user_id=sub.student_id, title="作业被退回",
-        content=f"《{db.get(Task, sub.task_id).title}》被退回：{sub.comment}",
-        type="system", biz_type="task", biz_id=sub.task_id,
-    ))
+    notify(db, sub.student_id, title="作业被退回",
+           content=f"《{db.get(Task, sub.task_id).title}》被退回：{sub.comment}",
+           type="system", biz_type="task", biz_id=sub.task_id,
+           category=notify_cat.CATEGORY_GRADE)
     db.commit()
     return ok(message="已打回，学生可重新提交")
 
@@ -318,8 +319,6 @@ def publish_score(
     user: User = Depends(require_perm(GRADING_PERM_PUBLISH)),
     scope: DataScope = Depends(get_data_scope),
 ):
-    from app.models import Notification
-
     sub = db.get(Submission, submission_id)
     if not sub:
         raise NotFoundException("作答记录不存在")
@@ -352,11 +351,10 @@ def publish_score(
     if ungraded:
         raise BusinessException(f"还有 {ungraded} 道主观题未批改，无法发布成绩")
     sub.status = "published"
-    db.add(Notification(
-        user_id=sub.student_id, title="成绩已发布",
-        content=f"《{task.title}》成绩：{sub.score} 分，班级排名第 {sub.class_rank or '-'} 名",
-        type="system", biz_type="task", biz_id=sub.task_id,
-    ))
+    notify(db, sub.student_id, title="成绩已发布",
+           content=f"《{task.title}》成绩：{sub.score} 分，班级排名第 {sub.class_rank or '-'} 名",
+           type="system", biz_type="task", biz_id=sub.task_id,
+           category=notify_cat.CATEGORY_GRADE)
     db.commit()
     return ok(message="成绩已发布")
 
@@ -449,8 +447,6 @@ def batch_publish(
     scope: DataScope = Depends(get_data_scope),
 ):
     """批量发布已批改提交的成绩。只处理 fully_graded 且分数非空的记录。"""
-    from app.models import Notification
-
     ids = data.get("submission_ids") or []
     if not ids:
         raise BusinessException("请选择要发布的提交")
@@ -471,11 +467,10 @@ def batch_publish(
             skipped.append({"id": sid, "reason": "已发布"})
             continue
         sub.status = "published"
-        db.add(Notification(
-            user_id=sub.student_id, title="成绩已发布",
-            content=f"《{task.title if task else ''}》成绩：{sub.score} 分",
-            type="system", biz_type="task", biz_id=sub.task_id,
-        ))
+        notify(db, sub.student_id, title="成绩已发布",
+               content=f"《{task.title if task else ''}》成绩：{sub.score} 分",
+               type="system", biz_type="task", biz_id=sub.task_id,
+               category=notify_cat.CATEGORY_GRADE)
         done.append(sid)
     db.commit()
     return ok({"published": done, "skipped": skipped},

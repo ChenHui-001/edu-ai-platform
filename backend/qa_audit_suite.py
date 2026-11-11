@@ -921,5 +921,108 @@ def test_deploy_dotenv_parsing(tmp_path):
     assert "注释" not in "".join(env)
 
 
+# ===================== 通知订阅偏好（F-07） =====================
+def test_notification_category_fallback_maps_known_types():
+    """历史调用点只给 type，没有 category —— 兜底映射错了就会"关不掉/乱关"。"""
+    from app.services import notification as n
+
+    assert n.resolve_category("exam") == n.CATEGORY_TASK
+    assert n.resolve_category("review") == n.CATEGORY_REVIEW
+    assert n.resolve_category("audit") == n.CATEGORY_AUDIT
+    # 无法判断的一律 system：宁可关不掉一条系统通知，也不能误判成安全提醒
+    assert n.resolve_category("whatever") == n.CATEGORY_SYSTEM
+
+
+def test_notification_unknown_explicit_category_degrades_to_system(caplog):
+    """显式传错类别不能静默变成「关不掉的安全提醒」，记 warning 后按 system。"""
+    from app.services import notification as n
+
+    assert n.resolve_category("system", explicit="securty") == n.CATEGORY_SYSTEM
+
+
+def test_notification_effective_fills_default_and_forces_locked():
+    from app.services import notification as n
+
+    eff = n.effective({"grade": False, "security": False})
+    assert eff["grade"] is False
+    # 没配过的类别默认开启（opt-out，升级无需回填）
+    assert eff["task"] is True and eff["review"] is True
+    # 安全提醒即使被写成 False 也强制开启
+    assert eff["security"] is True
+
+
+def test_notification_parse_ignores_garbage():
+    """prefs 列是自由文本：坏 JSON / 非 dict / 未知键 / 非 bool 值都不能炸。"""
+    from app.services import notification as n
+
+    assert n._parse("{不是 JSON") == {}
+    assert n._parse("[1,2]") == {}
+    assert n._parse('{"unknown": false, "grade": "no"}') == {}
+    assert n._parse('{"grade": false}') == {"grade": False}
+    assert n._parse(None) == {}
+
+
+def test_notification_save_ignores_locked_and_merges(db_session):
+    """锁定类别提交 false 应被忽略且**不落库**；其余类别只改传进来的那些。"""
+    from app.models import User
+    from app.services import notification as n
+
+    u = User(username="np_user", password="x", real_name="偏好", status="active",
+             identity="teacher")
+    db_session.add(u)
+    db_session.commit()
+
+    n.save_prefs(db_session, u.id, {"grade": False, "security": False})
+    prefs = n.load_prefs(db_session, u.id)
+    assert prefs["grade"] is False
+    assert prefs["security"] is True
+
+    # 第二次只传 review：不能把 grade=False 冲掉
+    n.save_prefs(db_session, u.id, {"review": False})
+    prefs = n.load_prefs(db_session, u.id)
+    assert prefs["grade"] is False and prefs["review"] is False
+
+
+def test_notify_respects_prefs_and_keeps_transaction_open(db_session):
+    """关闭的类别不落库；`notify` 不自己 commit（否则业务回滚会留孤儿通知）。"""
+    from app.models import Notification, User
+    from app.services import notification as n
+
+    u = User(username="np_user2", password="x", real_name="偏好2", status="active",
+             identity="teacher")
+    db_session.add(u)
+    db_session.commit()
+    n.save_prefs(db_session, u.id, {"grade": False})
+
+    assert n.notify(db_session, u.id, title="成绩已发布",
+                    category=n.CATEGORY_GRADE) is None
+    row = n.notify(db_session, u.id, title="新作业", type="exam",
+                   category=n.CATEGORY_TASK)
+    assert row is not None
+    # 此刻它只是 session 里的 pending 对象 —— 证明 `notify` 没有自己 commit
+    # （注意别用 query().count() 判断：会触发 autoflush，把 pending 刷进事务）
+    assert row in db_session.new
+    db_session.commit()
+    assert db_session.query(Notification).count() == 1
+
+
+def test_notify_many_counts_only_sent(db_session):
+    """返回值是**实际发出**条数：`已通知 N 名学生` 直接用它，不能拿人数顶替。"""
+    from app.models import User
+    from app.services import notification as n
+
+    users = [User(username=f"np_m{i}", password="x", real_name=f"批量{i}",
+                  status="active", identity="teacher") for i in range(3)]
+    db_session.add_all(users)
+    db_session.commit()
+    for u in users[:1]:
+        n.save_prefs(db_session, u.id, {"task": False})
+
+    sent = n.notify_many(db_session, [u.id for u in users], title="新作业",
+                         type="exam", category=n.CATEGORY_TASK)
+    assert sent == 2
+    db_session.commit()
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

@@ -15,10 +15,12 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Answer, Class, Grade, Notification, Paper, PaperStatus, Submission, Task,
+    Answer, Class, Grade, Paper, PaperStatus, Submission, Task,
     TaskAssignment, TaskStatus, TaskType, User, UserStatus,
 )
 from app.services import grading_service
+from app.services import notification as notify_cat
+from app.services.notification import notify_many
 from app.utils.common import PageParams, dictify, now_local, ok
 from app.utils.options import normalize_options
 
@@ -578,13 +580,12 @@ def create_task(
         notify_ids.update(
             db.scalars(select(User.id).where(User.class_id == cid, User.status == "active")).all()
         )
-    for sid in notify_ids:
-        db.add(Notification(
-            user_id=sid,
-            title=f"新的{TYPE_LABEL.get(task_type, '任务')}发布",
-            content=f"{task.title}，截止时间：{end_at.strftime('%Y-%m-%d %H:%M')}",
-            type="exam", biz_type="task", biz_id=task.id,
-        ))
+    sent = notify_many(
+        db, notify_ids,
+        title=f"新的{TYPE_LABEL.get(task_type, '任务')}发布",
+        content=f"{task.title}，截止时间：{end_at.strftime('%Y-%m-%d %H:%M')}",
+        type="exam", biz_type="task", biz_id=task.id,
+        category=notify_cat.CATEGORY_TASK)
     db.execute(
         TaskAssignment.__table__.update()
         .where(TaskAssignment.task_id == task.id)
@@ -593,7 +594,7 @@ def create_task(
     paper.use_count += 1
     db.commit()
     db.refresh(task)
-    return ok(dictify(task), message=f"{TYPE_LABEL.get(task_type)}发布成功，已通知 {len(notify_ids)} 名学生")
+    return ok(dictify(task), message=f"{TYPE_LABEL.get(task_type)}发布成功，已通知 {sent} 名学生")
 
 
 @router.get("/tasks/{task_id}", summary="任务详情")

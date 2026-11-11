@@ -279,6 +279,29 @@ class Notification(Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
 
+class NotifyPref(Base):
+    """用户的通知订阅偏好（F-07）。
+
+    `prefs` 存 JSON：`{"task": false, "review": true}`，**缺省的类别视为开启**。
+    因此「从来没打开过这个页面」的用户行为与改动前完全一致，不需要回填数据。
+
+    为什么不塞进 `sys_user`：这张表是登录/鉴权热路径，几乎每个请求都读整行，
+    为几个开关加一列会让所有查询多带一个 Text 列。独立表只有通知写入时读一次。
+
+    为什么不放 `sys_config`：那里是**全局**键值，按用户存就成了
+    `notify_pref_<uid>` 这类前缀键，既无法用 SQL 聚合，也没有外键级联。
+    """
+
+    __tablename__ = "sys_notify_pref"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("sys_user.id", ondelete="CASCADE"), primary_key=True)
+    prefs: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, comment="JSON：{category: bool}，缺省=开启")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=now_local, onupdate=now_local)
+
+
 class AgentRate(Base):
     """AI 接口限流计数（按用户 + 分钟窗口，DB 共享以支持多实例）。
 

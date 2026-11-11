@@ -34,6 +34,9 @@ export const systemApi = {
   notifications: (params) => request.get('/system/notifications', { params }),
   readNotification: (id) => request.put(`/system/notifications/${id}/read`),
   readAllNotifications: () => request.put('/system/notifications/read-all'),
+  // 通知订阅偏好（F-07）：GET 回 {prefs, categories, locked}
+  notificationPrefs: () => request.get('/system/notification-prefs'),
+  saveNotificationPrefs: (prefs) => request.put('/system/notification-prefs', { prefs }),
   config: () => request.get('/system/config'),
   // 版本号/构建号/最后更新时间（公开接口，登录页也可用）
   versionInfo: () => request.get('/system/version')

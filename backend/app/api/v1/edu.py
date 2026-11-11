@@ -19,7 +19,7 @@ from app.api.deps import (
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Class, ClassRequest, Grade, KnowledgePoint, Notification,
+    Class, ClassRequest, Grade, KnowledgePoint,
     Subject, TaskAssignment, TeachingAssignment, User,
 )
 from app.schemas.legacy_bodies import (
@@ -36,6 +36,8 @@ from app.schemas.legacy_bodies import (
     UpdateGradeIn,
     UpdateSubjectIn,
 )
+from app.services import notification as notify_cat
+from app.services.notification import notify
 from app.utils.common import dictify, now_local, ok
 
 router = APIRouter(prefix="/edu", tags=["教学资源"])
@@ -1125,18 +1127,18 @@ def review_class_request(
         db.flush()
         req.class_id = new_class.id
         req.status = "approved"
-        db.add(Notification(user_id=req.teacher_id,
-                     title="建班申请已通过",
-                     content=f"您申请的班级「{req.name}」已创建，您已被设为班主任。"
-                             + (f"备注：{note}" if note else ""),
-                     type="system", biz_type="class_request", biz_id=req.id))
+        notify(db, req.teacher_id, title="建班申请已通过",
+               content=f"您申请的班级「{req.name}」已创建，您已被设为班主任。"
+                       + (f"备注：{note}" if note else ""),
+               type="system", biz_type="class_request", biz_id=req.id,
+               category=notify_cat.CATEGORY_AUDIT)
         msg = "已通过并创建班级"
     else:
         req.status = "rejected"
-        db.add(Notification(user_id=req.teacher_id,
-                     title="建班申请被拒绝",
-                     content=f"您申请的班级「{req.name}」未通过审核。理由：{note}",
-                     type="system", biz_type="class_request", biz_id=req.id))
+        notify(db, req.teacher_id, title="建班申请被拒绝",
+               content=f"您申请的班级「{req.name}」未通过审核。理由：{note}",
+               type="system", biz_type="class_request", biz_id=req.id,
+               category=notify_cat.CATEGORY_AUDIT)
         msg = "已拒绝"
 
     db.commit()

@@ -189,7 +189,7 @@ def clean_temp_attachments() -> Dict[str, Any]:
 
 def push_review_reminders() -> Dict[str, Any]:
     """按艾宾浩斯计划推送今日复习清单。"""
-    from app.models import Notification
+    from app.services import notification as notify_svc
 
     db = SessionLocal()
     try:
@@ -207,18 +207,17 @@ def push_review_reminders() -> Dict[str, Any]:
 
         sent = 0
         for student_id, items in by_student.items():
-            db.add(
-                Notification(
-                    user_id=student_id,
-                    title=f"今日复习提醒（{len(items)} 个知识点）",
-                    content="、".join(str(i.knowledge_point_id) for i in items[:5]),
-                    type="review",
-                    biz_type="review",
-                )
-            )
-            sent += 1
+            if notify_svc.notify(
+                db, student_id,
+                title=f"今日复习提醒（{len(items)} 个知识点）",
+                content="、".join(str(i.knowledge_point_id) for i in items[:5]),
+                type="review",
+                biz_type="review",
+                category=notify_svc.CATEGORY_REVIEW,
+            ) is not None:
+                sent += 1
         db.commit()
-        logger.info(f"复习提醒推送 {sent} 名学生")
+        logger.info(f"复习提醒推送 {sent} 名学生（计划 {len(by_student)} 名）")
         return {"students": sent, "plans": len(plans)}
     finally:
         db.close()
@@ -285,7 +284,7 @@ def publish_scheduled_tasks() -> Dict[str, Any]:
     create_task 中 publish_at 在未来的任务以 draft 状态落库且不通知学生；
     本任务每分钟扫描一次，到期后置为 published 并补发通知。
     """
-    from app.models import Notification
+    from app.services import notification as notify_svc
 
     db = SessionLocal()
     try:
@@ -325,22 +324,19 @@ def publish_scheduled_tasks() -> Dict[str, Any]:
                     ).all()
                 )
             end_txt = task.end_at.strftime("%Y-%m-%d %H:%M") if task.end_at else "-"
-            for sid in notify_ids:
-                db.add(
-                    Notification(
-                        user_id=sid,
-                        title=f"新的{_TYPE_LABEL.get(task.type, '任务')}发布",
-                        content=f"{task.title}，截止时间：{end_txt}",
-                        type="exam", biz_type="task", biz_id=task.id,
-                    )
-                )
+            notified_total += notify_svc.notify_many(
+                db, notify_ids,
+                title=f"新的{_TYPE_LABEL.get(task.type, '任务')}发布",
+                content=f"{task.title}，截止时间：{end_txt}",
+                type="exam", biz_type="task", biz_id=task.id,
+                category=notify_svc.CATEGORY_TASK,
+            )
             db.execute(
                 TaskAssignment.__table__.update()
                 .where(TaskAssignment.task_id == task.id)
                 .values(notified=True)
             )
             activated += 1
-            notified_total += len(notify_ids)
         if activated:
             db.commit()
         logger.info(f"定时发布激活 {activated} 个任务，补发通知 {notified_total} 人次")

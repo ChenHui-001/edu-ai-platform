@@ -358,7 +358,8 @@ def chat_stream(
             )
             got_any = False
             for ev in engine.stream_chat(sys_prompt, request, user_id=user.id,
-                                         agent_name=f"stream_{intent}"):
+                                         agent_name=f"stream_{intent}",
+                                         biz_type="tutor"):
                 if ev.get("type") == "delta":
                     got_any = True
                     yield _sse({"type": "delta", "text": ev["text"]})

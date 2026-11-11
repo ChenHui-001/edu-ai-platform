@@ -187,13 +187,15 @@ fi
 # ---------- 0.4b 高价值场景回归（P-06） ----------
 # 这些脚本此前只在 CI 的「功能回归测试」定时任务里跑，本地发版时是盲区：
 # 组卷引擎、作答丢失、卷面结构、PDF 安全这些改坏了，静态门禁一个都看不出来。
-# 只挑「快且稳」的（合计约 95s）；重脚本留给 CI：
+# 只挑「快且稳」的（合计约 98s）；重脚本留给 CI：
 #   verify_student_retake(103s)、verify_paper_module(起独立服务,106 项)、
 #   verify_paper_manage(>150s) —— 放进发版链路会把 3 分钟拖成 8 分钟。
+# `verify_llm_routing` 约 3s 且不碰库/不碰网络：它覆盖场景路由与按 biz_type
+# 预算（F-06），而这类「配置存了但读不到」的缺口静态门禁完全看不出来。
 # 每个脚本单独 180s 上限：卡死要能报出是哪一个，而不是整条流水线挂住。
 if [ -n "$GATE_PY" ]; then
   REGRESS_SCRIPTS="verify_paper_rescore verify_compose_engine verify_pdf_export_safety \
-verify_bugfix_256 verify_compose_regenerate verify_paper_v3"
+verify_bugfix_256 verify_compose_regenerate verify_paper_v3 verify_llm_routing"
   # macOS 自带 coreutils 的路径与 Linux 不同；两条都没有就直接跑（不设上限），
   # 不能因为缺一个可选命令就让发版脚本直接报错。
   TIMEOUT_CMD=""
@@ -371,7 +373,7 @@ else
   # 提交信息末尾附带验证结论，便于回溯
   FULL_MSG="$MSG"
   if [ "$SKIP_TEST" -eq 0 ]; then
-    FULL_MSG="${MSG}"$'\n\n'"校验: 静态门禁 5/5 + 导库建表冒烟通过"
+    FULL_MSG="${MSG}"$'\n\n'"校验: 静态门禁 + 接口级行为回归 + 场景回归 + 冒烟通过"
   fi
   if ! git commit -m "$FULL_MSG"; then
     die 2 "git commit 失败"

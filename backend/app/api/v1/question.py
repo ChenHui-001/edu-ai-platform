@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Grade, KnowledgePoint, Notification, Paper, PaperItem, PaperShare, PaperStatus,
+    Grade, KnowledgePoint, Paper, PaperItem, PaperShare, PaperStatus,
     Question, QuestionBankType, QuestionStatus, ShareScope, Subject, Task, TaskStatus,
     User,
 )
@@ -37,6 +37,8 @@ from app.services.question_access import question_usable_error
 from app.services.question_usage import (
     question_ids_of_paper, question_ids_of_papers, recount_usage as _recount_usage,
 )
+from app.services import notification as notify_cat
+from app.services.notification import notify_many
 from app.utils.common import PageParams, dictify, ok
 from app.utils.options import normalize_options
 
@@ -1857,11 +1859,12 @@ def _share_paper_to(db: Session, paper: Paper, user: User, targets: List[int]) -
         if not exists:
             db.add(PaperShare(
                 paper_id=paper.id, from_user_id=user.id, to_user_id=uid))
-        db.add(Notification(
-            user_id=uid, title="收到共享试卷",
-            content=f"{user.real_name} 共享了试卷《{paper.name}》",
-            type="system", biz_type="paper", biz_id=paper.id,
-        ))
+    # 通知走统一出口（批量一次查偏好）：逐个 notify() 会在「共享给全组」时
+    # 变成逐用户查一次订阅偏好，正是 check_n_plus_one 盯的形态。
+    notify_many(db, targets, title="收到共享试卷",
+                content=f"{user.real_name} 共享了试卷《{paper.name}》",
+                type="system", biz_type="paper", biz_id=paper.id,
+                category=notify_cat.CATEGORY_SYSTEM)
     paper.is_shared = True
 
 

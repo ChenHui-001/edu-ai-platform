@@ -66,7 +66,10 @@
             </template>
             <div class="notif-header">
               <span>通知</span>
-              <el-link type="primary" :underline="false" @click="readAll">全部已读</el-link>
+              <span class="notif-header-actions">
+                <el-link type="info" :underline="false" @click="openPrefs">设置</el-link>
+                <el-link type="primary" :underline="false" @click="readAll">全部已读</el-link>
+              </span>
             </div>
             <el-scrollbar max-height="320px">
               <el-empty v-if="notifications.length === 0" description="暂无通知" :image-size="60" />
@@ -81,6 +84,32 @@
               </div>
             </el-scrollbar>
           </el-popover>
+
+          <!-- 通知设置（F-07）：按语义类别订阅。安全提醒后端锁定，置灰并说明原因 -->
+          <el-dialog v-model="prefVisible" title="通知设置" width="460px" append-to-body>
+            <div v-loading="prefLoading" class="pref-list">
+              <div v-for="c in prefCategories" :key="c.key" class="pref-item">
+                <div class="pref-text">
+                  <div class="pref-label">
+                    {{ c.label }}
+                    <el-tag v-if="c.locked" size="small" type="info" effect="plain">不可关闭</el-tag>
+                  </div>
+                  <div class="pref-desc">{{ c.description }}</div>
+                </div>
+                <el-switch
+                  :model-value="prefValues[c.key] !== false"
+                  :disabled="c.locked"
+                  :loading="prefSaving === c.key"
+                  @change="(v) => togglePref(c, v)"
+                />
+              </div>
+            </div>
+            <template #footer>
+              <span class="pref-foot">
+                关闭后该类通知不再发送，已收到的记录不会被删除。
+              </span>
+            </template>
+          </el-dialog>
 
           <el-dropdown @command="handleCommand">
             <span class="user-info">
@@ -165,6 +194,48 @@ const collapsed = ref(false)
 const notifications = ref([])
 const unread = ref(0)
 const aiStatus = ref({ llm_enabled: false })
+
+// ---- 通知订阅偏好（F-07）----
+// 每个开关独立提交（`{prefs:{key:val}}` 是部分更新）：弹窗里连点几个开关时不
+// 会互相覆盖，也不需要一个"保存"按钮来兜住半途关闭弹窗的情况。
+const prefVisible = ref(false)
+const prefLoading = ref(false)
+const prefSaving = ref('')
+const prefCategories = ref([])
+const prefValues = ref({})
+
+async function loadPrefs() {
+  prefLoading.value = true
+  try {
+    const res = await systemApi.notificationPrefs()
+    prefCategories.value = res.data.categories || []
+    prefValues.value = res.data.prefs || {}
+  } finally {
+    prefLoading.value = false
+  }
+}
+
+function openPrefs() {
+  prefVisible.value = true
+  loadPrefs()
+}
+
+async function togglePref(cat, value) {
+  if (cat.locked) return
+  const prev = prefValues.value[cat.key] !== false
+  prefSaving.value = cat.key
+  // 乐观更新：开关先动，失败再回滚。否则等接口回来才动，点击像没反应。
+  prefValues.value = { ...prefValues.value, [cat.key]: value }
+  try {
+    const res = await systemApi.saveNotificationPrefs({ [cat.key]: value })
+    prefValues.value = res.data.prefs || prefValues.value
+    ElMessage.success(value ? `已开启「${cat.label}」` : `已关闭「${cat.label}」`)
+  } catch (e) {
+    prefValues.value = { ...prefValues.value, [cat.key]: prev }
+  } finally {
+    prefSaving.value = ''
+  }
+}
 
 // 窄屏自动收起侧边栏：`el-aside` 固定 220px，在 390px 手机上会把内容区
 // 挤成 170px（滚动条 + 表格全废）。收起后剩 64px，内容区可用。
@@ -406,6 +477,30 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--el-border-color-lighter);
   font-weight: 600;
 }
+
+.notif-header-actions { display: flex; gap: 12px; font-weight: 400; }
+
+/* 通知设置弹窗：左文右开关，说明文字两行内说完 */
+.pref-list { display: flex; flex-direction: column; min-height: 120px; }
+.pref-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--el-fill-color-light);
+}
+.pref-item:last-child { border-bottom: none; }
+.pref-text { flex: 1; min-width: 0; }
+.pref-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+}
+.pref-desc { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
+.pref-foot { font-size: 12px; color: var(--el-text-color-secondary); }
 
 .notif-item {
   padding: 10px 12px;

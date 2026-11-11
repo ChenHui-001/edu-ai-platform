@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.exception import BusinessException
 from app.core.logger import get_logger
 from app.models import SysConfig
+from app.services import biz_budget
 
 logger = get_logger("ai_config")
 
@@ -82,6 +83,16 @@ _FIELDS: Dict[str, Dict[str, Any]] = {
         "default": settings.LLM_FAST_REASONING_EFFORT,
         "label": "快场景推理档", "description": "low/medium/high 等；留空则不传该参数",
         "category": "ai", "is_public": True,
+    },
+    # 按业务类型细化预算（F-06）：全局 temperature/max_tokens 是一刀切的，
+    # 出题要「低温度 + 大预算」、路由只要几百 token、答疑要自然些 —— 一刀切
+    # 只能互相将就。这里存 JSON：{biz_type: {temperature|max_tokens|reasoning_effort}}，
+    # 留空即全部走全局配置（等于关闭该功能，可随时回滚）。
+    "llm_biz_budgets": {
+        "key": "llm_biz_budgets", "type": "string", "default": "",
+        "label": "按业务类型细化预算",
+        "description": "JSON 对象：{biz_type: {temperature, max_tokens, reasoning_effort}}；留空走全局配置",
+        "category": "ai", "is_public": False,
     },
 }
 
@@ -182,7 +193,23 @@ def get_ai_config(db: Session) -> Dict[str, Any]:
         "config": config,
         "meta": meta,
         "providers": PROVIDER_PRESETS,
+        # 解析后的覆盖表 + 已知 biz_type 清单：前端不必自己 JSON.parse，
+        # 也不会因为存了个半截 JSON 就整页白屏（解析失败返回空表）。
+        "biz_budgets": _parsed_biz_budgets(rows),
+        "biz_types": list(biz_budget.KNOWN_BIZ_TYPES),
     }
+
+
+def _parsed_biz_budgets(rows: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """把 `llm_biz_budgets` 解析成对象；坏数据一律当空表（不影响页面渲染）。"""
+    row = rows.get(biz_budget.CONFIG_KEY)
+    if row is None or not (row.value or "").strip():
+        return {}
+    try:
+        return biz_budget.normalize(row.value)
+    except biz_budget.BizBudgetError as exc:
+        logger.warning(f"{biz_budget.CONFIG_KEY} 存量值非法（按未配置处理）: {exc}")
+        return {}
 
 
 def save_ai_config(db: Session, data: Dict[str, Any], admin_id: int) -> Dict[str, Any]:
@@ -212,6 +239,22 @@ def save_ai_config(db: Session, data: Dict[str, Any], admin_id: int) -> Dict[str
         raise BusinessException(
             f"不支持的模型提供商 {provider!r}，可选：{'/'.join(sorted(PROVIDER_PRESETS))}/custom"
         )
+
+    # 业务预算覆盖（F-06）必须在**保存时**判错。如果只在读取侧
+    # （`llm.resolve_biz_budget`）判，一个写坏的 JSON 会静默回落到全局配置，
+    # 管理员看到「保存成功」却什么都没变 —— 这类"静默不生效"最难查。
+    # 规范化后写回 canonical JSON，避免 dict 被 str() 成 Python repr 存进库。
+    data = dict(data)
+    raw_budgets = data.get(biz_budget.CONFIG_KEY)
+    if raw_budgets is None:
+        raw_budgets = data.get(biz_budget.CONFIG_KEY.upper())
+    if raw_budgets is not None:
+        try:
+            normalized = biz_budget.normalize(raw_budgets)
+        except biz_budget.BizBudgetError as exc:
+            raise BusinessException(f"按业务类型预算配置有误：{exc}") from None
+        data.pop(biz_budget.CONFIG_KEY.upper(), None)
+        data[biz_budget.CONFIG_KEY] = biz_budget.dumps(normalized)
 
     updated = []
     for key, spec in _FIELDS.items():

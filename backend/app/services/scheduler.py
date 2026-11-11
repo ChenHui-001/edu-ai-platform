@@ -133,21 +133,21 @@ def _run_locked(job_id: int, func_path: str, trigger_type: str) -> None:
 
             # 连续失败通知管理员
             if job.retry_times > 0:
-                from app.models import Notification, Role, User, UserRole
+                from app.models import Role, User, UserRole
+                from app.services import notification as notify_svc
 
                 admin_ids = db.scalars(
                     select(User.id).join(UserRole, UserRole.user_id == User.id)
                     .join(Role, Role.id == UserRole.role_id)
                     .where(Role.code == "sys_admin")
                 ).all()
-                for aid in admin_ids:
-                    db.add(
-                        Notification(
-                            user_id=aid, title="定时任务执行失败",
-                            content=f"任务「{job.name}」执行失败：{exc}",
-                            type="system", biz_type="job", biz_id=job_id,
-                        )
-                    )
+                notify_svc.notify_many(
+                    db, admin_ids,
+                    title="定时任务执行失败",
+                    content=f"任务「{job.name}」执行失败：{exc}",
+                    type="system", biz_type="job", biz_id=job_id,
+                    category=notify_svc.CATEGORY_SYSTEM,
+                )
         db.commit()
     finally:
         db.close()
