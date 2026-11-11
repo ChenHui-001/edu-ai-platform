@@ -11,11 +11,11 @@
 <!-- status:auto:begin -->
 | 项 | 实测值 | 口径 |
 |---|---:|---|
-| 版本 | 2.5.27 | `VERSION` 文件 |
+| 版本 | 2.5.28 | `VERSION` 文件 |
 | 路由数 | 293 | `app.routes` |
 | 数据表数 | 53 | `Base.metadata.tables` |
 | 后端用例 | 73 | `pytest backend/qa_audit_suite.py --collect-only` |
-| 前端用例 | 87 | `frontend/src/**/__tests__` 内 `it(` 计数 |
+| 前端用例 | 95 | `frontend/src/**/__tests__` 内 `it(` 计数 |
 | 接口断言 | 117 | `tools/verify_p0_fixes.py` 实际通过条数 |
 | 补列迁移 | 34 | `core/db_migrations._COLUMNS` |
 | 发版门禁 | 20 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |

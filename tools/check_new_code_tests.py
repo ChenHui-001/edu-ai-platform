@@ -65,6 +65,10 @@ REGISTRY = {
     "frontend/src/utils/exportJob.js": [
         "frontend/src/utils/__tests__/exportJob.test.js",
     ],
+    # 前端：长任务离开保护（判定写反 = 用户被反复拦 / 干脆不拦）
+    "frontend/src/utils/leaveGuard.js": [
+        "frontend/src/utils/__tests__/leaveGuard.test.js",
+    ],
     # 部署：supervisord FATAL → 容器退出（否则 Up + 全站 502）
     "deploy/fatal_guard.py": ["backend/qa_audit_suite.py"],
     # 工具：四层一致性合议（服务器落后不能被其它层绿灯掩盖）
@@ -79,7 +83,7 @@ REGISTRY = {
 # 拿运行数做基线会让同一次改动在两个口径间来回对不上。
 BASELINE = {
     "pytest_cases": 71,   # def test_* 个数（运行 73 passed，含 2 条参数化展开）
-    "vitest_cases": 87,
+    "vitest_cases": 95,
 }
 
 PYTEST_FILE = "backend/qa_audit_suite.py"

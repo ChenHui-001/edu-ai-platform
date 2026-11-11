@@ -14,7 +14,7 @@
       <div class="qb-actions">
         <el-button v-if="canImport" :icon="Download" @click="downloadTemplate">下载模板</el-button>
         <el-button v-if="canImport" :icon="Upload" @click="importVisible = true">批量导入</el-button>
-        <el-button v-if="canExport" :icon="Download" :loading="exporting" @click="onExport">导出</el-button>
+        <ExportButton v-if="canExport" :handler="onExport">导出</ExportButton>
         <el-button v-if="canWrite" :icon="MagicStick" type="warning" @click="openAiDlg">
           AI 智能出题
         </el-button>
@@ -493,8 +493,7 @@
 
     <!-- AI 变式：预览勾选后创建（不落库直到确认） -->
     <el-dialog v-model="aiVarDlg" title="AI 变式" width="900px" @opened="syncAiVarSelection">
-      <el-alert v-if="aiVarFallback" class="mb12" type="warning" :closable="false" show-icon
-                title="当前无可用大模型，变式由规则引擎降级生成（is_fallback=true）" />
+      <AiFallbackNotice :show="aiVarFallback" reason="本次变式题由规则引擎按题干改写规则生成" />
       <div class="ai-base">
         <span class="muted">原题：</span>
         <span>{{ aiVarBase ? stripHtml(aiVarBase.stem).slice(0, 80) : '-' }}</span>
@@ -550,8 +549,7 @@
 
     <!-- AI 补全：预览后应用（analysis / knowledge_point / difficulty） -->
     <el-dialog v-model="aiEnrichDlg" title="AI 补全" width="900px" @opened="syncAiEnrichSelection">
-      <el-alert v-if="aiEnrichFallback" class="mb12" type="warning" :closable="false" show-icon
-                title="当前无可用大模型，补全建议由规则引擎降级生成（is_fallback=true）" />
+      <AiFallbackNotice :show="aiEnrichFallback" reason="本次补全建议由规则引擎按题库统计生成" />
       <div class="ai-result-head">
         <b>补全建议</b>
         <span class="muted">共 {{ aiEnrichItems.length }} 条，已选 {{ aiEnrichSelected.length }} 条；
@@ -587,8 +585,7 @@
 
     <!-- AI 质检：展示问题列表，可定位题目 -->
     <el-dialog v-model="aiQualityDlg" title="AI 质检" width="820px">
-      <el-alert v-if="aiQualityFallback" class="mb12" type="warning" :closable="false" show-icon
-                title="当前无可用大模型，质检结果为规则引擎降级生成（is_fallback=true）" />
+      <AiFallbackNotice :show="aiQualityFallback" reason="本次质检结果由规则引擎（空值/重复/难度分布）生成" />
       <el-table v-loading="aiQualityLoading" :data="aiQualityItems" size="small" border max-height="420">
         <template #empty><TableEmpty text="暂无题目" /></template>
         <el-table-column label="题目" min-width="260">
@@ -689,6 +686,8 @@ import { questionApi, eduApi, agentApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { downloadBlob } from '@/utils/download'
+import ExportButton from '@/components/ExportButton.vue'
+import AiFallbackNotice from '@/components/AiFallbackNotice.vue'
 import { alertAction, confirmAction } from '@/utils/confirm'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
@@ -1134,16 +1133,10 @@ async function downloadTemplate() {
 
 // 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
 // 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
-const exporting = ref(false)
 
+// 单锁与 loading 由 ExportButton 内置（U-04）
 async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await exportExcel()
-  } finally {
-    exporting.value = false
-  }
+  await exportExcel()
 }
 
 async function exportExcel() {

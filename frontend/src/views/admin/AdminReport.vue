@@ -3,12 +3,20 @@
     <div class="page-header">
       <h2 class="page-title">系统报表</h2>
       <div>
-        <el-button :icon="Download" :loading="exporting" @click="onExport">导出 Excel</el-button>
+        <ExportButton :handler="onExport">导出 Excel</ExportButton>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
       </div>
     </div>
 
-    <template v-if="overview">
+    <ErrorState
+      v-if="loadError"
+      :message="loadError.message"
+      :code="loadError.code"
+      :loading="loadingGrade"
+      @retry="load"
+    />
+
+    <template v-if="overview && !loadError">
       <el-row :gutter="16" class="mb16">
         <el-col :span="6" v-for="c in userCards" :key="c.label">
           <div class="stat-card">
@@ -94,11 +102,16 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import EChart from '@/components/EChart.vue'
-import { Refresh, Download } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { reportApi } from '@/api'
 import { downloadBlob } from '@/utils/download'
+import ExportButton from '@/components/ExportButton.vue'
+import ErrorState from '@/components/ErrorState.vue'
+import { pickMessage } from '@/utils/notify'
 
 const overview = ref(null)
+/** 加载失败信息（null=正常）：页面级 ErrorState 就地重试（U-05） */
+const loadError = ref(null)
 const grades = ref([])
 const subjects = ref([])
 const runtime = ref(null)
@@ -146,6 +159,7 @@ const subjectOption = computed(() => ({
 
 async function load() {
   loadingGrade.value = true
+  loadError.value = null
   try {
     const [o, g, s, r] = await Promise.all([
       reportApi.adminOverview(), reportApi.gradeComparison(),
@@ -155,23 +169,26 @@ async function load() {
     grades.value = g.data || []
     subjects.value = s.data || []
     runtime.value = r.data
+  } catch (e) {
+    // 四个请求任一失败 → 整块报表不完整。给可重试的错误态（U-05）
+    overview.value = null
+    grades.value = []
+    subjects.value = []
+    runtime.value = null
+    loadError.value = {
+      message: pickMessage(e, '系统报表加载失败'),
+      code: e?.response?.status || e?.response?.data?.code || ''
+    }
   } finally {
     loadingGrade.value = false
   }
 }
 
-// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
-// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
-const exporting = ref(false)
+// 单锁与 loading 由 ExportButton 内置（U-04）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 曾经 10 个入口各写一遍 guard —— 漏写一处就能连点重复导出。
 
 async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await exportExcel()
-  } finally {
-    exporting.value = false
-  }
+  await exportExcel()
 }
 
 async function exportExcel() {

@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">错题本</h2>
       <div>
-        <ExportButton @click="exportWrong" />
+        <ExportButton :handler="exportWrong">导出</ExportButton>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
       </div>
     </div>

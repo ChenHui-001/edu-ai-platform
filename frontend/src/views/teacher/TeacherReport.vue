@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">教学报表</h2>
       <div>
-        <el-button :icon="Download" :loading="exporting" @click="onExport">导出 Excel</el-button>
+        <ExportButton :handler="onExport">导出 Excel</ExportButton>
         <el-button :icon="Refresh" :loading="loading || loadingWeak" @click="loadAll(true)">刷新</el-button>
       </div>
     </div>
@@ -24,7 +24,15 @@
       </el-form>
     </el-card>
 
-    <el-row :gutter="16" class="mb16" v-if="overview">
+    <ErrorState
+      v-if="loadError"
+      :message="loadError.message"
+      :code="loadError.code"
+      :loading="loading"
+      @retry="loadAll(true)"
+    />
+
+    <el-row :gutter="16" class="mb16" v-if="overview && !loadError">
       <el-col :span="6" v-for="c in cards" :key="c.label">
         <div class="stat-card">
           <div class="stat-value">{{ c.value }}</div>
@@ -140,10 +148,13 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import EChart from '@/components/EChart.vue'
-import { Download, Refresh } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { reportApi, eduApi, taskApi } from '@/api'
 import { downloadBlob } from '@/utils/download'
+import ExportButton from '@/components/ExportButton.vue'
+import ErrorState from '@/components/ErrorState.vue'
+import { pickMessage } from '@/utils/notify'
 
 const classes = ref([])
 const tasks = ref([])
@@ -155,6 +166,8 @@ const effect = ref([])
 const weakPoints = ref([])
 const weakSummary = ref({})
 const loading = ref(false)
+/** 报表加载失败信息（null=正常）。用于页面级 ErrorState 就地重试（U-05） */
+const loadError = ref(null)
 const loadingEffect = ref(false)
 const loadingWeak = ref(false)
 
@@ -201,6 +214,7 @@ async function loadAll(forceRefresh) {
   if (!classId.value) return
   const force = forceRefresh === true
   loading.value = true
+  loadError.value = null
   try {
     const [o, c] = await Promise.all([
       reportApi.classOverview({
@@ -211,6 +225,15 @@ async function loadAll(forceRefresh) {
     ])
     overview.value = o.data
     comparison.value = c.data || []
+  } catch (e) {
+    // 拦截器已经弹过一次红条；这里只负责把"这一块没数据"变成可重试的状态。
+    // 不再重复 toast（`toastIfUnhandled` 对已提示过的错误是静默的）。
+    overview.value = null
+    comparison.value = []
+    loadError.value = {
+      message: pickMessage(e, '报表加载失败，可能是后端查询超时'),
+      code: e?.response?.status || e?.response?.data?.code || ''
+    }
   } finally {
     loading.value = false
   }
@@ -261,18 +284,11 @@ async function loadWeak(forceRefresh) {
   }
 }
 
-// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
-// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
-const exporting = ref(false)
+// 单锁与 loading 由 ExportButton 内置（U-04）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 曾经 10 个入口各写一遍 guard —— 漏写一处就能连点重复导出。
 
 async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await exportExcel()
-  } finally {
-    exporting.value = false
-  }
+  await exportExcel()
 }
 
 async function exportExcel() {

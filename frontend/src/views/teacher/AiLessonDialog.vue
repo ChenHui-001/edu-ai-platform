@@ -221,8 +221,7 @@
           <el-button v-if="step === 0" type="primary" :icon="MagicStick"
                      :loading="submitting" @click="doGenerate">开始生成</el-button>
           <el-button v-if="step === 2" @click="step = 1">重新生成</el-button>
-          <el-button v-if="step === 2" :icon="Download" :disabled="!job.jobId"
-                     :loading="exporting" @click="onExport">导出 Markdown</el-button>
+          <ExportButton v-if="step === 2" :handler="onExport" :disabled="!job.jobId">导出 Markdown</ExportButton>
           <el-button v-if="step === 2" type="primary" :icon="Check"
                      :loading="savingToLib" @click="doSave">保存到教案库</el-button>
           <el-button v-if="step === 3" type="primary" @click="visible = false">完成</el-button>
@@ -235,9 +234,10 @@
 <script setup>
 import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus, MagicStick, Download, Check } from '@element-plus/icons-vue'
+import { Plus, MagicStick, Check } from '@element-plus/icons-vue'
 import { lessonAiApi } from '@/api'
 import { downloadBlob } from '@/utils/download'
+import ExportButton from '@/components/ExportButton.vue'
 
 import { toastIfUnhandled } from '@/utils/notify'
 const props = defineProps({
@@ -466,16 +466,10 @@ function applyResult(data) {
 // ------------------------------------------------------------ 导出 / 保存
 // 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
 // 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
-const exporting = ref(false)
 
+// 单锁与 loading 由 ExportButton 内置（U-04）
 async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await doExport()
-  } finally {
-    exporting.value = false
-  }
+  await doExport()
 }
 
 async function doExport() {

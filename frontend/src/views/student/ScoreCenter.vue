@@ -3,12 +3,20 @@
     <div class="page-header">
       <h2 class="page-title">成绩中心</h2>
       <div>
-        <el-button :icon="Download" :loading="exporting" @click="onExport">导出 Excel</el-button>
+        <ExportButton :handler="onExport">导出 Excel</ExportButton>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
       </div>
     </div>
 
-    <el-row :gutter="16" class="mb16" v-if="summary">
+    <ErrorState
+      v-if="loadError"
+      :message="loadError.message"
+      :code="loadError.code"
+      :loading="loading"
+      @retry="load"
+    />
+
+    <el-row :gutter="16" class="mb16" v-if="summary && !loadError">
       <el-col :span="5" v-for="c in cards" :key="c.label">
         <div class="stat-card">
           <div class="stat-value" :style="{ color: c.color }">{{ c.value }}</div>
@@ -98,8 +106,11 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import EChart from '@/components/EChart.vue'
-import { Refresh, Download } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { taskApi, reportApi } from '@/api'
+import ExportButton from '@/components/ExportButton.vue'
+import ErrorState from '@/components/ErrorState.vue'
+import { pickMessage } from '@/utils/notify'
 
 const list = ref([])
 const results = ref([])
@@ -107,6 +118,9 @@ const detail = ref(null)
 const summary = ref(null)
 const total = ref(0)
 const loading = ref(false)
+/** 加载失败信息（null=正常）：页面级 ErrorState 就地重试（U-05） */
+const loadError = ref(null)
+
 const detailLoading = ref(false)
 const detailDlg = ref(false)
 const query = reactive({ page: 1, page_size: 20 })
@@ -148,12 +162,21 @@ function format(v) {
 
 async function load() {
   loading.value = true
+  loadError.value = null
   try {
     const res = await taskApi.myScores(query)
     const d = res.data || {}
     list.value = d.items || []
     total.value = d.total || 0
     summary.value = d.summary
+  } catch (e) {
+    // 成绩列表拉不到时给可重试的错误态，而不是一张空表（U-05）
+    list.value = []
+    total.value = 0
+    loadError.value = {
+      message: pickMessage(e, '成绩加载失败'),
+      code: e?.response?.status || e?.response?.data?.code || ''
+    }
   } finally {
     loading.value = false
   }
@@ -179,18 +202,11 @@ async function viewDetail(row) {
   }
 }
 
-// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
-// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
-const exporting = ref(false)
+// 单锁与 loading 由 ExportButton 内置（U-04）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 曾经 10 个入口各写一遍 guard —— 漏写一处就能连点重复导出。
 
 async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await exportExcel()
-  } finally {
-    exporting.value = false
-  }
+  await exportExcel()
 }
 
 async function exportExcel() {

@@ -180,7 +180,7 @@
           <el-button :icon="Search" @click="loadStudents">查询</el-button>
           <el-button v-if="canWrite" type="primary" :icon="Upload"
                      @click="openImport">批量导入</el-button>
-          <el-button :icon="Download" :loading="exporting" @click="onExport">导出名单</el-button>
+          <ExportButton :handler="onExport">导出名单</ExportButton>
           <el-button v-if="canWrite" type="danger" plain :disabled="!studentSelection.length"
                      @click="batchRemoveStudents">移出选中（{{ studentSelection.length }}）</el-button>
         </div>
@@ -313,13 +313,14 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Bell, Download, Plus, Refresh, Search, Tickets, Upload,
+  Bell, Plus, Refresh, Search, Tickets, Upload,
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
 import { eduApi } from '@/api'
 import { downloadBlob } from '@/utils/download'
 import { formatLocalDate } from '@/utils/date'
 import { confirmAction, promptAction } from '@/utils/confirm'
+import ExportButton from '@/components/ExportButton.vue'
 
 const { can } = useUserStore()
 const canWrite = computed(() => can('resource:class:write'))
@@ -582,18 +583,11 @@ async function batchRemoveStudents() {
   await load()
 }
 
-// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
-// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
-const exporting = ref(false)
+// 单锁与 loading 由 ExportButton 内置（U-04）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 曾经 10 个入口各写一遍 guard —— 漏写一处就能连点重复导出。
 
 async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await exportStudents()
-  } finally {
-    exporting.value = false
-  }
+  await exportStudents()
 }
 
 async function exportStudents() {

@@ -539,6 +539,7 @@ import {
 import { eduApi, knowledgeApi, questionApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { confirmAction } from '@/utils/confirm'
+import { rememberJob, takeRememberedJob, useLeaveGuard } from '@/utils/leaveGuard'
 import { toastIfUnhandled } from '@/utils/notify'
 import {
   composeBlockReason as wizardComposeBlockReason,
@@ -570,6 +571,16 @@ const composeStage = ref('')
 let currentJobId = 0
 /** 已发出取消请求、仍在等 worker 到检查点 */
 const cancelling = ref(false)
+
+/**
+ * 离开保护（U-02）：组卷在后台跑 30~400s，用户切走/刷新会把进度和结果丢掉。
+ * 站内切走问一句、刷新由浏览器原生弹窗拦一下，刷新回来还能接着查（见 onMounted）。
+ */
+const WIZARD_JOB_KEY = 'paper_wizard'
+useLeaveGuard(
+  () => composing.value,
+  { message: '组卷仍在后台进行，离开后需要重新进入本页才能看到结果。确定离开吗？' }
+)
 
 /**
  * 请求取消当前组卷任务（F-04）。
@@ -948,7 +959,29 @@ onMounted(async () => {
   } finally {
     metaLoading.value = false
   }
+  await maybeResumeCompose()
 })
+
+/**
+ * 进页面时若本机记着一个未收尾的组卷任务，问一句要不要接着等（U-02）。
+ *
+ * 只问一次：`takeRememberedJob` 取完即清，避免用户每次进来都被弹窗打扰。
+ * 拒绝也不丢数据 —— 任务在后端照常跑完，只是前端不再自动接管。
+ */
+async function maybeResumeCompose() {
+  const pendingJobId = takeRememberedJob(WIZARD_JOB_KEY)
+  if (!pendingJobId) return
+  const go = await confirmAction(
+    `检测到上次提交的组卷任务（#${pendingJobId}）还没取结果，它可能仍在后台运行。要接着等它完成吗？`,
+    '恢复组卷任务',
+    { confirmButtonText: '继续等待', cancelButtonText: '不用了' }
+  )
+  if (!go) {
+    ElMessage.info('已放弃恢复；若任务已完成，可到「我的试卷」查看结果')
+    return
+  }
+  await resumeCompose(pendingJobId)
+}
 
 // 卸载后停止轮询：否则 2 秒一次的查询会持续到 15 分钟上限，
 // 期间还可能往已销毁的组件写 composeProgress，并在新页面上弹错误 toast。
@@ -1051,6 +1084,52 @@ function buildPayload() {
   })
 }
 
+/** 把组卷结果装进页面。首次组卷与「刷新后恢复」共用，避免两份填充逻辑漂移。 */
+function applyComposedResult(data) {
+  composedCtx.value = data
+  previewItems.value = data.items || []
+  gaps.value = data.gaps || []
+  aiMessage.value = data.message || ''
+  issues.value = data.issues || []
+  reports.value = {
+    difficulty_report: data.difficulty_report,
+    knowledge_report: data.knowledge_report,
+    type_report: data.type_report
+  }
+  if (!saveForm.name && data.standard_name) {
+    saveForm.name = `${data.grade_name}${data.subject_name}学业水平考试`
+  }
+  step.value = 2
+  if (!previewItems.value.length) {
+    ElMessage.warning('没有抽到题目，请检查题库或调整参数')
+  }
+}
+
+/**
+ * 恢复上次没取完的组卷任务（U-02）。
+ *
+ * 任务本来就在后端跑（状态在 `sys_agent_job`），前端丢的只是 job_id。
+ * 所以「刷新后接着等」不是新能力，只是把 id 记住了 —— 不需要后端改动。
+ */
+async function resumeCompose(jobId) {
+  composing.value = true
+  cancelling.value = false
+  composeStage.value = '恢复查询中'
+  currentJobId = Number(jobId) || 0
+  try {
+    const data = await pollComposeJob(currentJobId)
+    rememberJob(WIZARD_JOB_KEY, 0)
+    applyComposedResult(data)
+  } catch (e) {
+    rememberJob(WIZARD_JOB_KEY, 0)
+    toastIfUnhandled(e, '恢复组卷进度失败（任务可能已结束，请到「我的试卷」确认）')
+  } finally {
+    composing.value = false
+    cancelling.value = false
+    currentJobId = 0
+  }
+}
+
 async function doCompose() {
   // AI 模式按钮始终可点，缺描述时在这里给明确反馈（而不是让用户对着灰键猜）
   if (composeBlockReason.value) {
@@ -1082,27 +1161,13 @@ async function doCompose() {
       const submit = await questionApi.composeAiAsync({ ...payload, request: form.request })
       composeStage.value = '排队中'
       currentJobId = Number((submit.data || {}).job_id) || 0
+      // 记住 job_id：刷新/切走再回来能接着查（U-02）。终态一律清掉，见 finally。
+      rememberJob(WIZARD_JOB_KEY, currentJobId)
       data = await pollComposeJob(currentJobId)
     } else {
       data = (await questionApi.composePreview(payload)).data || {}
     }
-    composedCtx.value = data
-    previewItems.value = data.items || []
-    gaps.value = data.gaps || []
-    aiMessage.value = data.message || ''
-    issues.value = data.issues || []
-    reports.value = {
-      difficulty_report: data.difficulty_report,
-      knowledge_report: data.knowledge_report,
-      type_report: data.type_report
-    }
-    if (!saveForm.name && data.standard_name) {
-      saveForm.name = `${data.grade_name}${data.subject_name}学业水平考试`
-    }
-    step.value = 2
-    if (!previewItems.value.length) {
-      ElMessage.warning('没有抽到题目，请检查题库或调整参数')
-    }
+    applyComposedResult(data)
   } catch (e) {
     if (e?.__cancelled) {
       // 取消：说清楚"什么都没生成"，避免用户以为有一份半成品卷子
@@ -1114,6 +1179,8 @@ async function doCompose() {
     composing.value = false
     cancelling.value = false
     currentJobId = 0
+    // 走到这里说明任务已有结论（成功/失败/取消），不必再恢复
+    rememberJob(WIZARD_JOB_KEY, 0)
   }
 }
 

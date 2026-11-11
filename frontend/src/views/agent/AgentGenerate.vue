@@ -238,11 +238,23 @@
         </el-card>
 
         <!-- 结果区 -->
+        <!-- 空产出一闪而过的 toast 之后就只剩白屏：补一条常驻说明（U-06） -->
+        <el-alert
+          v-if="result && hasNoOutput(result)"
+          class="mt16"
+          type="info"
+          :closable="false"
+          show-icon
+          title="任务已结束，但没有产出内容"
+          description="常见原因：模型预算被推理耗尽（正文为空）、条件过窄抽不到题。可以放宽条件重试，或到「系统设置 → AI 配置」换成更稳的模型。"
+        />
+
+        <AiFallbackNotice v-if="result && !hasNoOutput(result)" :show="isFallback" class="mt16" />
         <el-card shadow="never" class="mt16" v-if="result && !hasNoOutput(result)">
           <template #header>
             <div class="flex-between">
               <b>生成结果</b>
-              <el-tag v-if="isFallback" type="warning" size="small">规则引擎降级模式</el-tag>
+              <el-tag v-if="isFallback" type="warning" size="small">规则引擎</el-tag>
             </div>
           </template>
 
@@ -375,6 +387,8 @@ import { sanitizeHtml } from '@/utils/sanitize'
 import TYPES, { QUESTION_TYPE_LABELS } from '@/constants/question'
 import { alertAction, confirmAction } from '@/utils/confirm'
 import { hasNoOutput } from '@/utils/agentResult'
+import AiFallbackNotice from '@/components/AiFallbackNotice.vue'
+import { rememberJob, takeRememberedJob, useLeaveGuard } from '@/utils/leaveGuard'
 import { toastIfUnhandled } from '@/utils/notify'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
@@ -424,6 +438,13 @@ const kps = ref([])
 const active = ref('question_generator')
 const result = ref(null)
 const running = ref(false)
+
+// 离开保护（U-02）：后台生成最长 15 分钟，切走/刷新会把正在轮询的结果丢掉。
+const AGENT_JOB_KEY = 'agent_generate'
+useLeaveGuard(
+  () => running.value,
+  { message: 'AI 任务仍在生成中，离开后需要重新发起。确定离开吗？' }
+)
 // 后台任务模式：提交到 /agent/jobs 后轮询，避免长连接被网关截断
 const asyncMode = ref(false)
 const jobId = ref(null)
@@ -669,6 +690,7 @@ async function run() {
           : paperParams()
         const res = await agentApi.createJob({ agent, params })
         jobId.value = res.data?.job_id
+        rememberJob(AGENT_JOB_KEY, jobId.value)
         ElMessage.success(`任务已提交（#${jobId.value}），正在后台生成…`)
         // 后端超时阈值：出题 300s、组卷 900s。前端略宽一点，
         // 否则前端先放弃而后台线程仍在跑，教师重试会重复生成。
@@ -684,6 +706,7 @@ async function run() {
         toastIfUnhandled(e, '后台任务失败')
       } finally {
         running.value = false
+        rememberJob(AGENT_JOB_KEY, 0)
       }
       return
     }
@@ -858,6 +881,13 @@ onMounted(async () => {
   engine.value = status.data
   subjects.value = subs.data || []
   grades.value = grs.data || []
+
+  // 上次的任务没收尾（用户直接关页面/刷新）：本页不接管恢复 —— 出题结果
+  // 只对"当时那次操作"有意义，硬塞回表单反而误导。清掉记录并指路任务列表。
+  const pending = takeRememberedJob(AGENT_JOB_KEY)
+  if (pending) {
+    ElMessage.info(`上次的后台任务（#${pending}）可能已完成，可在「任务记录」查看结果`)
+  }
 })
 </script>
 

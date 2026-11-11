@@ -15,7 +15,7 @@
         <el-button :icon="Refresh" @click="refreshAll">刷新</el-button>
         <el-button v-if="canWrite" :icon="Plus" type="primary" @click="openCreateRoot">新增根节点</el-button>
         <el-button v-if="canWrite" :icon="Upload" @click="openImport">导入</el-button>
-        <el-button :icon="Download" :loading="exporting" @click="onExport">导出</el-button>
+        <ExportButton :handler="onExport">导出</ExportButton>
         <el-button v-if="canWrite" :icon="Cpu" @click="openAiGenerate">AI 生成</el-button>
         <el-popover placement="bottom" :width="300" trigger="hover">
           <template #reference>
@@ -652,8 +652,8 @@
         <span class="muted">只生成预览不落库；确认后勾选“创建选中”逐条写入</span>
       </div>
 
-      <el-alert v-if="aiGenResult?.is_fallback" class="mt12" type="warning" :closable="false" show-icon
-                title="当前无可用大模型，结果为规则引擎降级生成（is_fallback=true）" />
+      <AiFallbackNotice :show="aiGenResult?.is_fallback === true" class="mt12"
+                        reason="本次知识点由规则引擎按教材目录拆分生成" />
 
       <template v-if="aiGenResult && aiGenResult.points.length">
         <div class="ai-result-head">
@@ -794,6 +794,8 @@ import { downloadBlob, fetchBlobUrl } from '@/utils/download'
 import { formatLocalDate, parseServerDate } from '@/utils/date'
 import { confirmAction } from '@/utils/confirm'
 import { toastIfUnhandled } from '@/utils/notify'
+import AiFallbackNotice from '@/components/AiFallbackNotice.vue'
+import ExportButton from '@/components/ExportButton.vue'
 
 const userStore = useUserStore()
 const { can } = userStore
@@ -1691,18 +1693,11 @@ async function runImport(dryRun) {
   }
 }
 
-// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
-// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
-const exporting = ref(false)
+// 单锁与 loading 由 ExportButton 内置（U-04）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 曾经 10 个入口各写一遍 guard —— 漏写一处就能连点重复导出。
 
 async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await exportExcel()
-  } finally {
-    exporting.value = false
-  }
+  await exportExcel()
 }
 
 async function exportExcel() {

@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">日志审计</h2>
       <div>
-        <el-button :icon="Download" :loading="exporting" @click="onExport">导出 Excel</el-button>
+        <ExportButton :handler="onExport">导出 Excel</ExportButton>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
       </div>
     </div>
@@ -127,9 +127,10 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { Search, Refresh, Download } from '@element-plus/icons-vue'
+import { Search, Refresh } from '@element-plus/icons-vue'
 import { logApi } from '@/api'
 import { downloadBlob } from '@/utils/download'
+import ExportButton from '@/components/ExportButton.vue'
 
 const tab = ref('login')
 const list = ref([])
@@ -169,18 +170,11 @@ function reset() {
   load()
 }
 
-// 导出按钮 loading（P2-11）：导出是纯等待动作（拼 xlsx / 拉 blob），
-// 没有 loading 时按钮毫无反馈，用户会连点造成重复下载。
-const exporting = ref(false)
+// 单锁与 loading 由 ExportButton 内置（U-04）：导出是纯等待动作（拼 xlsx / 拉 blob），
+// 曾经 10 个入口各写一遍 guard —— 漏写一处就能连点重复导出。
 
 async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await exportExcel()
-  } finally {
-    exporting.value = false
-  }
+  await exportExcel()
 }
 
 async function exportExcel() {

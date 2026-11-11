@@ -275,6 +275,53 @@
 > bug 本身。改成 `assert "res.data.data" not in pm`（盯"信封被正确解包"这件事）。
 > 教训：静态断言别锚在"某个辅助函数被调用"，否则清理死代码就会假红。
 
+## 交互体验进度（评估报告 §6.4）
+
+| 编号 | 内容 | 状态 |
+|---|---|:---:|
+| U-01 | 试卷域交互硬伤（预览抽屉不回写 / 保存按钮恒灰 / 重构大题清空修改） | **已修**（随 P0-2、P1-2、P1-3） |
+| U-02 | 长任务离开页面保护（`beforeunload` + 路由离开确认 + 刷新后恢复轮询） | **已完成**（见下） |
+| U-03 | 「AI 降级为规则引擎」提示统一 | **已完成**（见下） |
+| U-04 | 导出按钮统一走 `ExportButton`（内置 loading / 单锁 / 失败提示） | **已完成**（见下） |
+| U-05 | 页面级错误态 + 就地重试 `<ErrorState>` | **已完成**（4 个报表页接入） |
+| U-06 | AI「空产出」显式说明 | **已完成**（见下） |
+
+> **U-02 实现要点**：`utils/leaveGuard.js`。三件事分开：`beforeunload`（刷新/关标签
+> 由浏览器原生弹窗拦，**不 busy 时不注册处理器**——每次都问会让用户习惯性点确定）、
+> 路由离开（走统一 `confirmAction`，取消返回 false）、job 恢复（`rememberJob` /
+> `takeRememberedJob` 存本机，进页面问一次要不要接着等）。
+> 判定逻辑拆成纯函数 `resolveLeave()` 才可单测——composable 依赖 vue-router 上下文。
+> 接入：`PaperWizard`（+ 刷新恢复）、`AgentGenerate`（只提示、不自动接管：出题结果
+> 只对"当时那次操作"有意义，硬塞回表单会误导）。`AiLessonDialog` 本来就在关闭时
+> 提示「任务在后台继续生成，可从生成记录查看」，无需重复加。
+
+> **U-03 实现要点**：新增 `components/AiFallbackNotice.vue` 作全站唯一口径
+> （`el-alert warning` + 图标 + 一句"为什么"和"怎么办"）。改动前同一个事实有 5 种
+> 表达：`el-alert`（KnowledgeManage、QuestionBank×3）、`el-tag`（AgentGenerate、
+> AgentChat、AgentLogs）、`ElMessage` toast（PaperEdit、TaskManage）、tooltip、不显示。
+> 顺带去掉露给用户的工程话术「（is_fallback=true）」。
+> 保留 toast/tag 的三处是**一次性动作回执**（换了一道题、生成了建议、日志行），
+> 用提示条反而占版面 —— 差异写在这里，避免后来者以为是漏改。
+
+> **U-04 实现要点**：`ExportButton` 升级为「传 `:handler` 就自己管 loading/单锁/失败
+> 提示」，`@click` 旧写法完全不变。迁移 10 处（AdminReport / ClassManage /
+> KnowledgeManage / LogManage / MyReport / ScoreCenter / TeacherReport /
+> QuestionBank / AiLessonDialog / WrongBook），每处删掉 6 行重复的
+> `if (exporting) return / try / finally`。
+> **`PaperManage` 刻意不迁**：它的导出在 `el-dropdown-item` 里且按行并行
+> （`exportingKeys`，P2-6 特意改成多值锁），套用全局单锁会退回"导出别的行没反应"。
+
+> **U-05 实现要点**：新增 `components/ErrorState.vue`（图标 + 中文原因 + 错误码 +
+> 重试）。接 4 个报表页：TeacherReport / AdminReport / MyReport / ScoreCenter。
+> 关键区别：全局红条说的是「刚才那个操作失败了」，ErrorState 说的是「这一块数据没
+> 加载出来，可以就地重试」——后者必须常驻，不能 3 秒消失。
+> 失败时同时清空数据，避免"旧数据 + 错误态"并存看起来像加载成功。
+
+> **U-06 实现要点**：`hasNoOutput()`（reaudit P1-2 时写的判定）当时只在
+> `AgentGenerate` 生效，且只有一句 3 秒 toast —— toast 消失后整页白屏，
+> 用户以为"点了没反应"。现在补一条常驻说明，写清两个真实原因
+> （推理耗尽预算导致正文为空、条件过窄抽不到题）与两条出路（放宽条件 / 换模型）。
+
 ## 验证脚本（可重跑，用于反向验证修复）
 
 | 脚本 | 覆盖 | 运行 |
