@@ -31,8 +31,49 @@ BASELINE = 63
 TARGET = 40
 PATTERN = re.compile(r"Dict\s*\[[^\[\]]*\]\s*=\s*Body\s*\(")
 
+# 「模型注解 + dict 默认值」是**必然 500**，不是风格问题：
+#   def restore_version(..., body: RestoreVersionIn = Body(default_factory=dict))
+# 客户端**完全不带 body**时 FastAPI 不校验、直接把默认值 `{}` 塞进来，
+# 端点第一行 `body.model_dump()` 就 AttributeError → 500。
+# 前端恰好每次都发 `{}` 所以没暴露；脚本/第三方调用一跳过 body 就炸
+# （实测 verify_paper_v3 的「版本回溯 200」红了一版才发现）。
+# 正确写法：`Body(default_factory=RestoreVersionIn)`，默认值仍是"空模型"，
+# 语义等价且 `model_dump()` 可用。
+# 这类问题必须是 **0** 容忍，不做棘轮：每多一处就多一个 500 面。
+BAD_DEFAULT = re.compile(
+    r":\s*[A-Z]\w*\s*=\s*Body\(\s*(?:default\s*=\s*\{\s*\}|default_factory\s*=\s*dict)"
+)
+
+
+def check_model_default_dict():
+    """扫「Pydantic 模型注解却给 dict 默认值」的端点。返回 [(path, lineno, code)]。"""
+    bad = []
+    for root, _dirs, files in os.walk(API_DIR):
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(root, name)
+            with open(path, encoding="utf-8") as fh:
+                for lineno, line in enumerate(fh, 1):
+                    m = BAD_DEFAULT.search(line)
+                    if m:
+                        bad.append((os.path.relpath(path, ROOT), lineno,
+                                    m.group(0).strip()))
+    return bad
+
+
 
 def main() -> int:
+    # 先跑硬约束：模型注解 + dict 默认值 → 必然 500，一律不允许存在
+    bad_defaults = check_model_default_dict()
+    if bad_defaults:
+        print(f"[FAIL] 模型注解却给 dict 默认值 = {len(bad_defaults)} 处")
+        for path, lineno, code in bad_defaults[:8]:
+            print(f"  - {path}:{lineno}  {code}")
+        print("  → 改成 Body(default_factory=<同一个模型>)：客户端不带 body 时")
+        print("    FastAPI 会把 dict 直接塞进来，body.model_dump() 必然 AttributeError(500)。")
+        return 1
+
     hits = []
     total = 0
     for root, _dirs, files in os.walk(API_DIR):

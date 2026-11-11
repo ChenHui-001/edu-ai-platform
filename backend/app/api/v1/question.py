@@ -1707,7 +1707,7 @@ def delete_paper(
 
 @router.post("/papers/{paper_id}/archive", summary="停用 / 恢复试卷")
 def archive_paper(
-    paper_id: int, body: ArchivePaperIn = Body(default_factory=dict),
+    paper_id: int, body: ArchivePaperIn = Body(default_factory=ArchivePaperIn),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
@@ -1803,7 +1803,7 @@ def _copy_paper_row(db: Session, src: Paper, user: User, name: Optional[str] = N
 
 @router.post("/papers/{paper_id}/copy", summary="试卷复制复用")
 def copy_paper(
-    paper_id: int, body: CopyPaperIn = Body(default={}),
+    paper_id: int, body: CopyPaperIn = Body(default_factory=CopyPaperIn),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):

@@ -164,14 +164,49 @@ fi
 # ---------- 0.4 行为回归（接口级） ----------
 # 项目自 2026-10-29 移除 tests/ 后，后端行为回归是真空的：静态门禁只看
 # 「代码长什么样」，看不出「端点串起来还对不对」。这个脚本用临时库 +
-# TestClient 走真实 HTTP，覆盖试卷导出(P0-1)、异步组卷解析(P0-3)、
-# 智能组卷 Agent(P0-4)、覆盖写保留大题结构(P1-1)、删题后成绩重算(P1-4)、
-# 班级薄弱知识点聚合(F-03)，共 21 条断言，约 17s。
+# TestClient 走真实 HTTP，覆盖导出(P0-1)、异步组卷解析(P0-3)、Agent 组卷(P0-4)、
+# 覆盖写保留大题结构(P1-1)、删题重算(P1-4)、版本乐观锁(P1-9)、自测卷题型(P1-10)、
+# 版本对比(F-02)、班级薄弱点(F-03)、任务取消(F-04)、请求体默认值(BUG-026)、
+# 报表缓存(P-07：命中/refresh 绕过后写回/跨用户不串键/深拷贝/容量上限)。
 if [ -n "$GATE_PY" ] && [ -f tools/verify_p0_fixes.py ]; then
   if ! "$GATE_PY" tools/verify_p0_fixes.py; then
-    die 1 "接口级行为回归未通过（试卷导出 / 异步组卷 / Agent 组卷 / 大题结构 / 成绩重算 / 班级薄弱点）"
+    die 1 "接口级行为回归未通过（导出 / 组卷 / 大题结构 / 成绩重算 / 版本 / 自测卷 / 取消 / 报表缓存）"
   fi
-  ok "接口级行为回归通过"
+  ok "接口级行为回归通过（65 条断言）"
+fi
+
+# ---------- 0.4b 高价值场景回归（P-06） ----------
+# 这些脚本此前只在 CI 的「功能回归测试」定时任务里跑，本地发版时是盲区：
+# 组卷引擎、作答丢失、卷面结构、PDF 安全这些改坏了，静态门禁一个都看不出来。
+# 只挑「快且稳」的（合计约 95s）；重脚本留给 CI：
+#   verify_student_retake(103s)、verify_paper_module(起独立服务,106 项)、
+#   verify_paper_manage(>150s) —— 放进发版链路会把 3 分钟拖成 8 分钟。
+# 每个脚本单独 180s 上限：卡死要能报出是哪一个，而不是整条流水线挂住。
+if [ -n "$GATE_PY" ]; then
+  REGRESS_SCRIPTS="verify_paper_rescore verify_compose_engine verify_pdf_export_safety \
+verify_bugfix_256 verify_compose_regenerate verify_paper_v3"
+  # macOS 自带 coreutils 的路径与 Linux 不同；两条都没有就直接跑（不设上限），
+  # 不能因为缺一个可选命令就让发版脚本直接报错。
+  TIMEOUT_CMD=""
+  if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="timeout 180"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout 180"
+  fi
+  for _s in $REGRESS_SCRIPTS; do
+    if [ ! -f "tools/$_s.py" ]; then
+      echo "  ${c_warn}跳过（不存在）：$_s${c_reset}"
+      continue
+    fi
+    _log="/tmp/auto_ship_regress_${_s}.log"
+    # shellcheck disable=SC2086  # TIMEOUT_CMD 需要按空格拆成命令+参数
+    if ! $TIMEOUT_CMD "$GATE_PY" "tools/$_s.py" > "$_log" 2>&1; then
+      # 失败时把日志尾部打出来：否则只有一句「未通过」，还得自己去翻
+      tail -30 "$_log" 2>/dev/null
+      die 1 "场景回归未通过：$_s（完整输出见 $_log）"
+    fi
+    ok "场景回归：$_s"
+  done
 fi
 
 # ---------- 0.5 磁盘预检 ----------

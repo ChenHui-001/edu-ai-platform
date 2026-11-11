@@ -213,7 +213,8 @@ def learning_suggestion(
 @router.get("/teacher/class-overview", summary="班级学情概览")
 def class_overview(
     class_id: int, task_id: Optional[int] = None, db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
+    refresh: bool = Query(False, description="true=跳过缓存重算（教师主动刷新时用）"),
+    user: User = Depends(get_current_teacher), scope: DataScope = Depends(get_data_scope),
 ):
     if not scope.is_super:
         allowed = scope.class_ids()
@@ -223,6 +224,27 @@ def class_overview(
     k = db.get(Class, class_id)
     if not k:
         raise NotFoundException("班级不存在")
+
+    # 15s 进程内缓存（P-07）。这个接口是教师端首屏，一次要把整班提交 +
+    # 每份提交的满分都读一遍来算得分率；班级页开着反复切 task 时会把它打成热点。
+    from app.services import report_cache
+
+    cache_key = report_cache.key("class-overview", user.id, class_id, task_id)
+    if refresh:
+        # 重算还要**写回**：否则老师点一次刷新只爽这一次，紧接着的自动轮询
+        # 又拿回 15 秒前的旧值，看起来像「刷新没生效」。
+        payload = _class_overview_payload(db, class_id, task_id)
+        report_cache.put(cache_key, payload)
+    else:
+        payload = report_cache.cached(
+            cache_key, lambda: _class_overview_payload(db, class_id, task_id))
+    return ok(payload)
+
+
+def _class_overview_payload(db: Session, class_id: int,
+                            task_id: Optional[int]) -> dict:
+    """班级概览的纯计算部分（不含权限判定，便于缓存与复用）。"""
+    k = db.get(Class, class_id)
     # 与同文件其它班级报表口径一致：class_id 下可能挂着教师/班主任账号，
     # 不过滤 identity 会把教职工算进「学生人数」和作答分母。
     students = db.scalars(select(User).where(
@@ -255,7 +277,7 @@ def class_overview(
     completion_rate = (round(len(submitted_students) / len(students) * 100, 2)
                        if students else 0)
 
-    return ok({
+    return {
         "class": {"id": k.id, "name": k.name, "grade_id": k.grade_id},
         "student_count": len(students),
         "submission_count": len(subs),
@@ -272,7 +294,7 @@ def class_overview(
         # active_students 为历史键名，保留以兼容旧前端
         "participated_students": len(submitted_students),
         "active_students": len(submitted_students),
-    })
+    }
 
 
 def _submission_rates(db: Session, subs) -> Dict[int, float]:
@@ -598,8 +620,9 @@ def class_weak_points(
     subject_id: Optional[int] = None,
     limit: int = Query(10, ge=1, le=50),
     min_answers: int = Query(1, ge=1, le=200, description="样本下限：作答数低于此值不参与排名"),
+    refresh: bool = Query(False, description="true=跳过缓存重算（教师主动刷新时用）"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_teacher),
+    user: User = Depends(get_current_teacher),
     scope: DataScope = Depends(get_data_scope),
 ):
     """把「学生个人掌握度」聚合成「这个班哪个知识点集体没掌握」。
@@ -626,24 +649,37 @@ def class_weak_points(
 
     # 聚合口径全部收在 services/class_analytics：API 层只做权限与组装
     # （`check_api_sql` 要求新逻辑不进 API 层，且该口径将来会被年级/学科复用）
-    from app.services import class_analytics
+    from app.services import class_analytics, report_cache
 
-    student_ids = class_analytics.class_student_ids(db, class_id)
-    items = class_analytics.weak_points(
-        db, student_ids, subject_id=subject_id, min_answers=min_answers)
-    all_acc = [i["accuracy"] for i in items]
-    return ok({
-        "class_id": class_id,
-        "class_name": k.name,
-        "items": items[:limit],
-        "summary": {
-            "student_count": len(student_ids),
-            "point_count": len(items),
-            "avg_accuracy": round(sum(all_acc) / len(all_acc), 2) if all_acc else 0,
-            # 低于 60% 的算「班级共性薄弱点」，数量直接决定讲评课要讲几个点
-            "below_60": sum(1 for a in all_acc if a < 60),
-        },
-    })
+    def _build() -> dict:
+        student_ids = class_analytics.class_student_ids(db, class_id)
+        items = class_analytics.weak_points(
+            db, student_ids, subject_id=subject_id, min_answers=min_answers)
+        all_acc = [i["accuracy"] for i in items]
+        return {
+            "class_id": class_id,
+            "class_name": k.name,
+            "items": items[:limit],
+            "summary": {
+                "student_count": len(student_ids),
+                "point_count": len(items),
+                "avg_accuracy": round(sum(all_acc) / len(all_acc), 2) if all_acc else 0,
+                # 低于 60% 的算「班级共性薄弱点」，数量直接决定讲评课要讲几个点
+                "below_60": sum(1 for a in all_acc if a < 60),
+            },
+        }
+
+    # 15s 进程内缓存（P-07）：这个榜单一进页面就查、老师还会反复点刷新，
+    # 而它要把整班掌握度聚合一遍。key 带 user_id + 全部入参，跨用户不会串。
+    cache_key = report_cache.key(
+        "class-weak-points", user.id, class_id, subject_id, limit, min_answers)
+    if refresh:
+        # 同上：refresh 后写回，后续请求复用这份新值而不是又回到旧缓存
+        payload = _build()
+        report_cache.put(cache_key, payload)
+    else:
+        payload = report_cache.cached(cache_key, _build)
+    return ok(payload)
 
 
 # ================================================================ 管理员端

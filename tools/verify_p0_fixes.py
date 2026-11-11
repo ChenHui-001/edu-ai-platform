@@ -1,8 +1,12 @@
-"""P0 修复的**接口级**回归：四个 P0 + P1-1/P1-4 走真实 HTTP 路径。
+"""接口级行为回归（**65 条断言**）：P0 与 P1/F 系列修复走真实 HTTP 路径。
 
 与 `.audit_tmp/verify_p0_*.py`（直调函数）互补：那些验证「函数行为对不对」，
 这个验证「端点串起来还对不对」——中间隔着依赖注入、权限、序列化、
 `_build_preview`、`_write_items`，正是历史上反复出问题的地方。
+
+覆盖：P0-1 导出 / P0-3 异步组卷 / P0-4 Agent 组卷 / P1-1 大题结构 /
+P1-4 成绩重算 / P1-9 版本乐观锁 / P1-10 自测卷题型 / F-02 版本对比 /
+F-03 班级薄弱点 / F-04 任务取消 / BUG-026 空 body 500 / P-07 报表缓存。
 
 用法：python tools/verify_p0_fixes.py        （退出码 0 = 全通过）
 环境：临时库 + 关 LLM + 关验证码，不碰项目 data/。
@@ -409,6 +413,20 @@ def main():
             check("同一版本自比 = 无差异（不虚报变更）",
                   sd.get("has_changes") is False, str(sd.get("summary")))
 
+        print("\n[BUG-026] 带 Pydantic 模型的端点：客户端不带 body 不得 500")
+        # `body: XxxIn = Body(default_factory=dict)` 时，客户端完全不传 body
+        # 会让 FastAPI 把 `{}`（dict）塞进来 → body.model_dump() AttributeError。
+        # 前端每次恰好都发 `{}` 所以从未暴露，脚本一跳过 body 就 500。
+        for path, name in (
+            (f"/question/papers/{pid}/versions/{oldest}/restore", "回溯"),
+            (f"/question/papers/{pid}/copy", "复制"),
+            (f"/question/papers/{pid}/favorite", "收藏"),
+            (f"/question/papers/{pid}/archive", "停用"),
+        ):
+            r = client.post(api + path, headers=H)   # 刻意不传 json
+            check(f"{name}：不带 body 不 500", r.status_code != 500,
+                  f"HTTP {r.status_code} {r.text[:90]}")
+
     # ---------------------------------------------------------------- F-03
     print("\n[F-03] 班级薄弱知识点聚合")
     r = client.get(api + "/report/teacher/class-weak-points", headers=H,
@@ -425,6 +443,131 @@ def main():
               items[0].get("suggestion"))
         check("统计未掌握人数", items[0].get("weak_students") == 1,
               str(items[0].get("weak_students")))
+
+    # ---------------------------------------------------------------- P-07
+    # 缓存最容易「看起来生效了、其实永远不命中」，所以这里不测时间，只测
+    # 可观测的 hits/misses 增量；跨用户隔离另起一个教师身份验证。
+    print("\n[P-07] 报表聚合短 TTL 进程内缓存")
+    from app.services import report_cache  # noqa: E402  （延迟导入：需先建好临时库）
+
+    report_cache.clear()
+    wp = api + "/report/teacher/class-weak-points"
+    # 刻意换 limit=7，避开前面 F-03 用 limit=10 留下的条目，从零开始计数
+    p = {"class_id": ctx["class_id"], "limit": 7}
+
+    s0 = report_cache.stats()
+    r1 = client.get(wp, headers=H, params=p)
+    s1 = report_cache.stats()
+    check("首次请求未命中（misses +1）", s1["misses"] - s0["misses"] == 1,
+          f"misses {s0['misses']} -> {s1['misses']}")
+
+    r2 = client.get(wp, headers=H, params=p)
+    s2 = report_cache.stats()
+    check("同参数二次请求命中缓存（hits +1）", s2["hits"] - s1["hits"] == 1,
+          f"hits {s1['hits']} -> {s2['hits']}")
+    check("命中返回的内容与首次一致",
+          (r1.json().get("data") or {}) == (r2.json().get("data") or {}),
+          f"HTTP {r1.status_code}/{r2.status_code}")
+
+    # refresh=1 必须绕过缓存：老师刚批完作业点刷新还看到旧数字，会以为批改没生效
+    r3 = client.get(wp, headers=H, params={**p, "refresh": "true"})
+    s3 = report_cache.stats()
+    check("refresh=true 不读缓存（hits 不增）", s3["hits"] == s2["hits"],
+          f"hits {s2['hits']} -> {s3['hits']}")
+    check("refresh=true 返回结果仍然正确",
+          len((r3.json().get("data") or {}).get("items") or []) == 2,
+          f"HTTP {r3.status_code}")
+
+    # 重算后必须写回：否则老师点一次刷新只爽这一次，紧接着的轮询又回到旧值，
+    # 表现为「刷新没生效」。这条断言专防这种「看着修好了其实没修」。
+    r3b = client.get(wp, headers=H, params=p)
+    s3b = report_cache.stats()
+    check("refresh 后写回缓存，后续请求立即命中", s3b["hits"] - s3["hits"] == 1,
+          f"hits {s3['hits']} -> {s3b['hits']}")
+    check("refresh 后的缓存值就是重算值（不是旧值）",
+          (r3.json().get("data") or {}) == (r3b.json().get("data") or {}))
+
+    # 跨用户隔离：key 里 user_id 是第二参数，另一个教师不得复用前者的缓存。
+    # 这条是防数据泄露的，缓存评审里最难靠肉眼发现的那类 bug。
+    db = SessionLocal()
+    try:
+        other = User(username="p0_teacher2", password=hash_password("x"),
+                     real_name="P0教师2", status="active", identity="teacher")
+        role = db.query(Role).filter(Role.code == "sys_admin").first()
+        if role:
+            other.roles = [role]
+        db.add(other)
+        db.commit()
+        db.refresh(other)
+        other_id = other.id
+        other_class = Class(name="P0班2", grade_id=ctx["grade_id"],
+                            head_teacher_id=other_id)
+        db.add(other_class)
+        db.commit()
+        db.refresh(other_class)
+        other_class_id = other_class.id
+    finally:
+        db.close()
+
+    tok2 = create_access_token(other_id, role="teacher")
+    H2 = {**H, "Authorization": f"Bearer {tok2}"}
+    before = report_cache.stats()
+    r4 = client.get(wp, headers=H2, params={"class_id": other_class_id, "limit": 7})
+    after = report_cache.stats()
+    check("换教师 + 换班级：走真实查询而非命中", after["misses"] - before["misses"] == 1,
+          f"misses {before['misses']} -> {after['misses']}")
+    check("另一教师看不到原班级数据（仍受权限/键隔离约束）",
+          r4.status_code in (200, 403),
+          f"HTTP {r4.status_code}")
+    check("缓存键含 user_id（同一班级不同用户不共键）",
+          report_cache.key("class-weak-points", ctx["teacher_id"], 1)
+          != report_cache.key("class-weak-points", other_id, 1))
+
+    # 单元级：命中返回深拷贝，下游就地排序/追加不得污染缓存
+    report_cache.clear()
+    report_cache.cached("unit:deepcopy", lambda: {"a": [1, 2]})
+    got = report_cache.cached("unit:deepcopy", lambda: {"a": []})
+    got["a"].append(99)
+    again = report_cache.cached("unit:deepcopy", lambda: {"a": []})
+    check("命中返回深拷贝（下游就地修改不污染缓存）", again == {"a": [1, 2]}, str(again))
+
+    # 单元级：过期后必须重算（否则 TTL 形同虚设，数据永远不更新）
+    report_cache.clear()
+    calls = []
+    for _i in range(2):
+        report_cache.cached("unit:ttl", lambda: calls.append(1) or "v", ttl=-1)
+    check("TTL 过期后重新计算", len(calls) == 2, f"producer 调用 {len(calls)} 次")
+
+    # 单元级：容量上限必须生效，否则 key 带 user_id 会成为内存泄漏
+    report_cache.clear()
+    for i in range(report_cache.MAX_ENTRIES + 40):
+        report_cache.put(f"unit:cap:{i}", i)
+    check("容量上限生效（不无限增长）",
+          report_cache.stats()["entries"] <= report_cache.MAX_ENTRIES,
+          f"entries={report_cache.stats()['entries']} / max={report_cache.MAX_ENTRIES}")
+    report_cache.clear()
+
+    print("\n[P-07] 班级概览同样走缓存")
+    ov = api + "/report/teacher/class-overview"
+    # 用 reset_stats 而不是 clear：clear 保留累计计数，这里要断言绝对值
+    report_cache.reset_stats()
+    o1 = client.get(ov, headers=H, params={"class_id": ctx["class_id"]})
+    o2 = client.get(ov, headers=H, params={"class_id": ctx["class_id"]})
+    so = report_cache.stats()
+    check("班级概览返回 200", o1.status_code == 200, f"HTTP {o1.status_code}")
+    check("班级概览二次请求命中缓存", so["hits"] == 1 and so["misses"] == 1,
+          f"hits={so['hits']} misses={so['misses']}")
+
+    # 只缓存「学生人数/提交数」这类聚合算出来的结果，换个 task 必须另算
+    o3 = client.get(ov, headers=H,
+                    params={"class_id": ctx["class_id"], "task_id": ctx["task_id"]})
+    so2 = report_cache.stats()
+    check("换 task_id 走新键（不串上一次的概览）", so2["misses"] == 2,
+          f"misses={so2['misses']}")
+    check("带 task_id 的概览仍然可用", o3.status_code == 200, f"HTTP {o3.status_code}")
+    check("班级概览缓存前后内容一致",
+          (o1.json().get("data") or {}) == (o2.json().get("data") or {}))
+    report_cache.reset_stats()
 
     print()
     if FAILED:

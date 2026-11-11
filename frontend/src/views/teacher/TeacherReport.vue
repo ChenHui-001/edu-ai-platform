@@ -4,7 +4,7 @@
       <h2 class="page-title">教学报表</h2>
       <div>
         <el-button :icon="Download" :loading="exporting" @click="onExport">导出 Excel</el-button>
-        <el-button :icon="Refresh" @click="loadAll">刷新</el-button>
+        <el-button :icon="Refresh" :loading="loading || loadingWeak" @click="loadAll(true)">刷新</el-button>
       </div>
     </div>
 
@@ -186,12 +186,27 @@ function effectColor(v) { return ['#67c23a', '#e6a23c', '#f56c6c'][effectColorId
 function effectTag(v) { return ['success', 'warning', 'danger'][effectColorIdx(v)] }
 function effectText(v) { return ['优秀', '合格', '需强化'][effectColorIdx(v)] }
 
-async function loadAll() {
+/**
+ * 班级概览 + 学生对比。
+ *
+ * `forceRefresh` 只在点「刷新」时为 true —— 后端这两块有 15 秒进程内缓存（P-07），
+ * 老师刚批完 30 份作业点刷新，若还看到旧数字会以为批改没生效，所以刷新按钮
+ * 必须带 `refresh=1` 绕过缓存；切班级/切任务这类自动加载则允许吃缓存。
+ *
+ * 注意 `forceRefresh` 用 `=== true` 严格判定：`@change="loadAll"` 会把
+ * el-select 选中的 id（数字）当第一个参数传进来，宽松判定会让「切班级」
+ * 也变成强制刷新，缓存等于白加。
+ */
+async function loadAll(forceRefresh) {
   if (!classId.value) return
+  const force = forceRefresh === true
   loading.value = true
   try {
     const [o, c] = await Promise.all([
-      reportApi.classOverview({ class_id: classId.value, task_id: taskId.value }),
+      reportApi.classOverview({
+        class_id: classId.value, task_id: taskId.value,
+        ...(force ? { refresh: 1 } : {})
+      }),
       reportApi.studentComparison({ class_id: classId.value, task_id: taskId.value })
     ])
     overview.value = o.data
@@ -200,7 +215,7 @@ async function loadAll() {
     loading.value = false
   }
   // 薄弱知识点与任务无关（按班级聚合掌握度），单独加载、失败不影响上面两块
-  loadWeak()
+  loadWeak(force)
 }
 
 async function loadEffect() {
@@ -224,11 +239,15 @@ async function loadEffect() {
  * 这个直接按班级聚合 `edu_knowledge_mastery`，选完班级就能看，
  * 备课场景用得上（"这个班二次函数只有 41%"）。不依赖 taskId，所以独立加载。
  */
-async function loadWeak() {
+async function loadWeak(forceRefresh) {
   if (!classId.value) { weakPoints.value = []; weakSummary.value = {}; return }
+  const force = forceRefresh === true
   loadingWeak.value = true
   try {
-    const res = await reportApi.classWeakPoints({ class_id: classId.value, limit: 10 })
+    const res = await reportApi.classWeakPoints({
+      class_id: classId.value, limit: 10,
+      ...(force ? { refresh: 1 } : {})
+    })
     const d = res.data || {}
     weakPoints.value = d.items || []
     weakSummary.value = d.summary || {}

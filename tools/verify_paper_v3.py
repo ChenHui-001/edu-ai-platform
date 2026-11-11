@@ -500,7 +500,13 @@ def main():
                 proc.kill()
             except Exception:
                 pass
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        # --keep：失败时要能读 server.log 里的 traceback。
+        # 否则 500 用例只剩一句「服务器内部错误」，看不出是哪一行炸的
+        # （历史上为定位一次回溯 500，只能靠改脚本临时关掉清理）。
+        if os.environ.get("VERIFY_KEEP_TMP"):
+            print(f"[keep] 临时目录保留：{tmpdir}")
+        else:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

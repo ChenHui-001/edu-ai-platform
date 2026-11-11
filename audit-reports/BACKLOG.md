@@ -3,8 +3,8 @@
 > **本文件是唯一入口。** 其他 `audit-reports/*.md` 只作为「当时的证据与复现记录」保留，
 > 新发现一律往这里加一行，不再新开报告。修复进度以本文件的「状态」列为准。
 >
-> 基线：`VERSION=2.5.22`，master（2026-11-10 第三轮：P1 收尾 + F-02/F-04）
-> 来源：`paper-analysis-2026-11-10.md`（P0×4 / P1×11 / P2×20）+ `structured-assessment-2.5.19-2026-11-10.md`（§5.5）
+> 基线：`VERSION=2.5.23`，master（2026-11-10 第四轮：6.2 性能优化收尾 + BUG-026）
+> 来源：`paper-analysis-2026-11-10.md`（P0×4 / P1×11 / P2×20）+ `structured-assessment-2.5.19-2026-11-10.md`（§5.5 / §6.1 / §6.2）
 > 状态图例：`已修` = 本轮已改并验证；`待修` = 确认存在未处理；`待评估` = 需先确认影响面
 
 ---
@@ -18,7 +18,8 @@
 | P0-3 | AI 一键组卷「只写描述、不选年级学科」异步路径 100% 失败 | `api/v1/paper_compose.py` | **已修** | 抽出 `_ai_resolve_params()`，同步 `/compose/ai` 与异步 `/compose/ai/async` 共用；修正 `compose_ai_async` docstring。反向验证：`出一份一年级数学期中卷` → 解析出 grade=1 / subject=2（不依赖 LLM） |
 | P0-4 | 智能组卷 Agent 默认比例被 `int()` 截断 → 恒 0 题 + `NoneType` 崩溃 | `agents/paper_agent.py` | **已修** | 新增 `_split_counts()` 区分「比例/题量」并保证合计对齐；难度权重按 float 归一；`_ai_fill` 的 `PaperItem` 写入加 `paper is not None` 守卫，逐题 commit 改为一轮。反向验证：默认参数 10 题、`save=False` 不崩 |
 | P0-5 | 列表页「编辑试卷」整卷覆盖写 → 抹平标准卷大题结构；删题后成绩不重算 | `PaperManage.vue` / `question.py` / `paper_compose.py` | **已修** | 详情接口回传 `section_code/section_sort`；前端 `openDialog`/`save`/`applyRecommendations` 全链路透传；`_normalize_paper_items` 保留三件套 |
-| P0-6 | 无自动化行为回归，35 项修复无用例护航 | `tools/` / `backend/qa_audit_suite.py` | **已补** | 新增 `tools/verify_p0_fixes.py`（43 条接口级断言，临时库 + TestClient 走真实 HTTP，约 22s），覆盖 P0-1/3/4、P1-1/4/9/10、F-02/03/04，已接入 `auto_ship.sh` 的「0.4 行为回归」段 |
+| P0-6 | 无自动化行为回归，35 项修复无用例护航 | `tools/` / `backend/qa_audit_suite.py` | **已补** | 新增 `tools/verify_p0_fixes.py`（**65 条**接口级断言，临时库 + TestClient 走真实 HTTP，约 25s），覆盖 P0-1/3/4、P1-1/4/9/10、F-02/03/04、BUG-026、P-07，已接入 `auto_ship.sh` 的「0.4 行为回归」段 |
+| **BUG-026** | 6 个端点写 `body: XxxIn = Body(default_factory=dict)` → 客户端**完全不传 body** 时 FastAPI 塞进 `{}`，`body.model_dump()` 抛 `AttributeError` **必然 500** | `api/v1/paper_compose.py` 等 | **已修** | 改为 `Body(default_factory=XxxIn)`（`restore_version`/`copy_paper`/`favorite`/`archive`/`RegenerateItemIn`/`RestructurePaperIn`/`ToggleFavoriteIn` 等 6 处）。前端每次都恰发 `{}` 所以从未暴露，脚本一跳过 body 就炸。新增 `tools/check_schema_bodies.py` 的 `BAD_DEFAULT` 硬门禁（0 容忍，命中即红），已反向验证（临时回退一处 → RC=1，还原 → 绿） |
 
 ## P1 — 限制迭代速度与规模
 
@@ -103,19 +104,53 @@
 > token 已花掉）；**该端点目前没有前端消费方**（教案 AI 生成页未接线），仅后端可用。
 > 结果持久化本已具备（`job.result` 落库），无需改动。
 
+## 性能优化进度（评估报告 §6.2）
+
+| 编号 | 内容 | 状态 |
+|---|---|:---:|
+| P-01 | LLM 全局并发闸门（`threading.BoundedSemaphore` 包 `invoke()`，超限快速 `is_fallback`，不排队） | **已完成** |
+| P-02 | `check_n_plus_one.py --ratchet` 接入 `auto_ship.sh` + CI（A 类循环内查库棘轮，`BASELINE_A=86` 只许降） | **已完成** |
+| P-03 | `MasteryMap.vue` 改用 `utils/echarts.js` 按需注册，消除全量 ECharts 打包 | **已完成** |
+| P-04 | `llm.py` 双实例收敛为单一 `get_llm()`；`_get_db_value` 加 2s TTL 缓存 | **已完成**（随 P1-12） |
+| P-05 | `check_css_tokens.py` 接入本地门禁，消除「本地绿、CI 红」 | **已完成** |
+| P-06 | 高价值 verify 脚本纳入发版回归段 | **已完成**（见下） |
+| P-07 | 报表聚合短 TTL 进程内缓存（按 `user_id + params`），不引 Redis | **已完成**（见下） |
+
+> **P-06 实现要点**：`auto_ship.sh` 新增「0.4b 场景回归」段，接入
+> `verify_paper_rescore / verify_compose_engine / verify_pdf_export_safety /
+> verify_bugfix_256 / verify_compose_regenerate / verify_paper_v3` 六个脚本
+> （合计约 95s，各 180s 上限，优先 `timeout` 回退 `gtimeout`，都没有则不设限）。
+> 重脚本刻意**不入链路**：`verify_paper_module`（起独立服务、106 项）、
+> `verify_paper_manage`（>150s）、`verify_student_retake`（103s）——
+> 会把 3 分钟拖成 8 分钟，留给 CI。
+> 顺带收益：`verify_paper_v3` 一接进来就发现了 BUG-026（必然 500）。
+
+> **P-07 实现要点**：`services/report_cache.py`，15s TTL / 256 条上限 / FIFO 淘汰，
+> 覆盖 `class-overview` 与 `class-weak-points`。四条必须守住的约束：
+> ① **key 第二参数强制 `user_id`**（从签名上挡跨用户泄露，报表受 `DataScope` 约束）；
+> ② 命中返回**深拷贝**（下游就地 `sort()` 会污染缓存，表现为"第二次顺序变了"）；
+> ③ `refresh=true` **既绕过缓存也要写回**（否则老师点一次刷新只爽这一次，
+> 紧接着的轮询又回到旧值，看起来像刷新没生效）；④ `stats()` 暴露 hits/misses ——
+> 缓存最容易"看起来生效、其实永远不命中"。`clear()` 刻意不清计数，
+> 归零走 `reset_stats()`。不引 Redis：单容器单 worker 下进程内命中率=全局命中率，
+> 引 Redis 会破坏「单镜像 + SQLite」部署承诺（多 worker 化那天见 P1-15）。
+> 前端：教学报表页「刷新」按钮带 `refresh=1`，切班级/切任务仍吃缓存。
+
 ## 验证脚本（可重跑，用于反向验证修复）
 
 | 脚本 | 覆盖 | 运行 |
 |---|---|---|
-| `tools/verify_p0_fixes.py` | **接口级**：P0-1 导出 / P0-3 异步组卷 / P0-4 Agent 组卷 / P1-1 大题结构 / P1-4 成绩重算 / F-03 班级薄弱点（21 条断言） | `python tools/verify_p0_fixes.py` |
+| `tools/verify_p0_fixes.py` | **接口级**：P0-1 导出 / P0-3 异步组卷 / P0-4 Agent 组卷 / P1-1 大题结构 / P1-4 成绩重算 / P1-9 版本乐观锁 / P1-10 自测卷题型 / F-02 版本对比 / F-03 班级薄弱点 / F-04 任务取消 / BUG-026 空 body / P-07 报表缓存（**65 条断言**） | `python tools/verify_p0_fixes.py` |
 | `tools/verify_pdf_export_safety.py` | P0-1 恶意题干导出 PDF/答题卡不崩、输出合法 PDF | `python tools/verify_pdf_export_safety.py` |
 | `tools/probe_pdf_ssrf.py` | P0-1 SSRF 实证：旧写法会连接外部 URL，新实现 0 次连接 | `python tools/probe_pdf_ssrf.py` |
 | `tools/verify_compose_async_parse.py` | P0-3 异步路径复用解析；只写描述可推出年级学科；显式选择优先 | `python tools/verify_compose_async_parse.py` |
 | `tools/verify_paper_agent_ratio.py` | P0-4 比例/题量归一、默认参数出题、`_ai_fill` 不崩 | `python tools/verify_paper_agent_ratio.py` |
 
-> `tools/verify_p0_fixes.py` 已进 `auto_ship.sh`（每发版必跑，约 17s）；
-> 其余四个是「临时库 + 直调函数」的定向验证，不依赖 LLM、不写项目 `data/`，
-> 可安全重跑，但不进流水线（避免为逐个用例付建库开销）。
+> `tools/verify_p0_fixes.py` 已进 `auto_ship.sh` 的「0.4 行为回归」（每发版必跑，约 25s）；
+> 另有六个场景回归脚本进「0.4b」（`verify_paper_rescore`/`verify_compose_engine`/
+> `verify_pdf_export_safety`/`verify_bugfix_256`/`verify_compose_regenerate`/
+> `verify_paper_v3`，合计约 95s）。其余是「临时库 + 直调函数」的定向验证，
+> 不依赖 LLM、不写项目 `data/`，可安全重跑，但不进流水线（避免为逐个用例付建库开销）。
 
 ## 维护约定
 

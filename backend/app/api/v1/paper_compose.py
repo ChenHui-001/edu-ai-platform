@@ -2173,7 +2173,7 @@ def _recalculate_after_change(
 
 @router.post("/{paper_id}/items/{item_id}/regenerate", summary="AI 重新生成单题")
 def regenerate_item(
-    paper_id: int, item_id: int, body: RegenerateItemIn = Body(default={}),
+    paper_id: int, item_id: int, body: RegenerateItemIn = Body(default_factory=RegenerateItemIn),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:ai")),
 ):
@@ -2343,7 +2343,7 @@ def rename_section(
 
 @router.post("/{paper_id}/restructure", summary="一键重构大题结构")
 def restructure_paper(
-    paper_id: int, body: RestructurePaperIn = Body(default={}),
+    paper_id: int, body: RestructurePaperIn = Body(default_factory=RestructurePaperIn),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
@@ -2483,7 +2483,7 @@ def diff_version(
 
 @router.post("/{paper_id}/versions/{version}/restore", summary="回溯到指定版本")
 def restore_version(
-    paper_id: int, version: int, body: RestoreVersionIn = Body(default_factory=dict),
+    paper_id: int, version: int, body: RestoreVersionIn = Body(default_factory=RestoreVersionIn),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:write")),
 ):
@@ -2701,7 +2701,7 @@ def paper_library(
 
 @router.post("/{paper_id}/favorite", summary="收藏/取消收藏")
 def toggle_favorite(
-    paper_id: int, body: ToggleFavoriteIn = Body(default={}),
+    paper_id: int, body: ToggleFavoriteIn = Body(default_factory=ToggleFavoriteIn),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("paper:list")),
 ):

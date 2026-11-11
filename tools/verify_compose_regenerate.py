@@ -29,6 +29,17 @@ from app.core.database import Base, SessionLocal, engine  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.models import Grade, KnowledgePoint, Question, Subject, User  # noqa: E402
 from app.api.v1 import paper_compose as pc  # noqa: E402
+from app.schemas.legacy_bodies import ComposeRegenerateIn  # noqa: E402
+
+
+def _regen(payload, **kw):
+    """把 dict 包成请求模型再调端点。
+
+    走 HTTP 时 FastAPI 负责这层转换；直调函数必须自己包 ——
+    否则端点第一行 `body.model_dump()` 直接 AttributeError。
+    """
+    return pc.compose_regenerate(ComposeRegenerateIn(**payload), **kw)
+
 
 FAILED = []
 CALLS = []
@@ -154,7 +165,9 @@ def main() -> int:
         CALLS.clear()
         # index=3 = 第 4 题 = 9101（教师手改过题干/答案/解析、分值 6、槽位 0）
         payload = build_payload(db, grade, subject, mode="item", index=3)
-        res = pc.compose_regenerate(payload, db=db, user=teacher)
+        # 直调函数要自己包成模型：走 HTTP 时 FastAPI 会做这层转换，
+        # 传 dict 进来端点第一行 body.model_dump() 就 AttributeError
+        res = _regen(payload, db=db, user=teacher)
         data = res["data"]
         items = data["items"]
         check("单题重生 replaced=1", data["replaced"] == 1, str(data["replaced"]))
@@ -183,7 +196,7 @@ def main() -> int:
         install_fake_agent()
         CALLS.clear()
         payload = build_payload(db, grade, subject, mode="section", section_code="single")
-        res = pc.compose_regenerate(payload, db=db, user=teacher)
+        res = _regen(payload, db=db, user=teacher)
         data = res["data"]
         items = data["items"]
         singles = [i for i in items if i["section_code"] == "single"]
@@ -216,7 +229,7 @@ def main() -> int:
         # ---- 4. 模型难度不听话：宁可不换也不降级 ----
         install_fake_agent(ignore_difficulty=True)
         CALLS.clear()
-        before = pc.compose_regenerate(
+        before = _regen(
             build_payload(db, grade, subject, mode="item", index=0),
             db=db, user=teacher)["data"]
         # 全部返回 hard，而原题是 easy → 一道都不该被采纳
@@ -238,7 +251,7 @@ def main() -> int:
         # ---- 5. 模型混题型：过滤掉 ----
         install_fake_agent(ignore_type=True)
         CALLS.clear()
-        r5 = pc.compose_regenerate(
+        r5 = _regen(
             build_payload(db, grade, subject, mode="item", index=1),
             db=db, user=teacher)["data"]
         check("题型不符的题被过滤（replaced=0）", r5["replaced"] == 0, str(r5["replaced"]))
@@ -254,7 +267,7 @@ def main() -> int:
                 "section_code": "calc",
                 "items": [dict(ITEMS[3], question_id=9200 + n, difficulty="medium",
                                section_pos=n) for n in range(4)]}
-        r6 = pc.compose_regenerate(flat, db=db, user=teacher)["data"]
+        r6 = _regen(flat, db=db, user=teacher)["data"]
         check("空正文时一道也不采纳", r6["replaced"] == 0, str(r6["replaced"]))
         check("空正文原因翻译成中文可读",
               "预算" in str(r6["pending"][0]["reason"]),
@@ -273,7 +286,7 @@ def main() -> int:
               "index": 0, "items": []}, "items 为空"),
         ):
             try:
-                pc.compose_regenerate(bad, db=db, user=teacher)
+                _regen(bad, db=db, user=teacher)
                 check(f"{label} 应被拒绝", False, "未抛异常")
             except Exception as exc:  # noqa: BLE001
                 check(f"{label} 被拒绝且提示可读",
