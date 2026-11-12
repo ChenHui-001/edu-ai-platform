@@ -282,11 +282,13 @@ def main() -> int:
         return 1
 
     if extra_indexes and not args.drop_extra_indexes:
-        print(f"\n[提示] 元数据里没有这些索引：{extra_indexes}")
-        print("       确认是要删（它们通常来自手工 DDL）后加 --drop-extra-indexes；"
-              "否则请把它们补进模型。")
-        if not to_rebuild:
-            return 1
+        # 必须整体中止，不能"先重建完再报错"：那会把库留在「改了一半、退出码非零」
+        # 的状态，而运维看到失败只会以为什么都没动，转头就去查别的原因。
+        print(f"\n[STOP] 元数据里没有这些索引：{extra_indexes}")
+        print("       两条路选一条，本次**不做任何修改**：")
+        print("       1) 补进模型（推荐）——索引也是结构，应该只有模型一个真源；")
+        print("       2) 确认是手工 DDL 残留 → 加 --drop-extra-indexes 显式删掉。")
+        return 1
 
     if not args.apply:
         print("\n[dry-run] 未做任何修改。要执行加 --apply --yes")
@@ -325,16 +327,17 @@ def main() -> int:
         # 撞上历史脏值，COMMIT 之后再发现就只能靠备份手工回滚了。
         # 只断言「本次重建过的表」—— 别的表的历史孤儿不是本工具的职责，
         # 拿全库结果当门槛会让一次无关的脏数据挡住整个对齐。
-        bad = []
+        # PRAGMA foreign_key_check 每行是 (表, rowid, 父表, fk序号) —— 表名已在第一列，
+        # 不要再加前缀，否则打印成「表 edu_paper rowid=edu_paper -> 7」。
+        bad: List[tuple] = []
         for table in targets:
-            bad.extend((table.name,) + tuple(r) for r in con.execute(
-                f"PRAGMA foreign_key_check({table.name})"))
+            bad.extend(con.execute(f"PRAGMA foreign_key_check({table.name})").fetchall())
         if bad:
             con.execute("ROLLBACK")
             con.close()
             print(f"\n[FAIL] 已回滚：重建表里有 {len(bad)} 条孤儿引用")
             for row in bad[:8]:
-                print(f"       表 {row[0]} rowid={row[1]} -> {row[2]}")
+                print(f"       {row[0]} rowid={row[1]} → 父表 {row[2]} 无对应行")
             print("       多为新增外键撞上历史脏值（如 review_by 指向已删用户）。"
                   "把脏值置空后重跑即可。")
             print(f"       备份在 {bak}")
