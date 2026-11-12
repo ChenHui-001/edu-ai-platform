@@ -231,10 +231,11 @@ A: 不会。`rag.py` 捕获异常后自动降级为 SQL LIKE 检索，日志会�
 A: `Orchestrator` 检测后降级为顺序编排，`orchestrator_mode` 字段显示为 `sequential`，功能不变。
 
 **Q: 改了模型但表没变？**
-A: 分两种情况。**新库/测试库**：`Base.metadata.create_all` 只建缺失的表，已存在的表不加列，
-开发期可直接删 `data/edu_platform.db` 重建（丢数据）。**存量库/生产**：结构变更必须
-生成 Alembic 迁移（见第九节），老库靠 `MIGRATION_COLUMNS` 幂等补列兜底 —— 那条路径
-只会加列，不会改类型/删列。
+A: 分三种情况。**新库/测试库**：`Base.metadata.create_all` 只建缺失的表，已存在的表不加列，
+开发期可直接删 `data/edu_platform.db` 重建（丢数据）。**存量库/生产的新变更**：必须
+生成 Alembic 迁移（见第九节）。**存量库的历史漂移**（列可空性/外键/索引/类型与模型不一致）：
+跑 `tools/align_schema.py`（见第九节末），`MIGRATION_COLUMNS` 那条路只会加列，
+补不了 NOT NULL、外键和索引。
 
 **Q: 定时任务没执行？**
 A: 检查 `GET /api/v1/jobs/status` 确认调度器 running，并核对 Cron 表达式格式（分 时 日 月 周）。
@@ -243,12 +244,13 @@ A: 检查 `GET /api/v1/jobs/status` 确认调度器 running，并核对 Cron 表
 
 ## 九、结构变更与迁移（Alembic）
 
-结构演进有两套机制，**新变更一律走 Alembic**：
+结构演进有三套机制，**新变更一律走 Alembic**：
 
 | 机制 | 作用 | 边界 |
 |------|------|------|
 | `migrations/versions/*.py`（Alembic） | 有版本号、可回退的真实迁移 | 改类型/删列/建索引 |
 | `db_migrations.MIGRATION_COLUMNS` | 启动时对存量库幂等补列 | **只会加列**，老库追平用 |
+| `tools/align_schema.py` | 把存量库结构**整体**对齐到模型 | 一次性/运维用，不是发版流程 |
 
 ### 三条命令
 
@@ -284,3 +286,50 @@ python tools/check_alembic_sync.py    # 0=通过；也在 auto_ship 与 CI 里
 
 `autogenerate` 对「改列类型」「删索引」「重命名列」猜不准（重命名会被识别成
 删+加，数据丢失），这几类要手工改 up/downgrade 再跑守卫确认。
+
+### 存量库结构漂移：`tools/align_schema.py`
+
+`MIGRATION_COLUMNS` 用 `ALTER TABLE ADD COLUMN` 追平老库，而 SQLite 的 ADD COLUMN
+**只能加「可空或带默认值」的列** —— 补不了 NOT NULL、补不了 FOREIGN KEY、补不了索引、
+也改不了类型。长期滚下来的库于是和模型「差一口气」，而 `create_all` 对此完全无能为力。
+
+实测（2026-11）生产库有 4 张表漂移，都是这条路径留下的：
+
+| 表 | 漂移 |
+| --- | --- |
+| `edu_paper` | 缺 5 个索引；缺 `review_by → sys_user.id` 外键；`status`/`share_scope`/`current_version` 可空；`difficulty_ratio` 仍是 `VARCHAR(64)` |
+| `edu_paper_item` | 缺 `section_code` 索引；`section_sort` 可空 |
+| `edu_paper_share` | 缺 `uq_paper_share_target` 唯一约束；`permission` 可空 |
+| `sys_agent_job` | `cancel_requested` 可空 |
+
+**这不是风格问题**：可空性不一致意味着 `paper.status is None` 之类的判定会踩空；
+缺索引意味着试卷列表按 `status`/`exam_type` 过滤走全表扫描；缺外键意味着删用户后
+`review_by` 指向不存在的 id。
+
+修法**不是** autogenerate —— 基线已经 stamp 过的库，剩下的差异是「历史遗留」而不是
+「新变更」，autogenerate 只会吐出一堆含义不明的操作。用对齐工具：
+
+```bash
+python tools/align_schema.py                 # 只看差异（默认 dry-run）
+python tools/align_schema.py --apply --yes --drop-extra-indexes
+```
+
+- 判定复用 `alembic.autogenerate.compare_metadata()` —— 和守卫同源，保证「工具说齐了」
+  与「`alembic check` 说齐了」是同一件事。
+- 修复是 SQLite 唯一可行的方式：**按元数据重建表**（建 `_<表>__align` → 拷数据 →
+  删旧表 → 改名 → 按元数据建索引）。全程单事务，行数不一致或重建表出现孤儿外键就
+  整体 `ROLLBACK`，执行前自动用 sqlite backup API 备份到数据目录。
+- 默认**拒绝删**「库里多出来的列/表/约束」（那是数据丢失），只报告；索引是纯派生物，
+  要显式 `--drop-extra-indexes` 才删。
+
+对齐后生产库才真正「认得自己是谁」：
+
+```bash
+cd backend && python -m alembic stamp 0001_baseline     # 首次接入时
+python -m alembic check                                 # 必须输出 No new upgrade operations detected
+```
+
+⚠️ **不要再手工写 `CREATE INDEX` 兜底**。`run_knowledge_v2_migration` 里曾建过一个
+`ux_kp_subject_code` 部分唯一索引，与模型 `uq_kp_subject_code` UNIQUE 约束完全重复
+（SQLite 唯一索引本就把多个 NULL 视为互不相同），结果 `alembic check` 永久报一个
+`remove_index`。结构对齐只认模型，DDL 不写在迁移脚本以外的业务代码里。

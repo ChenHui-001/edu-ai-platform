@@ -352,10 +352,12 @@ def run_knowledge_v2_migration(db: Session) -> bool:
         db.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_kp_grade_subject_parent "
             "ON edu_knowledge_point (grade_id, subject_id, parent_id)"))
-        db.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_kp_subject_code "
-            "ON edu_knowledge_point (grade_id, subject_id, code) "
-            "WHERE code IS NOT NULL"))
+        # 这里原本还建过一个 `ux_kp_subject_code` 部分唯一索引
+        # （ON (grade_id, subject_id, code) WHERE code IS NOT NULL）。它和模型里的
+        # `uq_kp_subject_code` UNIQUE 约束**完全重复**：SQLite 的唯一约束/唯一索引
+        # 本来就把多个 NULL 视为互不相同，那个 WHERE 不改变任何语义。留着只会让
+        # `alembic check` 永久报一个 remove_index（元数据里没有它），
+        # 所以已删除；唯一性由模型的 UNIQUE 约束保证。
         db.execute(text(
             "INSERT INTO sys_config "
             "(key, value, value_type, category, is_public, created_at, updated_at) "
