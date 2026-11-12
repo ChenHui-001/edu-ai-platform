@@ -13,7 +13,7 @@
 #         裸 SQL/定时任务注册/status 字面量/造数确定性/用例覆盖/N+1 棘轮/ruff；
 #         前端：模板引用/重复模板/res.data.data/裸消息框/CSS 变量；
 #         文档：现状卡自洽 + 版本基线漂移。道数以 tools/status_snapshot.py 为准）
-#      2) 接口级行为回归（tools/verify_p0_fixes.py）+ 高价值场景回归（6 个脚本）
+#      2) 接口级行为回归（tools/verify_p0_fixes.py）+ 高价值场景回归（8 个脚本）
 #      3) 导库 + create_all 建表 + 路由数下限（拦住语法错、循环导入、模型断裂）
 #      4) CI 的 compileall + 镜像构建仍会独立跑一次
 #    代价要说清楚：**页面级行为回归已无自动化覆盖**，改业务逻辑后必须人工点一遍相关页面。
@@ -192,10 +192,14 @@ fi
 #   verify_paper_manage(>150s) —— 放进发版链路会把 3 分钟拖成 8 分钟。
 # `verify_llm_routing` 约 3s 且不碰库/不碰网络：它覆盖场景路由与按 biz_type
 # 预算（F-06），而这类「配置存了但读不到」的缺口静态门禁完全看不出来。
+# `verify_ai_fill_parallel` 约 2s：唯一直接驱动 `_ai_fill_gaps` 的脚本（补题并行、
+# 批次分档、空正文减半重试、熔断早退、缺口原因回传）。组卷补题出问题最贵的
+# 就是"静默补不上"，靠人工点页面根本发现不了。
 # 每个脚本单独 180s 上限：卡死要能报出是哪一个，而不是整条流水线挂住。
 if [ -n "$GATE_PY" ]; then
   REGRESS_SCRIPTS="verify_paper_rescore verify_compose_engine verify_pdf_export_safety \
-verify_bugfix_256 verify_compose_regenerate verify_paper_v3 verify_llm_routing"
+verify_bugfix_256 verify_compose_regenerate verify_paper_v3 verify_llm_routing \
+verify_ai_fill_parallel"
   # macOS 自带 coreutils 的路径与 Linux 不同；两条都没有就直接跑（不设上限），
   # 不能因为缺一个可选命令就让发版脚本直接报错。
   TIMEOUT_CMD=""
