@@ -11,14 +11,14 @@
 <!-- status:auto:begin -->
 | 项 | 实测值 | 口径 |
 |---|---:|---|
-| 版本 | 2.5.35 | `VERSION` 文件 |
+| 版本 | 2.5.36 | `VERSION` 文件 |
 | 路由数 | 293 | `app.routes` |
 | 数据表数 | 53 | `Base.metadata.tables` |
 | 后端用例 | 74 | `pytest backend/qa_audit_suite.py --collect-only` |
 | 前端用例 | 119 | `frontend/src/**/__tests__` 内 `it(` 计数 |
 | 接口断言 | 117 | `tools/verify_p0_fixes.py` 实际通过条数 |
 | 补列迁移 | 34 | `core/db_migrations._COLUMNS` |
-| 发版门禁 | 20 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |
+| 发版门禁 | 21 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |
 
 > 由 `python tools/status_snapshot.py --write` 生成。版本号另由 `tools/check_doc_versions.py` 门禁强制与 `VERSION` 一致。
 <!-- status:auto:end -->

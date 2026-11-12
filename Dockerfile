@@ -63,6 +63,11 @@ FROM backend-base AS backend
 
 WORKDIR /app
 COPY backend/app ./app
+# Q-06：迁移体系要能在容器内直接跑（alembic upgrade/stamp），
+# 只 COPY app 而不带 alembic.ini + migrations 的话，镜像里没有任何迁移文件，
+# 生产上想演进结构就只能回退到手工改库。
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/migrations ./migrations
 COPY backend/.env.example ./.env.example
 # 版本号单一真源：根目录 VERSION 文件。
 # 不注入 APP_VERSION 覆盖，让容器内直接读 /app/VERSION；
@@ -124,6 +129,8 @@ RUN groupadd -g "${APP_GID}" app \
     && useradd -u "${APP_UID}" -g app -m -d /home/app -s /usr/sbin/nologin app
 
 COPY backend/app ./app
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/migrations ./migrations
 # 版本号单一真源：根目录 VERSION 文件；缺失时才回退到 APP_VERSION build-arg
 COPY VERSION ./VERSION
 ARG APP_VERSION=""

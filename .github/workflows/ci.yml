@@ -50,6 +50,9 @@ jobs:
           python tools/check_time_contract.py
           python tools/check_model_fk.py
           python tools/check_migration_columns.py
+          # Q-06：Alembic 迁移链能建库、且与模型/create_all 结构一致。
+          # 只有静态文件没有"跑一遍"的守卫，迁移体系迟早退化成摆设。
+          python tools/check_alembic_sync.py
           python tools/check_schema_bodies.py
           python tools/check_api_sql.py
           # 定时任务 func_path 是否真的注册到 JOB_HANDLERS：漏注册时任务

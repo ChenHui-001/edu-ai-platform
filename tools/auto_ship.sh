@@ -117,6 +117,9 @@ if [ -n "$GATE_PY" ]; then
   "$GATE_PY" tools/check_time_contract.py || GATE_RC=1
   "$GATE_PY" tools/check_model_fk.py || GATE_RC=1
   "$GATE_PY" tools/check_migration_columns.py || GATE_RC=1
+  # Q-06：迁移链能建库 + 与模型/create_all 结构一致。3s，纯临时库，不碰真实库。
+  # 少了这一条，Alembic 会退化成"文件建了但没人跑过"的摆设。
+  "$GATE_PY" tools/check_alembic_sync.py || GATE_RC=1
   "$GATE_PY" tools/check_schema_bodies.py || GATE_RC=1
   "$GATE_PY" tools/check_api_sql.py || GATE_RC=1
   "$GATE_PY" tools/check_job_handlers.py || GATE_RC=1

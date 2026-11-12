@@ -7,10 +7,14 @@ pydantic-settings==2.7.0
 
 # ===== 数据库 =====
 SQLAlchemy==2.0.36
-# alembic 曾是「已内置但从未初始化」的僵尸依赖（无 alembic.ini / versions/），
-# 非 SQLite 路径还提示用户「改用 Alembic」，切库时必然踩空。当前结构演进由
-# db_migrations.MIGRATION_COLUMNS + tools/check_migration_columns.py 守护，
-# 故移除以免误导；真正需要版本化迁移时再连同初始化一并引入。
+# Q-06：alembic 从「未初始化的僵尸依赖」补齐为可用迁移体系
+# （backend/alembic.ini + backend/migrations/，基线 0001_baseline）。
+# 注意 alembic.ini 必须保持 **纯 ASCII** —— alembic 用 locale 编码读它，
+# 中文注释在 GBK 环境下会让所有命令直接 UnicodeDecodeError。
+# 与旧机制的关系：`db_migrations.MIGRATION_COLUMNS` 仍负责存量库的幂等补列，
+# 新结构变更一律走 `alembic revision --autogenerate`，由
+# tools/check_alembic_sync.py 守住「模型 / 迁移 / create_all」三者一致。
+alembic==1.14.0
 psycopg2-binary==2.9.10
 
 # ===== 安全 =====

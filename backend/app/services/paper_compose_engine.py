@@ -27,8 +27,9 @@ from app.models import ExamStandard, Grade, KnowledgePoint, Question, Subject, U
 from app.services import llm_breaker
 from app.services import paper_compose_service as compose_svc
 from app.services.ai_fill_batch import _fill_batch_cap
+from app.services.exam_structures import section_total, sections_for
 from app.services.paper_access import _is_sys_admin
-from app.services.paper_items import _stage_of
+from app.services.paper_items import _load_json, _stage_of
 
 logger = logging.getLogger(__name__)
 
@@ -681,3 +682,512 @@ def _compose_from_payload(
         "standard_fallback": standard_fallback, "ai_note": ai_note,
         "kp_missing": kp_missing,
     }
+
+
+# ---------------------------------------------------------------- AI 参数可信化
+# **模型给出的 id 一律当"猜测"处理**：提示词里只写了「学科ID」，而模型看不到我们的
+# id 空间，只能瞎猜小整数。实测它给七年级数学卷返回 subject_id=2 —— 那是**一年级**
+# 数学的 id，于是 `_grade_subject` 直接 400「学科「数学」不属于七年级」，
+# 用户看到的就是"AI 组卷用不了"。模型能可靠输出的只有**名称**，因此这里按
+# 「年级 + 学科名」重新解析，id 仅在没有名称时才作为线索使用。
+_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+           "六": 6, "七": 7, "八": 8, "九": 9}
+_GRADE_ALIAS = {"小一": 1, "小二": 2, "小三": 3, "小四": 4, "小五": 5, "小六": 6,
+                "初一": 7, "初二": 8, "初三": 9}
+
+
+def _resolve_ai_grade(db: Session, parsed: Dict[str, Any], request: str) -> Optional[Grade]:
+    """把 AI 解析结果归一到真实的 Grade 记录上（按年级序号，不按主键猜）。"""
+
+    def by_num(num: Optional[int]) -> Optional[Grade]:
+        if not num or not (1 <= int(num) <= 9):
+            return None
+        return db.scalar(select(Grade).where(Grade.grade_num == int(num)))
+
+    # 1) 显式年级序号字段（提示词优先要求 grade_num）
+    for key in ("grade_num", "grade"):
+        val = parsed.get(key)
+        if isinstance(val, (int, float)) or (isinstance(val, str) and val.isdigit()):
+            hit = by_num(int(val))
+            if hit:
+                return hit
+    # 2) grade_id 当年级序号用：`Grade.id` 与 `grade_num` 目前恰好同值，
+    #    但按 grade_num 查才是语义正确的（主键顺序不保证）。
+    raw = parsed.get("grade_id")
+    if isinstance(raw, (int, float)) or (isinstance(raw, str) and str(raw).isdigit()):
+        hit = by_num(int(raw))
+        if hit:
+            return hit
+    # 3) 年级名称
+    name = str(parsed.get("grade_name") or "").strip()
+    if name:
+        hit = db.scalar(select(Grade).where(Grade.name == name))
+        if hit:
+            return hit
+    # 4) 从原始需求文本里抠「七年级 / 7年级 / 初一」
+    text = str(request or "")
+    m = re.search(r"([一二三四五六七八九1-9])\s*年级", text)
+    if m:
+        ch = m.group(1)
+        hit = by_num(_CN_NUM.get(ch) or int(ch))
+        if hit:
+            return hit
+    for alias, num in _GRADE_ALIAS.items():
+        if alias in text:
+            hit = by_num(num)
+            if hit:
+                return hit
+    return None
+
+
+def _resolve_ai_subject(
+    db: Session, grade: Optional[Grade], parsed: Dict[str, Any], request: str,
+) -> Optional[Subject]:
+    """在**指定年级内**按名称解析学科；id 只在名称缺失时作线索。"""
+    if not grade:
+        return None
+    subs = db.scalars(select(Subject).where(Subject.grade_id == grade.id)).all()
+    if not subs:
+        return None
+    by_name = {s.name: s for s in subs}
+
+    # 1) 名称字段（提示词优先要求 subject_name）
+    for key in ("subject_name", "subject", "course", "subject_text"):
+        val = str(parsed.get(key) or "").strip()
+        if not val:
+            continue
+        if val in by_name:
+            return by_name[val]
+        for s in subs:               # 容忍「数学学科」「初中数学」这类写法
+            if val in s.name or s.name in val:
+                return s
+    # 2) id 只有落在本年级内才可信
+    raw = parsed.get("subject_id")
+    if isinstance(raw, (int, float)) or (isinstance(raw, str) and str(raw).isdigit()):
+        s = db.get(Subject, int(raw))
+        if s and s.grade_id == grade.id:
+            return s
+    # 3) 需求文本里出现的学科名（长名优先，避免"数学"被"数学与生活"抢走）
+    text = str(request or "")
+    for s in sorted(subs, key=lambda x: -len(x.name)):
+        if s.name and s.name in text:
+            return s
+    return None
+
+
+# ---------------------------------------------------------------- 预览态重新生成
+# 组卷结果**保存之前**在前端是纯内存数组（`plan.items` 只活在响应里），
+# 没有 paper_id / item_id 可用 —— 所以既有的
+# `POST /{paper_id}/items/{item_id}/regenerate`（面向已落库的试卷）帮不上忙。
+# 这里按「当前预览快照」重新出题：前端把整卷题目连同要替换的位置一起发上来，
+# 后端只重算被点名的那几道，其余原样返回，教师改过的题干/分值不会被覆盖。
+REGEN_MAX_COUNT = 20   # 单次最多重生 20 题（全为作文时已经要跑 10 轮模型）
+
+
+def _regen_targets(items: List[Dict[str, Any]], section_code: str) -> List[int]:
+    """取某大题内、题型与 section_code 一致的题目下标（保持卷面顺序）。"""
+    code = str(section_code or "").strip().lower()
+    return [i for i, it in enumerate(items)
+            if str(it.get("section_code") or it.get("type") or "").lower() == code]
+
+
+def _regen_forbid_ids(items: List[Dict[str, Any]]) -> set:
+    """生成时禁止复用的 question_id = **本卷全部已有题目**。
+
+    注意不能只排除「范围外」的题：被重生那道题自己也在卷面上，若允许复用它的
+    id，点「重新生成」会原地返回同一道题（教师看到毫无变化，还以为按钮失效）。
+    重生的新题在采纳后同样加入集合，保证整段重生时卷内不出现重复题。
+    """
+    out = set()
+    for it in items:
+        try:
+            qid = int(it.get("question_id") or it.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if qid:
+            out.add(qid)
+    return out
+
+
+def _regen_stem_keys(
+    db: Session, *, grade_id: int, subject_id: int, qtypes: set,
+) -> List[str]:
+    """已落库题干（用于近似去重）。
+
+    与补题路径的 `_existing_stem_keys` 不同：这里一次要覆盖**多个题型**，
+    且组卷预览还没入卷，无法用"本卷已用 id"兜住「换了个说法的同一道题」。
+    """
+    if not qtypes:
+        return []
+    rows = db.scalars(
+        select(Question.stem).where(
+            Question.grade_id == grade_id,
+            Question.subject_id == subject_id,
+            Question.type.in_(list(qtypes)),
+        ).order_by(Question.id.desc()).limit(400)
+    ).all()
+    return [k for k in (_stem_key(x) for x in rows) if k]
+
+
+def _regen_one(
+    *,
+    db_factory, user_id: int, is_admin: bool, grade_id: int, subject_id: int,
+    qtype: str, difficulty: str, kp_ids: List[int], need: int = 1,
+    forbid_ids: Optional[set] = None, forbid_keys: Optional[List[str]] = None,
+    source: str = "ai_regen",
+) -> Dict[str, Any]:
+    """给单个（题型, 难度）组合生成 1~N 道新题，返回已落库的题目字典列表。
+
+    与 `_fill_one_gap` 的区别：那个函数服务"补齐缺口"（按大题补到 need 道），
+    这个服务"替换某几道"（只要 1 道就够，但题型/难度/知识点必须精确对齐）。
+
+    三条硬约束，缺一条就会出问题：
+    1. **难度精确**：模型常无视难度要求给"中等"，而重生成的目的往往就是
+       "这道题太简单了换一道难的"。所以生成后按 difficulty 过滤，不匹配就重试一次。
+    2. **题型精确**：混进别的题型会让「选择题」大题里出现填空题。
+    3. **不重复**：与卷内其余题（id）和题库题干（近似）都不能撞。
+    """
+    from app.agents.question_agent import QuestionGeneratorAgent
+    from app.api.v1.question import normalize_question_type
+    from app.services.question_access import question_usable_error
+
+    out: Dict[str, Any] = {"items": [], "reason": "", "skipped_dup": 0}
+    forbid_ids = set(forbid_ids or ())
+    keys = list(forbid_keys or [])
+    # 单批上限与补题共用同一个函数：作文一题上千字、解答题要完整解题过程，
+    # 一次 10 道必然把 max_tokens 烧在推理阶段（见 _fill_batch_cap 的实测依据）。
+    # 重生时也要把**目标难度**带进来：困难题单批必须更小，否则一次都拿不到。
+    cap = _fill_batch_cap(qtype, difficulty or "")
+    # 空转保护：连续两轮"一点没多拿到"就停（模型持续给重复题 / 难度不符时
+    # 单纯加轮次只会白烧 60~90s）。轮数上限按 need 动态算，否则 need=9、
+    # cap=3 时 2 轮最多只拿到 6 题，剩下 3 题会被误报成"模型生成不了"。
+    rounds = min(6, max(2, (need + cap - 1) // cap + 1))
+    idle = 0
+    # 减半标记必须落在**循环外**的 batch_cap 上：如果只在分支里改 batch，
+    # 下一轮开头 `batch = min(cap, ...)` 会把它重新算回去，减半等于没做
+    # （首版就踩了这个坑：三轮调用恒为 count=3）。
+    batch_cap = cap
+    budget_retried = False
+
+    while len(out["items"]) < need and rounds > 0:
+        rounds -= 1
+        batch = max(1, min(batch_cap, need - len(out["items"])))
+        before = len(out["items"])
+        db = db_factory()
+        try:
+            try:
+                res = QuestionGeneratorAgent().run(
+                    db, user_id=user_id, grade_id=grade_id, subject_id=subject_id,
+                    question_type=qtype, count=batch, difficulty=difficulty,
+                    knowledge_point_ids=kp_ids or None, save=True,
+                    allow_all_banks=is_admin, source=source,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("预览重生失败（type=%s diff=%s）: %s", qtype, difficulty, exc)
+                out["reason"] = f"生成调用异常：{exc}"
+                break
+
+            if not (res or {}).get("success", True):
+                out["reason"] = str(res.get("message") or "生成执行失败")
+                break
+            data = (res or {}).get("data") or {}
+            got = data.get("questions") or []
+            if not got:
+                raw = str(data.get("reason") or data.get("tip") or "")
+                out["reason"] = _fill_fail_hint(data)
+                # 预算被推理吃光的，第二批自动减半（同补题口径：只减一次，
+                # 否则会一路减到 1 道，白耗轮次）
+                if _is_budget_failure(raw) and not budget_retried:
+                    budget_retried = True
+                    batch_cap = max(1, batch // 2)
+                    out["reason"] += "（已缩小批次重试）"
+                continue
+
+            for q in got:
+                if len(out["items"]) >= need:
+                    break
+                qid = q.get("id") or q.get("question_id")
+                if not qid:
+                    continue
+                qid_int = int(qid)
+                if qid_int in forbid_ids:
+                    continue
+                qrow = db.get(Question, qid_int)
+                if not qrow:
+                    continue
+                if question_usable_error(qrow, user_id=user_id, is_admin=is_admin):
+                    continue
+                if normalize_question_type(qrow.type, strict=False) != qtype:
+                    continue
+                # 难度必须精确匹配：放宽就失去"换一道同难度的题"的意义
+                if (qrow.difficulty or difficulty) != difficulty:
+                    continue
+                stem_key = _stem_key(qrow.stem)
+                if any(_is_similar_stem(stem_key, k) for k in keys):
+                    out["skipped_dup"] += 1
+                    continue
+                keys.append(stem_key)
+                forbid_ids.add(qid_int)
+                kp_name = None
+                if qrow.knowledge_point_id:
+                    kp_name = db.scalar(select(KnowledgePoint.name).where(
+                        KnowledgePoint.id == qrow.knowledge_point_id))
+                out["items"].append({
+                    "question_id": qid_int,
+                    "type": qrow.type,
+                    "type_label": TYPE_LABEL.get(qrow.type, qrow.type),
+                    "stem": qrow.stem,
+                    "difficulty": qrow.difficulty or difficulty,
+                    "options": _load_json(qrow.options),
+                    "answer": _load_json(qrow.answer),
+                    "analysis": qrow.analysis,
+                    "knowledge_point_id": qrow.knowledge_point_id,
+                    "knowledge_point_name": kp_name or "AI 生成",
+                })
+        finally:
+            db.close()
+
+        # 空转计数：本轮一道没多拿到就累加，连两轮没进展直接放弃（避免空烧模型）
+        idle = 0 if len(out["items"]) > before else idle + 1
+        if idle >= 2:
+            if not out["items"] and not out["reason"]:
+                out["reason"] = (f"未生成符合「{TYPE_LABEL.get(qtype, qtype)}·"
+                                 f"{_diff_label(difficulty)}」要求的新题")
+            break
+
+    if not out["items"] and not out["reason"]:
+        out["reason"] = f"未生成符合「{TYPE_LABEL.get(qtype, qtype)}·{_diff_label(difficulty)}」要求的新题"
+    if out["skipped_dup"]:
+        out["reason"] = (out["reason"] + "；" if out["reason"] else "") + \
+            f"跳过 {out['skipped_dup']} 道与题库重复的题"
+    return out
+
+
+def _diff_label(diff: str) -> str:
+    return {"easy": "简单", "medium": "中等", "hard": "困难"}.get(diff, diff)
+
+
+def _ai_resolve_params(
+    db: Session, user: User, data: Dict[str, Any],
+) -> tuple[Dict[str, Any], str, str]:
+    """把「自然语言 + 少量显式参数」解析成完整组卷参数。
+
+    同步接口 `/compose/ai` 与异步接口 `/compose/ai/async` **必须共用这一份**：
+    旧实现只有同步路径做解析，异步路径把 `grade_id=None` 直接塞给
+    `_compose_from_payload`，导致「只写描述、不选年级」在异步路径 100% 失败
+    （错误提示还是"请选择有效的年级"，与界面承诺完全相反）——P0-3。
+
+    **这里的解析允许失败**：AI 只负责翻译参数，翻译不出来就降级为规则组卷，
+    但年级/学科一个都推不出来时必须报错（交给调用方判定），
+    否则会在 `_grade_subject` 里抛出一句毫无信息量的错。
+
+    返回 `(merged, parse_error, request)`。
+    """
+    from app.agents.paper_agent import PaperComposerAgent
+
+    request = str(data.get("request") or "").strip()
+    parsed: Dict[str, Any] = {}
+    parse_error = ""
+    if request:
+        agent = PaperComposerAgent()
+        try:
+            res = agent.call_llm(
+                request, db=db, user_id=user.id,
+                biz_type="paper_parse", json_mode=True)
+            if res.get("success") and isinstance(res.get("parsed"), dict):
+                parsed = res["parsed"].get("params") or {}
+            else:
+                parse_error = res.get("reason") or res.get("message") or ""
+        except Exception as exc:  # noqa: BLE001
+            # AI 解析只是"翻译参数"，失败不该阻断组卷
+            logger.warning("AI 组卷参数解析失败，降级为规则组卷: %s", exc)
+            parse_error = str(exc)
+
+    merged = dict(data)
+    # 年级/学科单独处理：**客户端的显式选择优先**，只有没给的时候才用 AI 的推断，
+    # 且推断结果必须按「年级+名称」落到真实记录上（模型给的 id 不可信）。
+    merged.pop("grade_id", None)
+    merged.pop("subject_id", None)
+    anchor_grade = None
+    if data.get("grade_id"):
+        try:
+            anchor_grade = db.get(Grade, int(data["grade_id"]))
+        except (TypeError, ValueError):
+            anchor_grade = None
+    if anchor_grade is None:
+        anchor_grade = _resolve_ai_grade(db, parsed, request)
+    anchor_subject = None
+    if data.get("subject_id"):
+        # 用户明确选了学科就尊重它，交给 _grade_subject 给出精确的错配提示
+        try:
+            anchor_subject = db.get(Subject, int(data["subject_id"]))
+        except (TypeError, ValueError):
+            anchor_subject = None
+    if anchor_subject is None:
+        anchor_subject = _resolve_ai_subject(db, anchor_grade, parsed, request)
+    if anchor_grade:
+        merged["grade_id"] = anchor_grade.id
+    if anchor_subject:
+        merged["subject_id"] = anchor_subject.id
+    for key in ("standard_id", "difficulty_ratio",
+                "knowledge_point_ids", "source", "total_score"):
+        if not merged.get(key) and parsed.get(key):
+            merged[key] = parsed[key]
+    # AI 给的 sections 只在用户没指定时采用，且**至少 2 个大题**才采纳 ——
+    # 单一题型的结构不符合考试规范，几乎总是模型解析不完整的产物。
+    # 不采纳时上层会回退到学科命题标准（多题型），比照残缺结构出卷好。
+    if not merged.get("sections") and parsed.get("sections"):
+        ai_sections = _parse_sections_input(parsed["sections"])
+        if ai_sections and len(ai_sections) >= 2:
+            merged["sections"] = ai_sections
+        elif ai_sections:
+            logger.warning("AI 仅解析出 %d 个大题，已忽略并改用命题标准结构",
+                           len(ai_sections))
+    # 题型分布（type_ratio）→ sections：AI 常用 {"single":10} 形式
+    if not merged.get("sections") and parsed.get("type_ratio"):
+        merged["sections"] = _type_ratio_to_sections(
+            parsed["type_ratio"], merged.get("total_score") or 100,
+            stage=getattr(anchor_grade, "stage", None),
+            subject_name=getattr(anchor_subject, "name", None),
+        )
+    return merged, parse_error, request
+
+
+def _type_ratio_to_sections(
+    type_ratio: Any, total_score: float, *,
+    stage: Optional[str] = None, subject_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """把 {"single":10,"blank":5} 转成 sections。
+
+    **非法题型直接丢弃并记日志**——旧实现把 `fill`/`solve` 这类不在枚举里的
+    key 静默忽略，导致"要求 10 题只出 4 题"且毫无提示。
+    这里至少把丢弃行为写进日志，并在 sections 为空时由上层报错。
+
+    分值分配优先沿用**学科标准模板的阶梯形状**（数学解答题 6/6/6/8/8/8/10/11/12、
+    化学选择题 8×1+5×2）：AI 只解析出题型比例，没有每题分值，若一律均摊，
+    真实卷面的难度梯度会被抹平，压轴题和送分题同分。
+    只在「AI 给的题量与该大题模板题量一致」时套用形状，否则均摊
+    —— 题量对不上还硬套形状会算出「第 9 题 11 分但只有 6 题」这类错位。
+    """
+    if not isinstance(type_ratio, dict):
+        return []
+    result: List[Dict[str, Any]] = []
+    dropped: List[str] = []
+    total_count = 0
+    for code, qty in type_ratio.items():
+        key = str(code or "").strip().lower()
+        if key not in TYPE_LABEL:
+            dropped.append(key)
+            continue
+        try:
+            count = int(qty or 0)
+        except (TypeError, ValueError):
+            dropped.append(key)
+            continue
+        if count <= 0:
+            continue
+        result.append({"code": key, "name": TYPE_LABEL[key], "count": count,
+                       "difficulty": "medium", "sort": len(result) + 1})
+        total_count += count
+    if dropped:
+        logger.warning("AI 返回了非法题型，已丢弃：%s（合法值 %s）",
+                       dropped, sorted(TYPE_LABEL))
+    if not result or total_count <= 0:
+        return []
+    # 单一题型的结构不予采纳：整卷只有一种题型不符合考试规范，而且这几乎
+    # 总是「模型照抄了 prompt 里的错误示例 / 只写了 single」的产物。
+    # 返回空让上层回退到学科命题标准（多题型），比照着一条 type_ratio 出卷好。
+    if len(result) < 2:
+        logger.warning("AI 只给出 1 种题型（%s），已忽略并改用命题标准结构",
+                       [s["code"] for s in result])
+        return []
+
+    try:
+        ref = {s["code"]: s for s in sections_for(
+            stage=stage, subject_name=subject_name, total_score=float(total_score or 100))}
+    except Exception:  # noqa: BLE001 - 模板不可用不该阻断组卷
+        logger.warning("取学科结构模板失败，分值按均摊处理", exc_info=True)
+        ref = {}
+
+    base = round(float(total_score or 100) / total_count, 2)
+    acc = 0.0
+    for pos, s in enumerate(result):
+        count = int(s["count"])
+        # 末档吸收舍入误差，保证合计精确等于试卷总分
+        if pos == len(result) - 1:
+            sec_total = round(float(total_score or 100) - acc, 2)
+        else:
+            sec_total = round(base * count, 2)
+        pat = (ref.get(s["code"]) or {}).get("score_pattern")
+        if isinstance(pat, (list, tuple)) and len(pat) == count:
+            old = sum(float(x) for x in pat)
+            if old > 0:
+                ratio = sec_total / old
+                new_pat = [round(float(x) * ratio, 2) for x in pat]
+                drift = round(sec_total - sum(new_pat), 2)
+                if drift:
+                    new_pat[-1] = round(new_pat[-1] + drift, 2)
+                s["score_pattern"] = new_pat
+                s["score_per"] = round(sec_total / count, 2)
+                acc = round(acc + sum(new_pat), 2)
+                continue
+        sec_total = round(sec_total / count, 2) * count
+        sec_total = round(sec_total, 2)
+        s["score_per"] = round(sec_total / count, 2)
+        acc = round(acc + sec_total, 2)
+    return result
+
+
+def _plan_response(ctx: Dict[str, Any], *, ai_message: str = "") -> Dict[str, Any]:
+    plan = ctx["plan"]
+    std = ctx["standard"]
+    # 卷面体检：期望总分按 sections 算（plan.total_score 是"已抽到题目之和"，
+    # 用它当基准永远相等，等于没检查）。有缺口时合计天然小于总分，跳过该检查。
+    expected_total = round(sum(
+        section_total(s) for s in (ctx.get("sections") or [])
+    ), 2) or None
+    body = {
+        "grade_id": ctx["grade"].id, "grade_name": ctx["grade"].name,
+        "subject_id": ctx["subject"].id, "subject_name": ctx["subject"].name,
+        "standard_id": std.id if std else None,
+        "standard_name": std.name if std else None,
+        "exam_type": std.exam_type if std else None,
+        "sections": ctx["sections"],
+        "difficulty_ratio": ctx["difficulty"],
+        "source": ctx["source_strategy"],
+        "knowledge_point_ids": ctx["kp_ids"],
+        **plan.to_dict(),
+        **ctx["reports"],
+        "suggested_duration": std.duration if std else 90,
+        "standard_total_score": std.total_score if std else None,
+        # true = 该学段学科没有命题标准，结构来自通用模板（不是权威结构）
+        "standard_fallback": bool(ctx.get("standard_fallback")),
+        # true = 该学科一条知识点都没有：组卷仍可出题，但题目挂不上考点，
+        # 掌握度图谱与复习计划在这门课上必然失效。让前端能明确提示，
+        # 而不是让教师以为"AI 没识别出考点"。
+        "knowledge_point_missing": bool(ctx.get("kp_missing")),
+        # 卷面体检结果（空数组 = 通过）。前端在预览页顶部按 level 显示，
+        # error 用红色（打印会出错），warn 用黄色（不合常规但可用）。
+        "issues": compose_svc.audit_paper(
+            plan.items, total_score=expected_total, has_gaps=bool(plan.gaps)),
+    }
+    if ai_message:
+        body["message"] = ai_message
+    if body.get("standard_fallback"):
+        note = ("该学段学科尚未配置命题标准，本次已用通用结构（单选/填空/解答）生成卷面；"
+                "建议管理员在「命题标准」中补配后再生成一次。")
+        body["message"] = f"{body['message']}；{note}" if body.get("message") else note
+    if body["knowledge_point_missing"]:
+        note = (f"{ctx['grade'].name}{ctx['subject'].name}尚未维护知识点，本次组卷无法按考点选题，"
+                "题目也不会进入掌握度图谱；请联系管理员补齐该学科知识点后重新组卷。")
+        body["message"] = f"{body['message']}；{note}" if body.get("message") else note
+    # 去重曾把整大题清空、已自动放宽：必须告诉教师，否则"复用了老题"是隐形的
+    if getattr(plan, "relaxed_count", 0):
+        note = (f"「避免近 3 次考试重复」把部分大题清空，已自动放宽去重并复用 "
+                f"{plan.relaxed_count} 题；如需完全不重复，请先补充题库。")
+        body["message"] = f"{body['message']}；{note}" if body.get("message") else note
+    # AI 补题提示（失败原因 / 规则引擎兜底说明）如实透传到前端，便于诊断
+    if ctx.get("ai_note"):
+        note = ctx["ai_note"]
+        body["message"] = f"{body['message']}；{note}" if body.get("message") else note
+    return body

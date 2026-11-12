@@ -231,7 +231,56 @@ A: 不会。`rag.py` 捕获异常后自动降级为 SQL LIKE 检索，日志会�
 A: `Orchestrator` 检测后降级为顺序编排，`orchestrator_mode` 字段显示为 `sequential`，功能不变。
 
 **Q: 改了模型但表没变？**
-A: 启动时执行 `Base.metadata.create_all`，只新增不修改已有表。开发期可删除 `data/edu_platform.db` 重建（会丢数据）。
+A: 分两种情况。**新库/测试库**：`Base.metadata.create_all` 只建缺失的表，已存在的表不加列，
+开发期可直接删 `data/edu_platform.db` 重建（丢数据）。**存量库/生产**：结构变更必须
+生成 Alembic 迁移（见第九节），老库靠 `MIGRATION_COLUMNS` 幂等补列兜底 —— 那条路径
+只会加列，不会改类型/删列。
 
 **Q: 定时任务没执行？**
 A: 检查 `GET /api/v1/jobs/status` 确认调度器 running，并核对 Cron 表达式格式（分 时 日 月 周）。
+
+---
+
+## 九、结构变更与迁移（Alembic）
+
+结构演进有两套机制，**新变更一律走 Alembic**：
+
+| 机制 | 作用 | 边界 |
+|------|------|------|
+| `migrations/versions/*.py`（Alembic） | 有版本号、可回退的真实迁移 | 改类型/删列/建索引 |
+| `db_migrations.MIGRATION_COLUMNS` | 启动时对存量库幂等补列 | **只会加列**，老库追平用 |
+
+### 三条命令
+
+```bash
+cd backend
+
+# 1) 空库建到最新结构（等价于 create_all，但带 alembic_version 记录）
+ALEMBIC_DB_URL="sqlite:///./data/edu_platform.db" python -m alembic upgrade head
+
+# 2) 存量库认领基线（只在引入 Alembic 时做一次；生产库必须先 stamp 再 upgrade）
+python -m alembic stamp 0001_baseline
+
+# 3) 改了模型 → 生成迁移，然后**读一遍** up/downgrade
+python -m alembic revision --autogenerate -m "add xxx_column to edu_question"
+```
+
+生成后必须跑一次守卫，它会用临时库把迁移真的执行一遍：
+
+```bash
+python tools/check_alembic_sync.py    # 0=通过；也在 auto_ship 与 CI 里
+```
+
+### 三个坑（都是踩过的）
+
+1. **`backend/alembic.ini` 必须保持纯 ASCII。** alembic 用
+   `configparser.read(..., encoding="locale")` 读它，中文注释在 GBK 环境的
+   Windows 上会让**所有** alembic 命令直接 `UnicodeDecodeError: 'gbk' codec can't
+   decode byte 0x80`。中文说明写在 `migrations/env.py`（.py 文件不受影响）。
+2. **`migrations/env.py` 里的 `import app.models` 不能删。** 少了它
+   `Base.metadata` 是空壳，`--autogenerate` 会生成一个「删掉所有表」的迁移。
+3. **SQLite 必须用 batch 模式**（env.py 已设 `render_as_batch=True`）。
+   SQLite 不支持 `ALTER COLUMN`，非 batch 生成的迁移在本地和 CI 都会直接报错。
+
+`autogenerate` 对「改列类型」「删索引」「重命名列」猜不准（重命名会被识别成
+删+加，数据丢失），这几类要手工改 up/downgrade 再跑守卫确认。
