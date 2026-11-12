@@ -93,7 +93,7 @@ def _warn_if_slow(res: dict, agent: str) -> None:
                        agent, ms / 1000, SLOW_CALL_MS / 1000)
 
 
-def _agent_payload(res: Dict[str, Any]) -> Dict[str, Any]:
+def _agent_payload(res: Dict[str, Any]) -> Any:
     """data 载荷 + 降级标记（is_fallback）。
 
     信封里的 is_fallback 此前只被 /agent/chat 透传；出题/组卷等 6 个端点
@@ -102,12 +102,19 @@ def _agent_payload(res: Dict[str, Any]) -> Dict[str, Any]:
     页面毫无提示，教师把规则引擎的产出当成 AI 产出（U-03 的漏改面）。
     合并进 data 而不是扩信封：不动 ok() 的 schema，旧调用方零感知。
     """
-    data = dict(res.get("data") or {})
+    data = res.get("data")
+    # 空载荷统一成 {}：保留旧行为（`dict(None or {})` → {}），前端
+    # hasNoOutput 的「空对象 = 无产出」判定依赖它。
+    if data is None:
+        data = {}
     # 只在真降级时写入：正常路径的 data 保持原样（否则空载荷 {} 会变成
     # {is_fallback:false}，前端 hasNoOutput 的「空对象 = 无产出」判定失效，
-    # P1-2 的「空结果弹生成成功」会回归）。
-    if res.get("is_fallback"):
-        data["is_fallback"] = True
+    # P1-2 的「空结果弹生成成功」会回归）。用复制而非原地改，避免污染 res
+    # （审计日志等仍按原始 data 取字段）。
+    # 非 dict 载荷（如 list）无法合并标记，原样返回 —— 旧实现 `dict(list)`
+    # 会抛 TypeError，把「数据形状异常」升级成端点 500，比原行为更糟。
+    if res.get("is_fallback") and isinstance(data, dict):
+        data = {**data, "is_fallback": True}
     return data
 
 

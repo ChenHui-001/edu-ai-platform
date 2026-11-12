@@ -739,7 +739,7 @@ async function run() {
       }
       res = await agentApi.paperComposer(paperParams())
     } else if (active.value === 'note_organizer') {
-      if (!genericForm.note_id) { ElMessage.warning('请输入笔记 ID'); return }
+      if (!genericForm.note_id) { ElMessage.warning('请选择笔记'); return }
       res = await agentApi.noteOrganizer({ note_id: genericForm.note_id })
     } else if (active.value === 'tutor') {
       if (!genericForm.question) { ElMessage.warning('请输入问题'); return }
