@@ -11,7 +11,7 @@
 <!-- status:auto:begin -->
 | 项 | 实测值 | 口径 |
 |---|---:|---|
-| 版本 | 2.5.32 | `VERSION` 文件 |
+| 版本 | 2.5.33 | `VERSION` 文件 |
 | 路由数 | 293 | `app.routes` |
 | 数据表数 | 53 | `Base.metadata.tables` |
 | 后端用例 | 74 | `pytest backend/qa_audit_suite.py --collect-only` |
