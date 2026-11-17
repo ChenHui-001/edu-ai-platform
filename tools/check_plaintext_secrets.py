@@ -17,6 +17,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKSPACE = os.path.dirname(ROOT)
+SELF = os.path.abspath(__file__)
 
 PATTERNS = [
     ("prod_password", re.compile(r"(?:Prod|Sys)@[A-Za-z0-9]+2026!?[A-Za-z0-9]*")),
@@ -70,6 +71,9 @@ def main():
             files.extend(_iter_files(base))
 
     for path in files:
+        # 本文件包含用于识别的正则字面量，扫描自己必然自命中。
+        if os.path.abspath(path) == SELF:
+            continue
         _scan_file(path, findings)
 
     for rel in ("deploy_scripts/.deploy_pass", "deploy_scripts/deploy_pass"):

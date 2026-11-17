@@ -9,12 +9,12 @@
 
 示例：
   # 只压健康检查（无需登录）
-  python tools/load_test.py --base http://127.0.0.1:8080/api/v1 \
+  LOAD_TEST_BASE='<服务地址>/api/v1' python tools/load_test.py --base "$LOAD_TEST_BASE" \
       --path /health --concurrency 20 --duration 10
 
   # 登录后压班级列表（只读）
-  LOAD_TEST_PASSWORD='***' python tools/load_test.py \
-      --base http://127.0.0.1:8080/api/v1 --username admin \
+  LOAD_TEST_PASSWORD='***' python tools/load_test.py --base "$LOAD_TEST_BASE" \
+      --username admin \
       --path '/edu/classes?page_size=20' --concurrency 20 --duration 10
 
 **不要直接压生产库**：SQLite 单写者，压测会把审计日志写放大到整库。
@@ -168,7 +168,8 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description="轻量只读压测")
-    parser.add_argument("--base", default="http://127.0.0.1:8080/api/v1")
+    parser.add_argument("--base", default=os.environ.get("LOAD_TEST_BASE", ""),
+                        help="服务基地址（也可用 LOAD_TEST_BASE；必须显式提供，避免误压生产）")
     parser.add_argument("--path", action="append", help="可重复，GET 相对路径")
     parser.add_argument("--username", default="", help="登录用户名；不传则匿名压测")
     parser.add_argument("--password", default="", help="登录口令；建议用 LOAD_TEST_PASSWORD")
@@ -179,6 +180,8 @@ def main():
     parser.add_argument("--max-p95-ms", type=float, default=500.0)
     parser.add_argument("--json", action="store_true", help="额外输出一行 JSON 摘要")
     args = parser.parse_args()
+    if not args.base:
+        parser.error("缺少 --base 或 LOAD_TEST_BASE；本项目不允许内置默认主机")
     try:
         return run(args)
     except KeyboardInterrupt:
