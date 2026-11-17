@@ -61,8 +61,8 @@
 
 ## 发布
 
-- 版本：`2.5.40 → 2.5.41`；
-- 镜像：`ghcr.io/chenhui-001/edu-ai-platform:2.5.41`（CI 构建）；
+- 版本：`2.5.40 → 2.5.42`（2.5.41 为中间构建，2.5.42 为最终发布）；
+- 镜像：`ghcr.io/chenhui-001/edu-ai-platform:2.5.42`（CI 构建）；
 - 四位一体（本地 HEAD / origin/master / 镜像 / 生产容器）校验结果
   见 `docs/RELEASE_CONSISTENCY.md`。
 
