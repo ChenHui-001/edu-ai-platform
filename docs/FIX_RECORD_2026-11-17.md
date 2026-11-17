@@ -61,10 +61,10 @@
 
 ## 发布
 
-- 版本：`2.5.40 → 2.5.43`（2.5.41/2.5.42 为中间构建，2.5.43 为最终发布）；
-- 镜像：`ghcr.io/chenhui-001/edu-ai-platform:2.5.43`（CI 构建）；
-- Docker Hub `2.5.43` / `latest` 与 ghcr 同 digest；
-- 清理：本机与生产仅保留 2.5.43；Docker Hub 按保留策略删除 55 个旧标签；
+- 版本：`2.5.40 → 2.5.44`（2.5.41~2.5.43 为中间构建，2.5.44 为最终发布）；
+- 镜像：`ghcr.io/chenhui-001/edu-ai-platform:2.5.44`（CI 构建）；
+- Docker Hub `2.5.44` / `latest` 与 ghcr 同 digest；
+- 清理：本机与生产仅保留 2.5.44；Docker Hub 按保留策略删除 55 个旧标签；
 - 四位一体（本地 HEAD / origin/master / 镜像 / 生产容器）校验结果
   见 `docs/RELEASE_CONSISTENCY.md`。
 
