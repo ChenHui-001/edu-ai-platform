@@ -722,3 +722,122 @@ def public_question(question: Dict[str, Any]) -> Dict[str, Any]:
         "options": question.get("options") or [],
         "topic_id": question["topic_id"],
     }
+
+
+# ---------------------------------------------------------------- 先修关系仓储
+# API 层只做权限与参数编排；涉及 SQL 的部分集中在这里，避免路由继续变胖。
+
+def target_nodes(db: Session, ids: List[int]) -> List[KnowledgePoint]:
+    if not ids:
+        return []
+    return list(db.scalars(
+        select(KnowledgePoint).where(KnowledgePoint.id.in_(ids))
+    ).all())
+
+
+def edge_out(edge: KnowledgePrerequisite, kp: KnowledgePoint) -> Dict[str, Any]:
+    return {
+        "id": edge.id,
+        "knowledge_point_id": kp.id,
+        "name": kp.name,
+        "external_id": kp.external_id,
+        "grade_id": kp.grade_id,
+        "grade_num": None,
+        "strength": edge.strength,
+        "reason": edge.reason,
+        "source": edge.source,
+        "created_at": edge.created_at,
+    }
+
+
+def edge_list(
+    db: Session, kp: KnowledgePoint, direction: str,
+) -> List[Dict[str, Any]]:
+    if direction == "prerequisites":
+        rows = db.execute(
+            select(KnowledgePrerequisite, KnowledgePoint)
+            .join(KnowledgePoint,
+                  KnowledgePoint.id == KnowledgePrerequisite.prerequisite_kp_id)
+            .where(KnowledgePrerequisite.topic_kp_id == kp.id)
+            .order_by(KnowledgePrerequisite.id)
+        ).all()
+    else:
+        rows = db.execute(
+            select(KnowledgePrerequisite, KnowledgePoint)
+            .join(KnowledgePoint,
+                  KnowledgePoint.id == KnowledgePrerequisite.topic_kp_id)
+            .where(KnowledgePrerequisite.prerequisite_kp_id == kp.id)
+            .order_by(KnowledgePrerequisite.id)
+        ).all()
+    grade_ids = {node.grade_id for _, node in rows if node.grade_id}
+    grade_rows = list(db.scalars(
+        select(Grade).where(Grade.id.in_(grade_ids))).all()) if grade_ids else []
+    grades = {}
+    for grade in grade_rows:
+        grades[grade.id] = grade.grade_num
+    items = []
+    for edge, node in rows:
+        data = edge_out(edge, node)
+        data["grade_num"] = grades.get(node.grade_id)
+        items.append(data)
+    return items
+
+
+def subject_ids_by_name(db: Session, subject_id: int) -> Set[int]:
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        return set()
+    return set(db.scalars(
+        select(Subject.id).where(Subject.name == subject.name)).all())
+
+
+def would_create_cycle(
+    db: Session, subject_id: int, topic_id: int, prerequisite_id: int,
+) -> bool:
+    if topic_id == prerequisite_id:
+        return True
+    subject_ids = subject_ids_by_name(db, subject_id)
+    rows = db.execute(
+        select(KnowledgePrerequisite.topic_kp_id,
+               KnowledgePrerequisite.prerequisite_kp_id)
+        .join(KnowledgePoint,
+              KnowledgePoint.id == KnowledgePrerequisite.topic_kp_id)
+        .where(KnowledgePoint.subject_id.in_(subject_ids))
+    ).all()
+    adjacency: Dict[int, Set[int]] = {}
+    for topic, pre in rows:
+        adjacency.setdefault(topic, set()).add(pre)
+    stack = [prerequisite_id]
+    seen: Set[int] = set()
+    while stack:
+        current = stack.pop()
+        if current == topic_id:
+            return True
+        if current in seen:
+            continue
+        seen.add(current)
+        stack.extend(adjacency.get(current, ()))
+    return False
+
+
+def edge_exists(db: Session, topic_kp_id: int, prerequisite_kp_id: int) -> bool:
+    return db.scalar(select(KnowledgePrerequisite.id).where(
+        KnowledgePrerequisite.topic_kp_id == topic_kp_id,
+        KnowledgePrerequisite.prerequisite_kp_id == prerequisite_kp_id,
+    )) is not None
+
+
+def grade_num_of(db: Session, grade_id: Optional[int]) -> Optional[int]:
+    if not grade_id:
+        return None
+    grade = db.scalar(select(Grade).where(Grade.id == grade_id))
+    return grade.grade_num if grade else None
+
+
+def find_edge(
+    db: Session, topic_kp_id: int, prerequisite_kp_id: int,
+) -> Optional[KnowledgePrerequisite]:
+    return db.scalar(select(KnowledgePrerequisite).where(
+        KnowledgePrerequisite.topic_kp_id == topic_kp_id,
+        KnowledgePrerequisite.prerequisite_kp_id == prerequisite_kp_id,
+    ))

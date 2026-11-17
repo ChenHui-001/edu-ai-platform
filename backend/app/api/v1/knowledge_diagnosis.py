@@ -1,10 +1,9 @@
 """知识先修诊断与先修关系管理 API。"""
 import json
 import uuid
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -14,7 +13,7 @@ from app.api.v1.knowledge import WRITE_PERM, _assert_write, _forced_grade, _is_s
 from app.core.database import get_db
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (
-    Grade, KnowledgePoint, KnowledgePrerequisite, Subject,
+    KnowledgePoint, KnowledgePrerequisite, Subject,
     TaxonomyDiagnosisSession, User,
 )
 from app.schemas.taxonomy import (
@@ -22,8 +21,9 @@ from app.schemas.taxonomy import (
 )
 from app.services.knowledge_diagnosis import (
     DEFAULT_CONFIRM, RESULTS, apply_answer, build_graph, create_session,
-    grade_question, next_item, next_question, public_question, replay,
-    summarize,
+    edge_exists, edge_list, edge_out, find_edge, grade_num_of, grade_question,
+    next_item, next_question, public_question, replay, summarize, target_nodes,
+    would_create_cycle,
 )
 from app.utils.common import now_local, ok
 
@@ -195,9 +195,7 @@ def create_diagnosis_session(
         raise BusinessException("单次诊断最多选择 30 个目标知识点")
 
     student = _resolve_student(db, user, scope, payload.get("student_id"))
-    nodes = list(db.scalars(
-        select(KnowledgePoint).where(KnowledgePoint.id.in_(target_ids))
-    ).all())
+    nodes = target_nodes(db, target_ids)
     node_map = {node.id: node for node in nodes}
     if len(node_map) != len(target_ids):
         raise BusinessException("目标知识点不存在")
@@ -372,54 +370,6 @@ def _node_for_read(
     return kp
 
 
-def _edge_out(edge: KnowledgePrerequisite, kp: KnowledgePoint) -> Dict[str, Any]:
-    return {
-        "id": edge.id,
-        "knowledge_point_id": kp.id,
-        "name": kp.name,
-        "external_id": kp.external_id,
-        "grade_id": kp.grade_id,
-        "grade_num": None,
-        "strength": edge.strength,
-        "reason": edge.reason,
-        "source": edge.source,
-        "created_at": edge.created_at,
-    }
-
-
-def _edge_list(
-    db: Session, kp: KnowledgePoint, direction: str,
-) -> List[Dict[str, Any]]:
-    if direction == "prerequisites":
-        rows = db.execute(
-            select(KnowledgePrerequisite, KnowledgePoint)
-            .join(KnowledgePoint,
-                  KnowledgePoint.id == KnowledgePrerequisite.prerequisite_kp_id)
-            .where(KnowledgePrerequisite.topic_kp_id == kp.id)
-            .order_by(KnowledgePrerequisite.id)
-        ).all()
-    else:
-        rows = db.execute(
-            select(KnowledgePrerequisite, KnowledgePoint)
-            .join(KnowledgePoint,
-                  KnowledgePoint.id == KnowledgePrerequisite.topic_kp_id)
-            .where(KnowledgePrerequisite.prerequisite_kp_id == kp.id)
-            .order_by(KnowledgePrerequisite.id)
-        ).all()
-    grade_ids = {node.grade_id for _, node in rows if node.grade_id}
-    grade_rows = list(db.scalars(
-        select(Grade).where(Grade.id.in_(grade_ids))).all()) if grade_ids else []
-    grades = {}
-    for grade in grade_rows:
-        grades[grade.id] = grade.grade_num
-    items = []
-    for edge, node in rows:
-        data = _edge_out(edge, node)
-        data["grade_num"] = grades.get(node.grade_id)
-        items.append(data)
-    return items
-
-
 @router.get("/knowledge/{kp_id}/prerequisites", summary="知识点先修关系")
 def list_prerequisites(
     kp_id: int,
@@ -427,7 +377,7 @@ def list_prerequisites(
     user: User = Depends(get_current_user),
 ):
     kp = _node_for_read(db, user, kp_id)
-    items = _edge_list(db, kp, "prerequisites")
+    items = edge_list(db, kp, "prerequisites")
     return ok({
         "node": {"id": kp.id, "name": kp.name},
         "items": items,
@@ -443,50 +393,13 @@ def list_dependents(
     user: User = Depends(get_current_user),
 ):
     kp = _node_for_read(db, user, kp_id)
-    items = _edge_list(db, kp, "dependents")
+    items = edge_list(db, kp, "dependents")
     return ok({
         "node": {"id": kp.id, "name": kp.name},
         "items": items,
         "total": len(items),
         "can_edit": has_perm(user, WRITE_PERM),
     })
-
-
-def _subject_ids_by_name(db: Session, subject_id: int) -> Set[int]:
-    subject = db.get(Subject, subject_id)
-    if not subject:
-        return set()
-    return set(db.scalars(
-        select(Subject.id).where(Subject.name == subject.name)).all())
-
-
-def _has_cycle(
-    db: Session, subject_id: int, topic_id: int, prerequisite_id: int,
-) -> bool:
-    if topic_id == prerequisite_id:
-        return True
-    subject_ids = _subject_ids_by_name(db, subject_id)
-    rows = db.execute(
-        select(KnowledgePrerequisite.topic_kp_id,
-               KnowledgePrerequisite.prerequisite_kp_id)
-        .join(KnowledgePoint,
-              KnowledgePoint.id == KnowledgePrerequisite.topic_kp_id)
-        .where(KnowledgePoint.subject_id.in_(subject_ids))
-    ).all()
-    adjacency: Dict[int, Set[int]] = {}
-    for topic, pre in rows:
-        adjacency.setdefault(topic, set()).add(pre)
-    stack = [prerequisite_id]
-    seen: Set[int] = set()
-    while stack:
-        current = stack.pop()
-        if current == topic_id:
-            return True
-        if current in seen:
-            continue
-        seen.add(current)
-        stack.extend(adjacency.get(current, ()))
-    return False
 
 
 @router.post("/knowledge/{kp_id}/prerequisites", summary="新增先修关系")
@@ -517,13 +430,9 @@ def add_prerequisite(
     if pre.grade_id != kp.grade_id and not data.allow_cross_grade:
         raise BusinessException(
             "跨年级先修需要显式确认（allow_cross_grade=true）")
-    exists = db.scalar(select(KnowledgePrerequisite.id).where(
-        KnowledgePrerequisite.topic_kp_id == kp.id,
-        KnowledgePrerequisite.prerequisite_kp_id == pre.id,
-    ))
-    if exists:
+    if edge_exists(db, kp.id, pre.id):
         raise BusinessException("该先修关系已存在")
-    if _has_cycle(db, kp.subject_id, kp.id, pre.id):
+    if would_create_cycle(db, kp.subject_id, kp.id, pre.id):
         raise BusinessException("该先修关系会形成环，已拒绝")
     strength = str(data.strength or "hard").strip().lower()
     if strength not in {"hard", "soft"}:
@@ -539,9 +448,8 @@ def add_prerequisite(
     db.add(edge)
     db.commit()
     db.refresh(edge)
-    data_out = _edge_out(edge, pre)
-    data_out["grade_num"] = getattr(
-        db.scalar(select(Grade).where(Grade.id == pre.grade_id)), "grade_num", None)
+    data_out = edge_out(edge, pre)
+    data_out["grade_num"] = grade_num_of(db, pre.grade_id)
     return ok(data_out, message="先修关系已新增")
 
 
@@ -559,10 +467,7 @@ def remove_prerequisite(
     if not kp:
         raise NotFoundException("知识点不存在")
     _assert_write(db, user, kp.grade_id, kp.subject_id)
-    edge = db.scalar(select(KnowledgePrerequisite).where(
-        KnowledgePrerequisite.topic_kp_id == kp.id,
-        KnowledgePrerequisite.prerequisite_kp_id == prerequisite_id,
-    ))
+    edge = find_edge(db, kp.id, prerequisite_id)
     if not edge:
         raise NotFoundException("先修关系不存在")
     db.delete(edge)
