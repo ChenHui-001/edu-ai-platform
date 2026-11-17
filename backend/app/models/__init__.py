@@ -33,6 +33,9 @@ from app.models.task import (  # noqa: F401
     Answer, GradeStatus, Submission, Task, TaskAssignment, TaskStatus, TaskType,
     WrongQuestion,
 )
+from app.models.taxonomy import (  # noqa: F401
+    KnowledgePrerequisite, TaxonomyDiagnosisSession,
+)
 
 __all__ = [
     "Base",
@@ -42,6 +45,7 @@ __all__ = [
     "UserStatus", "IdentityType", "PermissionType",
     # edu
     "Grade", "Subject", "Class", "KnowledgePoint", "TeachingAssignment",
+    "KnowledgePrerequisite", "TaxonomyDiagnosisSession",
     # question
     "Question", "QuestionKnowledge", "Paper", "PaperItem", "PaperShare",
     "QuestionType", "QuestionStatus", "QuestionBankType", "Difficulty",

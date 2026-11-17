@@ -126,7 +126,20 @@ export const knowledgeApi = {
   search: (params) => request.get('/edu/knowledge/search', { params }),
   ragStatus: () => request.get('/edu/knowledge/rag-status'),
   aiGenerate: (data) => request.post('/edu/knowledge/ai/generate', data),
-  aiEnrich: (ids) => request.post('/edu/knowledge/ai/enrich', { ids })
+  aiEnrich: (ids) => request.post('/edu/knowledge/ai/enrich', { ids }),
+  // 先修诊断（2.5.41）：诊断结果只作学习建议，不改写正式掌握度
+  diagnosisTargets: (params) => request.get('/edu/knowledge/diagnosis/targets', { params }),
+  createDiagnosisSession: (data) => request.post('/edu/knowledge/diagnosis/sessions', data),
+  diagnosisSession: (id) => request.get(`/edu/knowledge/diagnosis/sessions/${id}`),
+  nextDiagnosisItem: (id) => request.get(`/edu/knowledge/diagnosis/sessions/${id}/next`),
+  answerDiagnosis: (id, data) => request.post(`/edu/knowledge/diagnosis/sessions/${id}/answers`, data),
+  diagnosisSummary: (id) => request.get(`/edu/knowledge/diagnosis/sessions/${id}/summary`),
+  // 先修关系
+  prerequisites: (kpId) => request.get(`/edu/knowledge/${kpId}/prerequisites`),
+  dependents: (kpId) => request.get(`/edu/knowledge/${kpId}/dependents`),
+  addPrerequisite: (kpId, data) => request.post(`/edu/knowledge/${kpId}/prerequisites`, data),
+  removePrerequisite: (kpId, prerequisiteId) => request.delete(
+    `/edu/knowledge/${kpId}/prerequisites/${prerequisiteId}`)
 }
 
 // ---------------- 题库与试卷 ----------------

@@ -3,6 +3,8 @@
     <div class="page-header">
       <h2 class="page-title">掌握度图谱</h2>
       <div>
+        <el-button type="primary" :icon="Compass" style="margin-right:8px"
+                   @click="router.push('/student/diagnosis')">知识诊断</el-button>
         <el-select v-model="subjectFilter" placeholder="选择学科" clearable style="width:140px"
                    @change="load">
           <el-option v-for="s in subjects" :key="s.id" :label="s.name" :value="s.id" />
@@ -93,7 +95,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Refresh, Edit } from '@element-plus/icons-vue'
+import { Refresh, Edit, Compass } from '@element-plus/icons-vue'
 import echarts from '@/utils/echarts'
 import { learningApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'

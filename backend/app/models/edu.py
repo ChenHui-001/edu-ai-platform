@@ -87,6 +87,10 @@ class KnowledgePoint(Base):
         # code 非空时在同一 grade+subject 下唯一；SQLite/PostgreSQL 都允许
         # 多个 NULL，因此未填编码的知识点不受影响。
         UniqueConstraint("grade_id", "subject_id", "code", name="uq_kp_subject_code"),
+        # 外部知识图谱映射：同一来源的外部 ID 只能落成一个本地知识点。
+        # 不能只按名称匹配，外部数据存在大量同名节点。
+        UniqueConstraint(
+            "external_source", "external_id", name="uq_kp_external"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -114,6 +118,14 @@ class KnowledgePoint(Base):
     owner_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True, index=True,
         comment="创建者")
+
+    # 外部知识图谱映射（cn-math-taxonomy 等）。本地父子树与外部先修图是
+    # 两种不同语义：parent_id 表示教材包含关系，先修关系见
+    # KnowledgePrerequisite。
+    external_source: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, comment="外部来源，如 cn-math-taxonomy")
+    external_id: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, comment="外部来源内的稳定 ID，如 cnm_p001")
 
 
 class TeachingAssignment(Base):

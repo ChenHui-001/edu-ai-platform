@@ -185,7 +185,7 @@ import {
   Collection, Avatar, Stamp, Share, OfficeBuilding, Document, Clock, Paperclip,
   DataAnalysis, Setting, Notebook, Tickets, List, EditPen, TrendCharts, Reading,
   MagicStick, UserFilled, PieChart, Edit, Timer, Warning, Refresh, DataLine,
-  Medal, Star, Histogram, Calendar, Guide, Box
+  Medal, Star, Histogram, Calendar, Guide, Box, Compass
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
 import { agentApi, systemApi } from '@/api'
@@ -242,7 +242,7 @@ const MENU_GROUPS = [
         title: '练',
         prefixes: ['/student/practice', '/student/custom', '/student/wrong', '/student/review']
       },
-      { title: '测', prefixes: ['/student/exams'] },
+      { title: '测', prefixes: ['/student/exams', '/student/diagnosis'] },
       {
         title: '评',
         prefixes: ['/student/report', '/student/scores', '/student/mastery', '/student/goals']
@@ -259,7 +259,7 @@ const ICONS = {
   Collection, Avatar, Stamp, Share, OfficeBuilding, Document, Clock, Paperclip,
   DataAnalysis, Setting, Notebook, Tickets, List, EditPen, TrendCharts, Reading,
   MagicStick, UserFilled, PieChart, Edit, Timer, Warning, Refresh, DataLine,
-  Medal, Star, Histogram, Calendar, Guide, Box
+  Medal, Star, Histogram, Calendar, Guide, Box, Compass
 }
 function iconOf(name) { return ICONS[name] || name }
 

@@ -1,6 +1,6 @@
 {
   "name": "edu-ai-platform-web",
-  "version": "2.5.40",
+  "version": "2.5.41",
   "private": true,
   "type": "module",
   "scripts": {

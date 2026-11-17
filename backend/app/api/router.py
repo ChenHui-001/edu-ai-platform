@@ -3,8 +3,8 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     agent, attachment, auth, edu, exam_standard, grading, knowledge, knowledge_ai,
-    lesson, lesson_ai, logs, paper_ai, paper_compose, question, question_ai, report,
-    system, task,
+    knowledge_diagnosis, lesson, lesson_ai, logs, paper_ai, paper_compose, question,
+    question_ai, report, system, task,
 )
 
 api_router = APIRouter()
@@ -15,6 +15,8 @@ api_router.include_router(edu.router)
 # 知识点 V2 独立成文件（树/批量/导入导出），与 edu 同为 /edu 前缀。
 # 旧的 /edu/knowledge* 路由已从 edu.py 移除，这里不会产生重复注册。
 api_router.include_router(knowledge.router)
+# 知识诊断 / 先修关系：独立文件，路径仍挂在 /edu/knowledge 下。
+api_router.include_router(knowledge_diagnosis.router)
 # 知识点 AI（生成/补全）：独立文件，前缀 /edu/knowledge/ai。
 # 权限/scope 直接复用 knowledge.py 的 helper，避免两套权限判定漂移。
 api_router.include_router(knowledge_ai.router)

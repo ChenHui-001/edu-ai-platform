@@ -12,6 +12,9 @@ from app.schemas.learning import (
     AttachmentBindIn, NoteCreateIn, NoteShareIn, NoteUpdateIn, WrongQuestionUpdateIn,
 )
 from app.schemas.question import QuestionBatchCreateIn
+from app.schemas.taxonomy import (
+    DiagnosisAnswerIn, DiagnosisSessionCreateIn, PrerequisiteCreateIn,
+)
 
 __all__ = [
     "PaperComposerRequest",
@@ -22,4 +25,7 @@ __all__ = [
     "NoteShareIn",
     "WrongQuestionUpdateIn",
     "AttachmentBindIn",
+    "DiagnosisSessionCreateIn",
+    "DiagnosisAnswerIn",
+    "PrerequisiteCreateIn",
 ]

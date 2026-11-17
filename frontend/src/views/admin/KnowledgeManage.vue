@@ -239,6 +239,11 @@
               </div>
             </el-form>
 
+            <!-- 先修关系：教材树之外的知识依赖图，供知识诊断回溯使用 -->
+            <KnowledgePrerequisitePanel :kp-id="detail.id" :kp-name="detail.name"
+              :subject-name="detail.subject_name || subjectName(detail.subject_id)"
+              :grade-id="detail.grade_id" :can-write="canWrite" />
+
             <!-- 资料附件：独立区块（标题 + 数量 + 工具栏 + 列表/空态） -->
             <div class="att-block mt12">
               <div class="att-toolbar">
@@ -779,6 +784,7 @@
         </el-button>
       </template>
     </el-dialog>
+
   </div>
 </template>
 
@@ -796,6 +802,7 @@ import { confirmAction } from '@/utils/confirm'
 import { toastIfUnhandled } from '@/utils/notify'
 import AiFallbackNotice from '@/components/AiFallbackNotice.vue'
 import ExportButton from '@/components/ExportButton.vue'
+import KnowledgePrerequisitePanel from '@/components/KnowledgePrerequisitePanel.vue'
 
 const userStore = useUserStore()
 const { can } = userStore
@@ -2076,10 +2083,7 @@ onMounted(async () => {
 .form-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .form-actions :deep(.el-button + .el-button) { margin-left: 0; }
 
-.batch-bar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 8px 0 12px;
-}
+.batch-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0 12px; }
 .batch-bar :deep(.el-button + .el-button) { margin-left: 0; }
 
 .import-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
@@ -2111,15 +2115,8 @@ onMounted(async () => {
 }
 
 /* 资料附件区块 */
-.att-block {
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  padding: 12px;
-}
-.att-toolbar {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
-}
+.att-block { border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 12px; }
+.att-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .att-title-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .att-title { font-size: 14px; color: var(--el-text-color-primary); }
 .att-hint { line-height: 1.4; }
@@ -2135,4 +2132,5 @@ onMounted(async () => {
 .att-op + .att-op { margin-left: 6px; }
 .att-switch-wrap { display: inline-flex; align-items: center; }
 .purge-ok { color: var(--el-color-danger); }
+
 </style>

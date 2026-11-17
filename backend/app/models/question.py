@@ -50,6 +50,11 @@ class QuestionStatus(str, enum.Enum):
 
 class Question(Base):
     __tablename__ = "edu_question"
+    __table_args__ = (
+        # 外部题库映射：同一来源的题目 ID 只落库一次（幂等导入）。
+        UniqueConstraint(
+            "external_source", "external_id", name="uq_question_external"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # 题目属性
@@ -78,6 +83,15 @@ class Question(Base):
     fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True, comment="题干哈希，用于查重")
     source: Mapped[str] = mapped_column(String(32), default="manual", comment="manual/ai_import")
     usage_count: Mapped[int] = mapped_column(Integer, default=0, comment="被使用次数")
+
+    # 外部题库映射与扩展字段。extra_json 保存本地模型没有、但诊断/判分
+    # 仍需要的原始信息（accept/verify/figure/unordered/percent/topicId 等）。
+    external_source: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, comment="外部来源，如 cn-math-taxonomy")
+    external_id: Mapped[Optional[str]] = mapped_column(
+        String(80), nullable=True, comment="外部来源内的稳定题目 ID")
+    extra_json: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, comment="外部扩展字段 JSON")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)

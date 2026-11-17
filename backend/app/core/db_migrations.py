@@ -89,6 +89,13 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
     # v2.1.0: 共享权限级别（仅查看 / 可另存 / 可编辑）
     ("edu_paper_share", "permission", "VARCHAR(16) DEFAULT 'view'"),
     ("edu_paper_share", "scope", "VARCHAR(16)"),
+    # v2.6.0: 外部知识图谱（cn-math-taxonomy）映射。存量库没有这些列时
+    # ORM 查询会直接 500；新表由 create_all 建出，无需登记。
+    ("edu_knowledge_point", "external_source", "VARCHAR(64)"),
+    ("edu_knowledge_point", "external_id", "VARCHAR(64)"),
+    ("edu_question", "external_source", "VARCHAR(64)"),
+    ("edu_question", "external_id", "VARCHAR(80)"),
+    ("edu_question", "extra_json", "TEXT"),
 ]
 
 
