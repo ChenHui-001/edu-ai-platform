@@ -220,6 +220,41 @@ curl http://localhost:8000/api/v1/agent/status \
 
 接口文档 `/docs` 提供了所有接口的在线调试能力。
 
+### 组件级回归
+
+前端测试分两层：
+
+- `frontend/src/utils/__tests__`：纯函数与契约；
+- `frontend/src/components/__tests__`：用 `@vue/test-utils` 挂载组件，覆盖错误态、AI 降级提示、导出按钮单锁、移动端卡片表格。
+
+```bash
+cd frontend
+npm test
+```
+
+### 只读压测
+
+`tools/load_test.py` 是标准库实现的轻量压测，默认只发 GET，输出 RPS 与 p50/p95/p99。
+**不要直接压生产库**；用临时库或预发环境，且优先在低峰期跑。
+
+```bash
+# 健康检查基线
+python tools/load_test.py --base http://127.0.0.1:8080/api/v1 \
+  --path /health --concurrency 20 --duration 10
+
+# 登录后压只读列表（口令走环境变量，不要写在命令行历史）
+# 兼容 Windows PowerShell 5.1 与 PowerShell 7
+$secure = Read-Host "压测账号口令" -AsSecureString
+$env:LOAD_TEST_PASSWORD = [System.Net.NetworkCredential]::new("", $secure).Password
+python tools/load_test.py --base http://127.0.0.1:8080/api/v1 \
+  --username admin --path '/edu/classes?page_size=20' \
+  --concurrency 20 --duration 10 --max-p95-ms 1500
+```
+
+默认错误率 >1% 或 p95 >500ms 即返回非零，可直接作为发布前检查。
+SQLite 单 worker 下列表查询的 p95 实测约 900ms（临时库 10 并发），
+所以列表接口先用 1500ms 作为基线；要收紧到 500ms 必须先做查询优化或换库。
+
 ---
 
 ## 八、常见开发问题

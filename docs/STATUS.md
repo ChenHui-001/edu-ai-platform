@@ -11,14 +11,14 @@
 <!-- status:auto:begin -->
 | 项 | 实测值 | 口径 |
 |---|---:|---|
-| 版本 | 2.5.38 | `VERSION` 文件 |
+| 版本 | 2.5.39 | `VERSION` 文件 |
 | 路由数 | 293 | `app.routes` |
 | 数据表数 | 53 | `Base.metadata.tables` |
 | 后端用例 | 74 | `pytest backend/qa_audit_suite.py --collect-only` |
-| 前端用例 | 119 | `frontend/src/**/__tests__` 内 `it(` 计数 |
+| 前端用例 | 129 | `frontend/src/**/__tests__` 内 `it(` 计数 |
 | 接口断言 | 117 | `tools/verify_p0_fixes.py` 实际通过条数 |
 | 补列迁移 | 34 | `core/db_migrations._COLUMNS` |
-| 发版门禁 | 21 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |
+| 发版门禁 | 23 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |
 
 > 由 `python tools/status_snapshot.py --write` 生成。版本号另由 `tools/check_doc_versions.py` 门禁强制与 `VERSION` 一致。
 <!-- status:auto:end -->
@@ -33,7 +33,7 @@
 | 后端 | FastAPI + SQLAlchemy 2.0（**同步** ORM）+ uvicorn `--workers 1` | 单写者假设贯穿限流/缓存/调度，改多 worker 需先看 `BACKLOG` P1-15 |
 | 数据库 | SQLite WAL（`busy_timeout=5000`、`foreign_keys=ON`） | 数据库与日志必须在**命名卷**上，9p 绑定挂载只能建首个连接 |
 | 前端 | Vue 3 + Vite + Element Plus（unplugin 按需） | 图表统一走 `utils/echarts.js` 按需注册，禁止全量引入 |
-| 迁移 | 无 Alembic：`create_all` + 手写补列（`core/db_migrations.py`） | 补列清单与模型列必须一致，由 `check_migration_columns` 守 |
+| 迁移 | Alembic 基线 `0001_baseline` + 存量库幂等补列 + `align_schema.py` 漂移对齐 | 新变更走 `alembic revision`；补列清单由 `check_migration_columns` 守，迁移链由 `check_alembic_sync` 守 |
 | 生产 | `186.241.77.194:8081`，容器 `edu-platform`，数据 `/opt/edu-ai-platform/{data,logs}` | 勿动 Caddy(80/5010)、8080、gostc(7500+) |
 
 ## 三、四层一致性
@@ -64,8 +64,11 @@
 
 ## 五、当前缺口（只列方向，明细在 BACKLOG）
 
-- **功能扩展**：F-05 导出异步化 / F-06 AI 预算按 `biz_type` 细化 / F-07 通知订阅偏好。
+- **功能扩展**：F-05 导出异步化 / F-06 AI 预算按 `biz_type` 细化 / F-07 通知订阅偏好
+  均已完成，详见 [`../audit-reports/BACKLOG.md`](../audit-reports/BACKLOG.md)。
 - **交互**：U-03 降级提示条统一（一律 `el-alert`，勿复活 `.fallback-tip`）/ U-04 导出按钮组件化 / U-05 页面级错误重试。
-- **结构**：Q-05 `paper_compose.py`（3000+ 行）继续按域拆分；Q-06 Alembic 暂不引入
-  （单实例 + 幂等补列，收益低于改造成本，多实例部署时再评估）。
+- **结构**：Q-05 `paper_compose.py` 已从 3000+ 行拆到约 1400 行，继续按域下沉；
+  Q-06 Alembic 已引入 `0001_baseline`，生产已 `stamp` 且 `alembic check` 干净。
+  13 个存量超长文件已纳入 `check_file_size.py` 的**只降不升**预算，新增文件硬顶 1200 行；
+  只读性能基线由 `tools/load_test.py` 提供（临时库，不压生产）。
 - **数据**：约 42 个学科缺知识点，AI 出题挂不上、掌握度失效（运营补齐，非代码问题）。

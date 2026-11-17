@@ -181,11 +181,14 @@ npm run dev
 需要**完整一个月**的教学数据（多班多学科、批量组卷、教案、学习中心活动）时，先起服务再跑：
 
 ```bash
-# 本地开发形态（后端 :8000，默认管理员 admin）
-python tools/seed_prod_data.py --base http://127.0.0.1:8000 --user admin --password Admin@123456
+# 本地开发形态（后端 :8000，默认管理员 admin；口令一律走环境变量）
+ADMIN_PASS='Admin@123456' SEED_TEACHER_PASS='<本地教师口令>' \
+  SEED_STUDENT_PASS='<本地学生口令>' \
+  python tools/seed_prod_data.py --base http://127.0.0.1:8000 --user admin
 
-# 生产形态（:8081 + sysadmin，也可用 BASE / ADMIN_USER / ADMIN_PASS 环境变量）
-python tools/seed_prod_data.py
+# 生产形态（:8081 + sysadmin，口令全部走环境变量，不写进命令行历史）
+ADMIN_PASS='<sysadmin 口令>' SEED_TEACHER_PASS='<教师口令>' \
+  SEED_STUDENT_PASS='<学生口令>' python tools/seed_prod_data.py
 ```
 
 该脚本走**真实 API** 完成「组织架构 → 题库 → 试卷 → 下发 → 学生作答 → 教师批改 → 教案 → 学习中心」全链路，幂等可重跑。
@@ -267,6 +270,9 @@ bash tools/auto_ship.sh --bump patch --deploy
 6. 校验 `BUILD_INFO` 的 commit == 本地 HEAD；失败自动回滚到上一镜像
 
 只想看会执行什么：`python tools/deploy_release.py --dry-run`。
+
+部署器优先使用公钥（`DEPLOY_KEY`，默认 `~/.ssh/id_ed25519`）；生产服务器已禁用
+密码登录，`DEPLOY_PASS` 仅作为旧环境回退。
 
 ### 服务器侧巡检（部署一次，长期生效）
 

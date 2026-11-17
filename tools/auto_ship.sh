@@ -130,6 +130,8 @@ if [ -n "$GATE_PY" ]; then
   # 实测耗时 10s / 0.3s，放进本地门禁不痛。
   "$GATE_PY" tools/check_gen_data_determinism.py || GATE_RC=1
   "$GATE_PY" tools/check_new_code_tests.py || GATE_RC=1
+  "$GATE_PY" tools/check_file_size.py || GATE_RC=1
+  "$GATE_PY" tools/check_plaintext_secrets.py || GATE_RC=1
   # N+1 棘轮：A 类（循环内逐条查库）只许降不许升。
   # 脚本早就写好了，但此前只在 CI 定时任务里跑，本地改完 API 直接提交，
   # 到 CI 才发现（或根本没人看）。默认非严格模式只出报告，--ratchet 卡基线。

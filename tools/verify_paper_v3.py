@@ -108,10 +108,14 @@ def main():
         tok = None
         # 新库的默认管理员是 admin/Admin@123456（init_db 播种）；
         # 生产库才有 sysadmin/自定义口令。两个都试，谁通用谁。
-        for user, pwd in (("admin", "Admin@123456"),
-                          ("admin", "Prod@Admin2026!Xy"),
-                          ("sysadmin", "Sys@Admin2026!Qw"),
-                          ("sysadmin", "Admin@123456")):
+        candidates = [(
+            os.environ.get("TEST_ADMIN_USER", "admin"),
+            os.environ.get("TEST_ADMIN_PASS", "Admin@123456"),
+        )]
+        sysadmin_pass = os.environ.get("SYSADMIN_PASS", "")
+        if sysadmin_pass:
+            candidates.append((os.environ.get("SYSADMIN_USER", "sysadmin"), sysadmin_pass))
+        for user, pwd in candidates:
             r = httpx.post(f"{api}/auth/login", json={"username": user, "password": pwd},
                            timeout=15)
             if r.status_code == 200:

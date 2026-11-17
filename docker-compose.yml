@@ -51,8 +51,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-50}
-      # 演示数据：本地体验保留默认 true；生产建议在 .env 设为 false
-      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      # 演示数据：默认关闭。本地体验请显式设置 SEED_DEMO_DATA=true，
+      # 生产环境保持 false，避免创建公开口令的演示账号。
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       TZ: Asia/Shanghai
     volumes:
       # 数据持久化：**用命名卷，而不是 ./data 绑定挂载**。

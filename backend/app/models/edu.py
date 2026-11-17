@@ -59,7 +59,18 @@ class Class(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(64), index=True)
     grade_id: Mapped[int] = mapped_column(ForeignKey("edu_grade.id", ondelete="CASCADE"), index=True)
-    head_teacher_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True, comment="班主任")
+    # sys_user.class_id 反向引用 edu_class，形成循环外键；use_alter 让建表排序
+    # 不再依赖两表谁先创建，避免 Alembic/SQLAlchemy 的 unresolvable cycle 警告。
+    head_teacher_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey(
+            "sys_user.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_edu_class_head_teacher",
+        ),
+        nullable=True,
+        comment="班主任",
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     remark: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)

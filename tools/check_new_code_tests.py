@@ -77,6 +77,22 @@ REGISTRY = {
     "frontend/src/utils/responsive.js": [
         "frontend/src/utils/__tests__/responsive.test.js",
     ],
+    # 前端：页面级错误态（错误码/重试/加载态）
+    "frontend/src/components/ErrorState.vue": [
+        "frontend/src/components/__tests__/components.test.js",
+    ],
+    # 前端：AI 降级提示条（是否显示/统一文案）
+    "frontend/src/components/AiFallbackNotice.vue": [
+        "frontend/src/components/__tests__/components.test.js",
+    ],
+    # 前端：导出按钮单锁与 loading
+    "frontend/src/components/ExportButton.vue": [
+        "frontend/src/components/__tests__/components.test.js",
+    ],
+    # 前端：移动端卡片表格（桌面/移动双分支）
+    "frontend/src/components/TableCards.vue": [
+        "frontend/src/components/__tests__/components.test.js",
+    ],
     # 部署：supervisord FATAL → 容器退出（否则 Up + 全站 502）
     "deploy/fatal_guard.py": ["backend/qa_audit_suite.py"],
     # 工具：四层一致性合议（服务器落后不能被其它层绿灯掩盖）
@@ -91,11 +107,11 @@ REGISTRY = {
 # 拿运行数做基线会让同一次改动在两个口径间来回对不上。
 BASELINE = {
     "pytest_cases": 72,   # def test_* 个数（运行 74 passed，含 2 条参数化展开；+AI 题强制 draft）
-    "vitest_cases": 119,  # 6.5：+theme 8、+responsive 9、+paperWizard 草稿 6、+agentResult is_fallback 1
+    "vitest_cases": 129,  # +components：错误态 3、降级提示 2、导出按钮 2、移动卡片 3
 }
 
 PYTEST_FILE = "backend/qa_audit_suite.py"
-VITEST_DIR = "frontend/src/utils/__tests__"
+VITEST_ROOT = "frontend/src"
 PYTEST_RE = re.compile(r"^def test_\w+\(", re.M)
 VITEST_RE = re.compile(r"^\s*(?:it|test)\s*\(", re.M)
 
@@ -132,13 +148,16 @@ def count_pytest():
 
 
 def count_vitest():
-    base = os.path.join(ROOT, VITEST_DIR)
+    base = os.path.join(ROOT, VITEST_ROOT)
     if not os.path.isdir(base):
         return 0
     total = 0
-    for name in sorted(os.listdir(base)):
-        if name.endswith((".test.js", ".spec.js")):
-            total += len(VITEST_RE.findall(read(os.path.join(VITEST_DIR, name))))
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in {"node_modules", "dist"}]
+        for name in sorted(files):
+            if name.endswith((".test.js", ".spec.js")):
+                rel = os.path.relpath(os.path.join(root, name), ROOT).replace("\\", "/")
+                total += len(VITEST_RE.findall(read(rel)))
     return total
 
 

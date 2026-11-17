@@ -1,6 +1,6 @@
 {
   "name": "edu-ai-platform-web",
-  "version": "2.0.0",
+  "version": "2.5.39",
   "private": true,
   "type": "module",
   "scripts": {
@@ -24,6 +24,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.6",
     "eslint": "^10.13.0",
     "eslint-plugin-vue": "^10.11.1",
     "globals": "^17.13.0",

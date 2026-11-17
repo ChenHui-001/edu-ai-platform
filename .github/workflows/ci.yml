@@ -80,6 +80,16 @@ jobs:
         # 并用棘轮锁住 pytest / vitest 用例数 —— 删测试即红。
         run: python tools/check_new_code_tests.py
 
+      - name: 上帝文件预算（存量只许降，新增不许再长）
+        # 大文件拆分不靠一次性重构，而靠每次提交都不让它继续增长。
+        # 拆分后请同步下调 tools/check_file_size.py 里的预算。
+        run: python tools/check_file_size.py
+
+      - name: 明文凭据扫描
+        # 匹配生产形态口令、长 API Key、私钥头；命中只报位置，不回显内容。
+        # 本地演示账号（README 的 Admin@123456）不在匹配范围。
+        run: python tools/check_plaintext_secrets.py
+
       - name: 后端断言套件（qa_audit_suite）
         # 后端 e2e 移除后这是唯一幸存的 pytest 套件，此前从未接入 CI：
         # 实现从 usage_count 记账改成幂等重算后，过期断言烂在仓库里
@@ -180,13 +190,16 @@ jobs:
         run: python tools/check_css_tokens.py
 
       - name: 单元测试（vitest）
-        # 6 个文件 76 个用例，锁六处回归：
+        # 11 个文件 129 个用例（数字由 tools/status_snapshot.py 统一重算）：
         #   date.test.js        —— Safari 解析 "YYYY-MM-DD HH:mm:ss" 与东八区口径
         #   paperWizard.test.js —— AI 组卷按钮恒灰的回归锁
         #   sanitize.test.js    —— 存储型 XSS 白名单
         #   errors.test.js      —— 取消语义白名单（只放行 'cancel'/'close'，其余算真故障）
         #   agentResult.test.js —— AI 产出空态判定 fail-safe（键存在但非数组也判空）
         #   confirm.test.js     —— confirm/prompt 取消返回 false/null 且不抛异常
+        #   exportJob.test.js / leaveGuard.test.js / responsive.test.js / theme.test.js
+        #                       —— 导出轮询、离开守卫、响应式断点、主题切换
+        #   components.test.js  —— 错误态/降级提示/导出按钮/表格卡片的组件级回归
         # 2026-10-29 之前前三份只存在于本地，CI 从未执行过 `npm test`；
         # 后端测试体系移除后补上，是当前唯一的自动化行为断言。
         working-directory: frontend

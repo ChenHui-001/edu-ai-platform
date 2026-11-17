@@ -22,7 +22,20 @@ import urllib.request
 
 BASE = os.environ.get("BASE", "http://127.0.0.1:8081") + "/api/v1"  # allow-hardcoded-host: BASE 环境变量可覆盖，此为本地兜底
 ADMIN_USER = os.environ.get("ADMIN_USER", "sysadmin")
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "Sys@Admin2026!Qw")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "")
+TEACHER_PASS = os.environ.get("SEED_TEACHER_PASS", "")
+STUDENT_PASS = os.environ.get("SEED_STUDENT_PASS", "")
+
+# 运维脚本（deploy_init.py）通过 0600 临时 JSON 注入口令，避免把口令写进
+# 命令行/进程列表；本地直接运行仍可用环境变量。
+_SECRETS_FILE = os.environ.get("EDU_SEED_SECRETS", "")
+if _SECRETS_FILE and os.path.exists(_SECRETS_FILE):
+    with open(_SECRETS_FILE, encoding="utf-8") as _fh:
+        _secrets = json.load(_fh)
+    ADMIN_USER = _secrets.get("admin_user", ADMIN_USER)
+    ADMIN_PASS = _secrets.get("admin_password", ADMIN_PASS)
+    TEACHER_PASS = _secrets.get("teacher_password", TEACHER_PASS)
+    STUDENT_PASS = _secrets.get("student_password", STUDENT_PASS)
 
 # 绕过系统代理：访问 127.0.0.1 必须直连，否则 502。
 for _k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
@@ -144,6 +157,17 @@ def _apply_cli_overrides():
 
 def main():
     _apply_cli_overrides()
+    missing = [
+        name for name, value in (
+            ("ADMIN_PASS", ADMIN_PASS),
+            ("SEED_TEACHER_PASS", TEACHER_PASS),
+            ("SEED_STUDENT_PASS", STUDENT_PASS),
+        ) if not value
+    ]
+    if missing:
+        print("缺少环境变量：" + "、".join(missing))
+        print("请通过环境变量注入演示账号口令，不要写入源码或命令行历史。")
+        return 1
     print("=" * 60)
     print("生产数据生成 · 模拟示范学校开学一个月运转")
     print("=" * 60)
@@ -228,7 +252,7 @@ def main():
         if not t:
             st, r = call("POST", "/system/users", {
                 "username": tname, "real_name": f"{scope[gn]['grade_name']}数学教师",
-                "identity": "teacher", "password": "Teacher@2026!Xy",
+                "identity": "teacher", "password": TEACHER_PASS,
                 "roles": ["teacher"], "status": "active",
                 "school_name": "示范学校", "grade_id": k["grade_id"],
                 "class_id": k["id"], "must_change_password": False,
@@ -251,7 +275,7 @@ def main():
             if not su:
                 st, r = call("POST", "/system/users", {
                     "username": sname, "real_name": f"学生{gn}{k.get('class_no','1')}{si}",
-                    "identity": "student", "password": "Student@2026!Xy",
+                    "identity": "student", "password": STUDENT_PASS,
                     "roles": ["student"], "status": "active",
                     "school_name": "示范学校", "grade_id": k["grade_id"],
                     "class_id": k["id"], "must_change_password": False,
@@ -364,7 +388,7 @@ def main():
         # 拉试卷结构（学生视角）
         members = stu_by_class.get(k["id"], [])
         for idx, (_, _, su) in enumerate(members):
-            tok_s, _ = login(su["username"], "Student@2026!Xy")
+            tok_s, _ = login(su["username"], STUDENT_PASS)
             if not tok_s:
                 continue
             st, r = call("GET", f"/task/tasks/{tid}/paper", token=tok_s)
@@ -430,7 +454,7 @@ def main():
     print("\n[8] 教案：每位教师建 1 份")
     plans = 0
     for (gn, k, t) in teachers:
-        tok_t, _ = login(t["username"], "Teacher@2026!Xy")
+        tok_t, _ = login(t["username"], TEACHER_PASS)
         if not tok_t:
             continue
         ginfo = scope[gn]
@@ -480,7 +504,7 @@ def main():
     notes = 0
     sample_stus = [s for s in students if s[0] == 7][:4]  # 七年级前 4 个学生
     for (gn, k, su) in sample_stus:
-        tok_s, _ = login(su["username"], "Student@2026!Xy")
+        tok_s, _ = login(su["username"], STUDENT_PASS)
         if not tok_s:
             continue
         ginfo = scope[gn]

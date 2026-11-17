@@ -9,6 +9,7 @@
 用法：python tools/diagnose_student_exam.py <base_url>
 """
 import json
+import os
 import sys
 
 import httpx
@@ -16,12 +17,9 @@ import httpx
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8099").rstrip("/")  # allow-hardcoded-host: 诊断脚本的 argv 兜底默认值
 API = f"{BASE}/api/v1"
 
-CREDS = [
-    ("s711", "Student@2026!Xy"),
-    ("s711", "Student@123456"),
-    ("stu7101", "Student@123456"),
-    ("admin", "Admin@123456"),
-]
+DIAG_USER = os.environ.get("DIAG_USER", "admin")
+DIAG_PASS = os.environ.get("DIAG_PASS", "Admin@123456")
+CREDS = [(DIAG_USER, DIAG_PASS)]
 
 
 def login(username, password):

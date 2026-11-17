@@ -33,7 +33,8 @@
 ## 环境变量（全部可选）
 
     PROD_HOST / PROD_PORT     默认 186.241.77.194 / 8081
-    DEPLOY_PASS               无则读仓库外 deploy_scripts/.deploy_pass
+    DEPLOY_KEY                私钥路径；默认依次尝试 ~/.ssh/id_ed25519、~/.ssh/id_rsa
+    DEPLOY_PASS               公钥不可用时的回退口令（或仓库外 deploy_scripts/.deploy_pass）
     KEEP_BACKUPS              默认 10，保留最近多少个预部署备份
 """
 import argparse
@@ -46,6 +47,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 from check_release_consistency import sh  # noqa: E402
+from ssh_connect import connect as ssh_connect, load_pass  # noqa: E402,F401
 
 # 输出被重定向到管道时 Python 默认按块缓冲：长步骤（拉镜像）会长时间"没有输出"，
 # 看起来像卡死。改成行缓冲，进度实时可见。
@@ -104,17 +106,6 @@ def read_dotenv(path=None):
     return out
 
 
-def load_pass():
-    pwd = os.environ.get("DEPLOY_PASS", "").strip()
-    if pwd:
-        return pwd
-    try:
-        with open(PASS_FILE, encoding="utf-8") as fh:
-            return fh.read().strip()
-    except OSError:
-        return ""
-
-
 class Remote:
     """一次连接跑完全部命令：SSH 握手成本高，且本机链路容易抖。"""
 
@@ -123,24 +114,14 @@ class Remote:
         self.c = None
 
     def _connect(self):
-        pwd = load_pass()
-        if not pwd:
-            raise SystemExit(_fail(3, "找不到部署凭据：设 DEPLOY_PASS 或放 deploy_scripts/.deploy_pass"))
         try:
-            import paramiko
+            self.c = ssh_connect(HOST)
         except ImportError:
             raise SystemExit(_fail(3, "缺 paramiko：pip install paramiko"))
-        import logging
-        logging.getLogger("paramiko").setLevel(logging.CRITICAL)
-        paramiko.util.log_to_file(os.devnull)
-        self.c = paramiko.SSHClient()
-        self.c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        try:
-            self.c.connect(HOST, username="root", password=pwd, timeout=20,
-                           banner_timeout=20, auth_timeout=20)
         except Exception as exc:  # noqa: BLE001
             raise SystemExit(_fail(3,
-                f"SSH 不可达（{type(exc).__name__}）。\n"
+                f"SSH 不可达（{type(exc).__name__}）：优先检查 DEPLOY_KEY / ~/.ssh/id_ed25519，\n"
+                f"    公钥不可用时再设 DEPLOY_PASS。\n"
                 f"    先验证选路：PowerShell `Find-NetRoute -RemoteIPAddress {HOST}`\n"
                 f"    若指向 Meta/mihomo TUN 而非 WLAN，说明本机 /32 直连路由失效（见 GOTCHAS）。"))
         # ⚠️ keepalive 是必需的，不是优化项。

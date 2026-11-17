@@ -48,11 +48,11 @@ from check_release_consistency import (  # noqa: E402
     image_embedded_version,
     sh,
 )
+from ssh_connect import connect as ssh_connect  # noqa: E402
 
 IMAGE_REPO = os.environ.get("GHCR_IMAGE", "ghcr.io/chenhui-001/edu-ai-platform")
 PROD_HOST = os.environ.get("PROD_HOST", "186.241.77.194")
 PROD_PORT = os.environ.get("PROD_PORT", "8081")
-PASS_FILE = os.path.join(os.path.dirname(ROOT), "deploy_scripts", ".deploy_pass")
 
 OK, BAD, WARN, NA = "OK", "DRIFT", "DEGRADED", "UNKNOWN"
 
@@ -73,17 +73,6 @@ def read_version():
 
 def short(sha):
     return (sha or "?")[:7]
-
-
-def load_pass():
-    pwd = os.environ.get("DEPLOY_PASS", "").strip()
-    if pwd:
-        return pwd
-    try:
-        with open(PASS_FILE, encoding="utf-8") as fh:
-            return fh.read().strip()
-    except OSError:
-        return ""
 
 
 # ---------------------------------------------------------------- 四层
@@ -172,28 +161,12 @@ def layer_image(version):
 
 def _ssh_build_info():
     """SSH 读服务器容器指纹。返回 dict 或 None（不可达/无凭据/缺 paramiko）。"""
-    pwd = load_pass()
-    if not pwd:
-        return None
     try:
-        import paramiko  # 延迟导入：只查前三层时完全不需要它
-    except ImportError:
+        c = ssh_connect(PROD_HOST, timeout=15)
+    except Exception:  # noqa: BLE001 不可达/缺凭据/缺 paramiko 都视为这一层拿不到
         return None
-    # paramiko 默认把「banner 读不到」的异常直接打到 stderr，一行报错配一坨
-    # traceback，看起来像脚本崩了。这里静音：连不上是**预期内的常态**
-    # （本机 → 服务器的 /32 直连路由丢失时，22 端口会被 mihomo TUN 丢弃）。
-    try:
-        import logging
-        logging.getLogger("paramiko").setLevel(logging.CRITICAL)
-        paramiko.util.log_to_file(os.devnull)
-    except Exception:  # noqa: BLE001
-        pass
-    c = paramiko.SSHClient()
-    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     try:
-        c.connect(PROD_HOST, username="root", password=pwd, timeout=15,
-                  banner_timeout=15, auth_timeout=15)
         _, out, _ = c.exec_command(
             "docker exec edu-platform sh -c 'cat /app/BUILD_INFO' 2>/dev/null; "
             "docker inspect edu-platform --format 'IMAGE_TAG={{.Config.Image}}'; "
