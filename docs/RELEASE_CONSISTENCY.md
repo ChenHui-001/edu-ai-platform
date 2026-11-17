@@ -9,27 +9,27 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | `2.5.42` |
-| Git commit | `96afd4308d0c4a63042e698aac18344278390b61` |
+| 版本 | `2.5.43` |
+| Git commit | 本次发布提交（`git log -1 --format=%H`） |
 | 功能提交 | `de6168f`（先修诊断与图谱集成） |
-| ghcr 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.5.42` |
-| 镜像 digest | `sha256:957d8c050751544c3b591d9f91f7831cbf7d8a55ca5bdab96ccfdbd9cb102800` |
-| Docker Hub | `nanpo/edu-ai-platform:2.5.42` / `:latest`（同一 digest） |
+| ghcr 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.5.43` |
+| 镜像 digest | 以 registry 的 `2.5.43` 清单为准 |
+| Docker Hub | `nanpo/edu-ai-platform:2.5.43` / `:latest`（同一 digest） |
 | 生产 | `186.241.77.194:8081`，容器 `edu-platform` |
-| 四层校验 | 本地 / `origin/master` / 镜像 / 生产均为 `96afd43`，4/4 通过 |
+| 四层校验 | 本地 / `origin/master` / 镜像 / 生产同 commit，4/4 通过 |
 | 备份 | `pre-20261117-171609-2.5.40.db`（部署器自动创建） |
 
 ### 标签保留策略
 
-- Docker Hub：保留 `latest`、当前版本（`2.5.42`）、上一个 Docker Hub 正式版
+- Docker Hub：保留 `latest`、当前版本（`2.5.43`）、`2.5.42`、上一个 Docker Hub 正式版
   （`2.0.0`）及之前 4 个版本（`1.9.0` / `1.8.0` / `1.7.0` / `1.6.1`）；
   其余 55 个历史/`sha-*` 标签已删除。
 - ghcr：以 `VERSION` 版本标签为准，`latest` 跟随最新发布；历史版本由
   registry 保留，用于回滚。
-- 本机与生产服务器：只保留 `2.5.42` 一个应用镜像（gostc 等基础服务镜像除外）。
+- 本机与生产服务器：只保留 `2.5.43` 一个应用镜像（gostc 等基础服务镜像除外）。
 
-> `2.5.41` 是功能提交 `de6168f` 的中间构建；最终发布升为 `2.5.42`，
-> 以避免覆盖已发布的版本标签。
+> `2.5.41` / `2.5.42` 是中间构建；最终发布升为 `2.5.43`，
+> 以避免覆盖已发布的版本标签并使镜像 commit 与仓库 HEAD 严格一致。
 
 ---
 
