@@ -3,12 +3,13 @@
 // （约 1MB，gzip 340KB），而本项目只用到折线/柱状/饼图/雷达四类。
 // 统一从这里导入并只注册必需模块，新图表类型在这里补充注册。
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, PieChart, RadarChart } from 'echarts/charts'
+import { BarChart, GraphChart, LineChart, PieChart, RadarChart } from 'echarts/charts'
 import {
   DatasetComponent,
   DataZoomComponent,
   GridComponent,
   LegendComponent,
+  GraphicComponent,
   MarkLineComponent,
   MarkPointComponent,
   RadarComponent,
@@ -22,6 +23,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 
 echarts.use([
   BarChart,
+  GraphChart,
   LineChart,
   PieChart,
   RadarChart,
@@ -29,6 +31,7 @@ echarts.use([
   DataZoomComponent,
   GridComponent,
   LegendComponent,
+  GraphicComponent,
   MarkLineComponent,
   MarkPointComponent,
   RadarComponent,

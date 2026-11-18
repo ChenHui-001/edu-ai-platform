@@ -236,7 +236,7 @@ const MENU_GROUPS = [
       {
         title: '学',
         prefixes: ['/student/knowledge', '/student/path', '/student/notes',
-                   '/student/flashcard', '/student/favorites']
+                   '/student/flashcard', '/student/favorites', '/student/graph']
       },
       {
         title: '练',

@@ -97,6 +97,8 @@ export const knowledgeApi = {
   list: (params) => request.get('/edu/knowledge', { params }),
   get: (id) => request.get(`/edu/knowledge/${id}`),
   stats: (params) => request.get('/edu/knowledge/stats', { params }),
+  // 关系图聚合：节点 + 先修边 + 层级边，一次取回（可选以某个知识点为中心展开）
+  graph: (params) => request.get('/edu/knowledge/graph', { params }),
   // 写入
   create: (data) => request.post('/edu/knowledge', data),
   update: (id, data) => request.put(`/edu/knowledge/${id}`, data),

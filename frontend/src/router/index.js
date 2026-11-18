@@ -35,6 +35,9 @@ const routes = [
         meta: { title: '学科管理', icon: 'Collection', perm: 'resource:subject:list' } },
       { path: 'admin/knowledge', name: 'KnowledgeManage', component: () => import('@/views/admin/KnowledgeManage.vue'),
         meta: { title: '知识点管理', icon: 'Share', perm: 'resource:knowledge:list' } },
+      { path: 'admin/knowledge-graph', name: 'KnowledgeGraphAdmin',
+        component: () => import('@/views/student/KnowledgeGraph.vue'),
+        meta: { title: '知识图谱', icon: 'Share', perm: 'resource:knowledge:list' } },
       { path: 'admin/classes', name: 'ClassManage', component: () => import('@/views/admin/ClassManage.vue'),
         meta: { title: '班级管理', icon: 'OfficeBuilding', perm: 'resource:class:list' } },
       { path: 'admin/teaching-matrix', name: 'TeachingMatrix', component: () => import('@/views/admin/TeachingMatrix.vue'),
@@ -112,6 +115,10 @@ const routes = [
         meta: { title: '闪卡速记', icon: 'Box', perm: 'student:flashcard' } },
       { path: 'student/knowledge', name: 'KnowledgeLibrary', component: () => import('@/views/student/KnowledgeLibrary.vue'),
         meta: { title: '知识资料', icon: 'Reading', perm: 'student:knowledge' } },
+      { path: 'student/graph', name: 'KnowledgeGraph',
+        component: () => import('@/views/student/KnowledgeGraph.vue'),
+        meta: { title: '知识图谱', icon: 'Share',
+          perms: ['student:knowledge', 'resource:knowledge:list'] } },
 
       // AI
       { path: 'agent/chat', name: 'AgentChat', component: () => import('@/views/agent/AgentChat.vue'),

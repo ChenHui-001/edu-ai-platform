@@ -19,6 +19,7 @@ const props = defineProps({
   option: { type: Object, required: true },
   height: { type: String, default: '300px' },
 })
+const emit = defineEmits(['chart-click'])
 
 const el = ref(null)
 let chart = null
@@ -27,6 +28,7 @@ let ro = null
 onMounted(() => {
   chart = echarts.init(el.value)
   if (props.option) chart.setOption(props.option)
+  chart.on('click', params => emit('chart-click', params))
   // 容器尺寸变化（侧栏折叠/窗口缩放）时自适应
   ro = new ResizeObserver(() => chart && chart.resize())
   ro.observe(el.value)

@@ -610,6 +610,17 @@ def summarize(graph: Dict[str, Any], session: Dict[str, Any]) -> Dict[str, Any]:
         }
         for nid in path_ids
     ]
+    path_set = set(path_ids)
+    path_links = [
+        {
+            "source": int(edge["id"]),
+            "target": int(nid),
+            "strength": edge.get("strength"),
+        }
+        for nid in path_ids
+        for edge in graph["prereqs"].get(nid, [])
+        if int(edge["id"]) in path_set
+    ]
 
     pending = [
         nid for nid in (session.get("stack") or [])
@@ -669,6 +680,7 @@ def summarize(graph: Dict[str, Any], session: Dict[str, Any]) -> Dict[str, Any]:
         "untested": [_node_ref(graph, nid, "unknown") for nid in untested],
         "roots": roots,
         "path": path,
+        "path_links": path_links,
         "chapters": chapter_list,
         "pending": [_node_ref(graph, nid) for nid in pending],
         "next_topic_id": next_node,

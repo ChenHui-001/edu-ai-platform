@@ -300,6 +300,14 @@
         </div>
         <div v-else class="tip">本次没有需要补学的节点。</div>
 
+        <template v-if="(summary.path?.length || 0) > 1">
+          <div class="section-title mt16">依赖路径图</div>
+          <EChart :option="pathOption" height="280px" />
+          <div class="tip">
+            箭头由先修指向后继：先补前置再学后继；红实线为硬先修，灰虚线为软先修。
+          </div>
+        </template>
+
         <el-row :gutter="16" class="mt16">
           <el-col :span="12">
             <div class="section-title">待测先修</div>
@@ -338,7 +346,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
+import EChart from '@/components/EChart.vue'
 import { knowledgeApi } from '@/api'
+import { buildPathOption } from '@/utils/knowledgeGraph'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
 
 const router = useRouter()
@@ -389,6 +399,11 @@ const feedbackTitle = computed(() => {
   if (feedback.value.result === 'wrong') return '回答错误，已加入先修复查'
   return '已跳过本题'
 })
+
+const pathOption = computed(() => buildPathOption(
+  summary.value.path || [],
+  summary.value.path_links || []
+))
 
 const summaryCards = computed(() => [
   { key: 'mastered', label: '已掌握', value: summary.value.counts?.mastered || 0, color: '#67c23a' },
