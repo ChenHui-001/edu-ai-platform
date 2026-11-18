@@ -63,11 +63,11 @@
         </div>
       </div>
 
-      <p class="stem" v-html="safeStem(w.stem)"></p>
+      <QuestionContent class="stem" :question="w" :analysis="w.analysis || ''" />
       <p v-if="parse(w.options)?.length" class="opts">
         <span v-for="o in parse(w.options)" :key="o.key"
               :class="{ wrong: isMyWrong(o.key, w.wrong_answer), right: isRight(o.key, w.answer) }">
-          {{ o.key }}. {{ o.text }}
+          {{ o.key }}. <QuestionContent :question="{ stem: o.text, figure: o.figure }" />
         </span>
       </p>
 
@@ -78,7 +78,6 @@
         <el-descriptions-item label="正确答案">
           <span class="text-success">{{ format(w.answer) }}</span>
         </el-descriptions-item>
-        <el-descriptions-item label="题目解析" :span="2">{{ w.analysis || '-' }}</el-descriptions-item>
         <el-descriptions-item v-if="w.error_reason" label="错因标注">
           <el-tag size="small" type="warning">{{ w.error_reason }}</el-tag>
         </el-descriptions-item>
@@ -105,6 +104,7 @@
           {{ w.is_mastered ? '取消掌握' : '标记已掌握' }}
         </el-button>
       </div>
+      <TutorPanel :question-id="w.question_id" />
     </el-card>
 
     <el-pagination v-if="total > query.page_size" class="mt16" background
@@ -122,12 +122,12 @@ import ExportButton from '@/components/ExportButton.vue'
 import TYPES from '@/constants/question'
 import { learningApi } from '@/api'
 import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject'
-import { sanitizeHtml } from '@/utils/sanitize'
+import QuestionContent from '@/components/QuestionContent.vue'
+import TutorPanel from '@/components/TutorPanel.vue'
 
 import { toastIfUnhandled } from '@/utils/notify'
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
-function safeStem(s) { return sanitizeHtml(s) }
 
 
 const DIFF = { easy: '简单', medium: '中等', hard: '困难' }

@@ -297,6 +297,13 @@ def _q_extra(question: Dict[str, Any]) -> Dict[str, Any]:
     extra["externalType"] = question.get("type")
     extra["license"] = LICENSE
     extra["sourceUrl"] = SOURCE_URL
+    choices = question.get("choices") or []
+    if isinstance(choices, list):
+        figures = {str(item.get("key") or chr(65 + index)): item["figure"]
+                   for index, item in enumerate(choices) if isinstance(item, dict)
+                   and isinstance(item.get("figure"), str) and len(item["figure"]) <= 100000}
+        if figures:
+            extra["option_figures"] = figures
     return extra
 
 
@@ -312,6 +319,7 @@ def import_math_taxonomy(
     bank_type: str = "private",
     status: str = "published",
     textbook_version: Optional[str] = "人教版",
+    commit: bool = True,
 ) -> Dict[str, Any]:
     """导入外部图谱，返回可审计统计。
 
@@ -628,7 +636,7 @@ def import_math_taxonomy(
         db.flush()
         if dry_run:
             db.rollback()
-        else:
+        elif commit:
             db.commit()
         return stats
     except Exception:

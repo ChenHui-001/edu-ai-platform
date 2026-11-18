@@ -76,6 +76,12 @@ function linkStyle(edge) {
   return { color: HARD_COLOR, type: 'solid', width: 1.8 }
 }
 
+export function escapeGraphText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character])
+}
+
 /**
  * @param {object} params
  * @param {Array} params.nodes 后端节点（id/name/difficulty/question_count/mastery/child_count）
@@ -147,12 +153,12 @@ export function buildGraphOption({
           return `先修关系（${strength}）`
         }
         const node = params.data.raw || {}
-        const lines = [`<b>${node.name || ''}</b>`]
-        if (node.grade_name) lines.push(`年级：${node.grade_name}`)
-        if (node.difficulty) lines.push(`难度：${node.difficulty}`)
-        lines.push(`题目：${node.question_count || 0} 道`)
+        const lines = [`<b>${escapeGraphText(node.name)}</b>`]
+        if (node.grade_name) lines.push(`年级：${escapeGraphText(node.grade_name)}`)
+        if (node.difficulty) lines.push(`难度：${escapeGraphText(node.difficulty)}`)
+        lines.push(`题目：${escapeGraphText(node.question_count || 0)} 道`)
         if (node.mastery !== null && node.mastery !== undefined) {
-          lines.push(`掌握度：${node.mastery}`)
+          lines.push(`掌握度：${escapeGraphText(node.mastery)}`)
         }
         return lines.join('<br/>')
       }

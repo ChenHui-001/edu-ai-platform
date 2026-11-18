@@ -21,13 +21,13 @@ from app.models import (
 from app.services import grading_service
 from app.services import notification as notify_cat
 from app.services.notification import notify_many
+from app.services.question_presentation import presentation_fields, presentation_options
 from app.utils.common import PageParams, dictify, now_local, ok
 from app.utils.options import normalize_options
 
 router = APIRouter(prefix="/task", tags=["作业与考试"])
 
 TYPE_LABEL = {"homework": "作业", "exam": "考试", "practice": "随机练习"}
-
 # 用户状态 -> 面向教师的提示词。只用于报错文案，不参与判定逻辑。
 _STATUS_LABEL = {
     UserStatus.PENDING.value: "待审批",
@@ -962,7 +962,7 @@ def get_task_paper(
         d = {
             "paper_item_id": it.id, "question_id": q.id, "sort_order": it.sort_order,
             "score": it.score, "section_name": it.section_name, "type": q.type,
-            "stem": q.stem, "options": normalize_options(q.options),
+            "stem": q.stem, "options": presentation_options(q.options, q.extra_json), **presentation_fields(q.extra_json),
         }
         if q.type == "composition":
             d["answer_min_words"] = int(q.answer_min_words or default_min_words)

@@ -36,6 +36,7 @@ from app.models.task import (  # noqa: F401
 from app.models.taxonomy import (  # noqa: F401
     KnowledgePrerequisite, TaxonomyDiagnosisSession,
 )
+from app.models.learning_ext import RemediationPlan, TutorFeedback, TaxonomySyncRun  # noqa: F401
 
 __all__ = [
     "Base",
@@ -46,6 +47,7 @@ __all__ = [
     # edu
     "Grade", "Subject", "Class", "KnowledgePoint", "TeachingAssignment",
     "KnowledgePrerequisite", "TaxonomyDiagnosisSession",
+    "RemediationPlan", "TutorFeedback", "TaxonomySyncRun",
     # question
     "Question", "QuestionKnowledge", "Paper", "PaperItem", "PaperShare",
     "QuestionType", "QuestionStatus", "QuestionBankType", "Difficulty",

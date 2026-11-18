@@ -204,7 +204,7 @@ fi
 if [ -n "$GATE_PY" ]; then
   REGRESS_SCRIPTS="verify_paper_rescore verify_compose_engine verify_pdf_export_safety \
 verify_bugfix_256 verify_compose_regenerate verify_paper_v3 verify_llm_routing \
-verify_ai_fill_parallel"
+verify_ai_fill_parallel verify_knowledge_graph verify_math_taxonomy_integration verify_learning_extensions"
   # macOS 自带 coreutils 的路径与 Linux 不同；两条都没有就直接跑（不设上限），
   # 不能因为缺一个可选命令就让发版脚本直接报错。
   TIMEOUT_CMD=""

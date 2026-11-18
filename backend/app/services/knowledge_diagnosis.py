@@ -17,6 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Grade, KnowledgePoint, KnowledgePrerequisite, Question, Subject
+from app.utils.answer import answers_match
+from app.services.catalog_cache import cached_catalog
+from app.services.question_presentation import presentation_fields, presentation_options
 
 RESULTS = {"correct", "wrong", "skip"}
 DEFAULT_LIMIT = 16
@@ -94,6 +97,7 @@ def _node_ref(graph: Dict[str, Any], node_id: int,
     return data
 
 
+@cached_catalog
 def build_graph(db: Session, subject_name: str) -> Dict[str, Any]:
     """构造学科全量先修图与题库。跨年级节点必须一起纳入。"""
     subject_ids = list(db.scalars(
@@ -116,6 +120,7 @@ def build_graph(db: Session, subject_name: str) -> Dict[str, Any]:
         ).all()
     } if rows else {}
     parent_names = {r.id: r.name for r in rows}
+    rows_by_id = {row.id: row for row in rows}
 
     def sort_key(row: KnowledgePoint) -> Tuple[int, int, int, int]:
         grade_num = getattr(grades.get(row.grade_id), "grade_num", 99)
@@ -124,7 +129,7 @@ def build_graph(db: Session, subject_name: str) -> Dict[str, Any]:
     rows.sort(key=sort_key)
     by_id: Dict[int, Dict[str, Any]] = {}
     for row in rows:
-        parent = next((r for r in rows if r.id == row.parent_id), None)
+        parent = rows_by_id.get(row.parent_id)
         by_id[row.id] = {
             "id": row.id,
             "name": row.name,
@@ -167,6 +172,7 @@ def build_graph(db: Session, subject_name: str) -> Dict[str, Any]:
             select(Question).where(
                 Question.knowledge_point_id.in_(order),
                 Question.status == "published",
+                Question.bank_type == "public",
             )
         ).all())
         questions.sort(key=_q_order)
@@ -695,6 +701,10 @@ def grade_question(question: Dict[str, Any], answer_text: Any) -> Optional[str]:
     reference = question.get("answer")
     if reference in (None, ""):
         return None
+    if qtype == "multiple":
+        if not answer_text:
+            return "skip"
+        return "correct" if answers_match(qtype, reference, answer_text) else "wrong"
     text = _normalize_text(answer_text)
     if not text:
         return "skip"
@@ -731,8 +741,9 @@ def public_question(question: Dict[str, Any]) -> Dict[str, Any]:
         "stem": question["stem"],
         "type": question["type"],
         "difficulty": question["difficulty"],
-        "options": question.get("options") or [],
+        "options": presentation_options(question.get("options"), question.get("extra")),
         "topic_id": question["topic_id"],
+        **presentation_fields(question.get("extra")),
     }
 
 

@@ -60,11 +60,16 @@ env:
   IMAGE_NAME: ${{ vars.IMAGE_NAME || 'chenhui-001/edu-ai-platform' }}
 
 jobs:
+  quality:
+    uses: ./.github/workflows/ci.yml
+  functional:
+    uses: ./.github/workflows/functional-test.yml
   # --------------------------------------------------------------------------
   # 闸门1/2：构建前的一致性校验。任何一项不过就不构建——
   # 构建一个无法溯源的镜像，比不构建更糟（它会静默覆盖线上）。
   # --------------------------------------------------------------------------
   preflight:
+    needs: [quality, functional]
     name: 构建前一致性校验
     runs-on: ubuntu-latest
     outputs:

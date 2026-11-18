@@ -134,10 +134,10 @@
               </div>
             </template>
 
-            <div class="q-stem">{{ current.question.stem }}</div>
+            <QuestionContent class="q-stem" :question="current.question" />
 
             <el-radio-group
-              v-if="['single', 'multiple', 'judge'].includes(current.question.type)"
+              v-if="['single', 'judge'].includes(current.question.type)"
               v-model="answer" class="option-list"
             >
               <el-radio
@@ -146,11 +146,19 @@
                 :value="opt.key"
                 class="option-item"
               >
-                <b>{{ opt.key }}.</b> {{ opt.text }}
+                <b>{{ opt.key }}.</b> <QuestionContent :question="{ stem: opt.text, figure: opt.figure }" />
               </el-radio>
               <el-empty v-if="!current.question.options.length" :image-size="50"
                         description="该题缺少选项，可直接跳过" />
             </el-radio-group>
+
+            <el-checkbox-group v-else-if="current.question.type === 'multiple'"
+                               v-model="answer" class="option-list">
+              <el-checkbox v-for="opt in current.question.options" :key="opt.key"
+                           :value="opt.key" class="option-item">
+                <b>{{ opt.key }}.</b> <QuestionContent :question="{ stem: opt.text, figure: opt.figure }" />
+              </el-checkbox>
+            </el-checkbox-group>
 
             <el-input
               v-else-if="current.question.type === 'blank'"
@@ -186,7 +194,7 @@
                 <b>参考答案：</b>{{ formatAnswer(feedback.reference_answer) }}
               </div>
               <div v-if="feedback.analysis" class="feedback-row">
-                <b>解析：</b>{{ feedback.analysis }}
+                <b>解析：</b><QuestionContent :question="{ stem: feedback.analysis }" />
               </div>
               <div class="feedback-row">
                 知识点「{{ current.name }}」需要连续答对 {{ session.confirm }} 题才会判为掌握。
@@ -334,7 +342,7 @@
                   description="如需巩固，可前往「学习路径」按建议顺序练习，或在「掌握图谱」查看正式学习数据。" />
         <div class="mt12">
           <el-button type="primary" @click="resetAll">再测一次</el-button>
-          <el-button @click="goLearning">去学习路径</el-button>
+          <el-button type="primary" @click="goLearning">生成补弱学习计划</el-button>
         </div>
       </el-card>
     </template>
@@ -343,6 +351,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import QuestionContent from '@/components/QuestionContent.vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
@@ -474,7 +483,7 @@ function toggleAll(checked) {
 function resetAll() {
   session.value = null
   current.value = null
-  answer.value = ''
+  answer.value = []
   feedback.value = null
   pendingNext.value = null
   summary.value = {}
@@ -513,7 +522,7 @@ function applySession(data) {
   summary.value = data.summary || {}
   current.value = data.next || null
   pendingNext.value = null
-  answer.value = ''
+  answer.value = current.value?.question?.type === 'multiple' ? [] : ''
   feedback.value = null
 }
 
@@ -560,7 +569,7 @@ function goNext() {
   if (!pendingNext.value) return
   current.value = pendingNext.value
   pendingNext.value = null
-  answer.value = ''
+  answer.value = current.value?.question?.type === 'multiple' ? [] : ''
   feedback.value = null
 }
 
@@ -577,7 +586,7 @@ async function finish() {
 }
 
 function goLearning() {
-  router.push('/student/path')
+  router.push({ path: '/student/remediation', query: { diagnosis: session.value.id } })
 }
 
 onMounted(async () => {

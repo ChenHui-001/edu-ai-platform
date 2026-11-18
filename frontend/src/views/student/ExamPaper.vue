@@ -49,20 +49,20 @@
             <span class="q-score">{{ it.score }} 分</span>
             <el-tag v-if="answered.includes(it.paper_item_id)" size="small" type="success" effect="plain">已答</el-tag>
           </div>
-          <div class="q-stem" v-html="safeStem(it.stem)"></div>
+          <QuestionContent class="q-stem" :question="it" />
 
           <!-- 选择题 -->
           <el-radio-group v-if="['single','judge'].includes(it.type)"
                           v-model="answers[it.paper_item_id]" class="opts">
             <el-radio v-for="o in parseOpts(it.options)" :key="o.key" :value="o.key" border class="opt">
-              {{ o.key }}. {{ o.text }}
+              {{ o.key }}. <QuestionContent :question="{ stem: o.text, figure: o.figure }" />
             </el-radio>
           </el-radio-group>
 
           <el-checkbox-group v-else-if="it.type === 'multiple'"
                               v-model="multiAnswers[it.paper_item_id]" class="opts">
             <el-checkbox v-for="o in parseOpts(it.options)" :key="o.key" :value="o.key" border class="opt">
-              {{ o.key }}. {{ o.text }}
+              {{ o.key }}. <QuestionContent :question="{ stem: o.text, figure: o.figure }" />
             </el-checkbox>
           </el-checkbox-group>
 
@@ -132,12 +132,11 @@
               {{ isRight(it) ? '正确' : '错误' }}
             </el-tag>
           </div>
-          <div class="q-stem" v-html="safeStem(it.stem)"></div>
+          <QuestionContent class="q-stem" :question="it" :analysis="it.analysis || ''" />
           <div class="r-answers">
             <div><b>你的答案：</b>{{ myAnswer(it) || '未作答' }}</div>
             <div v-if="it.answer" style="color:var(--el-color-success)"><b>正确答案：</b>{{ fmt(it.answer) }}</div>
           </div>
-          <div v-if="it.analysis" class="r-analysis"><b>解析：</b>{{ it.analysis }}</div>
         </div>
       </div>
     </template>
@@ -189,12 +188,11 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, CircleCheckFilled, CircleCloseFilled, DocumentChecked, Timer } from '@element-plus/icons-vue'
 import { taskApi } from '@/api'
-import { sanitizeHtml } from '@/utils/sanitize'
+import QuestionContent from '@/components/QuestionContent.vue'
 
 import { toastIfUnhandled } from '@/utils/notify'
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
-function safeStem(s) { return sanitizeHtml(s) }
 
 
 const route = useRoute()

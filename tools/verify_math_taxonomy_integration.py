@@ -234,6 +234,9 @@ def test_diagnosis(db: Any, models: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     print("\n[2] 诊断算法：先修优先 / 回溯 / 确认 / 重放")
+    for question in db.query(models["Question"]).all():
+        question.bank_type = "public"
+    db.commit()
     graph = build_graph(db, "数学")
     by_name = {node["name"]: node["id"] for node in graph["nodes"]}
     b_id, a_id, p_id, c_id = (

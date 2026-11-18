@@ -58,6 +58,14 @@ const routes = [
         meta: { title: 'AI 调用日志', icon: 'Cpu', roles: ['sys_admin', 'grade_admin'], perm: 'agent:logs' } },
 
       // 教师
+      { path: 'teacher/class-graph', name: 'ClassKnowledgeGraph', component: () => import('@/views/teacher/ClassKnowledgeGraph.vue'),
+        meta: { title: '班级知识图谱', icon: 'Share', perm: 'analysis:class', roles: ['sys_admin', 'grade_admin', 'teacher'] } },
+      { path: 'teacher/question-quality', name: 'QuestionQuality', component: () => import('@/views/teacher/QuestionQuality.vue'),
+        meta: { title: '题库质量', icon: 'Notebook', perm: 'question:bank:list', roles: ['sys_admin', 'grade_admin', 'teacher'] } },
+      { path: 'teacher/tutor-feedback', name: 'TutorFeedback', component: () => import('@/views/teacher/TutorFeedback.vue'),
+        meta: { title: '答疑纠错', icon: 'EditPen', roles: ['sys_admin', 'grade_admin', 'teacher'] } },
+      { path: 'admin/taxonomy-sync', name: 'TaxonomySync', component: () => import('@/views/admin/TaxonomySync.vue'),
+        meta: { title: '上游数据同步', icon: 'Refresh', roles: ['sys_admin'] } },
       { path: 'teacher/questions', name: 'QuestionBank', component: () => import('@/views/teacher/QuestionBank.vue'),
         meta: { title: '题库管理', icon: 'Notebook', perm: 'question:bank:list' } },
       { path: 'teacher/papers', name: 'PaperManage', component: () => import('@/views/teacher/PaperManage.vue'),
@@ -82,6 +90,8 @@ const routes = [
         meta: { title: '教学报表', icon: 'PieChart', perm: 'report:teacher' } },
 
       // 学生
+      { path: 'student/remediation', name: 'RemediationPlan', component: () => import('@/views/student/RemediationPlan.vue'),
+        meta: { title: '补弱学习计划', icon: 'Guide', roles: ['student'], perm: 'student:mastery' } },
       { path: 'student/practice', name: 'Practice', component: () => import('@/views/student/Practice.vue'),
         meta: { title: '随机练习', icon: 'Edit', perm: 'student:practice' } },
       { path: 'student/exams', name: 'MyExams', component: () => import('@/views/student/MyExams.vue'),

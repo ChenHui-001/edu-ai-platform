@@ -92,13 +92,13 @@
                      size="small" circle @click="toggleFavorite(q)" />
         </div>
 
-        <p class="stem" v-html="safeStem(q.stem)"></p>
+        <QuestionContent class="stem" :question="q" :analysis="result ? q.analysis || '' : ''" />
 
         <!-- 单选 / 判断 -->
         <el-radio-group v-if="q.type === 'single' || q.type === 'judge'"
                         v-model="answers[q.question_id]" class="opt-group">
           <el-radio v-for="o in parse(q.options)" :key="o.key" :value="o.key" class="opt-item">
-            {{ o.key }}. {{ o.text }}
+            {{ o.key }}. <QuestionContent :question="{ stem: o.text, figure: o.figure }" />
           </el-radio>
         </el-radio-group>
 
@@ -106,7 +106,7 @@
         <el-checkbox-group v-else-if="q.type === 'multiple'"
                            v-model="multiAnswers[q.question_id]" class="opt-group">
           <el-checkbox v-for="o in parse(q.options)" :key="o.key" :value="o.key" class="opt-item">
-            {{ o.key }}. {{ o.text }}
+            {{ o.key }}. <QuestionContent :question="{ stem: o.text, figure: o.figure }" />
           </el-checkbox>
         </el-checkbox-group>
 
@@ -136,6 +136,7 @@
             <b>AI 评语：</b>{{ results[q.question_id].ai_comment }}
           </p>
         </div>
+        <TutorPanel v-if="result" :question-id="q.question_id" />
       </el-card>
 
       <div class="footer-bar" v-if="!result">
@@ -199,12 +200,12 @@ import { fetchSubjects, currentGradeId, resolveSubjectId } from '@/utils/subject
 import PomodoroTimer from '@/components/PomodoroTimer.vue'
 import TableCards from '@/components/TableCards.vue'
 import { useIsMobile } from '@/utils/responsive'
-import { sanitizeHtml } from '@/utils/sanitize'
+import QuestionContent from '@/components/QuestionContent.vue'
+import TutorPanel from '@/components/TutorPanel.vue'
 import { confirmAction } from '@/utils/confirm'
 
 // 题干由教师/AI 录入，后端不做净化就落库，直接 v-html 会执行其中的脚本。
 // 统一走白名单净化后再渲染（同 MyNotes 的正文处理）。
-function safeStem(s) { return sanitizeHtml(s) }
 
 
 const route = useRoute()
@@ -383,7 +384,14 @@ async function submitPractice() {
     const res = await taskApi.submit(paper.value.task_id, { answers: answers_ })
     const d = res.data || {}
     results.value = {}
-    ;(d.results || []).forEach(r => { results.value[r.question_id] = r })
+    const details = new Map((d.answers || []).map(item => [item.paper_item_id, item]))
+    for (const question of paper.value.items) {
+      const detail = details.get(question.paper_item_id)
+      if (!detail) continue
+      results.value[question.question_id] = { ...detail, ai_comment: detail.comment }
+      question.answer = detail.answer
+      question.analysis = detail.analysis
+    }
     result.value = true
     ElMessage.success(res.data.message || '提交完成')
   } finally {

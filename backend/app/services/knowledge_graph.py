@@ -59,12 +59,18 @@ def resolve_graph(
         frontier: Set[int] = {center_id}
         for _ in range(max(1, depth)):
             nxt: Set[int] = set()
-            for node_id in frontier:
+            for node_id in sorted(frontier):
                 nxt |= adjacency.get(node_id, set()) - keep
             if not nxt:
                 break
+            capacity = max(0, limit - len(keep))
+            if len(nxt) > capacity:
+                nxt = set(sorted(nxt)[:capacity])
+                truncated = True
             keep |= nxt
             frontier = nxt
+            if truncated:
+                break
 
         if include_hierarchy:
             for node_id in list(keep):
@@ -72,6 +78,9 @@ def resolve_graph(
                 parent_id = row.parent_id if row else None
                 hops = 0
                 while parent_id and hops < 3:
+                    if parent_id not in keep and len(keep) >= limit:
+                        truncated = True
+                        break
                     keep.add(parent_id)
                     parent_row = universe.get(parent_id)
                     parent_id = parent_row.parent_id if parent_row else None

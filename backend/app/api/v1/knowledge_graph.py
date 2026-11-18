@@ -41,10 +41,13 @@ def knowledge_graph(
       并补上层级父节点，便于看清「缺哪块基础」；
     - 学生身份额外返回 `mastery`（0-100，未学过为 None）。
     """
-    base_rows = list(db.scalars(_filtered_query(
+    statement = _filtered_query(
         db, user, grade_id=grade_id, subject_id=subject_id,
         term=term, subject_name=subject_name,
-    )).all())
+    )
+    if not root_id:
+        statement = statement.limit(params_limit + 1)
+    base_rows = list(db.scalars(statement).all())
     if not base_rows:
         return ok({
             "nodes": [], "edges": [], "center": root_id, "depth": depth,

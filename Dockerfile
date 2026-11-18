@@ -198,7 +198,7 @@ RUN mkdir -p /app/data/uploads /app/data/exports /app/data/logs /app/data/chroma
 EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost/api/v1/health || exit 1
+    CMD curl -f http://localhost/api/v1/ready || exit 1
 
 # ↑ start-period=60s 是单 worker 的实测值。若 supervisord.conf 的 --workers 调到 N>1，
 #   必须同步放大到至少 60*N 秒：每个 worker 各自跑一遍 Chroma embedding 预热

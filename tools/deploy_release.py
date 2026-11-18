@@ -335,8 +335,14 @@ def wait_healthy(remote, expect_version, tries=30):
             data = {}
         if data.get("status") == "healthy":
             if data.get("version") == expect_version:
-                print(f"  健康（第 {i + 1} 次探测）version={data.get('version')}")
-                return True
+                ready_raw = remote.run(f"curl -s -m 5 http://127.0.0.1:{PORT}/api/v1/ready", quiet=True)
+                try:
+                    ready = json.loads(ready_raw).get("data", {}).get("ready", False)
+                except (ValueError, TypeError):
+                    ready = False
+                if ready:
+                    print(f"  健康且就绪（第 {i + 1} 次探测）version={data.get('version')}")
+                    return True
             print(f"  容器健康但版本是 {data.get('version')}，期望 {expect_version}，继续等待…")
         time.sleep(3)
     return False

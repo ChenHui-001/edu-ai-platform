@@ -11,6 +11,7 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session, noload
 
 from app.agents.rag import delete_question_index, index_question
+from app.services.question_quality import check_publication
 from app.api.deps import has_perm, require_perm
 from app.core.config import settings
 from app.core.database import get_db
@@ -683,10 +684,10 @@ def batch_questions(
             "draft": QuestionStatus.DRAFT.value,
         }[action]
         for q in nodes:
-            if target == QuestionStatus.PUBLISHED.value \
-                    and q.bank_type == QuestionBankType.PUBLIC.value \
-                    and not _can_audit(user):
-                skipped.append({"id": q.id, "reason": "公共题库上架需管理员审核"})
+            try:
+                check_publication(q, target, _can_audit(user))
+            except (BusinessException, PermissionException) as exc:
+                skipped.append({"id": q.id, "reason": str(exc)})
                 continue
             q.status = target
             done.append(q.id)
@@ -887,11 +888,7 @@ def change_status(
     if not _can_edit_question(q, user):
         raise PermissionException("只能操作自己的题目")
     status = _validate_q_status(data.get("status"), default="")
-    if status == QuestionStatus.PUBLISHED.value \
-            and q.bank_type == QuestionBankType.PUBLIC.value \
-            and not _can_audit(user):
-        # 公共题库上架需管理员审核权限
-        raise PermissionException("公共题库上架需管理员审核")
+    check_publication(q, status, _can_audit(user))
     q.status = status
     db.commit()
     return ok(message="状态已更新")

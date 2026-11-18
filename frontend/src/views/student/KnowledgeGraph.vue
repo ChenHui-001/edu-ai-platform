@@ -59,9 +59,10 @@
                     title="节点过多已截断"
                     :description="`当前范围超过 ${limit} 个知识点，只显示前 ${limit} 个。可缩小到单个单元或用「定位知识点」展开局部。`" />
 
-          <EChart v-if="graph.nodes.length" :option="option" height="620px"
-                  @chart-click="onChartClick" />
-          <el-empty v-else description="当前年级/学科暂无已发布知识点" :image-size="80" />
+          <ErrorState v-if="error" :message="error" :loading="loading" @retry="retryLoad" />
+          <EChart v-else-if="graph.nodes.length" :option="option" height="min(620px, 65vh)"
+                  @chart-click="onChartClick" @chart-dblclick="onChartDoubleClick" />
+          <el-empty v-else-if="!loading" description="当前年级/学科暂无已发布知识点" :image-size="80" />
         </el-card>
       </el-col>
 
@@ -130,27 +131,34 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import EChart from '@/components/EChart.vue'
+import ErrorState from '@/components/ErrorState.vue'
 import { eduApi, knowledgeApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { buildGraphOption } from '@/utils/knowledgeGraph'
 
 const LIMIT = 600
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 const isStudent = computed(() => userStore.isStudent)
 
 const loading = ref(false)
+const error = ref('')
 const searching = ref(false)
 const grades = ref([])
 const subjects = ref([])
 const centerOptions = ref([])
 const selectedId = ref(null)
 const limit = LIMIT
+let graphRequest = 0
+let searchRequest = 0
+let searchTimer
+let contextRequest = 0
 
 const form = reactive({
   grade_id: null,
@@ -215,8 +223,9 @@ async function loadGrades() {
   form.grade_id = grades.value[0]?.id ?? userStore.userInfo?.grade_id ?? null
 }
 
-async function loadSubjects() {
+async function loadSubjects(requestId = contextRequest) {
   const res = await eduApi.subjects({ grade_id: form.grade_id })
+  if (requestId !== contextRequest) return
   const items = res.data?.items || res.data || []
   subjects.value = items
   if (!items.some(item => Number(item.id) === Number(form.subject_id))) {
@@ -226,13 +235,19 @@ async function loadSubjects() {
 }
 
 async function onGradeChange() {
+  const requestId = ++contextRequest
+  graphRequest++
+  resetSearch()
   form.root_id = null
   selectedId.value = null
-  await loadSubjects()
-  await loadGraph()
+  await loadSubjects(requestId)
+  if (requestId === contextRequest) await loadGraph()
 }
 
 async function onSubjectChange() {
+  contextRequest++
+  graphRequest++
+  resetSearch()
   form.root_id = null
   selectedId.value = null
   centerOptions.value = []
@@ -241,15 +256,19 @@ async function onSubjectChange() {
 
 async function loadGraph() {
   if (!form.subject_id) return
+  const requestId = ++graphRequest
   loading.value = true
+  error.value = ''
   try {
     const res = await knowledgeApi.graph({
       grade_id: form.grade_id || undefined,
       subject_id: form.subject_id,
       root_id: form.root_id || undefined,
       depth: form.depth,
+      params_limit: LIMIT,
       include_hierarchy: form.showHierarchy
     })
+    if (requestId !== graphRequest) return
     const data = res.data || {}
     graph.nodes = data.nodes || []
     graph.edges = data.edges || []
@@ -261,17 +280,28 @@ async function loadGraph() {
       selectedId.value = null
     }
   } catch {
-    graph.nodes = []
-    graph.edges = []
-    graph.counts = { nodes: 0, edges: 0, prereq_edges: 0, hierarchy_edges: 0 }
+    if (requestId === graphRequest) error.value = '图谱加载失败，请重试'
   } finally {
-    loading.value = false
+    if (requestId === graphRequest) loading.value = false
   }
 }
 
-async function searchNodes(keyword) {
+function searchNodes(keyword) {
+  clearTimeout(searchTimer)
+  const requestId = ++searchRequest
   const text = String(keyword || '').trim()
-  if (!text) return
+  if (!text) { centerOptions.value = []; searching.value = false; return }
+  searchTimer = setTimeout(() => fetchSearch(text, requestId), 250)
+}
+
+function resetSearch() {
+  clearTimeout(searchTimer)
+  searchRequest++
+  centerOptions.value = []
+  searching.value = false
+}
+
+async function fetchSearch(text, requestId) {
   searching.value = true
   try {
     const res = await knowledgeApi.list({
@@ -281,11 +311,11 @@ async function searchNodes(keyword) {
       status: 'published'
     })
     const items = res.data?.items || res.data || []
-    centerOptions.value = items.slice(0, 30)
+    if (requestId === searchRequest) centerOptions.value = items.slice(0, 30)
   } catch {
-    centerOptions.value = []
+    if (requestId === searchRequest) centerOptions.value = []
   } finally {
-    searching.value = false
+    if (requestId === searchRequest) searching.value = false
   }
 }
 
@@ -308,10 +338,15 @@ function onChartClick(params) {
   selectedId.value = Number(params.data.id)
 }
 
+function onChartDoubleClick(params) {
+  if (params.dataType === 'node') focusNode(params.data.id)
+}
+
 function focusNode(id) {
   form.root_id = Number(id)
   if (!centerOptions.value.some(n => Number(n.id) === Number(id))) {
-    centerOptions.value = [...centerOptions.value, { id: Number(id), name: current.value?.name || `#${id}` }]
+    const target = graph.nodes.find(node => Number(node.id) === Number(id))
+    centerOptions.value = [...centerOptions.value, { id: Number(id), name: target?.name || `#${id}` }]
   }
   loadGraph()
 }
@@ -324,15 +359,35 @@ function goPractice(node) {
   })
 }
 
-onMounted(async () => {
+onBeforeUnmount(() => {
+  clearTimeout(searchTimer)
+  graphRequest++
+  searchRequest++
+  contextRequest++
+})
+
+async function initialize() {
+  error.value = ''
   try {
     await loadGrades()
     await loadSubjects()
+    const initialId = Number(route.query.kp)
+    if (Number.isInteger(initialId) && initialId > 0) {
+      const node = (await knowledgeApi.get(initialId)).data
+      form.grade_id = node.grade_id
+      form.subject_id = node.subject_id
+      await loadSubjects()
+      form.root_id = initialId
+      centerOptions.value = [{ id: initialId, name: node.name }]
+    }
     await loadGraph()
   } catch {
+    error.value = '图谱初始化失败，请重试'
     ElMessage.error('图谱加载失败，请稍后重试')
   }
-})
+}
+function retryLoad() { return form.subject_id ? loadGraph() : initialize() }
+onMounted(initialize)
 </script>
 
 <style scoped>

@@ -5,11 +5,17 @@ from app.api.v1 import (
     agent, attachment, auth, edu, exam_standard, grading, knowledge, knowledge_ai,
     knowledge_diagnosis, knowledge_graph, lesson, lesson_ai, logs, paper_ai,
     paper_compose, question, question_ai, report, system, task,
+    remediation, teaching_graph, question_quality, grounded_tutor, taxonomy_sync,
 )
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router)
+api_router.include_router(remediation.router)
+api_router.include_router(teaching_graph.router)
+api_router.include_router(question_quality.router)
+api_router.include_router(grounded_tutor.router)
+api_router.include_router(taxonomy_sync.router)
 api_router.include_router(system.router)
 api_router.include_router(edu.router)
 # 知识点 V2 独立成文件（树/批量/导入导出），与 edu 同为 /edu 前缀。

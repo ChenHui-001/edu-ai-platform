@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   push:
     # 本仓库主分支是 master（不是 main）。写错会导致工作流静默不触发，
     # Actions 页面看起来「什么都没发生」，极易被误判为「CI 挂了」。
@@ -156,7 +157,11 @@ jobs:
 
       - name: 安装依赖
         working-directory: frontend
-        run: npm install
+        run: npm ci
+
+      - name: 前端 lint
+        working-directory: frontend
+        run: npm run lint
 
       - name: 模板引用静态普查（白屏隐患）
         # 模板调用 script 中未定义的标识符 → 浏览器 "$setup.xxx is not a
@@ -208,6 +213,10 @@ jobs:
       - name: 构建
         working-directory: frontend
         run: npm run build
+
+      - name: 包体预算
+        working-directory: frontend
+        run: npm run check:bundle
 
   docker:
     name: 镜像构建

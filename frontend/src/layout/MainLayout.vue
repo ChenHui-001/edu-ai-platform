@@ -240,7 +240,7 @@ const MENU_GROUPS = [
       },
       {
         title: '练',
-        prefixes: ['/student/practice', '/student/custom', '/student/wrong', '/student/review']
+        prefixes: ['/student/practice', '/student/custom', '/student/wrong', '/student/review', '/student/remediation']
       },
       { title: '测', prefixes: ['/student/exams', '/student/diagnosis'] },
       {

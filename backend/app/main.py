@@ -315,6 +315,16 @@ def health():
     }
 
 
+@app.get("/api/v1/ready", tags=["系统"], summary="服务就绪检查")
+def ready():
+    from fastapi.responses import JSONResponse
+    from app.services.readiness import readiness_status
+
+    state = readiness_status()
+    return JSONResponse(status_code=200 if state["ready"] else 503,
+                        content={"success": state["ready"], "data": state})
+
+
 @app.get("/", include_in_schema=False)
 def root():
     return {

@@ -11,13 +11,13 @@ name: 功能回归测试
 #
 # 与 docker-publish.yml 的关系：
 #   - 本工作流只「跑测试」，不构建/推送镜像（镜像由 docker-publish 负责）。
-#   - 二者都由 master 推送触发、互不依赖；功能回归挂了不会阻断发版，但会在
-#     Actions 页面亮红灯，提醒「改了接口却没同步用例/没改权限」这类回归。
+#   - 发布工作流复用本工作流；质量检查与功能回归成功后才进入发布预检。
 #
 # 失败即阻断本次合入的信号：run-suite 中只要出现 1 条 FAIL，job 即非零退出。
 # ============================================================================
 
 on:
+  workflow_call:
   push:
     branches: [master]
     paths:
@@ -37,7 +37,7 @@ on:
     - cron: '17 23 * * *'
 
 concurrency:
-  group: functional-test-${{ github.ref }}
+  group: functional-test-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -128,7 +128,7 @@ jobs:
         run: |
           ready=0
           for i in $(seq 1 90); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8899/api/v1/system/version || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8899/api/v1/ready || true)
             if [ "$code" = "200" ]; then
               echo "后端就绪（耗时约 ${i} 轮 × 2s）"
               ready=1
@@ -177,6 +177,12 @@ jobs:
         # ② **连续两次 lifespan 后仍为空**（这条最易回归 —— 谁把开关判断删了，
         #    学科会被「空表就播种」灌回来）；③ 账号仍可登录。
         run: python tools/verify_empty_baseline.py
+
+      - name: 图谱与数学集成回归
+        run: |
+          python tools/verify_knowledge_graph.py
+          python tools/verify_math_taxonomy_integration.py
+          python tools/verify_learning_extensions.py
 
       - name: 汇总结果并判定
         run: |

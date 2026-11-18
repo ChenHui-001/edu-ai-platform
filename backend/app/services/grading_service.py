@@ -419,7 +419,7 @@ def pick_practice_questions(
 
     返回 `(questions, relaxations)`；`questions` 可能少于 `count`（题库就那么多）。
     """
-    base = [Question.subject_id == subject_id, Question.status == "published"]
+    base = [Question.subject_id == subject_id, Question.status == "published", Question.bank_type == "public"]
     if grade_id:
         base.append(Question.grade_id == grade_id)
 

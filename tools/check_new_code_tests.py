@@ -35,6 +35,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 错误分拣、取消语义、空产出判定、限流键、容器自杀、选项契约……
 # 纯展示组件（页面 .vue）不在此列 —— 它们靠功能回归覆盖。
 REGISTRY = {
+    "frontend/src/utils/mathContent.js": ["frontend/src/utils/__tests__/mathContent.test.js"],
+    "frontend/src/utils/knowledgeGraph.js": ["frontend/src/utils/__tests__/mathContent.test.js"],
+    "frontend/src/components/QuestionContent.vue": ["frontend/src/components/__tests__/QuestionContent.test.js"],
+    "frontend/src/components/EChart.vue": ["frontend/src/components/__tests__/learningInteractions.test.js"],
+    "frontend/src/views/student/KnowledgeGraph.vue": ["frontend/src/components/__tests__/learningInteractions.test.js"],
+    "frontend/src/views/student/KnowledgeDiagnosis.vue": ["frontend/src/components/__tests__/learningInteractions.test.js"],
+    "frontend/src/views/student/Practice.vue": ["frontend/src/components/__tests__/learningInteractions.test.js"],
+    "backend/app/services/remediation.py": ["tools/verify_learning_extensions.py"],
+    "backend/app/services/teaching_graph.py": ["tools/verify_learning_extensions.py"],
+    "backend/app/services/grounded_tutor.py": ["tools/verify_learning_extensions.py"],
+    "backend/app/services/question_quality.py": ["tools/verify_learning_extensions.py"],
+    "backend/app/services/question_presentation.py": ["tools/verify_learning_extensions.py"],
+    "backend/app/services/catalog_cache.py": ["tools/verify_learning_extensions.py"],
+    "backend/app/services/readiness.py": ["tools/verify_learning_extensions.py"],
+    "backend/app/services/taxonomy_source.py": ["tools/verify_learning_extensions.py"],
+    "backend/app/services/taxonomy_sync.py": ["tools/verify_learning_extensions.py"],
     # 前端：全局错误分拣（哪些弹红条、哪些是用户取消）
     "frontend/src/utils/errors.js": [
         "frontend/src/utils/__tests__/errors.test.js",
@@ -107,7 +123,7 @@ REGISTRY = {
 # 拿运行数做基线会让同一次改动在两个口径间来回对不上。
 BASELINE = {
     "pytest_cases": 72,   # def test_* 个数（运行 74 passed，含 2 条参数化展开；+AI 题强制 draft）
-    "vitest_cases": 129,  # +components：错误态 3、降级提示 2、导出按钮 2、移动卡片 3
+    "vitest_cases": 160,
 }
 
 PYTEST_FILE = "backend/qa_audit_suite.py"

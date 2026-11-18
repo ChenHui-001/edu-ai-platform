@@ -190,6 +190,7 @@ def clean_temp_attachments() -> Dict[str, Any]:
 def push_review_reminders() -> Dict[str, Any]:
     """按艾宾浩斯计划推送今日复习清单。"""
     from app.services import notification as notify_svc
+    from app.services.remediation import push_plan_reminders
 
     db = SessionLocal()
     try:
@@ -216,9 +217,10 @@ def push_review_reminders() -> Dict[str, Any]:
                 category=notify_svc.CATEGORY_REVIEW,
             ) is not None:
                 sent += 1
+        remediation_sent = push_plan_reminders(db)
         db.commit()
         logger.info(f"复习提醒推送 {sent} 名学生（计划 {len(by_student)} 名）")
-        return {"students": sent, "plans": len(plans)}
+        return {"students": sent, "plans": len(plans), "remediation_students": remediation_sent}
     finally:
         db.close()
 

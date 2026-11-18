@@ -11,11 +11,11 @@
 <!-- status:auto:begin -->
 | 项 | 实测值 | 口径 |
 |---|---:|---|
-| 版本 | 2.5.45 | `VERSION` 文件 |
-| 路由数 | 304 | `app.routes` |
-| 数据表数 | 55 | `Base.metadata.tables` |
+| 版本 | 2.5.46 | `VERSION` 文件 |
+| 路由数 | 323 | `app.routes` |
+| 数据表数 | 58 | `Base.metadata.tables` |
 | 后端用例 | 74 | `pytest backend/qa_audit_suite.py --collect-only` |
-| 前端用例 | 139 | `frontend/src/**/__tests__` 内 `it(` 计数 |
+| 前端用例 | 160 | `frontend/src/**/__tests__` 内 `it(` 计数 |
 | 接口断言 | 117 | `tools/verify_p0_fixes.py` 实际通过条数 |
 | 补列迁移 | 39 | `core/db_migrations._COLUMNS` |
 | 发版门禁 | 23 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |
@@ -58,6 +58,7 @@
 | 知识点 V2（含 RAG） | [`KNOWLEDGE_V2.md`](KNOWLEDGE_V2.md) · [`KNOWLEDGE_V2_RAG_AI.md`](KNOWLEDGE_V2_RAG_AI.md) |
 | 教学 V2（作业/考试/批改） | [`TEACHING_V2.md`](TEACHING_V2.md) |
 | 教案 AI | [`AI_LESSON_PLAN.md`](AI_LESSON_PLAN.md) |
+| 补弱计划、班级图谱、数学渲染、题库质检、分步答疑与上游同步 | [`LEARNING_EXTENSIONS.md`](LEARNING_EXTENSIONS.md) |
 | 卷面结构规范 | [`EXAM_STRUCTURE_SPEC_JUNIOR.md`](EXAM_STRUCTURE_SPEC_JUNIOR.md) · [`EXAM_STRUCTURE_SPEC_PRIMARY.md`](EXAM_STRUCTURE_SPEC_PRIMARY.md) |
 | 交付与发版 | [`DELIVERY_RULES.md`](DELIVERY_RULES.md) · [`RELEASE_CONSISTENCY.md`](RELEASE_CONSISTENCY.md) |
 | 开发与部署 | [`DEVELOPMENT.md`](DEVELOPMENT.md) · [`DEPLOYMENT.md`](DEPLOYMENT.md) · [`QUICKSTART.md`](QUICKSTART.md) |
@@ -71,4 +72,4 @@
   Q-06 Alembic 已引入 `0001_baseline`，生产已 `stamp` 且 `alembic check` 干净。
   13 个存量超长文件已纳入 `check_file_size.py` 的**只降不升**预算，新增文件硬顶 1200 行；
   只读性能基线由 `tools/load_test.py` 提供（临时库，不压生产）。
-- **数据**：约 42 个学科缺知识点，AI 出题挂不上、掌握度失效（运营补齐，非代码问题）。
+- **数据**：通过题库质量工作台查看缺项和题量缺口，通过上游同步补齐数学资料；其他学科仍需运营补题，准确数量以运行库查询为准。
