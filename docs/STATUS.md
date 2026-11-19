@@ -17,7 +17,7 @@
 | 后端用例 | 74 | `pytest backend/qa_audit_suite.py --collect-only` |
 | 前端用例 | 160 | `frontend/src/**/__tests__` 内 `it(` 计数 |
 | 接口断言 | 117 | `tools/verify_p0_fixes.py` 实际通过条数 |
-| 补列迁移 | 39 | `core/db_migrations._COLUMNS` |
+| 补列迁移 | 40 | `core/db_migrations._COLUMNS` |
 | 发版门禁 | 23 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |
 
 > 由 `python tools/status_snapshot.py --write` 生成。版本号另由 `tools/check_doc_versions.py` 门禁强制与 `VERSION` 一致。
