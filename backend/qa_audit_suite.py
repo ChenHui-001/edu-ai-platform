@@ -921,7 +921,7 @@ def test_deploy_run_cmd_keeps_every_required_flag():
     for frag in (
         "--env-file /opt/edu-ai-platform/.env.runtime",
         "APP_VERSION=9.9.9",
-        "-p 8081:80",
+        "-p 127.0.0.1:8081:80",
         "-v /opt/edu-ai-platform/data:/app/data",
         "-v /opt/edu-ai-platform/logs:/app/data/logs",
         "SECRET_KEY=SK123",
