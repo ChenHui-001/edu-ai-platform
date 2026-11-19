@@ -13,8 +13,9 @@ export const extensionApi = {
   visual: (id, visual) => request.put(`/question/quality/${id}/visual`, { visual }),
   tutor: (question_id, stage) => request.post('/learning/tutor', { question_id, stage }),
   feedback: data => request.post('/learning/tutor/feedback', data),
-  feedbackList: () => request.get('/learning/tutor/feedback'),
-  reviewFeedback: (id, correction) => request.put(`/learning/tutor/feedback/${id}`, { correction }),
+  feedbackList: params => request.get('/learning/tutor/feedback', { params }),
+  reviewFeedback: (id, correction, confirm_scope = false) =>
+    request.put(`/learning/tutor/feedback/${id}`, { correction, confirm_scope }),
   syncHistory: () => request.get('/system/taxonomy-sync'),
   syncPreview: ref => request.post('/system/taxonomy-sync/preview', { ref }, { timeout: 120000 }),
   syncApply: preview_id => request.post('/system/taxonomy-sync/apply', { preview_id }, { timeout: 120000 }),

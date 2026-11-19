@@ -142,7 +142,7 @@ def redo_wrong(
 @router.get("/wrong-questions/export", summary="导出错题")
 def export_wrong(
     subject_id: Optional[int] = None, with_answer: bool = True,
-    fmt: str = Query("markdown", regex="^(markdown|html|pdf)$"),
+    fmt: str = Query("markdown", pattern="^(markdown|html|pdf)$"),
     db: Session = Depends(get_db), user: User = Depends(get_current_student),
 ):
     """导出错题本：

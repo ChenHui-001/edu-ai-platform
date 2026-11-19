@@ -1,5 +1,5 @@
 """Staged learning assistance and teacher correction workflow."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_teacher, get_current_user, get_data_scope
 from app.core.database import get_db
@@ -21,11 +21,14 @@ def feedback(data: FeedbackCreate, db=Depends(get_db), user=Depends(get_current_
 
 
 @router.get("/feedback")
-def feedback_list(db=Depends(get_db), user=Depends(get_current_teacher), scope=Depends(get_data_scope)):
-    return ok({"items": grounded_tutor.feedback_list(db, user, scope)})
+def feedback_list(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+                  status: str | None = None, db=Depends(get_db),
+                  user=Depends(get_current_teacher), scope=Depends(get_data_scope)):
+    return ok(grounded_tutor.feedback_list(db, user, scope, page, page_size, status))
 
 
 @router.put("/feedback/{feedback_id}")
 def review(feedback_id: int, data: FeedbackReview, db=Depends(get_db),
            user=Depends(get_current_teacher), scope=Depends(get_data_scope)):
-    return ok(grounded_tutor.review_feedback(db, user, scope, feedback_id, data.correction))
+    return ok(grounded_tutor.review_feedback(
+        db, user, scope, feedback_id, data.correction, data.confirm_scope))

@@ -64,6 +64,7 @@ def connect(host: str, username: str = "root", timeout: int = 20):
                 auth_timeout=timeout,
                 allow_agent=False,
                 look_for_keys=False,
+                compress=True,
             )
             return client
         except Exception as exc:  # noqa: BLE001 下一把钥匙/口令继续尝试
@@ -82,6 +83,7 @@ def connect(host: str, username: str = "root", timeout: int = 20):
                 timeout=timeout,
                 banner_timeout=timeout,
                 auth_timeout=timeout,
+                compress=True,
             )
             return client
         except Exception as exc:  # noqa: BLE001

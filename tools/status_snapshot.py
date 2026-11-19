@@ -44,11 +44,17 @@ def measure_routes_tables():
         "SEED_DEMO_DATA": "false", "DEBUG": "false", "APP_ENV": "test",
         "SECRET_KEY": "status_snapshot_secret_key_0123456789",
     })
+    # FastAPI 0.165 起 include_router 改为惰性 `_IncludedRouter` 包装，
+    # `len(app.routes)` 只剩默认文档路由 + 包装节点，不再反映真实端点数。
+    # 统一改用 openapi() 的操作数（path × method），跨版本口径稳定。
     code = (
         "from app.main import app\n"
         "from app.core.database import Base, engine\n"
         "Base.metadata.create_all(bind=engine)\n"
-        "print(len(app.routes), len(Base.metadata.tables), sep=',')\n"
+        "schema = app.openapi()\n"
+        "methods = ('get', 'post', 'put', 'delete', 'patch', 'head', 'options')\n"
+        "ops = sum(1 for item in schema['paths'].values() for m in item if m in methods)\n"
+        "print(ops, len(Base.metadata.tables), sep=',')\n"
     )
     r = _run([PY, "-c", code], cwd=BACKEND, env=env)
     if r.returncode != 0:
@@ -130,7 +136,7 @@ def render():
     routes, tables = measure_routes_tables()
     data = [
         ("版本", version, "`VERSION` 文件"),
-        ("路由数", routes, "`app.routes`"),
+        ("接口操作数", routes, "`app.openapi()` 的 path×method"),
         ("数据表数", tables, "`Base.metadata.tables`"),
         ("后端用例", count_pytest(), "`pytest backend/qa_audit_suite.py --collect-only`"),
         ("前端用例", count_vitest(), "`frontend/src/**/__tests__` 内 `it(` 计数"),

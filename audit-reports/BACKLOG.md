@@ -13,6 +13,26 @@
 
 ---
 
+## 2.5.47 安全与运维收口（2026-11-19）
+
+| # | 问题 | 状态 | 验证 |
+|---|---|:---:|---|
+| R47-1 | 后端 0.3 线框架累计 35 项已知公告（Starlette 12 / langgraph-checkpoint 6 / langgraph-sdk 3 / langchain 2 / langchain-core 3 / langchain-openai 2 / chromadb 3 等） | **已修** | FastAPI 0.165 + Starlette 1.10 + LangChain 1.5 + LangGraph 1.2 + Chroma 1.5；pytest/117 条接口断言/160 条扩展断言/64 条 taxonomy 全通过 |
+| R47-2 | 前端 KaTeX 低危公告与开发依赖链中危 | **已修/收敛** | KaTeX 0.19.1；`npm audit` 0 high / 0 critical，剩 4 个 moderate 均在 devDependencies |
+| R47-3 | 生产 8081 明文端口对公网开放 | **已修** | 容器改绑 `127.0.0.1:8081`，外部只留 `https://592587860.xyz:8443`；部署健康检查仍走回环 |
+| R47-4 | 缺少 CSP 等安全响应头 | **已修** | nginx 统一输出 CSP/nosniff/frame/referrer/permissions，`always` 覆盖错误响应 |
+| R47-5 | 无异地备份与恢复文档 | **已修** | 服务器每日 cron 7 份 + 本机每日拉取 30 份（SHA-256 与 integrity_check 双校验）；恢复步骤见 `docs/OPERATIONS.md` |
+| R47-6 | 答疑「答案」阶段在考试/作业/补弱测验/诊断进行中仍可索取 | **已修** | 四类进行中场景返回 403；提示/步骤不受影响 |
+| R47-7 | 教师纠错可跨班生效、审核无范围确认 | **已修** | `class_id` 落库（迁移 `0004`）；非超管须 `confirm_scope`，仅对对应班级学生生效 |
+| R47-8 | 反馈可刷、重复提交与列表无分页 | **已修** | 24h 30 条限流（429）、10 分钟同题同阶段幂等复用、列表支持 page/page_size/status |
+| R47-9 | 专项作业重复点击会重复建任务 | **已修** | 10 分钟内同班级同知识点幂等复用；优先选近 30 天未使用题 |
+| R47-10 | 题库质量工作台一次性拉全量 | **已修** | 服务端分页 50 条 + 搜索/筛选 |
+| R47-11 | 容器日志无上限、内存无边界 | **已修** | json-file 20m×5 + 2GB 内存上限（deploy_release 创建参数） |
+| R47-12 | 上游同步计划任务直接写库 | **已修** | 计划任务改为每周只读 `--check`；写库只在管理页预览后应用或手工 apply |
+| R47-13 | FastAPI 升级后 `len(app.routes)` 口径失真 | **已修** | `status_snapshot` 改用 `openapi()` 的 path×method 操作数（当前 322） |
+
+---
+
 ## 学习闭环与知识图谱专项
 
 本轮按用户要求先完成全部优先优化，再完成六项扩展。契约与验收步骤见 `docs/LEARNING_EXTENSIONS.md`；版本与汇总数字以 `docs/STATUS.md` 为准。

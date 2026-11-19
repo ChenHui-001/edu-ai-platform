@@ -56,6 +56,7 @@ class FeedbackCreate(BaseModel):
 
 class FeedbackReview(BaseModel):
     correction: str = Field(min_length=1, max_length=4000)
+    confirm_scope: bool = False
 
 
 class QualityPublish(BaseModel):

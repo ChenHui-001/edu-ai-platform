@@ -1,11 +1,85 @@
-"""Staged tutoring with server-owned citations and teacher-reviewed corrections."""
+"""Staged tutoring with server-owned citations and class-scoped corrections."""
 import json
+from datetime import timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
-from app.core.exception import NotFoundException, PermissionException
-from app.models import KnowledgePoint, Question, Subject, Task, TaskAssignment, TeachingAssignment, TutorFeedback, User
+from app.core.exception import (
+    BusinessException, NotFoundException, PermissionException, RateLimitException,
+)
+from app.models import (
+    Class, KnowledgePoint, PaperItem, Question, RemediationPlan, Subject, Submission,
+    Task, TaskAssignment, TaxonomyDiagnosisSession, TeachingAssignment, TutorFeedback, User,
+)
 from app.services.question_quality import decode
+from app.utils.common import now_local
+
+DAILY_FEEDBACK_LIMIT = 30
+FEEDBACK_DEDUPE_MINUTES = 10
+
+
+def _active_assignment(db, user, question_id):
+    now = now_local()
+    owner_clause = [TaskAssignment.student_id == user.id]
+    if user.class_id:
+        owner_clause.append(TaskAssignment.class_id == user.class_id)
+    task_ids = db.scalars(select(Task.id).join(
+        PaperItem, PaperItem.paper_id == Task.paper_id
+    ).join(
+        TaskAssignment, TaskAssignment.task_id == Task.id
+    ).where(
+        PaperItem.question_id == question_id,
+        Task.type.in_(("exam", "homework")),
+        Task.status.in_(("published", "ongoing")),
+        or_(Task.start_at.is_(None), Task.start_at <= now),
+        or_(Task.end_at.is_(None), Task.end_at >= now),
+        or_(*owner_clause),
+    ).order_by(Task.id.desc()).limit(20)).all()
+    for task_id in task_ids:
+        submitted = db.scalar(select(Submission.id).where(
+            Submission.task_id == task_id, Submission.student_id == user.id,
+            Submission.submit_time.isnot(None)).limit(1))
+        if not submitted:
+            return task_id
+    return None
+
+
+def _active_remediation(db, user, question_id):
+    plans = db.scalars(select(RemediationPlan).where(
+        RemediationPlan.student_id == user.id
+    ).order_by(RemediationPlan.id.desc()).limit(50)).all()
+    for plan in plans:
+        try:
+            payload = json.loads(plan.payload)
+        except (TypeError, ValueError):
+            continue
+        quiz = payload.get("quiz") or {}
+        if any(str(item.get("qid")) == str(question_id) for item in quiz.get("questions") or []):
+            return plan.id
+    return None
+
+
+def _active_diagnosis(db, user, question):
+    if not question.subject_id:
+        return None
+    cutoff = now_local() - timedelta(hours=2)
+    return db.scalar(select(TaxonomyDiagnosisSession.id).where(
+        TaxonomyDiagnosisSession.user_id == user.id,
+        TaxonomyDiagnosisSession.subject_id == question.subject_id,
+        TaxonomyDiagnosisSession.finished_at.is_(None),
+        TaxonomyDiagnosisSession.updated_at >= cutoff,
+    ).limit(1))
+
+
+def assert_answer_allowed(db, user, question):
+    if user.identity != "student":
+        return
+    if _active_assignment(db, user, question.id):
+        raise PermissionException("作业进行中，暂不提供参考答案；可先查看提示与步骤")
+    if _active_remediation(db, user, question.id):
+        raise PermissionException("补弱测验进行中，暂不提供参考答案；请先完成当前测验")
+    if _active_diagnosis(db, user, question):
+        raise PermissionException("诊断进行中，暂不提供参考答案；请先完成诊断")
 
 
 def readable_question(db, user, question_id):
@@ -37,8 +111,36 @@ def readable_question(db, user, question_id):
     return question
 
 
+def _reviewer_allows(db, reviewer, item, user, question):
+    roles = set(reviewer.role_codes)
+    if "sys_admin" in roles:
+        return True
+    if item.class_id is not None:
+        return bool(user.class_id and user.class_id == item.class_id)
+    if "grade_admin" in roles:
+        return question.grade_id == (reviewer.grade_admin_grade_id or reviewer.grade_id)
+    return False
+
+
+def _visible_correction(db, user, question, stage):
+    rows = db.scalars(select(TutorFeedback).where(
+        TutorFeedback.question_id == question.id,
+        TutorFeedback.stage == stage,
+        TutorFeedback.status == "resolved",
+        TutorFeedback.correction.isnot(None),
+        TutorFeedback.reviewer_id.isnot(None),
+    ).order_by(TutorFeedback.id.desc()).limit(20)).all()
+    for item in rows:
+        reviewer = db.get(User, item.reviewer_id)
+        if reviewer and _reviewer_allows(db, reviewer, item, user, question):
+            return item
+    return None
+
+
 def tutor_response(db, user, question_id, stage):
     question = readable_question(db, user, question_id)
+    if stage == "answer":
+        assert_answer_allowed(db, user, question)
     knowledge = db.get(KnowledgePoint, question.knowledge_point_id) if question.knowledge_point_id else None
     subject = db.get(Subject, question.subject_id)
     references = [{"type": "题目", "id": question.id, "name": question.stem[:60], "source": question.source}]
@@ -47,9 +149,7 @@ def tutor_response(db, user, question_id, stage):
                            "source": knowledge.source, "textbook_version": knowledge.textbook_version})
     else:
         knowledge = None
-    corrected = db.scalar(select(TutorFeedback).where(
-        TutorFeedback.question_id == question.id, TutorFeedback.stage == stage,
-        TutorFeedback.status == "resolved").order_by(TutorFeedback.id.desc()).limit(1))
+    corrected = _visible_correction(db, user, question, stage)
     if corrected:
         return {"answer": corrected.correction, "references": references,
                 "stage": stage, "is_fallback": False, "teacher_reviewed": True}
@@ -83,13 +183,28 @@ def tutor_response(db, user, question_id, stage):
 
 def create_feedback(db, user, data):
     readable_question(db, user, data.question_id)
+    since = now_local() - timedelta(days=1)
+    count = db.scalar(select(func.count(TutorFeedback.id)).where(
+        TutorFeedback.user_id == user.id, TutorFeedback.created_at >= since))
+    if count >= DAILY_FEEDBACK_LIMIT:
+        raise RateLimitException("今日答疑反馈已达上限（30 条），请明日再试", retry_after=3600)
+    duplicate = db.scalar(select(TutorFeedback).where(
+        TutorFeedback.user_id == user.id,
+        TutorFeedback.question_id == data.question_id,
+        TutorFeedback.stage == data.stage,
+        TutorFeedback.content == data.content,
+        TutorFeedback.status == "pending",
+        TutorFeedback.created_at >= now_local() - timedelta(minutes=FEEDBACK_DEDUPE_MINUTES),
+    ).order_by(TutorFeedback.id.desc()).limit(1))
+    if duplicate:
+        return {"id": duplicate.id, "status": duplicate.status, "reused": True}
     item = TutorFeedback(user_id=user.id, **data.model_dump())
     db.add(item)
     db.commit()
-    return {"id": item.id, "status": item.status}
+    return {"id": item.id, "status": item.status, "reused": False}
 
 
-def feedback_list(db, user, scope):
+def _feedback_statement(db, user, scope):
     statement = select(TutorFeedback).join(Question, Question.id == TutorFeedback.question_id)
     if scope.is_grade_admin and not scope.is_super:
         statement = statement.where(Question.grade_id == (user.grade_admin_grade_id or user.grade_id or -1))
@@ -101,17 +216,61 @@ def feedback_list(db, user, scope):
                 TeachingAssignment.is_active.is_(True)).exists())
     if not scope.is_super:
         statement = statement.where(or_(Question.bank_type == "public", Question.owner_id == user.id))
-    rows = db.scalars(statement.order_by(TutorFeedback.id.desc()).limit(100)).all()
-    return [{"id": item.id, "question_id": item.question_id, "stage": item.stage,
-             "content": item.content, "correction": item.correction, "status": item.status}
-            for item in rows]
+    return statement
 
 
-def review_feedback(db, user, scope, feedback_id, correction):
-    allowed = {item["id"] for item in feedback_list(db, user, scope)}
-    if feedback_id not in allowed:
+def feedback_list(db, user, scope, page=1, page_size=20, status=None):
+    page = max(1, int(page or 1))
+    page_size = min(100, max(1, int(page_size or 20)))
+    statement = _feedback_statement(db, user, scope)
+    if status in {"pending", "resolved"}:
+        statement = statement.where(TutorFeedback.status == status)
+    total = db.scalar(select(func.count()).select_from(statement.subquery())) or 0
+    rows = db.scalars(statement.order_by(TutorFeedback.id.desc()).offset(
+        (page - 1) * page_size).limit(page_size)).all()
+    items = []
+    for item in rows:
+        student = db.get(User, item.user_id)
+        klass = db.get(Class, item.class_id or (student.class_id if student else None))
+        question = db.get(Question, item.question_id)
+        items.append({
+            "id": item.id, "question_id": item.question_id, "stage": item.stage,
+            "content": item.content, "correction": item.correction, "status": item.status,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "student_name": student.real_name if student else None,
+            "class_id": klass.id if klass else None,
+            "class_name": klass.name if klass else None,
+            "question_stem": (question.stem[:80] if question else None),
+        })
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+def review_feedback(db, user, scope, feedback_id, correction, confirm_scope=False):
+    item = db.scalar(_feedback_statement(db, user, scope).where(TutorFeedback.id == feedback_id))
+    if not item:
         raise PermissionException("无权审核该反馈")
-    item = db.get(TutorFeedback, feedback_id)
-    item.correction, item.reviewer_id, item.status = correction, user.id, "resolved"
+    student = db.get(User, item.user_id)
+    question = db.get(Question, item.question_id)
+    class_id = None
+    if "sys_admin" not in user.role_codes:
+        class_id = student.class_id if student else None
+        if not class_id:
+            raise BusinessException("学生尚未分班，无法确定纠错适用范围")
+        if not confirm_scope:
+            klass = db.get(Class, class_id)
+            raise BusinessException(f"请确认纠错只对「{klass.name if klass else class_id}」生效")
+        if "grade_admin" in user.role_codes:
+            if student.grade_id != (user.grade_admin_grade_id or user.grade_id):
+                raise PermissionException("只能核对本年级反馈")
+        else:
+            taught = db.scalar(select(TeachingAssignment.id).where(
+                TeachingAssignment.teacher_id == user.id,
+                TeachingAssignment.class_id == class_id,
+                TeachingAssignment.subject_id == question.subject_id,
+                TeachingAssignment.is_active.is_(True)))
+            if not taught:
+                raise PermissionException("只能核对自己任教班级的反馈")
+    item.correction, item.reviewer_id, item.status, item.class_id = (
+        correction, user.id, "resolved", class_id)
     db.commit()
-    return {"id": item.id, "status": item.status}
+    return {"id": item.id, "status": item.status, "class_id": item.class_id}

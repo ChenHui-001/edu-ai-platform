@@ -101,7 +101,7 @@ async function publish() {
     published.value = (await extensionApi.assign({
       class_id: classId.value, subject_id: subjectId.value, knowledge_point_ids: selected.value, count: count.value, due_days: days.value
     })).data
-    ElMessage.success('专项作业已发布')
+    ElMessage.success(published.value.reused ? '已复用刚才发布的同一份作业' : '专项作业已发布')
   } finally { publishing.value = false }
 }
 onMounted(async () => {

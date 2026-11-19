@@ -4,13 +4,13 @@
     <el-alert type="info" :closable="false" title="结构检查用于发现缺项和明确冲突；语义正确性仍需教师核对。AI 题发布前必须通过检查。" />
     <ErrorState v-if="error" :message="error" @retry="load" />
     <template v-else-if="report">
-      <p>扫描 {{ report.total_scanned }} 道题 · {{ report.errors }} 道存在阻断问题</p>
+      <p>扫描 {{ report.total_scanned }} 道题 · 匹配 {{ report.matched }} 道 · {{ report.errors }} 道存在阻断问题</p>
       <el-alert v-if="report.truncated" type="warning" :closable="false" title="本次只检查前 5000 道题" />
       <div class="mt12">
         <el-input v-model="keyword" placeholder="题号或题干搜索" clearable style="width: 240px" />
         <el-checkbox v-model="onlyIssues" style="margin-left: 12px">仅显示待审或有问题的题目</el-checkbox>
       </div>
-      <el-table :data="visibleItems" @selection-change="selection = $event.map(item => item.id)">
+      <el-table :data="report.items" @selection-change="selection = $event.map(item => item.id)">
         <el-table-column type="selection" width="45" />
         <el-table-column prop="id" label="编号" width="75" />
         <el-table-column prop="stem" label="题干" min-width="200" show-overflow-tooltip />
@@ -25,7 +25,8 @@
           <el-button size="small" :disabled="!row.can_edit" @click="openVisual(row)">编辑</el-button>
         </template></el-table-column>
       </el-table>
-      <el-pagination v-model:current-page="page" :total="filteredItems.length" :page-size="50" layout="total, prev, pager, next" />
+      <el-pagination v-model:current-page="page" :total="report.matched" :page-size="50"
+                     layout="total, prev, pager, next" @current-change="load" />
       <el-button class="mt12" type="primary" :disabled="!selection.length || !canAudit" @click="publish">核对后发布所选题目</el-button>
       <p v-if="!canAudit">当前账号没有公共题库审核权限，可先修正题目后提交管理员审核。</p>
       <el-collapse class="mt12"><el-collapse-item :title="`题量不足的知识点（${report.gaps.length}）`">
@@ -53,7 +54,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { extensionApi } from '@/api/extensions'
 import { useUserStore } from '@/store/user'
@@ -71,11 +72,19 @@ const selection = ref([])
 const page = ref(1)
 const keyword = ref('')
 const onlyIssues = ref(true)
-const filteredItems = computed(() => (report.value?.items || []).filter(item =>
-  (!onlyIssues.value || item.status === 'draft' || item.errors.length || item.warnings.length) &&
-  (!keyword.value || String(item.id).includes(keyword.value.trim()) || item.stem?.includes(keyword.value.trim()))))
-const visibleItems = computed(() => filteredItems.value.slice((page.value - 1) * 50, page.value * 50))
-watch([keyword, onlyIssues], () => { page.value = 1; selection.value = [] })
+let searchTimer = null
+function reload() {
+  page.value = 1
+  selection.value = []
+  load()
+}
+function queueReload() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(reload, 300)
+}
+watch(keyword, queueReload)
+watch(onlyIssues, reload)
+onBeforeUnmount(() => clearTimeout(searchTimer))
 const visualOpen = ref(false)
 const editing = ref(null)
 const kind = ref('number_line')
@@ -85,7 +94,11 @@ const previewQuestion = ref(null)
 async function load() {
   loading.value = true; error.value = ''
   selection.value = []
-  try { report.value = (await extensionApi.quality()).data }
+  try {
+    report.value = (await extensionApi.quality({
+      page: page.value, page_size: 50, keyword: keyword.value, only_issues: onlyIssues.value
+    })).data
+  }
   catch { error.value = '质检加载失败，请重试' }
   finally { loading.value = false }
 }

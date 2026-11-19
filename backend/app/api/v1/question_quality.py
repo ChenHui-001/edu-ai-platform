@@ -1,5 +1,5 @@
 """Teacher-visible quality workbench, with audit-protected publishing."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_teacher
 from app.core.database import get_db
@@ -12,8 +12,12 @@ router = APIRouter(prefix="/question/quality", tags=["题库质量"])
 
 
 @router.get("")
-def inventory(subject_id: int = None, db=Depends(get_db), user=Depends(get_current_teacher)):
-    return ok(question_quality.inventory(db, user, subject_id))
+def inventory(subject_id: int = None, page: int = Query(1, ge=1),
+              page_size: int = Query(50, ge=1, le=100), keyword: str | None = None,
+              only_issues: bool = False, db=Depends(get_db),
+              user=Depends(get_current_teacher)):
+    return ok(question_quality.inventory(
+        db, user, subject_id, page, page_size, keyword, only_issues))
 
 
 @router.post("/publish")

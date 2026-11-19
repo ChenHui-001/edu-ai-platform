@@ -1,7 +1,12 @@
 # ===== Web 框架 =====
-fastapi==0.115.6
+# 2026-11 安全升级：FastAPI 0.116 / Starlette 0.47 线累计 12 项 Starlette 公告，
+# 且上游已不再回补 0.x。整体升到 FastAPI 0.165 + Starlette 1.10 后，
+# 路由仍可正常注册（新版本对 include_router 做了惰性包装，
+# 路由数量统计改由 openapi() 口径核对，见 tools/status_snapshot.py）。
+fastapi==0.165.0
+starlette==1.10.0
 uvicorn[standard]==0.34.0
-python-multipart==0.0.20
+python-multipart==0.0.31
 pydantic==2.10.4
 pydantic-settings==2.7.0
 
@@ -18,8 +23,8 @@ alembic==1.14.0
 psycopg2-binary==2.9.10
 
 # ===== 安全 =====
-PyJWT==2.10.1
-Pillow==11.0.0
+PyJWT==2.15.1
+Pillow==13.0.0
 
 # ===== 日志与调度 =====
 loguru==0.7.3
@@ -31,14 +36,19 @@ PyMuPDF==1.25.1
 # 标准组卷 V3 导出：真 .docx / .pdf / 答题卡
 python-docx==1.1.2
 reportlab==4.2.5
-jinja2==3.1.5
+jinja2==3.1.6
 
 # ===== AI Agent =====
-langchain==0.3.14
-langchain-core==0.3.29
-langchain-openai==0.2.14
-langgraph==0.2.60
-chromadb==0.5.23
+# 2026-11 安全升级：0.3 线累计 18 项公告（langgraph-checkpoint 6 / langgraph-sdk 3 等），
+# 其中多数只在新主版本修复。1.x 已用 tools/verify_learning_extensions.py 与
+# tools/verify_p0_fixes.py 回归验证；LangGraph 仍以 langgraph 引擎模式启动。
+langchain==1.5.2
+langchain-core==1.8.3
+langchain-openai==1.8.3
+langgraph==1.2.23
+# Chroma 1.5 的 ONNX MiniLM 模型缓存在 ~/.cache/chroma（Dockerfile 已预置），
+# 不再随包分发；容器首次检索不会现场下载。
+chromadb==1.5.9
 
 # ===== HTTP 客户端 =====
 httpx==0.28.1

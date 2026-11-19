@@ -34,7 +34,7 @@ from app.main import app
 from app.models import (
     Class, Grade, KnowledgeMastery, KnowledgePoint, KnowledgePrerequisite, Notification,
     Paper, Question, QuestionKnowledge, RemediationPlan, Role, Subject, Task,
-    TeachingAssignment, User,
+    TeachingAssignment, TutorFeedback, User,
 )
 from app.services.catalog_cache import invalidate_catalog
 from app.services.knowledge_diagnosis import build_graph, grade_question
@@ -194,6 +194,8 @@ def main():
                          {"subject_id": ids["subject"], "grade_id": ids["grade"],
                           "targets": [ids["node"]], "limit": 3, "confirm": 1})
         next_item = diagnosis["next"]
+        call("POST", "/learning/tutor",
+             {"question_id": next_item["question"]["id"], "stage": "answer"}, 403)
         diagnosis_id = diagnosis["id"]
         diagnosis = call("POST", f"/edu/knowledge/diagnosis/sessions/{diagnosis_id}/answers",
                          {"knowledge_point_id": ids["node"], "question_id": next_item["question"]["id"], "answer": "B"})
@@ -225,6 +227,8 @@ def main():
                                                for item in plan["quiz"]["questions"]))
         restored_plan = call("GET", f"/learning/remediation/{plan['id']}")
         check("quiz persists on reload", restored_plan["quiz"]["id"] == plan["quiz"]["id"])
+        call("POST", "/learning/tutor",
+             {"question_id": plan["quiz"]["questions"][0]["id"], "stage": "answer"}, 403)
         quiz_id = plan["quiz"]["id"]
         answer_data = {"quiz_id": quiz_id, "answers": {item["id"]: "A" for item in plan["quiz"]["questions"]},
                        "version": plan["version"]}
@@ -295,6 +299,9 @@ def main():
         assignment = {"class_id": ids["class"], "subject_id": ids["subject"],
                       "knowledge_point_ids": [ids["node"]], "count": 5}
         published = call("POST", "/teaching/graph/assign", assignment)
+        duplicate = call("POST", "/teaching/graph/assign", assignment)
+        check("repeated publish reuses the same task", duplicate["task_id"] == published["task_id"]
+              and duplicate["reused"])
         with SessionLocal() as db:
             task = db.get(Task, published["task_id"])
             check("targeted assignment contains real paper items", len(task.paper.items) == 5)
@@ -305,6 +312,8 @@ def main():
         check("targeted paper is student-readable", len(task_paper["items"]) == 5)
         check("paper carries visual, not private answer extras", task_paper["items"][0].get("visual") and
               "accept" not in task_paper["items"][0] and "answer" not in task_paper["items"][0])
+        call("POST", "/learning/tutor", {"question_id": ids["questions"][0], "stage": "answer"}, 403)
+        call("POST", "/learning/tutor", {"question_id": ids["questions"][0], "stage": "hint"})
         submission = call("POST", f"/task/tasks/{published['task_id']}/submit", {
             "answers": [{"paper_item_id": item["paper_item_id"], "content": "A"} for item in task_paper["items"]]
         })
@@ -312,6 +321,18 @@ def main():
         finished_paper = call("GET", f"/task/tasks/{published['task_id']}/paper")
         check("submitted paper reveals correct answers and rendered visuals", all(
             item["answer"] == "A" and item.get("visual") for item in finished_paper["items"]))
+        as_user(ids["teacher"])
+        rotated = call("POST", "/teaching/graph/assign", assignment)
+        check("new publish rotates to unused questions", rotated["task_id"] != published["task_id"]
+              and rotated["reused"] is False and rotated["reused_questions"] == 4)
+        with SessionLocal() as db:
+            rotated_task = db.get(Task, rotated["task_id"])
+            check("rotation starts with the unused question",
+                  sorted(rotated_task.paper.items, key=lambda item: item.sort_order)[0].question_id
+                  == ids["questions"][5])
+            rotated_task.status = "archived"
+            db.commit()
+        as_user(ids["student"])
         practice = call("POST", "/learning/practice", {"subject_id": ids["subject"], "grade_id": ids["grade"],
                        "count": 2, "knowledge_point_ids": [ids["node"]], "question_types": ["single"]})
         practice_paper = call("GET", f"/learning/practice/{practice['task_id']}")
@@ -322,6 +343,11 @@ def main():
         as_user(ids["teacher"])
         report = call("GET", "/question/quality")
         check("quality detects bad AI answer", any(item["id"] == ids["bad"] and item["errors"] for item in report["items"]))
+        paged = call("GET", "/question/quality?page=1&page_size=3&only_issues=true")
+        check("quality paginates and filters on the server", paged["matched"] == 1
+              and len(paged["items"]) == 1 and paged["items"][0]["id"] == ids["bad"])
+        searched = call("GET", "/question/quality?page=1&page_size=10&keyword=%E6%89%A9%E5%B1%95%E6%B5%8B%E8%AF%95%202")
+        check("quality keyword search stays server-side", searched["matched"] == 1)
         call("POST", "/question/quality/publish", {"ids": [ids["bad"]]}, 403)
         call("PUT", f"/question/quality/{ids['questions'][0]}/visual",
              {"visual": {"kind": "fraction", "numerator": 1, "denominator": 3}}, 403)
@@ -355,13 +381,46 @@ def main():
         call("POST", "/learning/tutor", {"question_id": ids["private"]}, 403)
         feedback = call("POST", "/learning/tutor/feedback",
                         {"question_id": ids["questions"][0], "stage": "hint", "content": "请核对提示"})
+        duplicate_feedback = call("POST", "/learning/tutor/feedback",
+                                  {"question_id": ids["questions"][0], "stage": "hint", "content": "请核对提示"})
+        check("repeated feedback is idempotent", duplicate_feedback["id"] == feedback["id"])
+        with SessionLocal() as db:
+            for index in range(25):
+                db.add(TutorFeedback(
+                    user_id=ids["student"], question_id=ids["questions"][0], stage="hint",
+                    content=f"历史反馈 {index}", status="pending",
+                    created_at=now_local() - timedelta(days=2)))
+            db.commit()
         as_user(ids["teacher"])
-        feedbacks = call("GET", "/learning/tutor/feedback")["items"]
-        check("assigned teacher sees student feedback without grade_id", feedback["id"] in {item["id"] for item in feedbacks})
-        call("PUT", f"/learning/tutor/feedback/{feedback['id']}", {"correction": "教师核对：先合并两部分。"})
+        page_one = call("GET", "/learning/tutor/feedback?page=1&page_size=20")
+        page_two = call("GET", "/learning/tutor/feedback?page=2&page_size=20")
+        check("feedback list is paginated", page_one["total"] >= 26 and len(page_one["items"]) == 20)
+        check("older feedback remains reachable", len(page_two["items"]) >= 6 and
+              page_two["items"][-1]["id"] < page_one["items"][-1]["id"])
+        oldest_id = page_two["items"][-1]["id"]
+        call("PUT", f"/learning/tutor/feedback/{oldest_id}",
+             {"correction": "历史反馈核对"}, 400)
+        call("PUT", f"/learning/tutor/feedback/{oldest_id}",
+             {"correction": "历史反馈核对", "confirm_scope": True})
+        call("PUT", f"/learning/tutor/feedback/{feedback['id']}",
+             {"correction": "教师核对：先合并两部分。"}, 400)
+        call("PUT", f"/learning/tutor/feedback/{feedback['id']}",
+             {"correction": "教师核对：先合并两部分。", "confirm_scope": True})
         as_user(ids["student"])
         reply = call("POST", "/learning/tutor", {"question_id": ids["questions"][0], "stage": "hint"})
         check("teacher correction replaces next tutoring response", reply["teacher_reviewed"] and "先合并" in reply["answer"])
+        as_user(ids["stranger"])
+        reply = call("POST", "/learning/tutor", {"question_id": ids["questions"][0], "stage": "hint"})
+        check("teacher correction is scoped to the student class",
+              not reply["teacher_reviewed"] and "先合并" not in reply["answer"])
+        as_user(ids["student"])
+        statuses = []
+        for index in range(31):
+            response = client.post("/api/v1/learning/tutor/feedback", json={
+                "question_id": ids["questions"][0], "stage": "hint",
+                "content": f"限流反馈 {index}"})
+            statuses.append(response.status_code)
+        check("feedback rate limit returns 429", statuses[-1] == 429 and statuses.count(200) == 29)
         with SessionLocal() as db:
             task = db.get(Task, published["task_id"])
             task.type = "exam"

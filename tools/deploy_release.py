@@ -310,7 +310,9 @@ def write_env_file(remote, env):
 def run_cmd(version, env_file, secret_key, image):
     return (
         f"docker run -d --name {CONTAINER} --restart unless-stopped "
-        f"-p {PORT}:80 "
+        f"--log-driver json-file --log-opt max-size=20m --log-opt max-file=5 "
+        f"--memory 2g --memory-swap 2g "
+        f"-p 127.0.0.1:{PORT}:80 "
         f"-v {BASE_DIR}/data:/app/data "
         f"-v {BASE_DIR}/logs:/app/data/logs "
         f"--env-file {env_file} "

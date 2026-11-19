@@ -977,7 +977,7 @@ def remove_student(
 # ---------------------------------------------------------------- 人员简表
 @router.get("/people/brief", summary="人员简表（仅 id/姓名/账号，教师端下拉用）")
 def people_brief(
-    identity: str = Query(..., regex="^(student|teacher)$"),
+    identity: str = Query(..., pattern="^(student|teacher)$"),
     class_id: Optional[int] = None,
     db: Session = Depends(get_db), user: User = Depends(get_current_teacher),
     scope: DataScope = Depends(get_data_scope),

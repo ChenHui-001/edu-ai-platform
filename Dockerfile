@@ -16,7 +16,14 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# 索引可覆盖：CI（GitHub Actions）走默认 PyPI，国内本机构建走镜像源，
+# 避免 files.pythonhosted.org 读超时把构建卡死。重试次数与超时同时放宽。
+ARG PIP_INDEX_URL="https://pypi.org/simple"
+ARG PIP_EXTRA_INDEX_URL=""
+RUN pip install --no-cache-dir --retries 10 --timeout 120 \
+        --index-url "$PIP_INDEX_URL" \
+        ${PIP_EXTRA_INDEX_URL:+--extra-index-url "$PIP_EXTRA_INDEX_URL"} \
+        -r /tmp/requirements.txt
 
 
 # ==================== 运行层依赖（不含编译器，体积小）====================

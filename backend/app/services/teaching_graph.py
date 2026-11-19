@@ -1,17 +1,20 @@
 """Class-scoped graph analytics and targeted homework publication."""
 from collections import Counter
 from datetime import timedelta
+import threading
 
 from sqlalchemy import func, select
 
 from app.core.exception import BusinessException, NotFoundException, PermissionException
 from app.models import (Class, KnowledgePoint, Paper, PaperItem, Question,
-                        Task, TaskAssignment, TeachingAssignment, WrongQuestion)
+                        Submission, Task, TaskAssignment, TeachingAssignment, WrongQuestion)
 from app.services.class_analytics import class_student_ids, weak_points
 from app.services.knowledge_graph import resolve_graph
 from app.services.notification import notify_many
 from app.services.question_access import question_usable_error
 from app.utils.common import now_local
+
+_ASSIGN_LOCK = threading.Lock()
 
 
 def assert_class(db, user, scope, class_id, subject_id):
@@ -66,50 +69,86 @@ def class_graph(db, user, scope, class_id, subject_id):
     return {"nodes": nodes, "edges": edges, "student_count": len(students), "truncated": truncated}
 
 
+def _duplicate_assignment(db, user, klass, data, requested):
+    since = now_local() - timedelta(minutes=10)
+    tasks = db.scalars(select(Task).where(
+        Task.creator_id == user.id, Task.type == "homework",
+        Task.subject_id == data.subject_id, Task.created_at >= since,
+        Task.id.in_(select(TaskAssignment.task_id).where(TaskAssignment.class_id == klass.id)),
+    ).order_by(Task.id.desc()).limit(10)).all()
+    for task in tasks:
+        if db.scalar(select(Submission.id).where(Submission.task_id == task.id).limit(1)):
+            continue
+        rows = db.scalars(select(Question.knowledge_point_id).join(
+            PaperItem, PaperItem.question_id == Question.id).where(
+            PaperItem.paper_id == task.paper_id)).all()
+        if set(rows) == requested and len(rows) == data.count:
+            return {"task_id": task.id, "paper_id": task.paper_id, "question_count": len(rows),
+                    "requested_count": data.count, "reused": True, "reused_questions": 0}
+    return None
+
+
+def _recent_question_ids(db, class_id, subject_id):
+    since = now_local() - timedelta(days=30)
+    return set(db.scalars(select(PaperItem.question_id).join(
+        Task, Task.paper_id == PaperItem.paper_id).join(
+        TaskAssignment, TaskAssignment.task_id == Task.id).where(
+        TaskAssignment.class_id == class_id, Task.subject_id == subject_id,
+        Task.type == "homework", Task.created_at >= since).limit(5000)).all())
+
+
 def assign_homework(db, user, scope, data):
     klass = assert_class(db, user, scope, data.class_id, data.subject_id)
     requested = set(data.knowledge_point_ids)
-    nodes = list(db.scalars(select(KnowledgePoint).where(
-        KnowledgePoint.id.in_(requested), KnowledgePoint.subject_id == data.subject_id,
-        KnowledgePoint.grade_id == klass.grade_id, KnowledgePoint.status == "published",
-        KnowledgePoint.is_active.is_(True))).all())
-    if {item.id for item in nodes} != requested:
-        raise BusinessException("包含不存在或跨学科的知识点")
-    bank = list(db.scalars(select(Question).where(
-        Question.knowledge_point_id.in_(requested), Question.status == "published",
-        Question.subject_id == data.subject_id, Question.grade_id == klass.grade_id
-    ).order_by(Question.id)).all())
-    bank = [item for item in bank if question_usable_error(
-        item, user_id=user.id, is_admin=scope.is_super) is None]
-    if any(not any(item.knowledge_point_id == node for item in bank) for node in requested):
-        raise BusinessException("部分知识点没有可用题目，请先补题")
     if data.count < len(requested):
         raise BusinessException("题量不能小于选中的知识点数量")
-    chosen = []
-    for node in sorted(requested):
-        chosen.append(next(item for item in bank if item.knowledge_point_id == node))
-    chosen.extend(item for item in bank if item not in chosen)
-    chosen = chosen[:data.count]
-    total = sum(item.score or 5 for item in chosen)
-    paper = Paper(name="班级专项补弱练习", grade_id=klass.grade_id, subject_id=data.subject_id,
-                  creator_id=user.id, total_score=total, duration=30, status="published")
-    db.add(paper)
-    db.flush()
-    for position, question in enumerate(chosen):
-        db.add(PaperItem(paper_id=paper.id, question_id=question.id,
-                         score=question.score or 5, sort_order=position + 1))
-        question.usage_count = (question.usage_count or 0) + 1
-    paper.use_count = (paper.use_count or 0) + 1
-    task = Task(title=paper.name, type="homework", paper_id=paper.id, subject_id=data.subject_id,
-                grade_id=klass.grade_id, creator_id=user.id, status="published", total_score=total,
-                pass_score=total * .6, duration=30, show_answer=True,
-                start_at=now_local(), end_at=now_local() + timedelta(days=data.due_days))
-    db.add(task)
-    db.flush()
-    db.add(TaskAssignment(task_id=task.id, class_id=klass.id, notified=True))
-    students = class_student_ids(db, klass.id)
-    notify_many(db, students, title="专项补弱作业", content=task.title,
-                type="exam", biz_type="task", biz_id=task.id, category="task")
-    db.commit()
-    return {"task_id": task.id, "paper_id": paper.id, "question_count": len(chosen),
-            "requested_count": data.count}
+    with _ASSIGN_LOCK:
+        existing = _duplicate_assignment(db, user, klass, data, requested)
+        if existing:
+            return existing
+        nodes = list(db.scalars(select(KnowledgePoint).where(
+            KnowledgePoint.id.in_(requested), KnowledgePoint.subject_id == data.subject_id,
+            KnowledgePoint.grade_id == klass.grade_id, KnowledgePoint.status == "published",
+            KnowledgePoint.is_active.is_(True))).all())
+        if {item.id for item in nodes} != requested:
+            raise BusinessException("包含不存在或跨学科的知识点")
+        bank = list(db.scalars(select(Question).where(
+            Question.knowledge_point_id.in_(requested), Question.status == "published",
+            Question.subject_id == data.subject_id, Question.grade_id == klass.grade_id
+        ).order_by(Question.id)).all())
+        bank = [item for item in bank if question_usable_error(
+            item, user_id=user.id, is_admin=scope.is_super) is None]
+        if any(not any(item.knowledge_point_id == node for item in bank) for node in requested):
+            raise BusinessException("部分知识点没有可用题目，请先补题")
+        recent = _recent_question_ids(db, klass.id, data.subject_id)
+        bank.sort(key=lambda item: (item.id in recent, item.id))
+        chosen = []
+        for node in sorted(requested):
+            chosen.append(next(item for item in bank if item.knowledge_point_id == node))
+        chosen.extend(item for item in bank if item not in chosen)
+        chosen = chosen[:data.count]
+        reused_questions = sum(item.id in recent for item in chosen)
+        total = sum(item.score or 5 for item in chosen)
+        paper = Paper(name="班级专项补弱练习", grade_id=klass.grade_id, subject_id=data.subject_id,
+                      creator_id=user.id, total_score=total, duration=30, status="published")
+        db.add(paper)
+        db.flush()
+        for position, question in enumerate(chosen):
+            db.add(PaperItem(paper_id=paper.id, question_id=question.id,
+                             score=question.score or 5, sort_order=position + 1))
+            question.usage_count = (question.usage_count or 0) + 1
+        paper.use_count = (paper.use_count or 0) + 1
+        task = Task(title=paper.name, type="homework", paper_id=paper.id, subject_id=data.subject_id,
+                    grade_id=klass.grade_id, creator_id=user.id, status="published", total_score=total,
+                    pass_score=total * .6, duration=30, show_answer=True,
+                    start_at=now_local(), end_at=now_local() + timedelta(days=data.due_days))
+        db.add(task)
+        db.flush()
+        db.add(TaskAssignment(task_id=task.id, class_id=klass.id, notified=True))
+        students = class_student_ids(db, klass.id)
+        notify_many(db, students, title="专项补弱作业", content=task.title,
+                    type="exam", biz_type="task", biz_id=task.id, category="task")
+        db.commit()
+        return {"task_id": task.id, "paper_id": paper.id, "question_count": len(chosen),
+                "requested_count": data.count, "reused": False,
+                "reused_questions": reused_questions}

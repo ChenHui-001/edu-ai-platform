@@ -11,8 +11,8 @@
 <!-- status:auto:begin -->
 | 项 | 实测值 | 口径 |
 |---|---:|---|
-| 版本 | 2.5.46 | `VERSION` 文件 |
-| 路由数 | 323 | `app.routes` |
+| 版本 | 2.5.47 | `VERSION` 文件 |
+| 接口操作数 | 322 | `app.openapi()` 的 path×method |
 | 数据表数 | 58 | `Base.metadata.tables` |
 | 后端用例 | 74 | `pytest backend/qa_audit_suite.py --collect-only` |
 | 前端用例 | 160 | `frontend/src/**/__tests__` 内 `it(` 计数 |
@@ -34,7 +34,7 @@
 | 数据库 | SQLite WAL（`busy_timeout=5000`、`foreign_keys=ON`） | 数据库与日志必须在**命名卷**上，9p 绑定挂载只能建首个连接 |
 | 前端 | Vue 3 + Vite + Element Plus（unplugin 按需） | 图表统一走 `utils/echarts.js` 按需注册，禁止全量引入 |
 | 迁移 | Alembic 基线 `0001_baseline` + 存量库幂等补列 + `align_schema.py` 漂移对齐 | 新变更走 `alembic revision`；补列清单由 `check_migration_columns` 守，迁移链由 `check_alembic_sync` 守 |
-| 生产 | `186.241.77.194:8081`，容器 `edu-platform`，数据 `/opt/edu-ai-platform/{data,logs}` | 勿动 Caddy(80/5010)、8080、gostc(7500+) |
+| 生产 | `https://592587860.xyz:8443`（Caddy → `127.0.0.1:8081`），容器 `edu-platform`，数据 `/opt/edu-ai-platform/{data,logs}` | 容器端口只绑回环；勿动 Caddy(80/5010)、8080、gostc(7500+)；备份/恢复见 [`OPERATIONS.md`](OPERATIONS.md) |
 
 ## 三、四层一致性
 
@@ -62,6 +62,7 @@
 | 卷面结构规范 | [`EXAM_STRUCTURE_SPEC_JUNIOR.md`](EXAM_STRUCTURE_SPEC_JUNIOR.md) · [`EXAM_STRUCTURE_SPEC_PRIMARY.md`](EXAM_STRUCTURE_SPEC_PRIMARY.md) |
 | 交付与发版 | [`DELIVERY_RULES.md`](DELIVERY_RULES.md) · [`RELEASE_CONSISTENCY.md`](RELEASE_CONSISTENCY.md) |
 | 开发与部署 | [`DEVELOPMENT.md`](DEVELOPMENT.md) · [`DEPLOYMENT.md`](DEPLOYMENT.md) · [`QUICKSTART.md`](QUICKSTART.md) |
+| 运维（入口/备份/资源） | [`OPERATIONS.md`](OPERATIONS.md) |
 
 ## 五、当前缺口（只列方向，明细在 BACKLOG）
 

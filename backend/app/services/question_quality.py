@@ -85,7 +85,7 @@ def visible_questions(db, user, subject_id=None):
     return list(db.scalars(statement.order_by(Question.id).limit(5001)).all())
 
 
-def inventory(db, user, subject_id=None):
+def inventory(db, user, subject_id=None, page=1, page_size=50, keyword=None, only_issues=False):
     from app.api.deps import has_perm
     rows = visible_questions(db, user, subject_id)
     can_audit = bool({"sys_admin", "grade_admin"} & set(user.role_codes)) or has_perm(user, "question:bank:audit")
@@ -100,6 +100,14 @@ def inventory(db, user, subject_id=None):
                       "source": question.source, "knowledge_point_id": question.knowledge_point_id,
                       "can_edit": can_audit or (question.bank_type == "private" and question.owner_id == user.id),
                       **presentation_fields(question.extra_json), **issues})
+    keyword = (keyword or "").strip().lower()
+    matched = [item for item in items
+               if (not keyword or keyword == str(item["id"])
+                   or keyword in (item["stem"] or "").lower())
+               and (not only_issues or item["status"] == "draft" or item["errors"] or item["warnings"])]
+    page = max(1, int(page or 1))
+    page_size = min(100, max(1, int(page_size or 50)))
+    start = (page - 1) * page_size
     counts = Counter(item.knowledge_point_id for item in rows
                      if item.status == "published" and item.bank_type == "public"
                      and not issues_for(item)["errors"])
@@ -118,7 +126,9 @@ def inventory(db, user, subject_id=None):
     parents = {item.parent_id for item in nodes if item.parent_id}
     gaps = [{"id": item.id, "name": item.name, "question_count": counts[item.id]}
             for item in nodes if item.id not in parents and counts[item.id] < 3]
-    return {"items": items, "gaps": gaps, "total_scanned": min(len(rows), 5000),
+    return {"items": matched[start:start + page_size], "matched": len(matched),
+            "page": page, "page_size": page_size,
+            "gaps": gaps, "total_scanned": min(len(rows), 5000),
             "truncated": len(rows) > 5000,
             "errors": sum(bool(item["errors"]) for item in items)}
 

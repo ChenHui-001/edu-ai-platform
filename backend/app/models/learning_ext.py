@@ -28,6 +28,9 @@ class TutorFeedback(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id"), index=True)
+    class_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("edu_class.id", ondelete="SET NULL"), nullable=True, index=True,
+        comment="核对结果适用的班级；教师纠错必须有班级范围")
     question_id: Mapped[int] = mapped_column(ForeignKey("edu_question.id"))
     stage: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
