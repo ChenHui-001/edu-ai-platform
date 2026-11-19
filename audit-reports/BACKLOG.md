@@ -30,6 +30,7 @@
 | R47-11 | 容器日志无上限、内存无边界 | **已修** | json-file 20m×5 + 2GB 内存上限（deploy_release 创建参数） |
 | R47-12 | 上游同步计划任务直接写库 | **已修** | 计划任务改为每周只读 `--check`；写库只在管理页预览后应用或手工 apply |
 | R47-13 | FastAPI 升级后 `len(app.routes)` 口径失真 | **已修** | `status_snapshot` 改用 `openapi()` 的 path×method 操作数（当前 322） |
+| R47-14 | 新增列只写 Alembic 迁移、未登记启动补列清单 → 2.5.46 已建表的老库缺列必 500 | **已修** | `edu_tutor_feedback.class_id` 登记进 `MIGRATION_COLUMNS`；`/ready` 增加 `schema` 检查（缺列直接 503，反向验证过缺列红/补列绿） |
 
 ---
 

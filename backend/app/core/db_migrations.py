@@ -60,6 +60,10 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
     # v2.5.22: AI 长任务可取消（F-04）。协作式取消标志，worker 在检查点响应。
     # DEFAULT 0 是必须的：老库里已有的 finished 行要读成「未请求取消」。
     ("sys_agent_job", "cancel_requested", "INTEGER DEFAULT 0"),
+    # v2.5.47: 教师纠错按班级生效。edu_tutor_feedback 是 2.5.46 新建的表，
+    # 基线快照里没有它，反向门禁不会提醒；但 2.5.46 已落库的实例必须有这一列，
+    # 否则 ORM 查询即 500。不能只依赖 alembic 0004（运行时不自动跑迁移）。
+    ("edu_tutor_feedback", "class_id", "INTEGER"),
     # v1.1.0: 知识点 V2（树治理 / 状态 / 来源 / 创建者）
     ("edu_knowledge_point", "textbook_version", "VARCHAR(64)"),
     ("edu_knowledge_point", "status", "VARCHAR(16) DEFAULT 'published'"),
