@@ -5,19 +5,35 @@
 
 ---
 
-## 〇、最近发布（2026-11-17）
+## 〇、最近发布（2026-11-20）
 
 | 项 | 值 |
 |---|---|
-| 版本 | `2.5.44` |
-| Git commit | 本次发布提交（`git log -1 --format=%H`） |
-| 功能提交 | `de6168f`（先修诊断与图谱集成） |
-| ghcr 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.5.44` |
-| 镜像 digest | 以 registry 的 `2.5.44` 清单为准 |
-| Docker Hub | `nanpo/edu-ai-platform:2.5.44` / `:latest`（同一 digest） |
-| 生产 | `186.241.77.194:8081`，容器 `edu-platform` |
-| 四层校验 | 本地 / `origin/master` / 镜像 / 生产同 commit，4/4 通过 |
-| 备份 | `pre-20261117-171609-2.5.40.db`（部署器自动创建） |
+| 版本 | `2.5.49` |
+| Git commit | `ae76330a3130128db2ff98192d9cc396c043e81c` |
+| 功能提交 | `a11284d`（M6 流程引擎 + 阶段 0 镜像瘦身）；`f7960b2` / `2f91cc6` / `ae76330` 为后续修复 |
+| ghcr 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.5.49`（CI 多架构 amd64） |
+| 镜像 digest | `sha256:bc7e3cd260077cbce138b86995e812334efe5f0bcbf6df5d8c0c0e07e4b8ba1a` |
+| Docker Hub | `nanpo/edu-ai-platform:2.5.49` / `:latest` / `:sha-ae76330`（三处同 digest） |
+| 镜像体积 | **1.39GB**（2.01GB → 1.39GB，-31%；阶段 0 瘦身，见 [`IMAGE_SLIMDOWN_2026-11-20.md`](IMAGE_SLIMDOWN_2026-11-20.md)） |
+| 生产 | `186.241.77.194:8081`，容器 `edu-platform`；外网 `https://592587860.xyz:8443` |
+| 四层校验 | 本地 / `origin/master` / 镜像 / 生产同 commit `ae76330`，4/4 通过 |
+| 备份 | `pre-20261120-110528-2.5.47.db`（13960 KB，容器内 sqlite3 backup API） |
+| 生产验证 | `/health` healthy v2.5.49、`/ready` ready、容器内 339 路由/63 表、16 个 M6 端点、5 张 flow 表已建出 |
+
+### 本轮发布处理了的四个真实缺陷
+
+1. **`rule_engine.py` 依赖 `simpleeval` 但 `requirements.txt` 未声明** —— 生产镜像里该包不存在，
+   任何触达规则引擎的请求都会 `ImportError`。本地 venv 因被其他包顺带安装才没暴露。
+2. **现量卡的「镜像体积」依赖 `docker images` 探测** —— 现状卡 auto 区块是 **CI 门禁**，
+   CI runner 上没有 Docker daemon，`docker images` 返回空 → 渲染成「—」 → 与卡里数字不符 → 门禁变红。
+   改成随代码走的 `IMAGE_SIZE` 文件（同时 COPY 进镜像，容器内可自查）。
+3. **`ENV CHROMA_CACHE_DIR` 完全无效** —— chromadb 1.5.9 只认 `Path.home()`（`onnx_mini_lm_l6_v2.py:39`）。
+   原注释「兼容两种实现」是误导；真正生效的开关是 `HOME`。
+4. **`subprocess` 的 GBK 解码崩溃** —— `text=True` 走系统默认编码（中文 Windows 是 GBK），
+   子进程输出 UTF-8 字节时抛 `UnicodeDecodeError`，而异常发生在读取线程里（**子进程已跑完**，
+   `returncode` 正常）但 `stdout` 变成 `None` —— 调用方看到的是「AttributeError: 'NoneType' …」，
+   报错点隔了三层。已在 `status_snapshot.py` / `check_release_consistency.py` 显式指定 `encoding='utf-8'`。
 
 ### 标签保留策略
 

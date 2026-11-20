@@ -80,9 +80,46 @@
 | 项 | 值 |
 |---|---|
 | 版本 | 2.5.49 |
-| commit | 见 `git log -1` |
-| 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.5.49`（CI 多架构）+ `nanpo/edu-ai-platform:2.5.49` |
-| digest | 见 `docker buildx imagetools inspect` |
+| commit | `ae76330a3130128db2ff98192d9cc396c043e81c` |
+| 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.5.49`（CI 多架构 amd64）+ `nanpo/edu-ai-platform:2.5.49` |
+| digest | `sha256:bc7e3cd260077cbce138b86995e812334efe5f0bcbf6df5d8c0c0e07e4b8ba1a`（ghcr 与 Docker Hub **逐字节一致**） |
+| 标签 | `2.5.49` / `latest` / `sha-ae76330`（三处同 digest） |
+| 镜像体积 | 1.39GB（2.01GB → 1.39GB，-31%） |
+| 生产备份 | `pre-20261120-110528-2.5.47.db`（13960 KB，容器内 sqlite3 backup API） |
+
+### 提交历史（本轮 4 个提交）
+
+| commit | 内容 |
+|---|---|
+| `a11284d` | feat(flow): M6 流程引擎 + 阶段 0 镜像瘦身 |
+| `f7960b2` | fix(ci): 现状卡「镜像体积」改读 `IMAGE_SIZE` 文件 |
+| `2f91cc6` | fix(meta-model): 修复被写成字面 `n` 的换行 |
+| `ae76330` | fix(release): `check_release_consistency` 显式 UTF-8 解码 |
+
+### 四位一体核验（`tools/check_four_layer.py`）
+
+| 层 | 版本 | 指纹 | 判定 |
+|---|---|---|---|
+| 本地 worktree | 2.5.49 | ae76330 | OK（工作区干净） |
+| 远端 origin/master | 2.5.49 | ae76330 | OK（已推送） |
+| 镜像 :2.5.49 | 2.5.49 | ae76330 | OK（BUILD_INFO 自洽） |
+| 服务器 :8081 | 2.5.49 | ae76330 | OK（容器 BUILD_INFO 一致） |
+
+### 生产上线核验（SSH 进容器内实测）
+
+- `/api/v1/health` → healthy v2.5.49，db=sqlite，llm=True
+- `/api/v1/ready` → ready=true
+- 容器内 `app.openapi()` → 339 路由 / 63 表；**16 个 M6 端点**全部注册
+- `FlowEngine` 公开方法 23 个
+- 数据库 5 张 flow 表已建出：`edu_flow_definition` / `edu_flow_instance` /
+  `edu_flow_task` / `edu_flow_history` / `edu_flow_transfer`（空表，正常）
+- 前端 dist 含 `FlowTodo-BGz_d02i.js` / `ExamUrgeDialog-DxR8gtl1.js`
+- 容器内 `/app/IMAGE_SIZE` = 1.39GB，与镜像实测一致
+
+> 注：生产的 `alembic_version` 停在 `0002_math_taxonomy` 是**既有设计** ——
+> 运行时走 `create_all` + 幂等补列，不自动跑 Alembic（2.5.47 同样如此）。
+> `check_alembic_sync` / `check_migration_columns` 两道门禁均通过，
+> 迁移链与模型、create_all 三者一致。
 
 ## 五、后续
 
