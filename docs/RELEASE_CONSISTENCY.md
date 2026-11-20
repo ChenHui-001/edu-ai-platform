@@ -12,16 +12,16 @@
 | 当前版本 | 见 [`STATUS.md`](STATUS.md)（版本号唯一真源是根目录 `VERSION`） |
 | 本轮发布版本 | `2.5.50`（固定验收账号；后端运行时代码未变，但 `VERSION` 进镜像，故仍需重建） |
 | 上一发布版本 | `2.5.49`（M6 流程引擎 + 阶段 0 镜像瘦身） |
-| Git commit | `ae76330a3130128db2ff98192d9cc396c043e81c` |
-| 功能提交 | `a11284d`（M6 流程引擎 + 阶段 0 镜像瘦身）；`f7960b2` / `2f91cc6` / `ae76330` 为后续修复 |
-| ghcr 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.5.49`（CI 多架构 amd64） |
-| 镜像 digest | `sha256:bc7e3cd260077cbce138b86995e812334efe5f0bcbf6df5d8c0c0e07e4b8ba1a` |
-| Docker Hub | `nanpo/edu-ai-platform:2.5.49` / `:latest` / `:sha-ae76330`（三处同 digest） |
+| Git commit | `137b5897731dc72661a3cf0cefe61b2cee761207` |
+| 功能提交 | `137b589`（固定验收账号）；上一轮 `a11284d`（M6 流程引擎 + 阶段 0 镜像瘦身） |
+| ghcr 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.5.50`（CI 多架构 amd64） |
+| 镜像 digest | `sha256:4166f107592620fc12fcc11a7088957c47f38b94824c4b05b2376c5e32986e23` |
+| Docker Hub | `nanpo/edu-ai-platform:2.5.50` / `:latest` / `:sha-137b589`（三处同 digest） |
 | 镜像体积 | **1.39GB**（2.01GB → 1.39GB，-31%；阶段 0 瘦身，见 [`IMAGE_SLIMDOWN_2026-11-20.md`](IMAGE_SLIMDOWN_2026-11-20.md)） |
 | 生产 | `186.241.77.194:8081`，容器 `edu-platform`；外网 `https://592587860.xyz:8443` |
-| 四层校验 | 本地 / `origin/master` / 镜像 / 生产同 commit `ae76330`，4/4 通过 |
-| 备份 | `pre-20261120-110528-2.5.47.db`（13960 KB，容器内 sqlite3 backup API） |
-| 生产验证 | `/health` healthy v2.5.49、`/ready` ready、容器内 339 路由/63 表、16 个 M6 端点、5 张 flow 表已建出 |
+| 四层校验 | 本地 / `origin/master` / 镜像 / 生产同 commit `137b589`，4/4 通过 |
+| 备份 | `pre-20261120-133129-2.5.49.db`（14104 KB，容器内 sqlite3 backup API） |
+| 生产验证 | `/health` healthy v2.5.50、`/ready` ready、容器内 339 路由/63 表、16 个 M6 端点、5 张 flow 表已建出；三个固定验收账号真实 HTTP 登录均 200 |
 
 ### 本轮发布处理了的四个真实缺陷
 

@@ -210,11 +210,32 @@
 | 新增文件 | `tools/ensure_acceptance_accounts.py`、`docs/ACCEPTANCE_ACCOUNTS.md` |
 | 后端运行时代码 | **无变化** —— `tools/` 与 `docs/` 均被 `.dockerignore` 排除，不进镜像 |
 | 镜像 | 需重建：`VERSION` 会被 `COPY` 进镜像并烧进 `/app/BUILD_INFO`，故版本号变化即镜像内容变化 |
+| commit | `137b5897731dc72661a3cf0cefe61b2cee761207` |
+| digest | `sha256:4166f107592620fc12fcc11a7088957c47f38b94824c4b05b2376c5e32986e23`（ghcr 与 Docker Hub 六处标签同 digest） |
+| 标签 | `2.5.50` / `latest` / `sha-137b589` |
 | 口令文件（生产） | `/opt/edu-ai-platform/.acceptance_password`（0600 root:root） |
 | 口令文件（本机） | 仓库外 `E:\project\management\PRIVATE_ACCOUNTS_PASSWORD_2026-11-20.txt` |
+| 生产备份 | `pre-20261120-133129-2.5.49.db`（14104 KB） |
 
 > **为何本轮仍要重建镜像**：`tools/` 与 `docs/` 不进镜像，**后端运行时代码逐字节未变**；
 > 但 `VERSION` 会被 `Dockerfile` 的 `COPY VERSION ./VERSION` 带进镜像，
 > 并由 `RUN printf` 写进 `/app/BUILD_INFO`。版本号一变，镜像字节就变 ——
 > 按 `docs/DELIVERY_RULES.md` 第 1 条，凡改变镜像内容的提交都必须重建并同步。
 > 重建后四位一体（本地 / `origin/master` / 镜像 / 服务器）统一指向同一个 commit。
+
+### 四位一体核验（`tools/check_four_layer.py`）
+
+| 层 | 版本 | 指纹 | 判定 |
+|---|---|---|---|
+| 本地 worktree | 2.5.50 | 137b589 | OK（工作区干净） |
+| 远端 origin/master | 2.5.50 | 137b589 | OK（已推送） |
+| 镜像 :2.5.50 | 2.5.50 | 137b589 | OK（BUILD_INFO 自洽） |
+| 服务器 :8081 | 2.5.50 | 137b589 | OK（容器 BUILD_INFO 一致） |
+
+### 部署后复验（2.5.50 容器内实测）
+
+- `/api/v1/health` → healthy **v2.5.50**，db=sqlite，llm=True
+- `/api/v1/ready` → ready=true（database / schema / uploads / exports / logs 全 true）
+- 容器 `/app/BUILD_INFO` → `version=2.5.50` / `commit=137b589`
+- 外网 `https://592587860.xyz:8443/api/v1/health` → healthy v2.5.50
+- **三个验收账号在重建后的新容器里仍能真实 HTTP 登录**（走完整图形验证码），均 HTTP 200
