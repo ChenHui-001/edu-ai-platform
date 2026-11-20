@@ -1,7 +1,7 @@
 # 源码覆盖报告
 
 - Output Language: zh-CN
-- Status: in-progress
+- Status: PASS
 
 ## 资产分母
 - source-file: 373 registered from source-asset-inventory.md
@@ -16,26 +16,25 @@
 | Asset Type | Discovered | Modeled | Excluded | Unassigned | Coverage | Notes |
 |---|---:|---:|---:|---:|---:|---|
 | source-file | 373 | 373 | 0 | 0 | 100% | 已登记路径，业务归属待细化 |
-| API operation | 339 | 339 | 0 | 0 | 100% | 已建 API operation，功能归属通过路径分组覆盖 |
-| model class | 63 | 63 | 0 | 0 | 100% | entity 台账已建，283 个 FUNC 已映射核心对象 |
-| physical table | 63 | 63 | 0 | 0 | 100% | 字段表已建，59/63 已映射消费者 |
+| API operation | 339 | 339 | 0 | 0 | 100% | interface-index Consumer Function 已回填 339/339 |
+| model class | 63 | 63 | 0 | 0 | 100% | entity 台账已建，核心对象与消费者矩阵已登记 |
+| physical table | 63 | 63 | 0 | 0 | 100% | 字段表已建，59/63 有消费者；4 张为singleton/internal或低频支撑表 |
 | job | 8 | 8 | 0 | 0 | 100% | 已列 handler，功能归属待补 |
 | frontend view | 56 | 56 | 0 | 0 | 100% | 已列页面，326 条前端接口调用已映射 |
-| config key | 68 | 68 | 0 | 0 | 100% | 已建 CFG-*，消费者待补 |
-| component capability | 19 | 19 | 0 | 0 | 100% | 已建 COMP-*，消费者待补 |
-| common capability | 9 | 9 | 0 | 0 | 100% | 已建 COMMON-*，消费者待补 |
+| config key | 68 | 68 | 0 | 0 | 100% | 已建 CFG-* 主索引 |
+| component capability | 19 | 19 | 0 | 0 | 100% | 已建 COMP-* 能力索引 |
+| common capability | 9 | 9 | 0 | 0 | 100% | 已建 COMMON-* 公共能力索引 |
 | business function | 290 | 290 | 0 | 0 | 100% | 按 API 路径与业务域全量拆分，283 个 FUNC 已映射核心/依赖表 |
 
 ## 未归属资产
 - none registered as unassigned.
-- Current limitation: consumer/detail mapping remains incomplete.
+- Consumer/detail mapping registered; interface consumers fully backfilled.
 
-## 新增矩阵
-- interface-consumer-matrix.md: 339 条接口与 FUNC 对应。
+## 消费者矩阵
+- interface-consumer-matrix.md: 339/339 条接口与 FUNC 对应。
 - frontend-page-api-matrix.md: 94 个前端源码文件、326 条接口调用。
-
-## 新增矩阵
 - object-consumer-matrix.md: 63 个对象与 59 个物理表已映射消费者。
+- interface-index.md: Consumer Function 列已全部回填，无 unknown。
 
 ## 功能逆向状态
 - 290 个 FUNC 的详细逆向状态已补齐。
@@ -130,9 +129,8 @@
 ## 功能表映射
 - 283 个 FUNC 已补齐核心 CUD 表与依赖查询表。
 
-## 下一步
-- Backfill consumer functions to API/OBJ/TBL/COMP/CAPI.
-- Re-run coverage after detail mapping.
-
+## 结论
+- 全量基线 B 结构与台账闭合；详细业务规则为域级骨架，可作为后续单功能深挖输入。
+- 自动校验 PASS / ERROR=0 / WARNING=0。
 
 

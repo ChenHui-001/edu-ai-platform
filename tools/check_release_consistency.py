@@ -61,7 +61,18 @@ GREEN, RED, YELLOW, DIM, RESET = "\033[92m", "\033[91m", "\033[93m", "\033[90m",
 def sh(args, cwd=ROOT, timeout=60):
     """执行命令，返回 (returncode, stdout, stderr)。不抛异常。"""
     try:
-        r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        # ★ 编码必须显式指定，不能靠 text=True 走系统默认编码。
+        #   Windows 中文环境的默认编码是 GBK，而 `git status --porcelain` 之类
+        #   命令在处理中文文件名/内容时可能输出 UTF-8 字节 —— 用 GBK 解码会抛
+        #   UnicodeDecodeError。该异常发生在 subprocess 的读取线程里，
+        #   **子进程已经跑完**（returncode 正常），但 stdout 变成 None，
+        #   报错点离真正原因隔了好几层：调用方看到的是
+        #   「AttributeError: 'NoneType' object has no attribute 'strip'」，
+        #   极难定位。errors="replace" 是第二道保险。
+        r = subprocess.run(
+            args, cwd=cwd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
         return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
     except (OSError, subprocess.SubprocessError) as exc:
         return -1, "", str(exc)
