@@ -1,0 +1,12 @@
+# 本版本发布镜像的实测体积（docker images 实测 unified 镜像）。
+#
+# 为什么要落成一个文件，而不是让 tools/status_snapshot.py 去跑 `docker images`：
+#   现状卡 auto 区块是 **CI 门禁**（ci.yml 的「现状卡数字与实际一致（Q-02）」），
+#   CI runner 上没有 Docker daemon，`docker images` 返回空 → 渲染成「—」，
+#   与卡里已有的数字不符 → 门禁变红。而门禁红的原因是「测不到」，不是「数字错」。
+#   把体积记成**随代码走的声明式事实**：改镜像内容的人必须同步改这个文件，
+#   CI 与本地读的是同一份，不存在「环境差异」。
+#
+# 口径：unified 镜像（生产交付物，nginx + 后端同端口）的 `docker images` 体积。
+# 实测示例：2.5.47 = 2.01GB，2.5.49（阶段 0 瘦身后）= 1.39GB。
+1.39GB

@@ -189,6 +189,9 @@ COPY backend/.env.example ./.env.example
 # 注意：不要 `ENV APP_VERSION=""` —— buildx 缓存可能让上一轮的值
 # （如 latest）残留到新镜像，导致 /health 返回错误版本号。
 COPY VERSION ./VERSION
+# 镜像体积声明（unified 镜像实测）。随代码走，容器内可自查，
+# 也供 tools/status_snapshot.py 读取（现状卡「镜像体积」一行的事实源）。
+COPY IMAGE_SIZE ./IMAGE_SIZE
 ARG APP_VERSION=""
 ENV APP_VERSION=${APP_VERSION}
 
@@ -247,6 +250,9 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/migrations ./migrations
 # 版本号单一真源：根目录 VERSION 文件；缺失时才回退到 APP_VERSION build-arg
 COPY VERSION ./VERSION
+# 镜像体积声明（unified 镜像实测）。随代码走，容器内可自查，
+# 也供 tools/status_snapshot.py 读取（现状卡「镜像体积」一行的事实源）。
+COPY IMAGE_SIZE ./IMAGE_SIZE
 ARG APP_VERSION=""
 ENV APP_VERSION=${APP_VERSION}
 

@@ -19,7 +19,7 @@
 | 接口断言 | 117 | `tools/verify_p0_fixes.py` 实际通过条数 |
 | 补列迁移 | 44 | `core/db_migrations._COLUMNS` |
 | 发版门禁 | 24 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |
-| 镜像体积 | 1.39GB | `docker images` 实测 unified 镜像 |
+| 镜像体积 | 1.39GB | `IMAGE_SIZE` 文件（unified 镜像实测） |
 
 > 由 `python tools/status_snapshot.py --write` 生成。版本号另由 `tools/check_doc_versions.py` 门禁强制与 `VERSION` 一致。
 <!-- status:auto:end -->

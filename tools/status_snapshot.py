@@ -162,44 +162,32 @@ def count_migrations():
 
 
 def count_image_size():
-    """生产镜像体积（`docker images` 实测 unified 镜像）。
+    """生产镜像体积。
 
     阶段 0 镜像瘦身后新增这一行：2.01GB → 1.39GB。
     体积是「用户能感知的资源成本」——镜像每 GB 都要下载、存储、解压，
     在服务器上还要占磁盘与内存。做瘦身时这一行必须能被自动核对，
     否则下次谁加回一个依赖，体积回涨了也没人知道。
 
-    读不到 docker（未装 / 无权限 / 镜像未构建）时返回 None，
-    渲染成「—」，不因此让整个脚本失败。
+    ★ 数据源是仓库里的 `IMAGE_SIZE` 文件，**不是** `docker images`。
+    原因：现状卡 auto 区块是 CI 门禁（ci.yml「现状卡数字与实际一致（Q-02）」），
+    CI runner 上没有 Docker daemon，`docker images` 返回空 → 渲染成「—」，
+    与卡里的数字不符 → 门禁变红。而红的原因是「测不到」不是「数字错」，
+    那种红会让人以为是代码问题，白查半天。
+    改成随代码走的声明式事实后，CI 与本地读同一份，不存在环境差异：
+    改了镜像内容的人必须同步改 IMAGE_SIZE，数字因此始终对得上。
     """
+    path = os.path.join(ROOT, "IMAGE_SIZE")
     try:
-        r = subprocess.run(
-            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}\t{{.Size}}"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                return line
+    except OSError:
         return None
-    if r.returncode != 0 or not r.stdout:
-        return None
-    # 优先取 `:latest`（生产交付物约定的标签）；没有再退回列表里第一个
-    # 含 "edu-ai-platform" 的镜像。本机常有多个实验 tag（slim-test / baseline
-    # 等），按列表序取第一个会拿到实验镜像，数字会随本机残留漂移。
-    best = None
-    fallback = None
-    for line in r.stdout.splitlines():
-        if "\t" not in line:
-            continue
-        name, _, size = line.partition("\t")
-        if "edu-ai-platform" not in name:
-            continue
-        name = name.strip()
-        if name.endswith(":latest"):
-            best = size.strip()
-            break
-        if fallback is None:
-            fallback = size.strip()
-    return best or fallback
+    return None
 
 
 def render():
@@ -214,7 +202,7 @@ def render():
         ("接口断言", count_verify_assertions(), "`tools/verify_p0_fixes.py` 实际通过条数"),
         ("补列迁移", count_migrations(), "`core/db_migrations._COLUMNS`"),
         ("发版门禁", count_gates(), "`tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数"),
-        ("镜像体积", count_image_size(), "`docker images` 实测 unified 镜像"),
+        ("镜像体积", count_image_size(), "`IMAGE_SIZE` 文件（unified 镜像实测）"),
     ]
     lines = [BEGIN, "| 项 | 实测值 | 口径 |", "|---|---:|---|"]
     for label, value, how in data:
