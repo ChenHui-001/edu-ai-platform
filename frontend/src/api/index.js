@@ -283,6 +283,10 @@ export const taskApi = {
   heartbeat: (id, data) => request.post(`/task/tasks/${id}/heartbeat`, data),
   submissionDetail: (id) => request.get(`/task/submissions/${id}`),
   myScores: (params) => request.get('/task/my/scores', { params }),
+  // 待交名单：催学生交卷前先看谁还没交
+  pendingStudents: (id) => request.get(`/task/tasks/${id}/pending-students`),
+  // 催交考试 / 作业：只对未交卷的学生生效
+  urge: (id, data) => request.post(`/task/tasks/${id}/urge`, data || {}),
   practice: (data) => request.post('/learning/practice', data),
   practicePaper: (id) => request.get(`/learning/practice/${id}`),
   practiceHistory: (params) => request.get('/learning/practice/history', { params })
@@ -468,4 +472,33 @@ export const lessonAiApi = {
   // 带 token 的 blob 导出（裸 URL 打开 / 前端 fetch 手拼 token 都不可靠）
   exportBlob: (id) => request.get(`/lesson/ai/jobs/${id}/export`,
     { responseType: 'blob' })
+}
+
+// ---------------- 流程待办（M6 流程引擎） ----------------
+// 待办按角色可见：持有对应 role_code 的登录用户都能看到同一份待办，
+// 认领后 assignee_id 记录实际处理人。审批是**角色职责**，不是个人数据。
+export const flowApi = {
+  // 我的待办（按角色过滤）
+  todo: (params) => request.get('/flow/todo', { params }),
+  // 我的已办（按处理人过滤）
+  done: (params) => request.get('/flow/done', { params }),
+  // 我发起的流程
+  instances: (params) => request.get('/flow/instances', { params }),
+  // 逾期待办：已过截止时间但仍未处理（不自动关闭）
+  overdue: (params) => request.get('/flow/overdue', { params }),
+  // 实例详情：当前活动 + 待办 + 完整留痕
+  instance: (id) => request.get(`/flow/instances/${id}`),
+  claim: (id) => request.post(`/flow/tasks/${id}/claim`),
+  approve: (id, data) => request.post(`/flow/tasks/${id}/approve`, data || {}),
+  reject: (id, data) => request.post(`/flow/tasks/${id}/reject`, data || {}),
+  // 退回必须带 target_activity_id（退回到指定活动重新提交）
+  returnTo: (id, data) => request.post(`/flow/tasks/${id}/return`, data),
+  cancel: (id, data) => request.post(`/flow/tasks/${id}/cancel`, data || {}),
+  // 转办：指定别人接手（与「认领」= 自己接手不同）
+  transferCandidates: (id) => request.get(`/flow/tasks/${id}/transfer-candidates`),
+  transfer: (id, data) => request.post(`/flow/tasks/${id}/transfer`, data),
+  // 催办：给已认领的处理人发提醒（同一待办 30 分钟内限一次）
+  urge: (id, data) => request.post(`/flow/tasks/${id}/urge`, data || {}),
+  // 设置/清除待办截止时间
+  setDeadline: (id, data) => request.put(`/flow/tasks/${id}/deadline`, data || {})
 }

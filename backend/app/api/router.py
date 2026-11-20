@@ -6,11 +6,15 @@ from app.api.v1 import (
     knowledge_diagnosis, knowledge_graph, lesson, lesson_ai, logs, paper_ai,
     paper_compose, question, question_ai, report, system, task,
     remediation, teaching_graph, question_quality, grounded_tutor, taxonomy_sync,
+    flow, task_urge,
 )
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router)
+# 流程待办中心（M6 流程引擎）：待办/已办/我发起的/实例详情。
+# 独立成文件是因为它是**编排层**，不接管任何业务表的状态字段。
+api_router.include_router(flow.router)
 api_router.include_router(remediation.router)
 api_router.include_router(teaching_graph.router)
 api_router.include_router(question_quality.router)
@@ -41,6 +45,9 @@ api_router.include_router(paper_ai.router)
 api_router.include_router(exam_standard.router)
 api_router.include_router(paper_compose.router)
 api_router.include_router(task.router)
+# 考试 / 作业催办（任务域：催未交卷的学生）。与流程待办催办是两件事——
+# 前者针对 flow_task 的处理人，后者针对 edu_task 的未交学生。
+api_router.include_router(task_urge.router)
 api_router.include_router(grading.grading_router)
 api_router.include_router(grading.learning_router)
 api_router.include_router(agent.router)

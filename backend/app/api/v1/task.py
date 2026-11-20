@@ -20,6 +20,7 @@ from app.models import (
 )
 from app.services import grading_service
 from app.services import notification as notify_cat
+from app.services import task_urge as task_urge_svc
 from app.services.notification import notify_many
 from app.services.question_presentation import presentation_fields, presentation_options
 from app.utils.common import PageParams, dictify, now_local, ok
@@ -767,41 +768,21 @@ def task_submissions(
             "submit_time": s.submit_time.strftime("%Y-%m-%d %H:%M:%S") if s.submit_time else None,
         })
 
-    # 应交名单与完成率：先收集学生 id 与班级 id，再一次 IN 查询，
-    # 避免每遇到一条班级下发就查一次用户表（N+1）。
-    assigned_ids: set = set()
-    class_ids: set = set()
-    for a in task.assignments:
-        if a.student_id:
-            assigned_ids.add(a.student_id)
-        elif a.class_id:
-            class_ids.add(a.class_id)
-    if class_ids:
-        assigned_ids.update(
-            db.scalars(select(User.id).where(User.class_id.in_(class_ids))).all()
-        )
-    submitted_ids = {s.student_id for s in rows} | set(
-        db.scalars(select(Submission.student_id).where(Submission.task_id == task_id)).all()
-    )
-    pending = list(assigned_ids - submitted_ids)
-
-    # 待交名单只展示前 50 人：一次批量取名，替代逐人两次 db.get(User)
-    pending_page = pending[:50]
-    pending_user_ids = {pid for pid in pending_page if pid}
-    pending_names = {
-        u.id: u.real_name for u in db.scalars(
-            select(User).where(User.id.in_(pending_user_ids))
-        ).all()
-    } if pending_user_ids else {}
+    # 应交名单与待交名单：**复用** services/task_urge 的实现。
+    # 此前这里有一份独立算法，催办功能落地后会出现「统计说交了 30 人、
+    # 催办却催了 31 人」这类对不上的差异——两份算法漂移比没有催办更糟。
+    pending_info = task_urge_svc.pending_students(db, task)
 
     return ok({
-        "items": items, "total": total, "assigned": len(assigned_ids),
-        "submitted": len(submitted_ids & assigned_ids) if assigned_ids else len(submitted_ids),
-        "completion_rate": round(len(submitted_ids & assigned_ids) / len(assigned_ids) * 100, 2)
-        if assigned_ids else 0,
+        "items": items, "total": total,
+        "assigned": pending_info["total_assigned"],
+        "submitted": pending_info["total_submitted"],
+        "completion_rate": round(
+            pending_info["total_submitted"] / pending_info["total_assigned"] * 100, 2)
+        if pending_info["total_assigned"] else 0,
         "pending_students": [
-            {"id": pid, "name": pending_names.get(pid, "")}
-            for pid in pending_page
+            {"id": sid, "name": pending_info["names"].get(sid, "")}
+            for sid in pending_info["ids"]
         ],
     })
 

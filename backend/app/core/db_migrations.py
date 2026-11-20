@@ -60,6 +60,13 @@ MIGRATION_COLUMNS: List[Tuple[str, str, str]] = [
     # v2.5.22: AI 长任务可取消（F-04）。协作式取消标志，worker 在检查点响应。
     # DEFAULT 0 是必须的：老库里已有的 finished 行要读成「未请求取消」。
     ("sys_agent_job", "cancel_requested", "INTEGER DEFAULT 0"),
+    # v2.5.48: 流程待办的转办 / 催办字段。edu_flow_task 是 2.5.48 新建的表，
+    # 但 2.5.48 已落库的实例必须补上这些列，否则 ORM 查询即 500
+    # （create_all 只建缺失的表，不会给已有表补列）。
+    ("edu_flow_task", "urge_count", "INTEGER DEFAULT 0"),
+    ("edu_flow_task", "last_urged_at", "DATETIME"),
+    ("edu_flow_task", "transfer_count", "INTEGER DEFAULT 0"),
+    ("edu_flow_task", "last_transferred_at", "DATETIME"),
     # v2.5.47: 教师纠错按班级生效。edu_tutor_feedback 是 2.5.46 新建的表，
     # 基线快照里没有它，反向门禁不会提醒；但 2.5.46 已落库的实例必须有这一列，
     # 否则 ORM 查询即 500。不能只依赖 alembic 0004（运行时不自动跑迁移）。

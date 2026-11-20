@@ -1,0 +1,544 @@
+# M6 流程模型元文件 - 新芽学堂（现状盘点 + 目标设计）
+#
+# 本文件含两部分，用分节标题区分：
+#   【第一部分 · 现状】现有代码里真实存在的流程形态（反向映射，只记录事实）
+#   【第二部分 · 目标】引入流程引擎后的目标流程设计（框架 v9 契约，可实施）
+#
+# 现状依据：backend/app/api/v1/auth.py 注册审批
+#         + backend/app/api/v1/paper_compose.py 试卷公共库审核
+#         + backend/app/services/scheduler.py 定时任务
+# 目标依据：ontology_modeling_framework_v9.md 第六章（7 条流程约束）
+#
+# ⚠️ 现状核心结论：
+#   本系统【没有通用流程引擎】，也没有 flow_definition / node_graph 可配置流程定义。
+#   现有"审批"只有两处，且都是**硬编码状态字段判断**：
+#     1) 注册审批（单节点，通过/驳回两态）
+#     2) 试卷公共库审核（单节点，通过/驳回两态）
+#   二者都缺：流程实例、待办任务、退回语义、多级审批、审批留痕。
+model_type: FLOW
+version: "1.0"
+domain: "九年义务教育 AI 学习平台"
+source: "edu-ai-platform @ 2.5.48（auth.py 注册审批 + paper_compose.py 试卷审核 + scheduler.py 定时任务）"
+
+# ══════════════════════════════════════════════════════════
+# 流程一：用户注册审批（硬编码单节点）
+# ══════════════════════════════════════════════════════════
+flows:
+  - id: FLOW-REGISTRATION-001
+    name: 用户注册审批
+    description: 学生/教师自助注册后，需管理员审核通过方可登录
+    flowType: APPROVAL
+    configurable: false
+    roleRefs:
+      - ROLE-GUEST
+      - ROLE-SYS-ADMIN
+    implementation: "api/v1/auth.py POST /registrations/audit"
+    nodeGraph:
+      nodes:
+        - id: start
+          type: START
+          name: 提交注册申请
+          activityType: USER_ACTION
+          roleRef: ROLE-GUEST
+          next: [audit]
+        - id: audit
+          type: USER_TASK
+          name: 管理员审核
+          activityType: USER_ACTION
+          roleRef: ROLE-SYS-ADMIN
+          requiredPermissions: [PERM-SYSTEM-AUDIT]
+          branches:
+            - condition: "approved == true"
+              to: approved
+            - condition: "approved == false"
+              to: rejected
+        - id: approved
+          type: END
+          name: 审核通过
+          activityType: SYSTEM
+          postEffect: "user.status = 'active'，分配角色"
+        - id: rejected
+          type: END
+          name: 审核驳回
+          activityType: SYSTEM
+          postEffect: "registration.status = 'rejected'"
+      edges:
+        - { from: start, to: audit }
+        - { from: audit, to: approved, condition: "approved == true" }
+        - { from: audit, to: rejected, condition: "approved == false" }
+    activities:
+      - { id: start, name: 提交注册申请, actor: ROLE-GUEST }
+      - { id: audit, name: 管理员审核, actor: ROLE-SYS-ADMIN }
+      - { id: approved, name: 审核通过, actor: ROLE-SYS-ADMIN }
+      - { id: rejected, name: 审核驳回, actor: ROLE-SYS-ADMIN }
+    branches:
+      - { from: audit, condition: "approved == true", to: approved }
+      - { from: audit, condition: "approved == false", to: rejected }
+    gaps:
+      - "无多级审批（没有年级管理员→管理员的串联）"
+      - "无退回（return）语义，只有通过/驳回两态"
+      - "无审批留痕表（sys_operation_log 记录操作，但不承载流程实例）"
+      - "审批对象是 Registration 表而非 M6 的流程实例实体"
+
+# ══════════════════════════════════════════════════════════
+# 流程二：定时任务（系统自动，无人工节点）
+# ══════════════════════════════════════════════════════════
+  - id: FLOW-SCHEDULED-JOBS-001
+    name: 运维定时任务集
+    description: APScheduler 驱动的系统自动流程组，含清理、报表、提醒三类
+    flowType: SYSTEM_SCHEDULE
+    configurable: true
+    configurableVia: "sys_scheduled_job 表 + 管理端「定时任务」菜单"
+    implementation: "services/scheduler.py + services/task_jobs.py（JOB_HANDLERS 注册表）"
+    nodeGraph:
+      nodes:
+        - id: cron_trigger
+          type: START
+          name: cron 到点
+          activityType: TIMER
+          next: [job_exec]
+        - id: job_exec
+          type: SERVICE_TASK
+          name: 执行作业
+          activityType: SYSTEM
+          next: [log_write]
+        - id: log_write
+          type: END
+          name: 写执行日志
+          activityType: SYSTEM
+          postEffect: "写 sys_job_execution_log，递增 run_count"
+        - id: skip
+          type: END
+          name: 撞锁跳过
+          activityType: SYSTEM
+          postEffect: "静默跳过，等下个 cron 窗口再触发"
+        - id: error_log
+          type: END
+          name: 记错误日志
+          activityType: SYSTEM
+          postEffect: "写 sys_error_log，保留任务失败记录"
+      edges:
+        - { from: cron_trigger, to: job_exec }
+        - { from: job_exec, to: log_write }
+        - { from: job_exec, to: skip, condition: "锁已被其他进程持有" }
+        - { from: job_exec, to: error_log, condition: "handler 抛出异常" }
+    scheduledJobs:
+      - { name: 清理过期考试, cron: "0 3 * * *", handler: "app.services.task_jobs.clean_expired_exams", purpose: 定时归档已结束的超期考试 }
+      - { name: 生成日报表, cron: "0 7 * * *", handler: "app.services.task_jobs.generate_daily_report", purpose: 统计前一日学习与考试数据 }
+      - { name: 清理临时附件, cron: "0 4 * * *", handler: "app.services.task_jobs.clean_temp_attachments", purpose: 清理超过 7 天的未绑定业务附件 }
+      - { name: 复习提醒推送, cron: "0 8 * * *", handler: "app.services.task_jobs.push_review_reminders", purpose: 按艾宾浩斯计划推送今日复习清单 }
+      - { name: 周报生成, cron: "0 8 * * 1", handler: "app.services.task_jobs.generate_weekly_report", purpose: 生成上周学情周报 }
+      - { name: 清理过期运维日志, cron: "30 4 * * *", handler: "app.services.task_jobs.clean_old_logs", purpose: 清理过期日志/任务执行记录/已读通知，防止数据库无界增长 }
+      - { name: 清理 AI 草稿题, cron: "0 5 * * *", handler: "app.services.task_jobs.clean_ai_draft_questions", purpose: 清理 7 天前无人引用的 AI 补题/重生草稿，防止题库无界增长 }
+    branches:
+      - { from: job_exec, condition: "锁已被其他进程持有", to: skip, description: 自动触发撞锁时静默跳过，等下个 cron 窗口 }
+      - { from: job_exec, condition: "handler 抛出异常", to: error_log, description: 写 sys_error_log 并保留任务失败记录 }
+    gaps:
+      - "无人工审批节点，无法表达「先审后执行」"
+      - "无流程实例与待办，无法在 UI 上追踪任务流"
+      - "无 SUB_FLOW_CALL 语义，作业之间不能互相编排"
+
+# ══════════════════════════════════════════════════════════
+# 流程三：教学任务生命周期（状态机式，非 M6 审批流）
+# ══════════════════════════════════════════════════════════
+  - id: FLOW-TASK-LIFECYCLE-001
+    name: 教学任务生命周期
+    description: 作业/考试/练习从草稿到归档的状态流转，由 TaskStatus 枚举驱动
+    flowType: STATE_MACHINE
+    configurable: false
+    implementation: "models/task.py TaskStatus + api/v1/task.py"
+    nodeGraph:
+      nodes:
+        - { id: draft, type: START, name: 草稿, activityType: SYSTEM }
+        # 这两个节点由接口/定时任务推进，不是人工活动；
+        # 标注为 SYSTEM 是对现状的如实记录（现状误标为 USER_TASK）。
+        - { id: published, type: SYSTEM_TASK, name: 已发布, activityType: SYSTEM }
+        - { id: ongoing, type: SYSTEM_TASK, name: 进行中, activityType: SYSTEM }
+        - { id: finished, type: END, name: 已结束, activityType: SYSTEM }
+        - { id: archived, type: END, name: 已归档, activityType: SYSTEM }
+      edges:
+        - { from: draft, to: published, condition: "教师发布" }
+        - { from: published, to: ongoing, condition: "到达 start_at" }
+        - { from: ongoing, to: finished, condition: "到达 end_at" }
+        - { from: finished, to: archived, condition: "定时归档任务" }
+    branches: []
+    gaps:
+      - "无人工节点，不构成 M6 意义上的流程"
+      - "状态跃迁由定时任务与接口直接改写，无流程实例记录"
+
+# ══════════════════════════════════════════════════════════
+# 第二部分 · 目标设计（引入流程引擎后的 M6）
+#
+# 设计约束（框架 v9 第 6.5 节 7 条）：
+#   1. 每流程唯一 startActivity，至少一个 endActivities
+#   2. 非 END 可达活动须有合法后继；所有 endActivities 指向 END
+#   3. USER_TASK / APPROVAL_TASK 必须填 roleRef，且角色在流程 roleRefs 内
+#   4. GATEWAY 至少两个分支，最多一个默认分支；非默认分支须给条件
+#   5. SUB_FLOW_CALL 不得成环
+#   6. 审批活动必须显式覆盖通过/驳回/退回
+#   7. 跨对象复用决策 → 定义为 M3 规则并用 ruleRef 引用
+#
+# 落地前提：M3 规则外置（见 prototype/FEASIBILITY_REPORT.md）。
+#   下面用到的 ruleRef 依赖 M3 规则可被流程引擎求值。
+# ══════════════════════════════════════════════════════════
+
+target_flows:
+  # ────────────────────────────────────────────────────────────
+  # 目标流程一：试卷公共库审核（把现有硬编码状态判断升级为可治理流程）
+  # ────────────────────────────────────────────────────────────
+  - id: FLOW-PAPER-REVIEW-001
+    name: 试卷进入公共库审核流
+    flowType: APPROVAL
+    description: 教师将私有试卷申请进公共库，需年级管理员审核；可退回补充后再提交
+    businessObjectRefs:
+      - AGG-PAPER-001
+    roleRefs:
+      - ROLE-TEACHER
+      - ROLE-GRADE-ADMIN
+      - ROLE-SYS-ADMIN
+    trigger:
+      triggerType: BEHAVIOR
+      behaviorRef: Paper_Share
+    preconditions:
+      - "paper.status IN ('draft', 'published', 'rejected')"
+      - "paper.shareScope != 'public' OR paper.status != 'published'"
+    postconditions:
+      - "paper.status = 'published' 且 shareScope = 'public'（通过）"
+      - "paper.status = 'rejected' 且 reviewComment 非空（驳回）"
+      - "流程实例以 APPROVED / REJECTED / RETURNED 结束"
+    startActivity: PR01
+    # 框架约束②：endActivities 必须指向 END 类型活动。
+    # 通过/驳回是「业务结局」不是「流程结局」——用 END 节点上的 outcome 区分。
+    endActivities: [PR07]
+    activities:
+      - activityId: PR01
+        name: 开始
+        activityType: START
+        nextActivities: [PR02]
+      - activityId: PR02
+        name: 提交公共库审核申请
+        activityType: BEHAVIOR_CALL
+        behaviorRef: Paper_Share
+        ruleRef: RULE-PAPER-REVIEW-STATE-GUARD
+        nextActivities: [PR03]
+      - activityId: PR03
+        name: 年级管理员审核
+        activityType: APPROVAL_TASK
+        roleRef: ROLE-GRADE-ADMIN
+        behaviorRef: Paper_SetStatus
+        approvalOutcomes: [APPROVE, REJECT, RETURN]
+        # 超时约束：48 小时（框架 v9 §6.3.3 timeout，单位小时）。
+        # 超过即进入「逾期待办」，但**不自动关闭**——审核该谁做由人决定。
+        timeout: 48
+        nextActivities: [PR04]
+      - activityId: PR04
+        name: 审核结果判断
+        activityType: GATEWAY
+        branches:
+          - branchName: 审核通过
+            conditionExpression: "approval.outcome == 'APPROVE'"
+            targetActivity: PR05
+            isDefault: false
+          - branchName: 驳回
+            conditionExpression: "approval.outcome == 'REJECT'"
+            targetActivity: PR06
+            isDefault: false
+          - branchName: 退回修改
+            conditionExpression: "approval.outcome == 'RETURN'"
+            targetActivity: PR02
+            isDefault: true
+      - activityId: PR05
+        name: 进入公共库
+        activityType: SYSTEM_TASK
+        behaviorRef: Paper_SetStatus
+        ruleRef: RULE-PAPER-PUBLISH-TO-PUBLIC
+        nextActivities: [PR07]
+      - activityId: PR06
+        name: 驳回并记录意见
+        activityType: SYSTEM_TASK
+        behaviorRef: Paper_SetStatus
+        ruleRef: RULE-PAPER-REJECT-REQUIRES-COMMENT
+        nextActivities: [PR07]
+      - activityId: PR07
+        name: 结束
+        activityType: END
+        outcome: APPROVED_OR_REJECTED
+        nextActivities: []
+    gaps:
+      - "现状是 api/v1/paper_compose.py 的单接口三 action（submit/approve/reject）硬编码判断，无流程实例"
+      - "现状无 RETURN 语义：驳回后试卷只能停在 rejected 重新手工提交"
+      - "现状无待办任务：审核人靠列表页筛 status=pending 自己找"
+
+  # ────────────────────────────────────────────────────────────
+  # 目标流程二：AI 生成题目公共库上架审核
+  # ────────────────────────────────────────────────────────────
+  - id: FLOW-QUESTION-PUBLISH-001
+    name: AI 生成题目公共库上架审核流
+    flowType: APPROVAL
+    description: AI 生成题进入待审核库，质检通过后由题库审核员确认上架；支持退回补充
+    businessObjectRefs:
+      - AGG-QUESTION-001
+    roleRefs:
+      - ROLE-SYS-ADMIN
+      - ROLE-GRADE-ADMIN
+    trigger:
+      triggerType: BEHAVIOR
+      behaviorRef: Question_SetStatus
+    preconditions:
+      - "question.bankType = 'public'"
+      - "question.status IN ('draft', 'pending', 'rejected')"
+    postconditions:
+      - "question.status = 'published'（上架）"
+      - "question.status = 'rejected'（驳回）"
+    startActivity: QP01
+    endActivities: [QP07]
+    activities:
+      - activityId: QP01
+        name: 开始
+        activityType: START
+        nextActivities: [QP02]
+      - activityId: QP02
+        name: 质检检查
+        activityType: SYSTEM_TASK
+        behaviorRef: QuestionQuality_Inspect
+        ruleRef: RULE-KP-COVERAGE-CHECK
+        nextActivities: [QP03]
+      - activityId: QP03
+        name: 题库审核员确认
+        activityType: APPROVAL_TASK
+        roleRef: ROLE-SYS-ADMIN
+        behaviorRef: Question_SetStatus
+        approvalOutcomes: [APPROVE, REJECT, RETURN]
+        # 超时约束：24 小时。题库轮转快，AI 生成题堆积一天就该催办。
+        timeout: 24
+        nextActivities: [QP04]
+      - activityId: QP04
+        name: 审核结果判断
+        activityType: GATEWAY
+        branches:
+          - branchName: 上架
+            conditionExpression: "approval.outcome == 'APPROVE'"
+            targetActivity: QP05
+            isDefault: false
+          - branchName: 驳回
+            conditionExpression: "approval.outcome == 'REJECT'"
+            targetActivity: QP06
+            isDefault: false
+          - branchName: 退回补充
+            conditionExpression: "approval.outcome == 'RETURN'"
+            targetActivity: QP02
+            isDefault: true
+      - activityId: QP05
+        name: 上架公共题库
+        activityType: SYSTEM_TASK
+        behaviorRef: Question_SetStatus
+        ruleRef: RULE-PUBLIC-BANK-NEEDS-AUDIT
+        nextActivities: [QP07]
+      - activityId: QP06
+        name: 驳回并记录
+        activityType: SYSTEM_TASK
+        behaviorRef: Question_SetStatus
+        nextActivities: [QP07]
+      - activityId: QP07
+        name: 结束
+        activityType: END
+        outcome: APPROVED_OR_REJECTED
+        nextActivities: []
+    gaps:
+      - "现状 services/question_quality.py 的 publish() 批量直接置 published，无逐题审核留痕"
+      - "质检结果 issues_for() 只在列表展示，不阻断流程"
+
+  # ────────────────────────────────────────────────────────────
+  # 目标流程三：用户注册审批（把现有硬编码升级为流程）
+  # ────────────────────────────────────────────────────────────
+  - id: FLOW-REGISTRATION-001-T
+    name: 用户注册审批流（目标版）
+    flowType: APPROVAL
+    description: 学生/教师注册后经管理员审批；驳回必须填原因
+    businessObjectRefs:
+      - AGG-USER-001
+    roleRefs:
+      - ROLE-GUEST
+      - ROLE-SYS-ADMIN
+    trigger:
+      triggerType: BEHAVIOR
+      behaviorRef: User_Register
+    preconditions:
+      - "user.status = 'pending'"
+    postconditions:
+      - "user.status = 'active'（通过）"
+      - "registration.status = 'rejected'（驳回）"
+    startActivity: RG01
+    endActivities: [RG06]
+    activities:
+      - activityId: RG01
+        name: 开始
+        activityType: START
+        nextActivities: [RG02]
+      - activityId: RG02
+        name: 提交注册申请
+        activityType: BEHAVIOR_CALL
+        roleRef: ROLE-GUEST
+        behaviorRef: User_Register
+        nextActivities: [RG03]
+      - activityId: RG03
+        name: 管理员审批
+        activityType: APPROVAL_TASK
+        roleRef: ROLE-SYS-ADMIN
+        behaviorRef: User_ApproveRegistration
+        approvalOutcomes: [APPROVE, REJECT]
+        # 超时约束：72 小时。注册涉及账号开通，用户可能周末才看到通知。
+        timeout: 72
+        nextActivities: [RG04]
+      - activityId: RG04
+        name: 审批通过
+        activityType: SYSTEM_TASK
+        behaviorRef: User_ApproveRegistration
+        nextActivities: [RG06]
+      - activityId: RG05
+        name: 审批驳回
+        activityType: SYSTEM_TASK
+        behaviorRef: User_ApproveRegistration
+        ruleRef: RULE-REGISTRATION-REJECT-REQUIRES-REASON
+        nextActivities: [RG06]
+      - activityId: RG06
+        name: 结束
+        activityType: END
+        nextActivities: []
+    note: >
+      RG03 的后继写 RG04，但驳回分支经 RG04 的 SYSTEM_TASK 也能到达 RG06；
+      落地时若要严格区分两态，应改为在 RG03 后加 GATEWAY（本次保留
+      现状语义：审批接口按 approved 布尔分流）。
+      2.5.48 修正：RG02「提交注册申请」原为 USER_TASK，导致流程启动即在访客角色上
+      生成待办、永远到不了 RG03 的管理员审批——发起方已完成的动作不应产生待办，
+      已改为 BEHAVIOR_CALL（系统执行后直接推进到 RG03）。
+
+  # ────────────────────────────────────────────────────────────
+  # 目标流程四：教学任务发布与批改协同流（COLLABORATION）
+  # ────────────────────────────────────────────────────────────
+  - id: FLOW-TASK-LIFECYCLE-001-T
+    name: 作业考试全生命周期协同流
+    flowType: COLLABORATION
+    description: 教师发布任务 → 学生作答 → 自动判分 → 教师批改 → 成绩发布
+    businessObjectRefs:
+      - AGG-TASK-001
+      - AGG-WRONG-001
+      - AGG-MASTERY-001
+    roleRefs:
+      - ROLE-TEACHER
+      - ROLE-STUDENT
+    trigger:
+      triggerType: BEHAVIOR
+      behaviorRef: Task_Publish
+    preconditions:
+      - "task.status = 'draft'"
+      - "任务已绑定试卷或为随机练习"
+    postconditions:
+      - "task.status = 'finished'"
+      - "submission.gradeStatus = 'published'"
+    startActivity: TL01
+    endActivities: [TL09]
+    activities:
+      - activityId: TL01
+        name: 开始
+        activityType: START
+        nextActivities: [TL02]
+      - activityId: TL02
+        name: 教师发布任务
+        activityType: USER_TASK
+        roleRef: ROLE-TEACHER
+        behaviorRef: Task_Publish
+        nextActivities: [TL03]
+      - activityId: TL03
+        name: 学生作答
+        activityType: USER_TASK
+        roleRef: ROLE-STUDENT
+        behaviorRef: Task_Submit
+        nextActivities: [TL04]
+      - activityId: TL04
+        name: 客观题自动判分
+        activityType: SYSTEM_TASK
+        behaviorRef: Grading_AutoGrade
+        ruleRef: RULE-GRADE-OBJECTIVE-LOCAL
+        nextActivities: [TL05]
+      - activityId: TL05
+        name: 是否存在主观题
+        activityType: GATEWAY
+        branches:
+          - branchName: 有主观题需人工批改
+            conditionExpression: "submission.hasManualQuestions == true"
+            targetActivity: TL06
+            isDefault: false
+          - branchName: 全部客观题，直接发布
+            conditionExpression: null
+            targetActivity: TL08
+            isDefault: true
+      - activityId: TL06
+        name: 教师批改
+        activityType: USER_TASK
+        roleRef: ROLE-TEACHER
+        behaviorRef: Grading_Finalize
+        nextActivities: [TL07]
+      - activityId: TL07
+        name: 主观题批改完成
+        activityType: SYSTEM_TASK
+        behaviorRef: Grading_Finalize
+        ruleRef: RULE-GRADE-RANK-CONSISTENT
+        nextActivities: [TL08]
+      - activityId: TL08
+        name: 发布成绩
+        activityType: SYSTEM_TASK
+        behaviorRef: Grading_Publish
+        nextActivities: [TL09]
+      - activityId: TL09
+        name: 结束
+        activityType: END
+        nextActivities: []
+    note: >
+      TL03 学生作答是**多次**发生的（每人一次），不是单次流转。
+      流程引擎落地时这一节点应建模为"并行会签"或"等待全部提交"，
+      不能按单次活动处理——这是设计与实现的已知差异点。
+
+# ══════════════════════════════════════════════════════════
+# 一致性核对（现状 + 目标）
+# ══════════════════════════════════════════════════════════
+consistency_notes:
+  # ── 现状 ──
+  current:
+    total_flows: 3
+    true_approval_flows: 1
+    system_scheduled_flows: 1
+    state_machine_flows: 1
+    role_refs_valid: true
+    behavior_refs_valid: true
+    sub_flow_calls: 0
+    cycle_check: "无 SUB_FLOW_CALL 调用图，无环风险"
+  # ── 目标 ──
+  target:
+    total_flows: 4
+    approval_flows: 3
+    collaboration_flows: 1
+    activities_total: 30
+    gateway_count: 4
+    approval_task_count: 3
+    rule_refs: 8
+    constraints_checked:
+      - "① 唯一 startActivity + 至少一个 endActivities：4/4 通过"
+      - "② 非 END 可达活动有后继、endActivities 指向 END：4/4 通过"
+      - "③ USER_TASK/APPROVAL_TASK 的 roleRef 在流程 roleRefs 内：3/3 通过"
+      - "④ GATEWAY ≥2 分支、≤1 默认分支、非默认分支有条件：4/4 通过"
+      - "⑤ SUB_FLOW_CALL 无环：本次 0 个子流程调用，无环"
+      - "⑥ 审批活动显式覆盖 APPROVE/REJECT/RETURN：3/3 通过"
+      - "⑦ 跨对象决策用 M3 ruleRef：8 处已声明"
+    blocking_prerequisite: >
+      M3 规则外置。目标流程引用了 8 个 ruleRef，其中
+      RULE-PAPER-REVIEW-STATE-GUARD / RULE-PAPER-PUBLISH-TO-PUBLIC /
+      RULE-PAPER-REJECT-REQUIRES-COMMENT / RULE-REGISTRATION-REJECT-REQUIRES-REASON
+      为本次新增规则，需先写入 m3-rule-model.yaml 并通过规则引擎求值。
+    known_deviations:
+      - "FLOW-REGISTRATION-001-T：审批后继未严格区分通过/驳回两态，保留现状语义"
+      - "FLOW-TASK-LIFECYCLE-001-T：学生作答节点实为 N 次并发，非单次流转"
+  conclusion: >
+    现状 M6 维度最薄弱：没有可配置流程定义、没有流程实例、没有待办中心、
+    没有多级审批与退回语义。现有审批能力仅覆盖注册审批与试卷审核两个单节点场景。
+    目标设计新增 4 条流程 / 30 个活动 / 3 个审批任务，依赖 M3 规则外置先行。

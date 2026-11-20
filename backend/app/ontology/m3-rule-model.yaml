@@ -1,0 +1,450 @@
+# M3 规则模型元文件 - 新芽学堂现有系统反向映射
+# 来源：backend/app/services/*.py 与 api/v1/*.py 中实际 raise 的业务校验
+# 说明：expression 用框架约定的谓词风格表达；violationMessage 取自代码中的中文原文，
+#       保证盘点结果可直接与实现逐条对照。
+model_type: RULE
+version: "1.0"
+domain: "九年义务教育 AI 学习平台"
+source: "edu-ai-platform @ 2.5.47（services + api/v1 的 raise BusinessException/PermissionException）"
+
+rules:
+  # ══════════════════════════════════════════════════════════
+  # 题目与试卷规则
+  # ══════════════════════════════════════════════════════════
+  - id: RULE-QUESTION-SCORE-RANGE
+    name: 题目分值合法范围
+    description: 题目分值必须是数字且落在 0~1000 之间
+    category: FIELD
+    expression: "isNumber(score) AND score >= 0 AND score <= 1000"
+    violationMessage: 题目分值需在 0~1000 之间
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/paper_items.py:92-94"
+
+  - id: RULE-QUESTION-FINGERPRINT-UNIQUE
+    name: 题干指纹唯一
+    description: 题干哈希在题库内唯一，用于识别重复录入
+    category: CROSS_ENTITY
+    expression: "COUNT(edu_question WHERE fingerprint = value.fingerprint) <= 1"
+    violationMessage: 题干重复，疑似同一题目重复录入
+    enforcedAt: ON_CREATE
+    params:
+      - name: fingerprint
+        label: 题干指纹
+        type: String
+        required: true
+    reads: [fingerprint]
+    source_ref: "models/question.py:fingerprint 字段注释「题干哈希，用于查重」"
+
+  - id: RULE-QUESTION-REFERENCED-NO-DELETE
+    name: 被引用题目不可删除
+    description: 题目已被任务引用时只能停用（archived），不可物理删除
+    category: CROSS_ENTITY
+    expression: "NOT 被任务引用 OR status = 'archived'"
+    violationMessage: 题目已被任务引用，不能删除，请改为停用
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "models/question.py QuestionStatus.ARCHIVED 注释「被任务引用时不可删，只能停用」"
+
+  - id: RULE-PAPER-ITEM-SCORE-RANGE
+    name: 试卷题目分值范围
+    description: 组卷写入时逐题校验分值
+    category: FIELD
+    expression: "isNumber(score) AND score >= 0 AND score <= 1000"
+    violationMessage: 题目分值需在 0~1000 之间
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/paper_items.py:92-94"
+
+  - id: RULE-PAPER-NO-DUPLICATE-ITEM
+    name: 试卷内题目不可重复
+    description: 同一 question_id 在一张试卷中只能出现一次
+    category: CROSS_ENTITY
+    expression: "COUNT(paper_item WHERE question_id = value.question_id) <= 1"
+    violationMessage: 试卷中题目重复
+    enforcedAt: ON_CREATE
+    params: []
+    reads: [question_id]
+    source_ref: "services/paper_items.py:63"
+
+  - id: RULE-PAPER-GRADE-SUBJECT-CONSISTENT
+    name: 题目年级学科与试卷一致
+    description: 试卷题目项的年级/学科必须与试卷本身一致
+    category: CROSS_ENTITY
+    expression: "question.grade_id == paper.grade_id AND question.subject_id == paper.subject_id"
+    violationMessage: 题目年级/学科与试卷不一致
+    enforcedAt: ALWAYS
+    params: []
+    reads: [grade_id, subject_id]
+    source_ref: "services/paper_items.py:77"
+
+  - id: RULE-COMPOSE-SCORE-POSITIVE
+    name: 组卷题型分值必须为正
+    description: 组卷时单题分值必须大于 0
+    category: FIELD
+    expression: "score > 0"
+    violationMessage: 单题分值必须大于 0
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/paper_compose_engine.py:163"
+
+  - id: RULE-COMPOSE-RATIO-SPLIT
+    name: 组卷比例切分必须合计对齐
+    description: 按比例抽题时，各难度/题型分配合计必须等于总题量；比例与题量两种入参不得混用
+    category: COMPUTATION
+    expression: "SUM(split_counts) == total_count"
+    violationMessage: 难度/题型配比之和与总题量不一致
+    enforcedAt: ALWAYS
+    params:
+      - name: total_count
+        label: 总题量
+        type: Integer
+        required: true
+    source_ref: "services/paper_compose_service.py:normalize_difficulty / split_by_difficulty"
+
+  # ══════════════════════════════════════════════════════════
+  # 任务与批改规则
+  # ══════════════════════════════════════════════════════════
+  - id: RULE-TASK-DEADLINE
+    name: 任务提交时限
+    description: end_at 必须晚于 start_at；超过截止时间不可提交
+    category: TIME
+    expression: "end_at > start_at AND NOW() <= end_at"
+    violationMessage: 任务已截止，无法提交
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "api/v1/task.py: if end_at <= start_at 校验"
+
+  - id: RULE-GRADE-OBJECTIVE-LOCAL
+    name: 客观题本地判分
+    description: 客观题（单选/多选/判断）以题库标准答案本地比对，不调用大模型
+    category: COMPUTATION
+    expression: "answer IN (question.answer) AND type IN ('single','multiple','judge')"
+    violationMessage: 客观题判分异常
+    enforcedAt: ALWAYS
+    params: []
+    reads: [answer]
+    source_ref: "services/grading_service.py:_auto_grade_answers"
+
+  - id: RULE-GRADE-RANK-CONSISTENT
+    name: 排名一致性
+    description: 班级排名按总分降序，同分同名次
+    category: COMPUTATION
+    expression: "rank(i) >= rank(j) WHEN score(i) >= score(j)"
+    violationMessage: 排名与成绩不一致
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/grading_service.py:_calc_rank"
+
+  - id: RULE-TASK-REMEDIATION-IDEMPOTENT
+    name: 专项作业幂等
+    description: 同一班级同一知识点 10 分钟内重复触发不重复建任务
+    category: CROSS_ENTITY
+    expression: "NOT (EXISTS(同班级同知识点任务) AND 最近创建时间 > NOW() - 10min)"
+    violationMessage: 刚刚已为该班级派发过相同知识点的作业
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "BACKLOG R47-9（10 分钟内同班级同知识点幂等复用）"
+
+  # ══════════════════════════════════════════════════════════
+  # 教学图谱规则
+  # ══════════════════════════════════════════════════════════
+  - id: RULE-GRAPH-NO-CYCLE
+    name: 先修关系无环
+    description: 知识点先修依赖构成有向无环图，环会导致诊断无法排序
+    category: CROSS_ENTITY
+    expression: "拓扑排序可完成"
+    violationMessage: 先修关系存在环，无法完成诊断排序
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/knowledge_diagnosis.py:topo_sort / would_create_cycle"
+
+  - id: RULE-GRAPH-NODE-BOUND
+    name: 图谱节点有界
+    description: 中心 BFS 展开的节点数有硬上限，防止高扇出节点拖垮响应
+    category: RESOURCE
+    expression: "node_count <= MAX_NODES"
+    violationMessage: 图谱节点数量超出上限
+    enforcedAt: ALWAYS
+    params:
+      - name: MAX_NODES
+        label: 节点上限
+        type: Integer
+        required: true
+    source_ref: "BACKLOG KG-O4（中心 BFS 节点硬上限）"
+
+  - id: RULE-DIAGNOSIS-NEEDS-TARGET
+    name: 诊断必须指定目标知识点
+    description: 诊断会话至少需要一个目标知识点
+    category: FIELD
+    expression: "LENGTH(target_knowledge_points) >= 1"
+    violationMessage: 至少需要一个目标知识点
+    enforcedAt: ON_CREATE
+    params: []
+    source_ref: "services/knowledge_diagnosis.py:299"
+
+  - id: RULE-KP-COVERAGE-CHECK
+    name: 知识点覆盖检查
+    description: 题库质量工作台检测缺项、重复与显式冲突
+    category: CROSS_ENTITY
+    expression: "无缺项 AND 无显式冲突"
+    violationMessage: 存在知识点缺项或冲突
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/question_quality.py"
+
+  - id: RULE-TEACHING-COUNT-GE-KP
+    name: 专项作业题量不少于知识点数
+    description: 按选中知识点派发专项作业时，题量不得少于知识点数量
+    category: FIELD
+    expression: "question_count >= LENGTH(selected_knowledge_points)"
+    violationMessage: 题量不能小于选中的知识点数量
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/teaching_graph.py:104"
+
+  - id: RULE-TEACHING-SUBJECT-GRADE-MATCH
+    name: 学科与班级年级一致
+    description: 班级图谱按学科操作时，学科必须属于该班级所在年级
+    category: CROSS_ENTITY
+    expression: "subject.grade_id == class.grade_id"
+    violationMessage: 学科与班级年级不一致
+    enforcedAt: ALWAYS
+    params: []
+    reads: [grade_id]
+    source_ref: "services/teaching_graph.py:31"
+
+  # ══════════════════════════════════════════════════════════
+  # 答疑与反馈规则（2.5.47 新增）
+  # ══════════════════════════════════════════════════════════
+  - id: RULE-TUTOR-NO-ANSWER-DURING-EXAM
+    name: 考试进行中不可索取答案
+    description: 考试/作业/补弱测验/诊断进行中，答疑的"答案"阶段一律拒绝；提示与步骤不受影响
+    category: CROSS_ENTITY
+    expression: "NOT (存在进行中的 exam/homework/remediation/diagnosis 且 命中该题)"
+    violationMessage: 考试期间不能请求该试题的答疑
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/grounded_tutor.py:105 + BACKLOG R47-6"
+
+  - id: RULE-FEEDBACK-RATE-LIMIT
+    name: 答疑反馈限流
+    description: 单用户 24 小时内最多提交 30 条反馈
+    category: RESOURCE
+    expression: "COUNT(feedback WHERE user_id = value.user_id AND created_at > NOW() - 24h) < 30"
+    violationMessage: 反馈提交过于频繁，请稍后再试
+    enforcedAt: ALWAYS
+    params:
+      - name: limit
+        label: 24 小时上限
+        type: Integer
+        required: true
+        defaultValue: 30
+    reads: [user_id]
+    source_ref: "services/grounded_tutor.py DAILY_FEEDBACK_LIMIT = 30"
+
+  - id: RULE-FEEDBACK-IDEMPOTENT
+    name: 反馈同题同阶段幂等
+    description: 同一题同一阶段 10 分钟内重复提交复用已有反馈
+    category: CROSS_ENTITY
+    expression: "NOT (EXISTS(同用户同题同阶段反馈) AND 最近提交时间 > NOW() - 10min)"
+    violationMessage: 已提交过该题的反馈，请稍后再试
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/grounded_tutor.py FEEDBACK_DEDUPE_MINUTES = 10"
+
+  - id: RULE-FEEDBACK-SCOPE-CONFIRM
+    name: 教师纠错范围确认
+    description: 非超管教师纠错必须显式确认 class_id，纠错仅对该班学生生效
+    category: CROSS_ENTITY
+    expression: "isSuperAdmin OR confirm_scope IS NOT NULL"
+    violationMessage: 纠错需先确认影响范围（班级）
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "BACKLOG R47-7 + 迁移 0004_tutor_feedback_scope"
+
+  # ══════════════════════════════════════════════════════════
+  # 学习闭环规则
+  # ══════════════════════════════════════════════════════════
+  - id: RULE-REVIEW-ROUND-COUNT
+    name: 艾宾浩斯复习轮次
+    description: 错题生成 1/2/4/7 天四轮复习计划
+    category: COMPUTATION
+    expression: "LENGTH(review_rounds) == 4"
+    violationMessage: 复习轮次数量不正确
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "README「艾宾浩斯 1/2/4/7 天四轮」"
+
+  - id: RULE-PRACTICE-BASE-ON-WEAK
+    name: 随机练习基于薄弱知识点
+    description: 练习抽题优先取薄弱知识点，题量不低于知识点数
+    category: COMPUTATION
+    expression: "抽题覆盖至少一个薄弱知识点"
+    violationMessage: 无可用薄弱知识点
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/grading_service.py:_weak_knowledge / pick_practice_questions"
+
+  - id: RULE-REMEDIATION-NEEDS-TARGET
+    name: 补弱计划需有待补知识点
+    description: 当前诊断没有待补知识点时不得创建计划
+    category: FIELD
+    expression: "存在待补知识点"
+    violationMessage: 当前诊断没有需要补弱的知识点
+    enforcedAt: ON_CREATE
+    params: []
+    source_ref: "services/remediation.py:71"
+
+  - id: RULE-REMEDIATION-NO-DUPLICATE-STEP
+    name: 补弱步骤不重复练习
+    description: 当前步骤无需重复练习时拒绝提交
+    category: FIELD
+    expression: "当前步骤允许练习"
+    violationMessage: 当前步骤无需重复练习
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/remediation.py:111"
+
+  # ══════════════════════════════════════════════════════════
+  # 用户、权限与通知规则
+  # ══════════════════════════════════════════════════════════
+  - id: RULE-USER-PASSWORD-LENGTH
+    name: 密码长度下限
+    description: 密码长度不能少于配置的 PASSWORD_MIN_LENGTH 位
+    category: FIELD
+    expression: "LENGTH(value) >= PASSWORD_MIN_LENGTH"
+    violationMessage: 密码长度不足
+    enforcedAt: ON_CREATE
+    params:
+      - name: PASSWORD_MIN_LENGTH
+        label: 密码最小长度
+        type: Integer
+        required: true
+    source_ref: "services/auth_service.py:45"
+
+  - id: RULE-USER-PASSWORD-NOT-SAME
+    name: 新密码不得与原密码相同
+    description: 修改密码时新旧密码必须不同
+    category: FIELD
+    expression: "new_password != old_password"
+    violationMessage: 新密码不能与原密码相同
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/auth_service.py:279"
+
+  - id: RULE-PUBLIC-BANK-NEEDS-AUDIT
+    name: 公共题库上架需审核
+    description: 题目进入公共题库必须经管理员审核，AI 生成题目一律进待审核库
+    category: CROSS_ENTITY
+    expression: "bank_type != 'public' OR status != 'published' OR 已审核通过"
+    violationMessage: 公共题库上架需管理员审核
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/question_quality.py:68,140,160"
+
+  - id: RULE-DATA-SCOPE-FILTER
+    name: 数据权限范围过滤
+    description: 查询按角色 data_scope 强制过滤：all 全校 / grade 本年级 / taught_class 所授班级 / self 本人 / none 无数据
+    category: CROSS_ENTITY
+    expression: "按 data_scope 追加 WHERE 条件"
+    violationMessage: 越权访问
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/class_analytics.py:19 + models/system.py data_scope 注释"
+
+  - id: RULE-NOTIFY-PREF-RESPECT
+    name: 通知偏好不可静默关闭
+    description: 接收人关闭某类别通知后不再发送；安全类提醒不可被关闭
+    category: CROSS_ENTITY
+    expression: "类别已开启 OR 类别 == 'security'"
+    violationMessage: 未知的通知类别
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "verify_p0_fixes.py 的通知偏好断言段"
+
+  - id: RULE-TAXONOMY-CYCLE-CHECK
+    name: 上游同步不成环
+    description: 应用上游同步前必须通过环检测；预览阶段即可拦截
+    category: CROSS_ENTITY
+    expression: "拓扑排序可完成"
+    violationMessage: 同步后先修关系将成环
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/taxonomy_sync.py + services/knowledge_diagnosis.py:would_create_cycle"
+
+  - id: RULE-TAXONOMY-SOURCE-DRIFT
+    name: 源与库无漂移方可应用
+    description: 上游预览快照与当前库不一致时禁止直接应用，须重新预览
+    category: CROSS_ENTITY
+    expression: "preview_hash == current_source_hash"
+    violationMessage: 上游数据已变化，请重新预览后再应用
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "services/taxonomy_sync.py"
+
+  # ══════════════════════════════════════════════════════════
+  # 流程流转规则（M6 引入后新增，供流程节点求值）
+  # ══════════════════════════════════════════════════════════
+  - id: RULE-PAPER-REVIEW-STATE-GUARD
+    name: 试卷提交审核的状态前置
+    description: 只有非 pending 状态的试卷才能提交公共库审核；已在公共库的不可重复提交
+    category: CROSS_ENTITY
+    expression: "paper.status != 'pending' AND NOT (paper.share_scope == 'public' AND paper.status == 'published')"
+    violationMessage: 该试卷已在审核中或已进入公共库，无法重复提交
+    enforcedAt: ALWAYS
+    params: []
+    reads: [status, share_scope]
+    source_ref: "api/v1/paper_compose.py: review() submit 分支的现有判断"
+
+  - id: RULE-PAPER-PUBLISH-TO-PUBLIC
+    name: 审核通过进入公共库
+    description: 审核通过后试卷状态置为 published、共享范围置为 public
+    category: CROSS_ENTITY
+    expression: "paper.status == 'published' AND paper.share_scope == 'public'"
+    violationMessage: 审核通过后未能正确进入公共库
+    enforcedAt: ALWAYS
+    params: []
+    reads: [status, share_scope]
+    source_ref: "api/v1/paper_compose.py: review() approve 分支的现有赋值"
+
+  - id: RULE-PAPER-REJECT-REQUIRES-COMMENT
+    name: 驳回必须填写审核意见
+    description: 试卷审核被驳回时必须给出审核意见，否则拒绝
+    category: FIELD
+    expression: "LENGTH(comment) > 0"
+    violationMessage: 驳回时必须填写审核意见
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "api/v1/paper_compose.py: review() reject 分支的现有校验"
+
+  - id: RULE-REGISTRATION-REJECT-REQUIRES-REASON
+    name: 驳回注册必须填写原因
+    description: 注册申请被驳回时必须填写驳回原因
+    category: FIELD
+    expression: "LENGTH(reason) > 0"
+    violationMessage: 驳回申请必须填写原因
+    enforcedAt: ALWAYS
+    params: []
+    source_ref: "api/v1/auth.py: audit_registration 的现有校验"
+
+# ══════════════════════════════════════════════════════════
+# 分类统计
+# ══════════════════════════════════════════════════════════
+statistics:
+  total: 37
+  by_category:
+    FIELD: 13
+    CROSS_ENTITY: 15
+    COMPUTATION: 4
+    RESOURCE: 2
+    TIME: 1
+    FLOW: 2
+  by_enforcement:
+    ALWAYS: 24
+    ON_CREATE: 5
+    ON_UPDATE: 0
+  note: >
+    本系统规则以代码内联校验为主（raise BusinessException/PermissionException），
+    全部为「硬校验」（ALWAYS 或 ON_CREATE），没有独立的 ON_UPDATE 阶段规则。
+    规则未声明式建模——这是与七模型框架的第二个主要差异点。

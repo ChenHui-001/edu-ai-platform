@@ -28,8 +28,12 @@ from app.models import Registration, User
 from app.schemas import RefreshTokenIn
 from app.services import auth_service
 from app.utils.common import dictify, ok
+from app.services.flow_orchestration import (
+    complete_registration_flow, start_registration_flow,
+)
 
 logger = get_logger("auth")
+
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -237,6 +241,9 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
         attachments=payload.attachments,
         reason=payload.reason,
     )
+    # 编排层：同步启动 M6 注册审批流程实例，产生系统管理员待办。
+    # 流程不接管 user.status——状态仍由 auth_service 写入。
+    start_registration_flow(db, user)
     return ok(
         {"user_id": user.id, "status": user.status},
         message="注册申请已提交，请等待管理员审批",
@@ -287,6 +294,10 @@ def audit_registration(
     user = auth_service.audit_registration(
         db, payload.registration_id, payload.approved, admin.id, payload.reason
     )
+    # 编排层：推进 M6 流程实例（通过/驳回）。
+    complete_registration_flow(
+        db, user, "APPROVE" if payload.approved else "REJECT",
+        comment=payload.reason)
     # 不能直接 dictify(user)：会把 password（PBKDF2 哈希）回传给前端。
     _u = dictify(user)
     _u.pop("password", None)

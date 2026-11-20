@@ -132,6 +132,10 @@ if [ -n "$GATE_PY" ]; then
   "$GATE_PY" tools/check_new_code_tests.py || GATE_RC=1
   "$GATE_PY" tools/check_file_size.py || GATE_RC=1
   "$GATE_PY" tools/check_plaintext_secrets.py || GATE_RC=1
+  # Q-08：本体副本漂移。audit-reports/ 里的本体源文件与 backend/app/ontology/ 的分发副本
+  # 必须逐字节一致 —— 副本漂移的后果是「本地全绿、线上找不到流程定义」，
+  # 因为镜像只 COPY backend/app，audit-reports 根本进不去容器。
+  "$GATE_PY" tools/check_ontology_consistency.py || GATE_RC=1
   # N+1 棘轮：A 类（循环内逐条查库）只许降不许升。
   # 脚本早就写好了，但此前只在 CI 定时任务里跑，本地改完 API 直接提交，
   # 到 CI 才发现（或根本没人看）。默认非严格模式只出报告，--ratchet 卡基线。
@@ -204,7 +208,8 @@ fi
 if [ -n "$GATE_PY" ]; then
   REGRESS_SCRIPTS="verify_paper_rescore verify_compose_engine verify_pdf_export_safety \
 verify_bugfix_256 verify_compose_regenerate verify_paper_v3 verify_llm_routing \
-verify_ai_fill_parallel verify_knowledge_graph verify_math_taxonomy_integration verify_learning_extensions"
+verify_ai_fill_parallel verify_knowledge_graph verify_math_taxonomy_integration verify_learning_extensions \
+verify_flow_engine"
   # macOS 自带 coreutils 的路径与 Linux 不同；两条都没有就直接跑（不设上限），
   # 不能因为缺一个可选命令就让发版脚本直接报错。
   TIMEOUT_CMD=""

@@ -31,7 +31,20 @@ PY = sys.executable
 
 
 def _run(cmd, cwd, env=None):
-    return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
+    # ★ 编码必须显式指定，不能靠 text=True 走系统默认编码。
+    #   Windows 中文环境的默认编码是 GBK，而子进程输出的 `[config] APP_VERSION=
+    #   '' 非版本号...` 是 UTF-8（应用内部统一用 UTF-8）。用 GBK 解码会抛
+    #   UnicodeDecodeError: 'gbk' codec can't decode byte 0xac ...，
+    #   而 capture_output=True 下这个异常发生在读取线程里，**子进程已经跑完**
+    #   （returncode=0）但 stdout 变成 None —— 于是调用方拿到
+    #   `AttributeError: 'NoneType' object has no attribute 'strip'`，
+    #   报错点离真正的原因隔了三层，极难定位。
+    #   errors="replace" 是第二道保险：万一子进程真吐出非法字节，
+    #   宁可拿到带替换符的文本，也不要整条命令崩掉。
+    return subprocess.run(
+        cmd, cwd=cwd, env=env, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
 
 
 def measure_routes_tables():
@@ -67,16 +80,33 @@ def measure_routes_tables():
         return None, None
 
 
+# 后端用例所在的测试文件。写死单个文件会让新增的测试套件不被计数，
+# 现状卡上的「后端用例」当场低估——指标失真比指标缺失更糟。
+PYTEST_SUITES = (
+    "backend/qa_audit_suite.py",
+    "backend/qa_flow_engine_suite.py",
+    "backend/qa_flow_urge_suite.py",
+)
+
+
 def count_pytest():
-    """用例数（`--collect-only` 不执行，约 1s）。"""
-    r = _run([PY, "-m", "pytest", "backend/qa_audit_suite.py",
-              "--collect-only", "-q"], cwd=ROOT)
-    m = re.search(r"(\d+)\s+tests?\s+collected", r.stdout or "")
-    if m:
-        return int(m.group(1))
-    # 老版本 pytest 输出形如 "60 tests collected"；再兜一层「收集到 N 项」
-    m = re.search(r"collected\s+(\d+)", r.stdout or "")
-    return int(m.group(1)) if m else None
+    """用例数（`--collect-only` 不执行，约 1s）。
+
+    多个套件合并计数：口径是「后端 pytest 用例总数」，
+    不是「某一个套件的用例数」。
+    """
+    total = 0
+    for suite in PYTEST_SUITES:
+        if not os.path.exists(os.path.join(ROOT, suite)):
+            continue
+        r = _run([PY, "-m", "pytest", suite, "--collect-only", "-q"], cwd=ROOT)
+        m = re.search(r"(\d+)\s+tests?\s+collected", r.stdout or "")
+        if not m:
+            # 老版本 pytest 输出形如 "60 tests collected"；再兜一层「收集到 N 项」
+            m = re.search(r"collected\s+(\d+)", r.stdout or "")
+        if m:
+            total += int(m.group(1))
+    return total or None
 
 
 def count_vitest():
@@ -131,6 +161,47 @@ def count_migrations():
     return len(re.findall(r"\(\s*\"", block.group(1))) if block else None
 
 
+def count_image_size():
+    """生产镜像体积（`docker images` 实测 unified 镜像）。
+
+    阶段 0 镜像瘦身后新增这一行：2.01GB → 1.39GB。
+    体积是「用户能感知的资源成本」——镜像每 GB 都要下载、存储、解压，
+    在服务器上还要占磁盘与内存。做瘦身时这一行必须能被自动核对，
+    否则下次谁加回一个依赖，体积回涨了也没人知道。
+
+    读不到 docker（未装 / 无权限 / 镜像未构建）时返回 None，
+    渲染成「—」，不因此让整个脚本失败。
+    """
+    try:
+        r = subprocess.run(
+            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}\t{{.Size}}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0 or not r.stdout:
+        return None
+    # 优先取 `:latest`（生产交付物约定的标签）；没有再退回列表里第一个
+    # 含 "edu-ai-platform" 的镜像。本机常有多个实验 tag（slim-test / baseline
+    # 等），按列表序取第一个会拿到实验镜像，数字会随本机残留漂移。
+    best = None
+    fallback = None
+    for line in r.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        name, _, size = line.partition("\t")
+        if "edu-ai-platform" not in name:
+            continue
+        name = name.strip()
+        if name.endswith(":latest"):
+            best = size.strip()
+            break
+        if fallback is None:
+            fallback = size.strip()
+    return best or fallback
+
+
 def render():
     version = open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
     routes, tables = measure_routes_tables()
@@ -138,11 +209,12 @@ def render():
         ("版本", version, "`VERSION` 文件"),
         ("接口操作数", routes, "`app.openapi()` 的 path×method"),
         ("数据表数", tables, "`Base.metadata.tables`"),
-        ("后端用例", count_pytest(), "`pytest backend/qa_audit_suite.py --collect-only`"),
+        ("后端用例", count_pytest(), "`pytest backend/qa_*_suite.py --collect-only` 合计"),
         ("前端用例", count_vitest(), "`frontend/src/**/__tests__` 内 `it(` 计数"),
         ("接口断言", count_verify_assertions(), "`tools/verify_p0_fixes.py` 实际通过条数"),
         ("补列迁移", count_migrations(), "`core/db_migrations._COLUMNS`"),
         ("发版门禁", count_gates(), "`tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数"),
+        ("镜像体积", count_image_size(), "`docker images` 实测 unified 镜像"),
     ]
     lines = [BEGIN, "| 项 | 实测值 | 口径 |", "|---|---:|---|"]
     for label, value, how in data:

@@ -250,6 +250,9 @@ const MENU_GROUPS = [
     ]
   },
   { title: 'AI 智能', icon: 'MagicStick', prefixes: ['/agent/', '/admin/agent-logs'] },
+  // 流程待办：高频入口，独立成组并排在系统管理之前。
+  // 放最后的话，用户要点两次「系统管理」才找得到待办。
+  { title: '我的待办', icon: 'Stamp', prefixes: ['/admin/flow-todo'] },
   { title: '系统管理', icon: 'Setting', prefixes: ['/admin/'] }
 ]
 

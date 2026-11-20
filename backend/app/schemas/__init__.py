@@ -8,6 +8,9 @@
 """
 from app.schemas.agent import PaperComposerRequest
 from app.schemas.auth import RefreshTokenIn
+from app.schemas.flow import (
+    FlowActionIn, FlowDeadlineIn, FlowReturnIn, FlowTransferIn, FlowUrgeIn,
+)
 from app.schemas.learning import (
     AttachmentBindIn, NoteCreateIn, NoteShareIn, NoteUpdateIn, WrongQuestionUpdateIn,
 )
@@ -18,6 +21,11 @@ from app.schemas.taxonomy import (
 
 __all__ = [
     "PaperComposerRequest",
+    "FlowActionIn",
+    "FlowDeadlineIn",
+    "FlowReturnIn",
+    "FlowTransferIn",
+    "FlowUrgeIn",
     "QuestionBatchCreateIn",
     "RefreshTokenIn",
     "NoteCreateIn",

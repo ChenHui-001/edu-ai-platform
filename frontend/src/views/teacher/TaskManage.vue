@@ -97,10 +97,11 @@
             <el-tag :type="statusTag(row)" size="small">{{ statusLabel(row) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right">
+        <el-table-column label="操作" width="290" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openSubs(row)">提交情况</el-button>
             <el-button link type="success" @click="openReport(row)">学情报告</el-button>
+            <el-button v-if="canUrgeTask(row)" link type="warning" @click="openUrge(row)">催交</el-button>
             <el-button v-if="canEditTask(row)" link type="primary" @click="openDialog(row)">编辑</el-button>
             <el-button v-if="canEditTask(row)" link type="danger" @click="remove(row)">删除</el-button>
           </template>
@@ -268,6 +269,9 @@
       </template>
     </el-drawer>
 
+    <!-- 催交考试 / 作业 -->
+    <ExamUrgeDialog v-model="urgeDlgVisible" :task="urgeTask" @done="onUrgeDone" />
+
     <!-- 答卷详情 -->
     <el-dialog v-model="answerDlg" title="答卷详情" width="720px" top="5vh">
       <div v-loading="answerLoading">
@@ -294,6 +298,7 @@ import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { taskApi, questionApi, eduApi, gradingApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { confirmAction } from '@/utils/confirm'
+import ExamUrgeDialog from '@/components/ExamUrgeDialog.vue'
 
 const userStore = useUserStore()
 // 按钮级权限统一取 store 的 can getter
@@ -327,6 +332,9 @@ const stats = ref({})
 const statsLoading = ref(false)
 const selection = ref([])
 const batchLoading = ref(false)
+// 催交对话框
+const urgeDlgVisible = ref(false)
+const urgeTask = ref(null)
 
 const query = reactive({
   page: 1, page_size: 20, task_type: '', status: '',
@@ -377,6 +385,22 @@ function isOwner(row) {
 
 function canEditTask(row) {
   return can('task:write') && isOwner(row)
+}
+
+// 催交权限与后端一致：任务创建者或管理员。
+// 「任教班级就能催」不行 —— 催办会打扰学生，边界应与「谁有权改这个任务」一致。
+function canUrgeTask(row) {
+  return !!row && (isSysAdmin.value || row.creator_id === meId)
+}
+
+function openUrge(row) {
+  urgeTask.value = row
+  urgeDlgVisible.value = true
+}
+
+function onUrgeDone() {
+  // 催交后刷新列表，让「已交/待交」进度立刻反映出来。
+  refreshAll()
 }
 
 function onSelectionChange(rows) { selection.value = rows || [] }

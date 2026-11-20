@@ -37,6 +37,9 @@ from app.models.taxonomy import (  # noqa: F401
     KnowledgePrerequisite, TaxonomyDiagnosisSession,
 )
 from app.models.learning_ext import RemediationPlan, TutorFeedback, TaxonomySyncRun  # noqa: F401
+from app.models.flow import (  # noqa: F401
+    FlowDefinition, FlowHistory, FlowInstance, FlowTask, FlowTransfer,
+)
 
 __all__ = [
     "Base",
@@ -48,6 +51,8 @@ __all__ = [
     "Grade", "Subject", "Class", "KnowledgePoint", "TeachingAssignment",
     "KnowledgePrerequisite", "TaxonomyDiagnosisSession",
     "RemediationPlan", "TutorFeedback", "TaxonomySyncRun",
+    # flow（流程引擎）
+    "FlowDefinition", "FlowInstance", "FlowTask", "FlowHistory", "FlowTransfer",
     # question
     "Question", "QuestionKnowledge", "Paper", "PaperItem", "PaperShare",
     "QuestionType", "QuestionStatus", "QuestionBankType", "Difficulty",

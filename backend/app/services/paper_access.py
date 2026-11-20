@@ -13,8 +13,12 @@ from typing import Optional
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.exception import PermissionException
-from app.models import Paper, PaperShare, SharePermission, ShareScope, User
+from app.core.exception import BusinessException, PermissionException
+from app.utils.common import now_local
+from app.services.flow_orchestration import sync_paper_review_flow
+from app.models import (
+    Paper, PaperShare, PaperStatus, SharePermission, ShareScope, User,
+)
 
 
 def _is_sys_admin(user: User) -> bool:
@@ -127,3 +131,64 @@ def _assert_can_edit(db: Session, paper: Paper, user: User) -> None:
     perm = _share_permission(db, paper, user)
     if perm != SharePermission.EDIT.value:
         raise PermissionException("只能编辑自己创建的试卷，或经授权的共享试卷")
+
+
+# ------------------------------------------------------------------
+# 审核状态机
+# ------------------------------------------------------------------
+
+def apply_paper_review_action(db: Session, paper: Paper, user: User,
+                              action: str, comment: str = "") -> dict:
+    """执行一次试卷审核动作（submit / approve / reject）。
+
+    **校验、状态写入、流程编排全部在此完成**，路由层只负责解析请求体。
+
+    从 `api/v1/paper_compose.py` 下沉的原因有两个：
+      1. 那个文件已在文件体积门禁的预算边缘，状态机逻辑放进去只会让它更臃肿；
+      2. 状态机（draft→pending→published/rejected）本就该有一处可单测的实现，
+         埋在路由函数里只能靠 HTTP 层间接覆盖。
+
+    返回给前端的结果字典；异常直接抛出（BusinessException / PermissionException）。
+
+    **流程编排是可选增强**：编排失败只记 warning，不影响本函数的业务结果，
+    也不回滚已写入的状态——审核已受理，业务状态必须如实反映。
+    """
+    action = (action or "").strip().lower()
+    if action not in ("submit", "approve", "reject"):
+        raise BusinessException("action 仅支持 submit / approve / reject")
+
+    if action == "submit":
+        _assert_can_edit(db, paper, user)
+        if paper.status == PaperStatus.PENDING.value:
+            raise BusinessException("该试卷已在审核中，请等待审核结果")
+        if paper.share_scope == ShareScope.PUBLIC.value and \
+                paper.status == PaperStatus.PUBLISHED.value:
+            raise BusinessException("该试卷已进入公共库")
+        paper.status = PaperStatus.PENDING.value
+        paper.review_comment = None
+        db.commit()
+        sync_paper_review_flow(db, paper, user, "submit")
+        return {"status": paper.status}
+
+    if not _is_sys_admin(user) and not _is_grade_admin(user):
+        raise PermissionException("仅管理员可审核试卷")
+    if paper.status != PaperStatus.PENDING.value:
+        raise BusinessException("该试卷不在待审核状态")
+
+    paper.review_by = user.id
+    paper.review_at = now_local()
+    if action == "approve":
+        paper.status = PaperStatus.PUBLISHED.value
+        paper.share_scope = ShareScope.PUBLIC.value
+        paper.is_shared = True
+        db.commit()
+        sync_paper_review_flow(db, paper, user, "approve", comment=comment or None)
+        return {"status": paper.status, "share_scope": paper.share_scope}
+
+    if not comment:
+        raise BusinessException("驳回时必须填写审核意见")
+    paper.status = PaperStatus.REJECTED.value
+    paper.review_comment = comment[:2000]
+    db.commit()
+    sync_paper_review_flow(db, paper, user, "reject", comment=comment)
+    return {"status": paper.status, "review_comment": paper.review_comment}

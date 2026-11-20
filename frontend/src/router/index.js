@@ -29,6 +29,10 @@ const routes = [
         meta: { title: '角色权限', icon: 'Avatar', roles: ['sys_admin'] } },
       { path: 'admin/registrations', name: 'RegistrationAudit', component: () => import('@/views/admin/RegistrationAudit.vue'),
         meta: { title: '注册审批', icon: 'Stamp', roles: ['sys_admin'] } },
+      // 流程待办（M6）：待办按角色可见，审批是角色职责而非个人数据。
+      // 因此这里不挂 perm —— 有待办角色的登录用户都应看到入口。
+      { path: 'admin/flow-todo', name: 'FlowTodo', component: () => import('@/views/admin/FlowTodo.vue'),
+        meta: { title: '流程待办', icon: 'Stamp', roles: ['sys_admin', 'grade_admin', 'teacher'] } },
       { path: 'admin/grades', name: 'GradeManage', component: () => import('@/views/admin/ResourceManage.vue'),
         meta: { title: '年级管理', icon: 'School', perm: 'resource:grade:list' } },
       { path: 'admin/subjects', name: 'SubjectManage', component: () => import('@/views/admin/ResourceManage.vue'),

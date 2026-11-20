@@ -136,6 +136,7 @@ from app.services.paper_access import (  # noqa: F401
     _assert_readable,
     _is_grade_admin,
     _is_sys_admin,
+    apply_paper_review_action,
     _legacy_shared_clause,
     _paper_visibility_clause,
     _scope_clause,
@@ -1307,49 +1308,24 @@ def review_paper(
     - submit：教师申请进公共库（draft/published → pending）
     - approve：管理员通过（pending → published，share_scope=public）
     - reject：管理员驳回（pending → rejected），需给意见
+
+    校验与状态机实现在 `services/paper_access.apply_paper_review_action`，
+    本函数只负责解析请求体与组装响应。
     """
     data = body.model_dump(exclude_unset=True)
     paper = db.get(Paper, paper_id)
     if not paper:
         raise NotFoundException("试卷不存在")
     action = str(data.get("action") or "").strip().lower()
-    if action not in ("submit", "approve", "reject"):
-        raise BusinessException("action 仅支持 submit / approve / reject")
-
-    if action == "submit":
-        _assert_can_edit(db, paper, user)
-        if paper.status == PaperStatus.PENDING.value:
-            raise BusinessException("该试卷已在审核中，请等待审核结果")
-        if paper.share_scope == ShareScope.PUBLIC.value and \
-                paper.status == PaperStatus.PUBLISHED.value:
-            raise BusinessException("该试卷已进入公共库")
-        paper.status = PaperStatus.PENDING.value
-        paper.review_comment = None
-        db.commit()
-        return ok({"status": paper.status}, message="已提交审核")
-
-    if not _is_sys_admin(user) and not _is_grade_admin(user):
-        raise PermissionException("仅管理员可审核试卷")
-    if paper.status != PaperStatus.PENDING.value:
-        raise BusinessException("该试卷不在待审核状态")
-
-    paper.review_by = user.id
-    paper.review_at = __import__("app.utils.common", fromlist=["now_local"]).now_local()
-    if action == "approve":
-        paper.status = PaperStatus.PUBLISHED.value
-        paper.share_scope = ShareScope.PUBLIC.value
-        paper.is_shared = True
-        db.commit()
-        return ok({"status": paper.status, "share_scope": paper.share_scope},
-                  message="审核通过，已进入公共库")
-    comment = str(data.get("comment") or "").strip()
-    if not comment:
-        raise BusinessException("驳回时必须填写审核意见")
-    paper.status = PaperStatus.REJECTED.value
-    paper.review_comment = comment[:2000]
-    db.commit()
-    return ok({"status": paper.status, "review_comment": paper.review_comment},
-              message="已驳回")
+    result = apply_paper_review_action(
+        db, paper, user, action,
+        comment=str(data.get("comment") or "").strip())
+    message = {
+        "submit": "已提交审核",
+        "approve": "审核通过，已进入公共库",
+        "reject": "已驳回",
+    }.get(action, "已处理")
+    return ok(result, message=message)
 
 
 # ---------------------------------------------------------------- 导出

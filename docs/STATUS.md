@@ -11,14 +11,15 @@
 <!-- status:auto:begin -->
 | 项 | 实测值 | 口径 |
 |---|---:|---|
-| 版本 | 2.5.47 | `VERSION` 文件 |
-| 接口操作数 | 322 | `app.openapi()` 的 path×method |
-| 数据表数 | 58 | `Base.metadata.tables` |
-| 后端用例 | 74 | `pytest backend/qa_audit_suite.py --collect-only` |
-| 前端用例 | 160 | `frontend/src/**/__tests__` 内 `it(` 计数 |
+| 版本 | 2.5.49 | `VERSION` 文件 |
+| 接口操作数 | 339 | `app.openapi()` 的 path×method |
+| 数据表数 | 63 | `Base.metadata.tables` |
+| 后端用例 | 145 | `pytest backend/qa_*_suite.py --collect-only` 合计 |
+| 前端用例 | 187 | `frontend/src/**/__tests__` 内 `it(` 计数 |
 | 接口断言 | 117 | `tools/verify_p0_fixes.py` 实际通过条数 |
-| 补列迁移 | 40 | `core/db_migrations._COLUMNS` |
-| 发版门禁 | 23 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |
+| 补列迁移 | 44 | `core/db_migrations._COLUMNS` |
+| 发版门禁 | 24 | `tools/auto_ship.sh` 引用的 check_*/scan_vue_* 数 |
+| 镜像体积 | 1.39GB | `docker images` 实测 unified 镜像 |
 
 > 由 `python tools/status_snapshot.py --write` 生成。版本号另由 `tools/check_doc_versions.py` 门禁强制与 `VERSION` 一致。
 <!-- status:auto:end -->
@@ -35,6 +36,7 @@
 | 前端 | Vue 3 + Vite + Element Plus（unplugin 按需） | 图表统一走 `utils/echarts.js` 按需注册，禁止全量引入 |
 | 迁移 | Alembic 基线 `0001_baseline` + 存量库幂等补列 + `align_schema.py` 漂移对齐 | 新变更走 `alembic revision`；补列清单由 `check_migration_columns` 守，迁移链由 `check_alembic_sync` 守 |
 | 生产 | `https://592587860.xyz:8443`（Caddy → `127.0.0.1:8081`），容器 `edu-platform`，数据 `/opt/edu-ai-platform/{data,logs}` | 容器端口只绑回环；勿动 Caddy(80/5010)、8080、gostc(7500+)；备份/恢复见 [`OPERATIONS.md`](OPERATIONS.md) |
+| 镜像瘦身 | 阶段 0 已完成：unified 2.01GB→1.39GB、backend 1.59GB→1.32GB | 剔除项与「不能删」的依赖图依据见 [`IMAGE_SLIMDOWN_2026-11-20.md`](IMAGE_SLIMDOWN_2026-11-20.md)；改动依赖前先读该文档的依赖图不动点分析 |
 
 ## 三、四层一致性
 

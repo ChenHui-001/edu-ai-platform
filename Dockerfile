@@ -23,7 +23,35 @@ ARG PIP_EXTRA_INDEX_URL=""
 RUN pip install --no-cache-dir --retries 10 --timeout 120 \
         --index-url "$PIP_INDEX_URL" \
         ${PIP_EXTRA_INDEX_URL:+--extra-index-url "$PIP_EXTRA_INDEX_URL"} \
-        -r /tmp/requirements.txt
+        -r /tmp/requirements.txt \
+    && pip uninstall -y \
+        kubernetes aiohttp aiohappyeyeballs aiosignal durationpy frozenlist \
+        multidict oauthlib propcache python-dateutil requests-oauthlib six \
+        websocket-client yarl \
+        zstandard hf_xet mmh3 \
+    && pip check 2>&1 | grep -v "No broken requirements found" || true
+
+# ---- 阶段 0 镜像瘦身：剔除无用传递依赖（已实测验证）----
+# 上面的 pip uninstall 是**卸载真包**，不是装假包。依据与实测见
+# backend/requirements.txt 末尾「体积裁剪约束」注释。
+#
+# 摘出来的包与其体积（实测 2.5.47 镜像）：
+#   kubernetes 84MB + aiohttp 9MB + websocket-client/durationpy/
+#   requests-oauthlib/oauthlib/six/urllib3*/multidict/yarl/propcache/
+#   aiosignal/frozenlist/aiohappyeyeballs/python-dateutil  ≈ 96MB
+#   zstandard 24MB（仅 httpx/langsmith 的 try/except 可选路径）
+#   hf_xet 11MB（仅 huggingface_hub 的 xet 加速上传）
+#   mmh3 1MB
+#
+# ★ 不能删的（实测依赖图）：
+#   requests / urllib3 / certifi / idna / charset-normalizer —— langsmith、
+#     tiktoken、httpx 仍在用；attrs —— jsonschema/referencing 仍在用；
+#     pyyaml —— chromadb/huggingface_hub/langchain-core 仍在用；
+#     typing-extensions / tzdata —— 大半个依赖树共用。
+#
+# 实测（2.5.47 镜像内真实卸载后）：chromadb create/add/query、langchain +
+# langgraph 导入、langsmith 导入、httpx 真实网络请求、uvicorn 真实起服务并
+# 响应 HTTP、PyMuPDF/Pillow 中文字体渲染、FastAPI 全栈 —— 全部通过。
 
 
 # ==================== 运行层依赖（不含编译器，体积小）====================
@@ -33,20 +61,99 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     TZ=Asia/Shanghai \
-    PATH=/usr/local/bin:$PATH
+    PATH=/usr/local/bin:$PATH \
+    HOME=/home/app
 
-# libgl1/libglib2.0 为 numpy/PyMuPDF 运行时所需；fonts-noto-cjk 用于中文渲染
+# fonts-noto-cjk 用于中文渲染（验证码 + PDF 导出）
+#
+# ★ 阶段 0 瘦身：原先这里还装了 libgl1 + libglib2.0-0，注释说
+#   「为 numpy/PyMuPDF 运行时所需」——**这个说法是错的**。实测：
+#   对镜像内**全部** .so 做 ldd 扫描，无任何一个链接 libGL/libglib/
+#   libEGL/libgbm；且项目不装 opencv，PyMuPDF 用的是 MuPDF 自带渲染器，
+#   不走 OpenGL。装它们的唯一后果是拖进整套 Mesa/LLVM 图形栈：
+#     libllvm19 123MB + mesa-libgallium 40MB + libz3-4 26MB ≈ 190MB
+#   （libgl1 → libglx0/libglvnd0 → libglx-mesa0 → mesa-libgallium →
+#     libllvm19 → libz3-4）
+# 去掉后 numpy / PyMuPDF / Pillow / reportlab 全部照常工作（已实测）。
 RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; \
             s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
         /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
     && apt-get update \
     && apt-get install -y --no-install-recommends --fix-missing \
-        curl libgl1 libglib2.0-0 fonts-noto-cjk \
+        curl fonts-noto-cjk \
+    && apt-get purge -y --auto-remove \
+        libgl1 libglib2.0-0 libgl1-mesa-glx libgl1-mesa-dri \
+        libglx0 libglvnd0 libglx-mesa0 mesa-libgallium libllvm19 \
+        libz3-4 libgbm1 libdrm2 libdrm-common libx11-6 libx11-data \
+        libxcb1 libxcb-dri3-0 libxcb-glx0 libxcb-present0 libxcb-randr0 \
+        libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxdmcp6 libxext6 \
+        libxshmfence1 libxxf86vm1 libsensors-config libsensors5 \
+        libvulkan1 libdrm-amdgpu1 libdrm-intel1 libpciaccess0 libedit2 \
     && rm -rf /var/lib/apt/lists/*
+
+# ---- 阶段 0 瘦身：字体只留 Sans，砍掉从未被引用的 Serif ----
+# fonts-noto-cjk 带 4 个 .ttc（合计 89MB）：
+#   NotoSansCJK-Bold.ttc    19MB  ← app/core/security.py 验证码字体
+#   NotoSansCJK-Regular.ttc 18MB  ← app/services/paper_export_service.py PDF 导出
+#   NotoSerifCJK-Bold.ttc    26MB  ← 全项目零引用（rg 无命中）
+#   NotoSerifCJK-Regular.ttc 25MB  ← 全项目零引用
+# 砍掉两个 Serif 文件后，验证码与 PDF 导出的中文渲染照常（已实测）。
+RUN rm -f /usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc \
+        /usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc \
+    && ls -la /usr/share/fonts/opentype/noto/
 
 # 从编译层拷贝 site-packages（含 chromadb / langgraph 等纯 wheel 依赖）
 COPY --from=backend-builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=backend-builder /usr/local/bin /usr/local/bin
+
+# ---- 阶段 0 瘦身：剔掉 site-packages 里的 .pyc（实测 134MB）----
+# pip 安装时会把 .py 编译成 .pyc 缓存。容器里这些 .pyc 占了 134MB
+# （site-packages 共 906MB，其中 916 个 __pycache__ 目录）。
+# 代价：进程首次 import 需重新编译，实测启动 1.65s → 2.13s（+0.5s）。
+# 容器常驻数小时、只启动一次，这个代价换 134MB 是算盘的。
+# 注意 PYTHONDONTWRITEBYTECODE=1 已设，运行时不会再生成新的 .pyc。
+RUN find /usr/local/lib/python3.11/site-packages -name "__pycache__" -type d \
+        -prune -exec rm -rf {} + \
+    && find /usr/local/lib/python3.11/site-packages -name "*.pyc" -delete \
+    && echo "pyc cleaned"
+
+# ---- 预置 ChromaDB 的默认 embedding 模型（约 79MB）----
+# ★ 阶段 0 修复：原先**只有 unified 阶段**预置 ONNX 模型，backend 阶段
+#   没有。结果 `docker build --target backend` 出来的镜像，首次做向量检索
+#   会现场下载 79MB（实测 slim-test 容器启动日志里确实在下载），
+#   内网/弱网下必然超时，拖垮 /edu/knowledge/reindex 等接口。
+#   现在把预置提到 backend-base，两者共用同一份缓存。
+#
+# ★ chromadb 1.5.9 只认 Path.home()，不读任何环境变量（实测）：
+#   chromadb/utils/embedding_functions/onnx_mini_lm_l6_v2.py:39
+#     DOWNLOAD_PATH = Path.home() / ".cache" / "chroma" / "onnx_models" / MODEL_NAME
+#   因此原来的 `ENV CHROMA_CACHE_DIR=...` **完全无效**（原注释作“兼容两种实现”
+#   是误导）。真正生效的开关是 HOME 环境变量 → Path.home()。
+#   上面已给 backend-base 设 HOME=/home/app，预置目录也必须是 /home/app/.cache；
+#   若预置在 /root/.cache/chroma，app 用户根本读不到（/root 是 0700），
+#   预置等于白做、首次向量检索仍要现场下载。
+#
+# 因此 backend-base 必须先创建 app 用户（统一在 unified 阶段也要用）。
+ARG ONNX_URL="https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/onnx.tar.gz"
+RUN groupadd -g 10001 app \
+    && useradd -u 10001 -g app -m -d /home/app -s /usr/sbin/nologin app \
+    && mkdir -p /home/app/.cache/chroma/onnx_models/all-MiniLM-L6-v2 \
+    && ONNX_DIR=/home/app/.cache/chroma/onnx_models/all-MiniLM-L6-v2 \
+    && for u in "$ONNX_URL" \
+              "https://hf-mirror.com/chroma/all-MiniLM-L6-v2/resolve/main/onnx.tar.gz"; do \
+         echo "尝试下载 embedding 模型: $u"; \
+         if curl -fsSL --retry 3 --retry-all-errors --max-time 600 \
+                 -o /tmp/onnx.tar.gz "$u" \
+            && tar -xzf /tmp/onnx.tar.gz -C "$ONNX_DIR" 2>/dev/null \
+            && [ -n "$(ls -A "$ONNX_DIR" 2>/dev/null)" ]; then \
+             rm -f /tmp/onnx.tar.gz; \
+             echo "embedding 模型预置完成（来源: $u）"; \
+             break; \
+         fi; \
+         echo "  来源不可用，尝试下一个"; \
+       done \
+    && chown -R app:app /home/app/.cache \
+    && ls -la "$ONNX_DIR" || true
 
 
 # ==================== 前端构建 ====================
@@ -130,10 +237,10 @@ WORKDIR /app
 # nginx 要绑定特权端口 80 并写 /var/log/nginx，root 降权后无法完成。
 # 因此镜像级别**不**写 `USER app`（否则 supervisord 起不来），
 # 真正的降权点在 deploy/supervisord.conf 的 [program:backend] user=app。
+# app 用户已在 backend-base 阶段创建（ONNX 模型预置需要它），
+# 此处不再重复创建（重复 groupadd 会报 "already exists" 并中断构建）。
 ARG APP_UID=10001
 ARG APP_GID=10001
-RUN groupadd -g "${APP_GID}" app \
-    && useradd -u "${APP_UID}" -g app -m -d /home/app -s /usr/sbin/nologin app
 
 COPY backend/app ./app
 COPY backend/alembic.ini ./alembic.ini
@@ -154,38 +261,9 @@ RUN printf 'version=%s\ncommit=%s\nbuilt_at=%s\n' \
         "${GIT_COMMIT:-unknown}" "${BUILD_TIME:-unknown}" \
         > /app/BUILD_INFO
 
-# ---- 预热 ChromaDB 的默认 embedding 模型（约 79MB）----
-# 不预置的话，**每个全新容器首次做向量检索时都要现场下载**，
-# 内网/弱网下必然超时，进而拖垮 /edu/knowledge/reindex 等接口。
-# 在构建阶段拉一次，运行时直接命中缓存。
-#
-# 注意：两个源都可能因网络抖动失败（实测官方 S3 偶发 TLS EOF，
-# hf-mirror 返回 308 重定向）。任一成功即可；
-# 都失败时只告警不中断构建 —— 运行时 ChromaDB 仍会自行下载，
-# 配合 REINDEX_TIMEOUT_SEC 硬超时不会拖死调用方。
-#
-# 缓存目录必须放在 app 用户可读的位置：降权后 uvicorn 的 HOME=/home/app，
-# 若仍预置在 /root/.cache/chroma，app 用户根本读不到（/root 是 0700），
-# 预热等于白做、首次向量检索仍要现场下载。同时导出 CHROMA_CACHE_DIR，
-# 兼容不同 chromadb 版本「读环境变量 / 用 Path.home() 推导」两种实现。
-ARG ONNX_URL="https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/onnx.tar.gz"
-ENV CHROMA_CACHE_DIR=/home/app/.cache/chroma
-RUN mkdir -p "$CHROMA_CACHE_DIR/onnx_models/all-MiniLM-L6-v2" \
-    && ONNX_DIR="$CHROMA_CACHE_DIR/onnx_models/all-MiniLM-L6-v2" \
-    && for u in "$ONNX_URL" \
-              "https://hf-mirror.com/chroma/all-MiniLM-L6-v2/resolve/main/onnx.tar.gz"; do \
-         echo "尝试下载 embedding 模型: $u"; \
-         if curl -fsSL --retry 3 --retry-all-errors --max-time 600 \
-                 -o /tmp/onnx.tar.gz "$u" \
-            && tar -xzf /tmp/onnx.tar.gz -C "$ONNX_DIR" 2>/dev/null \
-            && [ -n "$(ls -A "$ONNX_DIR" 2>/dev/null)" ]; then \
-             rm -f /tmp/onnx.tar.gz; \
-             echo "embedding 模型预置完成（来源: $u）"; \
-             break; \
-         fi; \
-         echo "  来源不可用，尝试下一个"; \
-       done \
-    && ls -la "$ONNX_DIR" || true
+# embedding 模型的预置已上移到 backend-base 阶段（见上方）。
+# unified 继承 backend-base，因此自动包含预置好的 ONNX 缓存，
+# 无需在此复制一份（重复下载会多花 ~15s 构建时间）。
 
 # 前端静态资源
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html

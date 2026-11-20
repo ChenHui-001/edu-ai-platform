@@ -46,9 +46,41 @@ langchain==1.5.2
 langchain-core==1.8.3
 langchain-openai==1.8.3
 langgraph==1.2.23
+# 规则引擎（M3 规则求值）的表达式求值器。
+# ★ 修复：此前**未列入 requirements**，但 backend/app/services/rule_engine.py
+#   直接 `from simpleeval import SimpleEval` —— 生产镜像里该包不存在，
+#   任何触达规则引擎的请求都会 ImportError。本地 venv 因被其他包顺带安装
+#   才没暴露。依赖必须显式声明，不能靠传递依赖「顺带」存在。
+simpleeval==0.9.13
 # Chroma 1.5 的 ONNX MiniLM 模型缓存在 ~/.cache/chroma（Dockerfile 已预置），
 # 不再随包分发；容器首次检索不会现场下载。
 chromadb==1.5.9
 
 # ===== HTTP 客户端 =====
 httpx==0.28.1
+
+# ===== 体积裁剪约束（阶段 0：镜像瘦身）=====
+# 下面这些包都是 chromadb / langchain 的**传递依赖**，但本项目一个都用不到：
+#   kubernetes(84MB)+aiohttp/websocket-client/durationpy/requests-oauthlib/
+#   oauthlib/six/urllib3/charset-normalizer/multidict/yarl/propcache/
+#   aiosignal/frozenlist/aiohappyeyeballs/python-dateutil  ≈ 96MB
+#   zstandard(24MB)  仅被 httpx/langsmith 以 try/except 保护的可选路径使用
+#   hf_xet(11MB)     仅 huggingface_hub 的 xet 加速上传路径使用
+#   mmh3(1MB)        仅 chromadb 的 hash 辅助
+# 证据：chromadb 只在 chromadb/segment/impl/distributed/（K8s 分布式后端）
+# 与测试代码里 import kubernetes；本项目用 PersistentClient 本地模式，
+# 完全不触碰该路径。实测屏蔽后 chromadb 1.5.9 的 create/add/query 全链路通过。
+#
+# ★ 这里**不**再声明 kubernetes：声明它等于要求 pip 必须安装那 84MB。
+#   真正的裁剪动作在 Dockerfile 的 backend-builder 阶段用
+#   `pip uninstall -y` 完成（pip 没有原生 exclude 语法）。
+#
+# ★ 不能删的（依赖图不动点分析结果，删了会破）：
+#   requests / urllib3 / certifi / idna / charset-normalizer —— langsmith、
+#     tiktoken、httpx 仍在用；attrs —— jsonschema/referencing 仍在用；
+#     pyyaml —— chromadb/huggingface_hub/langchain-core 仍在用；
+#     typing-extensions / tzdata —— 大半个依赖树共用。
+#
+# 注意：requirements.txt 只描述**直接依赖**。裁剪后的依赖树由 Dockerfile
+# 里的 uninstall 列表保证；本机 venv 不需要跟着裁（开发环境要留 kubernetes
+# 以便本地复现完整依赖图）。
