@@ -210,12 +210,12 @@
 | 新增文件 | `tools/ensure_acceptance_accounts.py`、`docs/ACCEPTANCE_ACCOUNTS.md` |
 | 后端运行时代码 | **无变化** —— `tools/` 与 `docs/` 均被 `.dockerignore` 排除，不进镜像 |
 | 镜像 | 需重建：`VERSION` 会被 `COPY` 进镜像并烧进 `/app/BUILD_INFO`，故版本号变化即镜像内容变化 |
-| commit | `137b5897731dc72661a3cf0cefe61b2cee761207` |
-| digest | `sha256:4166f107592620fc12fcc11a7088957c47f38b94824c4b05b2376c5e32986e23`（ghcr 与 Docker Hub 六处标签同 digest） |
-| 标签 | `2.5.50` / `latest` / `sha-137b589` |
+| commit | `862f6e220d37227fc995d42a1d409ea193b26c4d` |
+| digest | `sha256:e0d14cb5f721d38d50e77912a477d0eaf85c7069c70e9b09963a97c076378511`（ghcr 与 Docker Hub 六处标签同 digest） |
+| 标签 | `2.5.50` / `latest` / `sha-862f6e2` |
 | 口令文件（生产） | `/opt/edu-ai-platform/.acceptance_password`（0600 root:root） |
 | 口令文件（本机） | 仓库外 `E:\project\management\PRIVATE_ACCOUNTS_PASSWORD_2026-11-20.txt` |
-| 生产备份 | `pre-20261120-133129-2.5.49.db`（14104 KB） |
+| 生产备份 | `pre-20261120-134548-2.5.50.db`（14108 KB） |
 
 > **为何本轮仍要重建镜像**：`tools/` 与 `docs/` 不进镜像，**后端运行时代码逐字节未变**；
 > 但 `VERSION` 会被 `Dockerfile` 的 `COPY VERSION ./VERSION` 带进镜像，
@@ -227,15 +227,34 @@
 
 | 层 | 版本 | 指纹 | 判定 |
 |---|---|---|---|
-| 本地 worktree | 2.5.50 | 137b589 | OK（工作区干净） |
-| 远端 origin/master | 2.5.50 | 137b589 | OK（已推送） |
-| 镜像 :2.5.50 | 2.5.50 | 137b589 | OK（BUILD_INFO 自洽） |
-| 服务器 :8081 | 2.5.50 | 137b589 | OK（容器 BUILD_INFO 一致） |
+| 本地 worktree | 2.5.50 | 862f6e2 | OK（工作区干净） |
+| 远端 origin/master | 2.5.50 | 862f6e2 | OK（已推送） |
+| 镜像 :2.5.50 | 2.5.50 | 862f6e2 | OK（BUILD_INFO 自洽） |
+| 服务器 :8081 | 2.5.50 | 862f6e2 | OK（容器 BUILD_INFO 一致） |
 
 ### 部署后复验（2.5.50 容器内实测）
 
 - `/api/v1/health` → healthy **v2.5.50**，db=sqlite，llm=True
 - `/api/v1/ready` → ready=true（database / schema / uploads / exports / logs 全 true）
-- 容器 `/app/BUILD_INFO` → `version=2.5.50` / `commit=137b589`
+- 容器 `/app/BUILD_INFO` → `version=2.5.50` / `commit=862f6e2`
 - 外网 `https://592587860.xyz:8443/api/v1/health` → healthy v2.5.50
 - **三个验收账号在重建后的新容器里仍能真实 HTTP 登录**（走完整图形验证码），均 HTTP 200
+
+### 顺带修掉的巡检缺陷
+
+`tools/check_four_layer.py` 的服务器层此前只看 commit 字面是否等于 HEAD，不等就判
+「版本号相同但 commit 不同（未走发版流程）」—— 与 `docs/DELIVERY_RULES.md` 第 1 条
+（**仅文档/记录类提交不需要重建镜像**）直接冲突。实际后果是每发一笔发布记录，
+四层巡检就报一次漂移，而规则恰恰允许文档提交不发版；发版链路与巡检链路
+给出相反结论，且巡检那条是错的。
+
+已改为复用 `check_release_consistency.commits_missing_from_image` 的同一套
+「差异是否落在会被 COPY 的路径」判据，两条链路不再各说各话：
+
+- 差异全在 `docs/`、`tools/`、`*.md` 等不进镜像的路径 → 判 OK，并注明
+  「镜像出自 `<sha>`，HEAD `<sha>` 之后只有不影响镜像内容的改动」；
+- 差异含 `backend/app/`、`frontend/`、`VERSION` 等会进镜像的路径 → 仍判 DRIFT，
+  并列出差异文件。
+
+实测：`137b589→032fbbe`（只改 docs/）判不影响镜像；`e1bd821→032fbbe`（含 VERSION）
+判影响镜像 —— 两种情况都能正确分流。
