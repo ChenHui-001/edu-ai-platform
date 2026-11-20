@@ -5,14 +5,6 @@
 - Function Count: 289
 
 
-
-
-
-
-
-
-
-
 ## FUNC-auth-auth-captcha
 - ID: FUNC-auth-auth-captcha
 - 类型: business
@@ -29,14 +21,6 @@
 - 实现链: ./function-chain-index.md#func-auth-auth-captcha
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-register
@@ -57,14 +41,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-auth-auth-registrations
 - ID: FUNC-auth-auth-registrations
 - 类型: business
@@ -81,14 +57,6 @@
 - 实现链: ./function-chain-index.md#func-auth-auth-registrations
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-registrations-audit
@@ -109,14 +77,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-auth-auth-login
 - ID: FUNC-auth-auth-login
 - 类型: operations
@@ -133,14 +93,6 @@
 - 实现链: ./function-chain-index.md#func-auth-auth-login
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-refresh
@@ -161,14 +113,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-auth-auth-profile
 - ID: FUNC-auth-auth-profile
 - 类型: business
@@ -185,14 +129,6 @@
 - 实现链: ./function-chain-index.md#func-auth-auth-profile
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-password
@@ -213,14 +149,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-auth-auth-logout
 - ID: FUNC-auth-auth-logout
 - 类型: operations
@@ -237,14 +165,6 @@
 - 实现链: ./function-chain-index.md#func-auth-auth-logout
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-forgot-password
@@ -265,14 +185,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-auth-auth-reset-password
 - ID: FUNC-auth-auth-reset-password
 - 类型: business
@@ -289,14 +201,6 @@
 - 实现链: ./function-chain-index.md#func-auth-auth-reset-password
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-todo
@@ -317,14 +221,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-flow-flow-done
 - ID: FUNC-flow-flow-done
 - 类型: business
@@ -341,14 +237,6 @@
 - 实现链: ./function-chain-index.md#func-flow-flow-done
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-instances
@@ -369,14 +257,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-flow-flow-instances-instance-id
 - ID: FUNC-flow-flow-instances-instance-id
 - 类型: business
@@ -393,14 +273,6 @@
 - 实现链: ./function-chain-index.md#func-flow-flow-instances-instance-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-claim
@@ -421,14 +293,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-flow-flow-tasks-task-id-approve
 - ID: FUNC-flow-flow-tasks-task-id-approve
 - 类型: business
@@ -445,14 +309,6 @@
 - 实现链: ./function-chain-index.md#func-flow-flow-tasks-task-id-approve
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-reject
@@ -473,14 +329,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-flow-flow-tasks-task-id-return
 - ID: FUNC-flow-flow-tasks-task-id-return
 - 类型: business
@@ -497,14 +345,6 @@
 - 实现链: ./function-chain-index.md#func-flow-flow-tasks-task-id-return
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-cancel
@@ -525,14 +365,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-flow-flow-definitions-sync
 - ID: FUNC-flow-flow-definitions-sync
 - 类型: business
@@ -549,14 +381,6 @@
 - 实现链: ./function-chain-index.md#func-flow-flow-definitions-sync
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-overdue
@@ -577,14 +401,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-flow-flow-tasks-task-id-transfer-candidates
 - ID: FUNC-flow-flow-tasks-task-id-transfer-candidates
 - 类型: business
@@ -601,14 +417,6 @@
 - 实现链: ./function-chain-index.md#func-flow-flow-tasks-task-id-transfer-candidates
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-transfer
@@ -629,14 +437,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-flow-flow-tasks-task-id-urge
 - ID: FUNC-flow-flow-tasks-task-id-urge
 - 类型: business
@@ -653,14 +453,6 @@
 - 实现链: ./function-chain-index.md#func-flow-flow-tasks-task-id-urge
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-deadline
@@ -681,14 +473,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-remediation
 - ID: FUNC-learning-learning-remediation
 - 类型: business
@@ -705,14 +489,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-remediation
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-remediation-plan-id
@@ -733,14 +509,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-remediation-plan-id-quizzes
 - ID: FUNC-learning-learning-remediation-plan-id-quizzes
 - 类型: business
@@ -757,14 +525,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-remediation-plan-id-quizzes
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-remediation-plan-id-answers
@@ -785,14 +545,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teaching-graph-teaching-graph
 - ID: FUNC-teaching-graph-teaching-graph
 - 类型: business
@@ -809,14 +561,6 @@
 - 实现链: ./function-chain-index.md#func-teaching-graph-teaching-graph
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teaching-graph-teaching-graph-assign
@@ -837,14 +581,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-quality
 - ID: FUNC-question-question-quality
 - 类型: business
@@ -861,14 +597,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-quality
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-quality-publish
@@ -889,14 +617,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-quality-question-id-visual
 - ID: FUNC-question-question-quality-question-id-visual
 - 类型: business
@@ -913,14 +633,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-quality-question-id-visual
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-tutor
@@ -941,14 +653,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-tutor-feedback
 - ID: FUNC-learning-learning-tutor-feedback
 - 类型: business
@@ -965,14 +669,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-tutor-feedback
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-tutor-feedback-feedback-id
@@ -993,14 +689,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-taxonomy-sync-system-taxonomy-sync
 - ID: FUNC-taxonomy-sync-system-taxonomy-sync
 - 类型: operations
@@ -1017,14 +705,6 @@
 - 实现链: ./function-chain-index.md#func-taxonomy-sync-system-taxonomy-sync
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-taxonomy-sync-system-taxonomy-sync-preview
@@ -1045,14 +725,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-taxonomy-sync-system-taxonomy-sync-apply
 - ID: FUNC-taxonomy-sync-system-taxonomy-sync-apply
 - 类型: operations
@@ -1069,14 +741,6 @@
 - 实现链: ./function-chain-index.md#func-taxonomy-sync-system-taxonomy-sync-apply
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-taxonomy-sync-system-taxonomy-sync-run-id-restore
@@ -1097,14 +761,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-admin-user-system-users
 - ID: FUNC-admin-user-system-users
 - 类型: operations
@@ -1121,14 +777,6 @@
 - 实现链: ./function-chain-index.md#func-admin-user-system-users
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-admin-user-system-users-user-id
@@ -1149,14 +797,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-admin-user-system-users-user-id-teachings
 - ID: FUNC-admin-user-system-users-user-id-teachings
 - 类型: operations
@@ -1173,14 +813,6 @@
 - 实现链: ./function-chain-index.md#func-admin-user-system-users-user-id-teachings
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-other-system-password-reset
@@ -1201,14 +833,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-admin-user-system-users-user-id-unlock
 - ID: FUNC-admin-user-system-users-user-id-unlock
 - 类型: operations
@@ -1225,14 +849,6 @@
 - 实现链: ./function-chain-index.md#func-admin-user-system-users-user-id-unlock
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-admin-role-system-roles
@@ -1253,14 +869,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-admin-role-system-roles-role-id
 - ID: FUNC-admin-role-system-roles-role-id
 - 类型: operations
@@ -1277,14 +885,6 @@
 - 实现链: ./function-chain-index.md#func-admin-role-system-roles-role-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-admin-role-system-roles-role-id-copy
@@ -1305,14 +905,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-admin-permission-system-permissions
 - ID: FUNC-admin-permission-system-permissions
 - 类型: operations
@@ -1329,14 +921,6 @@
 - 实现链: ./function-chain-index.md#func-admin-permission-system-permissions
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-notification-system-notifications
@@ -1357,14 +941,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-notification-system-notifications-notif-id-read
 - ID: FUNC-notification-system-notifications-notif-id-read
 - 类型: operations
@@ -1381,14 +957,6 @@
 - 实现链: ./function-chain-index.md#func-notification-system-notifications-notif-id-read
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-notification-system-notifications-read-all
@@ -1409,14 +977,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-other-system-notification-prefs
 - ID: FUNC-other-system-notification-prefs
 - 类型: operations
@@ -1433,14 +993,6 @@
 - 实现链: ./function-chain-index.md#func-other-system-notification-prefs
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-system-config-system-config
@@ -1461,14 +1013,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-system-version-system-version
 - ID: FUNC-system-version-system-version
 - 类型: operations
@@ -1485,14 +1029,6 @@
 - 实现链: ./function-chain-index.md#func-system-version-system-version
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-system-config-system-config-key
@@ -1513,14 +1049,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-ai-config-system-ai-config
 - ID: FUNC-ai-config-system-ai-config
 - 类型: operations
@@ -1537,14 +1065,6 @@
 - 实现链: ./function-chain-index.md#func-ai-config-system-ai-config
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-config-system-ai-config-test
@@ -1565,14 +1085,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-grade-edu-grades
 - ID: FUNC-teacher-grade-edu-grades
 - 类型: business
@@ -1589,14 +1101,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-grade-edu-grades
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-grade-edu-grades-grade-id
@@ -1617,14 +1121,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-subject-edu-subjects
 - ID: FUNC-teacher-subject-edu-subjects
 - 类型: business
@@ -1641,14 +1137,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-subject-edu-subjects
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-subject-edu-subjects-subject-id
@@ -1669,14 +1157,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-subject-edu-subjects-subject-id-clone
 - ID: FUNC-teacher-subject-edu-subjects-subject-id-clone
 - 类型: business
@@ -1693,14 +1173,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-subject-edu-subjects-subject-id-clone
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-public
@@ -1721,14 +1193,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-class-edu-classes
 - ID: FUNC-teacher-class-edu-classes
 - 类型: business
@@ -1745,14 +1209,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-class-edu-classes
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-stats
@@ -1773,14 +1229,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-class-edu-classes-class-id
 - ID: FUNC-teacher-class-edu-classes-class-id
 - 类型: business
@@ -1797,14 +1245,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-class-edu-classes-class-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-batch
@@ -1825,14 +1265,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-class-edu-classes-class-id-students
 - ID: FUNC-teacher-class-edu-classes-class-id-students
 - 类型: business
@@ -1849,14 +1281,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-class-edu-classes-class-id-students
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-class-id-students-export
@@ -1877,14 +1301,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-class-edu-classes-class-id-students-batch-remove
 - ID: FUNC-teacher-class-edu-classes-class-id-students-batch-remove
 - 类型: business
@@ -1901,14 +1317,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-class-edu-classes-class-id-students-batch-remove
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-class-id-students-student-id
@@ -1929,14 +1337,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-other-edu-people-brief
 - ID: FUNC-other-edu-people-brief
 - 类型: business
@@ -1953,14 +1353,6 @@
 - 实现链: ./function-chain-index.md#func-other-edu-people-brief
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-request-edu-class-requests
@@ -1981,14 +1373,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-class-request-edu-class-requests-mine
 - ID: FUNC-teacher-class-request-edu-class-requests-mine
 - 类型: business
@@ -2005,14 +1389,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-class-request-edu-class-requests-mine
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-request-edu-class-requests-req-id-review
@@ -2033,14 +1409,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-class-request-edu-class-requests-req-id
 - ID: FUNC-teacher-class-request-edu-class-requests-req-id
 - 类型: business
@@ -2057,14 +1425,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-class-request-edu-class-requests-req-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-teaching-edu-teaching-matrix
@@ -2085,14 +1445,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-teacher-teaching-edu-teaching-assignments
 - ID: FUNC-teacher-teaching-edu-teaching-assignments
 - 类型: business
@@ -2109,14 +1461,6 @@
 - 实现链: ./function-chain-index.md#func-teacher-teaching-edu-teaching-assignments
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-teaching-edu-teaching-assignments-asg-id
@@ -2137,14 +1481,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-graph
 - ID: FUNC-knowledge-edu-knowledge-graph
 - 类型: business
@@ -2161,14 +1497,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-graph
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-tree
@@ -2189,14 +1517,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge
 - ID: FUNC-knowledge-edu-knowledge
 - 类型: business
@@ -2213,14 +1533,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-list
@@ -2241,14 +1553,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-stats
 - ID: FUNC-knowledge-edu-knowledge-stats
 - 类型: business
@@ -2265,14 +1569,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-stats
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-template
@@ -2293,14 +1589,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-export
 - ID: FUNC-knowledge-edu-knowledge-export
 - 类型: business
@@ -2317,14 +1605,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-export
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-mastery-overview
@@ -2345,14 +1625,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-search
 - ID: FUNC-knowledge-edu-knowledge-search
 - 类型: business
@@ -2369,14 +1641,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-search
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-rag-status
@@ -2397,14 +1661,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-kp-id
 - ID: FUNC-knowledge-edu-knowledge-kp-id
 - 类型: business
@@ -2421,14 +1677,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-kp-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-kp-id-attachments
@@ -2449,14 +1697,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-kp-id-attachments-att-id
 - ID: FUNC-knowledge-edu-knowledge-kp-id-attachments-att-id
 - 类型: business
@@ -2473,14 +1713,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-kp-id-attachments-att-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-batch
@@ -2501,14 +1733,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-import
 - ID: FUNC-knowledge-edu-knowledge-import
 - 类型: business
@@ -2525,14 +1749,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-import
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-reindex
@@ -2553,14 +1769,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-purge-generic
 - ID: FUNC-knowledge-edu-knowledge-purge-generic
 - 类型: business
@@ -2577,14 +1785,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-purge-generic
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-diagnosis-targets
@@ -2605,14 +1805,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions
 - ID: FUNC-knowledge-edu-knowledge-diagnosis-sessions
 - 类型: business
@@ -2629,14 +1821,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-diagnosis-sessions
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id
@@ -2657,14 +1841,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-next
 - ID: FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-next
 - 类型: business
@@ -2681,14 +1857,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-diagnosis-sessions-session-id-next
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-answers
@@ -2709,14 +1877,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-summary
 - ID: FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-summary
 - 类型: business
@@ -2733,14 +1893,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-diagnosis-sessions-session-id-summary
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-kp-id-prerequisites
@@ -2761,14 +1913,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-kp-id-dependents
 - ID: FUNC-knowledge-edu-knowledge-kp-id-dependents
 - 类型: business
@@ -2785,14 +1929,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-kp-id-dependents
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-kp-id-prerequisites-prerequisite-id
@@ -2813,14 +1949,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-ai-generate
 - ID: FUNC-knowledge-edu-knowledge-ai-generate
 - 类型: platform
@@ -2837,14 +1965,6 @@
 - 实现链: ./function-chain-index.md#func-knowledge-edu-knowledge-ai-generate
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-ai-enrich
@@ -2865,14 +1985,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-questions
 - ID: FUNC-question-question-questions
 - 类型: business
@@ -2889,14 +2001,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-questions
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-stats
@@ -2917,14 +2021,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-batch-create
 - ID: FUNC-question-question-questions-batch-create
 - 类型: business
@@ -2941,14 +2037,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-questions-batch-create
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-batch
@@ -2969,14 +2057,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-template
 - ID: FUNC-question-question-questions-template
 - 类型: business
@@ -2993,14 +2073,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-questions-template
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-q-id
@@ -3021,14 +2093,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-q-id-status
 - ID: FUNC-question-question-questions-q-id-status
 - 类型: business
@@ -3045,14 +2109,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-questions-q-id-status
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-q-id-duplicates
@@ -3073,14 +2129,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-import
 - ID: FUNC-question-question-questions-import
 - 类型: business
@@ -3097,14 +2145,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-questions-import
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-export
@@ -3125,14 +2165,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers
 - ID: FUNC-question-question-papers
 - 类型: business
@@ -3149,14 +2181,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-stats
@@ -3177,14 +2201,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-batch
 - ID: FUNC-question-question-papers-batch
 - 类型: business
@@ -3201,14 +2217,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-batch
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id
@@ -3229,14 +2237,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-archive
 - ID: FUNC-question-question-papers-paper-id-archive
 - 类型: business
@@ -3253,14 +2253,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-archive
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-copy
@@ -3281,14 +2273,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-share
 - ID: FUNC-question-question-papers-paper-id-share
 - 类型: business
@@ -3305,14 +2289,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-share
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-export
@@ -3333,14 +2309,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-ai-variants
 - ID: FUNC-question-question-questions-ai-variants
 - 类型: platform
@@ -3357,14 +2325,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-questions-ai-variants
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-ai-enrich
@@ -3385,14 +2345,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-ai-quality
 - ID: FUNC-question-question-questions-ai-quality
 - 类型: platform
@@ -3409,14 +2361,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-questions-ai-quality
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-ai-analyze
@@ -3437,14 +2381,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-ai-recommend
 - ID: FUNC-question-question-papers-paper-id-ai-recommend
 - 类型: platform
@@ -3461,14 +2397,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-ai-recommend
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-standards
@@ -3489,14 +2417,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-standards-options
 - ID: FUNC-question-question-standards-options
 - 类型: business
@@ -3513,14 +2433,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-standards-options
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-standards-std-id
@@ -3541,14 +2453,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-standards-std-id-duplicate
 - ID: FUNC-question-question-standards-std-id-duplicate
 - 类型: business
@@ -3565,14 +2469,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-standards-std-id-duplicate
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-standards-generate-missing
@@ -3593,14 +2489,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-standards-seed
 - ID: FUNC-question-question-standards-seed
 - 类型: business
@@ -3617,14 +2505,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-standards-seed
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-standards-std-id-reset
@@ -3645,14 +2525,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-compose-regenerate
 - ID: FUNC-question-question-papers-compose-regenerate
 - 类型: business
@@ -3669,14 +2541,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-compose-regenerate
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-compose-preview
@@ -3697,14 +2561,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-compose-ai
 - ID: FUNC-question-question-papers-compose-ai
 - 类型: platform
@@ -3721,14 +2577,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-compose-ai
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-compose-save
@@ -3749,14 +2597,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-preview
 - ID: FUNC-question-question-papers-paper-id-preview
 - 类型: business
@@ -3773,14 +2613,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-preview
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-items
@@ -3801,14 +2633,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-items-item-id-regenerate
 - ID: FUNC-question-question-papers-paper-id-items-item-id-regenerate
 - 类型: business
@@ -3825,14 +2649,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-items-item-id-regenerate
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-items-item-id
@@ -3853,14 +2669,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-sections-rename
 - ID: FUNC-question-question-papers-paper-id-sections-rename
 - 类型: business
@@ -3877,14 +2685,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-sections-rename
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-restructure
@@ -3905,14 +2705,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-versions
 - ID: FUNC-question-question-papers-paper-id-versions
 - 类型: business
@@ -3929,14 +2721,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-versions
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-versions-version
@@ -3957,14 +2741,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-versions-version-diff
 - ID: FUNC-question-question-papers-paper-id-versions-version-diff
 - 类型: business
@@ -3981,14 +2757,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-versions-version-diff
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-versions-version-restore
@@ -4009,14 +2777,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-library-list
 - ID: FUNC-question-question-papers-library-list
 - 类型: business
@@ -4033,14 +2793,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-library-list
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-favorite
@@ -4061,14 +2813,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-share-scope
 - ID: FUNC-question-question-papers-paper-id-share-scope
 - 类型: business
@@ -4085,14 +2829,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-share-scope
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-share-info
@@ -4113,14 +2849,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-review
 - ID: FUNC-question-question-papers-paper-id-review
 - 类型: business
@@ -4137,14 +2865,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-review
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-export-docx
@@ -4165,14 +2885,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-export-pdf
 - ID: FUNC-question-question-papers-paper-id-export-pdf
 - 类型: business
@@ -4189,14 +2901,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-export-pdf
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-export-answer-sheet
@@ -4217,14 +2921,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-export-html
 - ID: FUNC-question-question-papers-paper-id-export-html
 - 类型: business
@@ -4241,14 +2937,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-paper-id-export-html
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-export-jobs
@@ -4269,14 +2957,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-export-jobs-job-id
 - ID: FUNC-question-question-papers-export-jobs-job-id
 - 类型: operations
@@ -4293,14 +2973,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-export-jobs-job-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-export-jobs-job-id-file
@@ -4321,14 +2993,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-compose-ai-async
 - ID: FUNC-question-question-papers-compose-ai-async
 - 类型: platform
@@ -4345,14 +3009,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-compose-ai-async
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-compose-jobs-job-id
@@ -4373,14 +3029,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-compose-jobs-job-id-cancel
 - ID: FUNC-question-question-papers-compose-jobs-job-id-cancel
 - 类型: operations
@@ -4397,14 +3045,6 @@
 - 实现链: ./function-chain-index.md#func-question-question-papers-compose-jobs-job-id-cancel
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks
@@ -4425,14 +3065,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-task-task-tasks-stats
 - ID: FUNC-task-task-tasks-stats
 - 类型: business
@@ -4449,14 +3081,6 @@
 - 实现链: ./function-chain-index.md#func-task-task-tasks-stats
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-batch
@@ -4477,14 +3101,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-task-task-tasks-task-id
 - ID: FUNC-task-task-tasks-task-id
 - 类型: business
@@ -4501,14 +3117,6 @@
 - 实现链: ./function-chain-index.md#func-task-task-tasks-task-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-task-id-submissions
@@ -4529,14 +3137,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-task-task-my-tasks
 - ID: FUNC-task-task-my-tasks
 - 类型: business
@@ -4553,14 +3153,6 @@
 - 实现链: ./function-chain-index.md#func-task-task-my-tasks
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-task-id-paper
@@ -4581,14 +3173,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-task-task-tasks-task-id-submit
 - ID: FUNC-task-task-tasks-task-id-submit
 - 类型: business
@@ -4605,14 +3189,6 @@
 - 实现链: ./function-chain-index.md#func-task-task-tasks-task-id-submit
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-task-id-heartbeat
@@ -4633,14 +3209,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-task-task-submissions-submission-id
 - ID: FUNC-task-task-submissions-submission-id
 - 类型: business
@@ -4657,14 +3225,6 @@
 - 实现链: ./function-chain-index.md#func-task-task-submissions-submission-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-my-scores
@@ -4685,14 +3245,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-task-task-tasks-task-id-pending-students
 - ID: FUNC-task-task-tasks-task-id-pending-students
 - 类型: business
@@ -4709,14 +3261,6 @@
 - 实现链: ./function-chain-index.md#func-task-task-tasks-task-id-pending-students
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-task-id-urge
@@ -4737,14 +3281,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-grading-grading-pending
 - ID: FUNC-grading-grading-pending
 - 类型: business
@@ -4761,14 +3297,6 @@
 - 实现链: ./function-chain-index.md#func-grading-grading-pending
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-submissions
@@ -4789,14 +3317,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-grading-grading-stats
 - ID: FUNC-grading-grading-stats
 - 类型: business
@@ -4813,14 +3333,6 @@
 - 实现链: ./function-chain-index.md#func-grading-grading-stats
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-submissions-submission-id
@@ -4841,14 +3353,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-grading-grading-submissions-submission-id-grade
 - ID: FUNC-grading-grading-submissions-submission-id-grade
 - 类型: business
@@ -4865,14 +3369,6 @@
 - 实现链: ./function-chain-index.md#func-grading-grading-submissions-submission-id-grade
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-submissions-submission-id-reject
@@ -4893,14 +3389,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-grading-grading-submissions-submission-id-publish
 - ID: FUNC-grading-grading-submissions-submission-id-publish
 - 类型: business
@@ -4917,14 +3405,6 @@
 - 实现链: ./function-chain-index.md#func-grading-grading-submissions-submission-id-publish
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-batch-grade
@@ -4945,14 +3425,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-grading-grading-batch-publish
 - ID: FUNC-grading-grading-batch-publish
 - 类型: business
@@ -4969,14 +3441,6 @@
 - 实现链: ./function-chain-index.md#func-grading-grading-batch-publish
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-unpublish
@@ -4997,14 +3461,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-grading-grading-tasks-task-id-report
 - ID: FUNC-grading-grading-tasks-task-id-report
 - 类型: business
@@ -5021,14 +3477,6 @@
 - 实现链: ./function-chain-index.md#func-grading-grading-tasks-task-id-report
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-tasks-task-id-ai-comment
@@ -5049,14 +3497,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-notes
 - ID: FUNC-learning-learning-notes
 - 类型: business
@@ -5073,14 +3513,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-notes
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-notes-shared
@@ -5101,14 +3533,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-notes-note-id
 - ID: FUNC-learning-learning-notes-note-id
 - 类型: business
@@ -5125,14 +3549,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-notes-note-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-notes-note-id-share
@@ -5153,14 +3569,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-notes-note-id-organize
 - ID: FUNC-learning-learning-notes-note-id-organize
 - 类型: business
@@ -5177,14 +3585,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-notes-note-id-organize
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-notes-note-id-export
@@ -5205,14 +3605,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-wrong-questions
 - ID: FUNC-learning-learning-wrong-questions
 - 类型: business
@@ -5229,14 +3621,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-wrong-questions
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-wrong-questions-wid
@@ -5257,14 +3641,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-wrong-questions-wid-analyze
 - ID: FUNC-learning-learning-wrong-questions-wid-analyze
 - 类型: business
@@ -5281,14 +3657,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-wrong-questions-wid-analyze
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-wrong-questions-wid-redo
@@ -5309,14 +3677,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-wrong-questions-export
 - ID: FUNC-learning-learning-wrong-questions-export
 - 类型: business
@@ -5333,14 +3693,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-wrong-questions-export
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-review-plans
@@ -5361,14 +3713,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-review-plans-plan-id-complete
 - ID: FUNC-learning-learning-review-plans-plan-id-complete
 - 类型: business
@@ -5385,14 +3729,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-review-plans-plan-id-complete
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-review-mastery
@@ -5413,14 +3749,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-review-plan
 - ID: FUNC-learning-learning-review-plan
 - 类型: business
@@ -5437,14 +3765,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-review-plan
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-practice
@@ -5465,14 +3785,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-practice-history
 - ID: FUNC-learning-learning-practice-history
 - 类型: business
@@ -5489,14 +3801,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-practice-history
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-practice-task-id
@@ -5517,14 +3821,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-favorites
 - ID: FUNC-learning-learning-favorites
 - 类型: business
@@ -5541,14 +3837,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-favorites
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-favorites-fav-id
@@ -5569,14 +3857,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-favorites-by-question-question-id
 - ID: FUNC-learning-learning-favorites-by-question-question-id
 - 类型: business
@@ -5593,14 +3873,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-favorites-by-question-question-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-favorites-check-batch
@@ -5621,14 +3893,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-favorites-check-question-id
 - ID: FUNC-learning-learning-favorites-check-question-id
 - 类型: business
@@ -5645,14 +3909,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-favorites-check-question-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-favorites-practice
@@ -5673,14 +3929,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-wrong-questions-wid-variant
 - ID: FUNC-learning-learning-wrong-questions-wid-variant
 - 类型: business
@@ -5697,14 +3945,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-wrong-questions-wid-variant
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-custom-paper
@@ -5725,14 +3965,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-goals
 - ID: FUNC-learning-learning-goals
 - 类型: business
@@ -5749,14 +3981,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-goals
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-goals-goal-id
@@ -5777,14 +4001,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-goals-goal-id-checkin
 - ID: FUNC-learning-learning-goals-goal-id-checkin
 - 类型: business
@@ -5801,14 +4017,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-goals-goal-id-checkin
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-path-recommend
@@ -5829,14 +4037,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-learning-learning-flashcards
 - ID: FUNC-learning-learning-flashcards
 - 类型: business
@@ -5853,14 +4053,6 @@
 - 实现链: ./function-chain-index.md#func-learning-learning-flashcards
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-list
@@ -5881,14 +4073,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-status
 - ID: FUNC-ai-agent-agent-status
 - 类型: platform
@@ -5905,14 +4089,6 @@
 - 实现链: ./function-chain-index.md#func-ai-agent-agent-status
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-chat
@@ -5933,14 +4109,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-chat-stream
 - ID: FUNC-ai-agent-agent-chat-stream
 - 类型: platform
@@ -5957,14 +4125,6 @@
 - 实现链: ./function-chain-index.md#func-ai-agent-agent-chat-stream
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-question-generator
@@ -5985,14 +4145,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-paper-composer
 - ID: FUNC-ai-agent-agent-paper-composer
 - 类型: platform
@@ -6009,14 +4161,6 @@
 - 实现链: ./function-chain-index.md#func-ai-agent-agent-paper-composer
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-grading
@@ -6037,14 +4181,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-study-planner
 - ID: FUNC-ai-agent-agent-study-planner
 - 类型: platform
@@ -6061,14 +4197,6 @@
 - 实现链: ./function-chain-index.md#func-ai-agent-agent-study-planner
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-tutor
@@ -6089,14 +4217,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-note-organizer
 - ID: FUNC-ai-agent-agent-note-organizer
 - 类型: platform
@@ -6113,14 +4233,6 @@
 - 实现链: ./function-chain-index.md#func-ai-agent-agent-note-organizer
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-jobs
@@ -6141,14 +4253,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-jobs-job-id
 - ID: FUNC-ai-agent-agent-jobs-job-id
 - 类型: operations
@@ -6165,14 +4269,6 @@
 - 实现链: ./function-chain-index.md#func-ai-agent-agent-jobs-job-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-logs
@@ -6193,14 +4289,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-report-report-student-overview
 - ID: FUNC-report-report-student-overview
 - 类型: business
@@ -6217,14 +4305,6 @@
 - 实现链: ./function-chain-index.md#func-report-report-student-overview
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-student-score-trend
@@ -6245,14 +4325,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-report-report-student-knowledge-radar
 - ID: FUNC-report-report-student-knowledge-radar
 - 类型: business
@@ -6269,14 +4341,6 @@
 - 实现链: ./function-chain-index.md#func-report-report-student-knowledge-radar
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-student-wrong-analysis
@@ -6297,14 +4361,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-report-report-student-learning-suggestion
 - ID: FUNC-report-report-student-learning-suggestion
 - 类型: business
@@ -6321,14 +4377,6 @@
 - 实现链: ./function-chain-index.md#func-report-report-student-learning-suggestion
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-teacher-class-overview
@@ -6349,14 +4397,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-report-report-teacher-student-comparison
 - ID: FUNC-report-report-teacher-student-comparison
 - 类型: business
@@ -6373,14 +4413,6 @@
 - 实现链: ./function-chain-index.md#func-report-report-teacher-student-comparison
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-teacher-student-detail
@@ -6401,14 +4433,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-report-report-teacher-knowledge-effect
 - ID: FUNC-report-report-teacher-knowledge-effect
 - 类型: business
@@ -6425,14 +4449,6 @@
 - 实现链: ./function-chain-index.md#func-report-report-teacher-knowledge-effect
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-teacher-class-weak-points
@@ -6453,14 +4469,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-report-report-admin-overview
 - ID: FUNC-report-report-admin-overview
 - 类型: operations
@@ -6477,14 +4485,6 @@
 - 实现链: ./function-chain-index.md#func-report-report-admin-overview
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-admin-grade-comparison
@@ -6505,14 +4505,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-report-report-admin-subject-comparison
 - ID: FUNC-report-report-admin-subject-comparison
 - 类型: operations
@@ -6529,14 +4521,6 @@
 - 实现链: ./function-chain-index.md#func-report-report-admin-subject-comparison
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-admin-system-runtime
@@ -6557,14 +4541,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-report-report-export-excel
 - ID: FUNC-report-report-export-excel
 - 类型: business
@@ -6581,14 +4557,6 @@
 - 实现链: ./function-chain-index.md#func-report-report-export-excel
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-log-logs-login
@@ -6609,14 +4577,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-log-logs-operation
 - ID: FUNC-log-logs-operation
 - 类型: operations
@@ -6633,14 +4593,6 @@
 - 实现链: ./function-chain-index.md#func-log-logs-operation
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-log-logs-error
@@ -6661,14 +4613,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-log-logs-export
 - ID: FUNC-log-logs-export
 - 类型: operations
@@ -6685,14 +4629,6 @@
 - 实现链: ./function-chain-index.md#func-log-logs-export
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-job-jobs-handlers
@@ -6713,14 +4649,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-job-jobs
 - ID: FUNC-job-jobs
 - 类型: operations
@@ -6737,14 +4665,6 @@
 - 实现链: ./function-chain-index.md#func-job-jobs
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-job-jobs-job-id
@@ -6765,14 +4685,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-job-jobs-job-id-toggle
 - ID: FUNC-job-jobs-job-id-toggle
 - 类型: operations
@@ -6789,14 +4701,6 @@
 - 实现链: ./function-chain-index.md#func-job-jobs-job-id-toggle
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-job-jobs-job-id-run
@@ -6817,14 +4721,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-job-jobs-status
 - ID: FUNC-job-jobs-status
 - 类型: operations
@@ -6841,14 +4737,6 @@
 - 实现链: ./function-chain-index.md#func-job-jobs-status
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-job-jobs-job-id-executions
@@ -6869,14 +4757,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-attachment-attachments-public-upload
 - ID: FUNC-attachment-attachments-public-upload
 - 类型: business
@@ -6893,14 +4773,6 @@
 - 实现链: ./function-chain-index.md#func-attachment-attachments-public-upload
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-attachment-attachments-upload
@@ -6921,14 +4793,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-attachment-attachments-batch
 - ID: FUNC-attachment-attachments-batch
 - 类型: business
@@ -6945,14 +4809,6 @@
 - 实现链: ./function-chain-index.md#func-attachment-attachments-batch
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-attachment-attachments
@@ -6973,14 +4829,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-attachment-attachments-att-id-preview
 - ID: FUNC-attachment-attachments-att-id-preview
 - 类型: business
@@ -6997,14 +4845,6 @@
 - 实现链: ./function-chain-index.md#func-attachment-attachments-att-id-preview
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-attachment-attachments-att-id-download
@@ -7025,14 +4865,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-attachment-attachments-att-id-bind
 - ID: FUNC-attachment-attachments-att-id-bind
 - 类型: business
@@ -7049,14 +4881,6 @@
 - 实现链: ./function-chain-index.md#func-attachment-attachments-att-id-bind
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-attachment-attachments-att-id
@@ -7077,14 +4901,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-plans
 - ID: FUNC-lesson-lesson-plans
 - 类型: business
@@ -7101,14 +4917,6 @@
 - 实现链: ./function-chain-index.md#func-lesson-lesson-plans
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-plans-stats
@@ -7129,14 +4937,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-plans-plan-id
 - ID: FUNC-lesson-lesson-plans-plan-id
 - 类型: business
@@ -7153,14 +4953,6 @@
 - 实现链: ./function-chain-index.md#func-lesson-lesson-plans-plan-id
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-plans-plan-id-copy
@@ -7181,14 +4973,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-plans-plan-id-share
 - ID: FUNC-lesson-lesson-plans-plan-id-share
 - 类型: business
@@ -7205,14 +4989,6 @@
 - 实现链: ./function-chain-index.md#func-lesson-lesson-plans-plan-id-share
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-plans-batch
@@ -7233,14 +5009,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-plans-plan-id-attachments
 - ID: FUNC-lesson-lesson-plans-plan-id-attachments
 - 类型: business
@@ -7257,14 +5025,6 @@
 - 实现链: ./function-chain-index.md#func-lesson-lesson-plans-plan-id-attachments
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-plans-plan-id-attachments-att-id
@@ -7285,14 +5045,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-ai-generate
 - ID: FUNC-lesson-lesson-ai-generate
 - 类型: platform
@@ -7309,14 +5061,6 @@
 - 实现链: ./function-chain-index.md#func-lesson-lesson-ai-generate
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-ai-jobs-job-id
@@ -7337,14 +5081,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-ai-jobs-job-id-cancel
 - ID: FUNC-lesson-lesson-ai-jobs-job-id-cancel
 - 类型: operations
@@ -7361,14 +5097,6 @@
 - 实现链: ./function-chain-index.md#func-lesson-lesson-ai-jobs-job-id-cancel
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-ai-jobs
@@ -7389,14 +5117,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-ai-jobs-job-id-save
 - ID: FUNC-lesson-lesson-ai-jobs-job-id-save
 - 类型: operations
@@ -7413,14 +5133,6 @@
 - 实现链: ./function-chain-index.md#func-lesson-lesson-ai-jobs-job-id-save
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-ai-jobs-job-id-export
@@ -7441,14 +5153,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-ai-options
 - ID: FUNC-lesson-lesson-ai-options
 - 类型: platform
@@ -7465,14 +5169,6 @@
 - 实现链: ./function-chain-index.md#func-lesson-lesson-ai-options
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
-
 
 
 ## FUNC-health-health
@@ -7493,14 +5189,6 @@
 - 详细逆向: partial
 
 
-
-
-
-
-
-
-
-
 ## FUNC-ready-ready
 - ID: FUNC-ready-ready
 - 类型: operations
@@ -7517,13 +5205,6 @@
 - 实现链: ./function-chain-index.md#func-ready-ready
 - 主链状态: partial
 - 详细逆向: partial
-
-
-
-
-
-
-
 
 
 ## FUNC-jobs-clean-expired-exams

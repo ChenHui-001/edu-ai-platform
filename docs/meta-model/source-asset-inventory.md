@@ -392,7 +392,6 @@
 | tools/verify_student_retake.py | source-file | registered |
 
 
-
 | audit-reports/ontology-inventory/prototype/verify_prototype.py::paper_item | database-object | registered |
 | audit-reports/ontology-inventory/prototype/verify_prototype.py::paper_item | database-object | registered |
 | paper_item | database-object | registered |

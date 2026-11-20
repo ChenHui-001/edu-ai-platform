@@ -5,13 +5,6 @@
 - Function Count: 289
 
 
-
-
-
-
-
-
-
 ## FUNC-auth-auth-captcha
 
 ### Requirement Link
@@ -63,13 +56,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-auth-auth-captcha
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-register
@@ -125,13 +111,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-auth-auth-registrations
 
 ### Requirement Link
@@ -183,13 +162,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-auth-auth-registrations
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-registrations-audit
@@ -245,13 +217,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-auth-auth-login
 
 ### Requirement Link
@@ -303,13 +268,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-auth-auth-login
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-refresh
@@ -365,13 +323,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-auth-auth-profile
 
 ### Requirement Link
@@ -423,13 +374,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-auth-auth-profile
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-password
@@ -485,13 +429,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-auth-auth-logout
 
 ### Requirement Link
@@ -543,13 +480,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-auth-auth-logout
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-auth-auth-forgot-password
@@ -605,13 +535,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-auth-auth-reset-password
 
 ### Requirement Link
@@ -663,13 +586,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-auth-auth-reset-password
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-todo
@@ -725,13 +641,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-flow-flow-done
 
 ### Requirement Link
@@ -783,13 +692,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-flow-flow-done
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-instances
@@ -845,13 +747,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-flow-flow-instances-instance-id
 
 ### Requirement Link
@@ -903,13 +798,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-flow-flow-instances-instance-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-claim
@@ -965,13 +853,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-flow-flow-tasks-task-id-approve
 
 ### Requirement Link
@@ -1023,13 +904,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-flow-flow-tasks-task-id-approve
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-reject
@@ -1085,13 +959,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-flow-flow-tasks-task-id-return
 
 ### Requirement Link
@@ -1143,13 +1010,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-flow-flow-tasks-task-id-return
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-cancel
@@ -1205,13 +1065,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-flow-flow-definitions-sync
 
 ### Requirement Link
@@ -1263,13 +1116,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-flow-flow-definitions-sync
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-overdue
@@ -1325,13 +1171,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-flow-flow-tasks-task-id-transfer-candidates
 
 ### Requirement Link
@@ -1383,13 +1222,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-flow-flow-tasks-task-id-transfer-candidates
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-transfer
@@ -1445,13 +1277,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-flow-flow-tasks-task-id-urge
 
 ### Requirement Link
@@ -1503,13 +1328,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-flow-flow-tasks-task-id-urge
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-flow-flow-tasks-task-id-deadline
@@ -1565,13 +1383,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-remediation
 
 ### Requirement Link
@@ -1623,13 +1434,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-remediation
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-remediation-plan-id
@@ -1685,13 +1489,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-remediation-plan-id-quizzes
 
 ### Requirement Link
@@ -1743,13 +1540,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-remediation-plan-id-quizzes
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-remediation-plan-id-answers
@@ -1805,13 +1595,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teaching-graph-teaching-graph
 
 ### Requirement Link
@@ -1863,13 +1646,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teaching-graph-teaching-graph
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teaching-graph-teaching-graph-assign
@@ -1925,13 +1701,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-quality
 
 ### Requirement Link
@@ -1983,13 +1752,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-quality
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-quality-publish
@@ -2045,13 +1807,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-quality-question-id-visual
 
 ### Requirement Link
@@ -2103,13 +1858,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-quality-question-id-visual
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-tutor
@@ -2165,13 +1913,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-tutor-feedback
 
 ### Requirement Link
@@ -2223,13 +1964,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-tutor-feedback
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-tutor-feedback-feedback-id
@@ -2285,13 +2019,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-taxonomy-sync-system-taxonomy-sync
 
 ### Requirement Link
@@ -2343,13 +2070,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-taxonomy-sync-system-taxonomy-sync
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-taxonomy-sync-system-taxonomy-sync-preview
@@ -2405,13 +2125,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-taxonomy-sync-system-taxonomy-sync-apply
 
 ### Requirement Link
@@ -2463,13 +2176,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-taxonomy-sync-system-taxonomy-sync-apply
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-taxonomy-sync-system-taxonomy-sync-run-id-restore
@@ -2525,13 +2231,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-admin-user-system-users
 
 ### Requirement Link
@@ -2583,13 +2282,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-admin-user-system-users
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-admin-user-system-users-user-id
@@ -2645,13 +2337,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-admin-user-system-users-user-id-teachings
 
 ### Requirement Link
@@ -2703,13 +2388,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-admin-user-system-users-user-id-teachings
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-other-system-password-reset
@@ -2765,13 +2443,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-admin-user-system-users-user-id-unlock
 
 ### Requirement Link
@@ -2823,13 +2494,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-admin-user-system-users-user-id-unlock
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-admin-role-system-roles
@@ -2885,13 +2549,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-admin-role-system-roles-role-id
 
 ### Requirement Link
@@ -2943,13 +2600,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-admin-role-system-roles-role-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-admin-role-system-roles-role-id-copy
@@ -3005,13 +2655,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-admin-permission-system-permissions
 
 ### Requirement Link
@@ -3063,13 +2706,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-admin-permission-system-permissions
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-notification-system-notifications
@@ -3125,13 +2761,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-notification-system-notifications-notif-id-read
 
 ### Requirement Link
@@ -3183,13 +2812,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-notification-system-notifications-notif-id-read
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-notification-system-notifications-read-all
@@ -3245,13 +2867,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-other-system-notification-prefs
 
 ### Requirement Link
@@ -3303,13 +2918,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-other-system-notification-prefs
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-system-config-system-config
@@ -3365,13 +2973,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-system-version-system-version
 
 ### Requirement Link
@@ -3423,13 +3024,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-system-version-system-version
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-system-config-system-config-key
@@ -3485,13 +3079,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-ai-config-system-ai-config
 
 ### Requirement Link
@@ -3543,13 +3130,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-ai-config-system-ai-config
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-config-system-ai-config-test
@@ -3605,13 +3185,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-grade-edu-grades
 
 ### Requirement Link
@@ -3663,13 +3236,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-grade-edu-grades
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-grade-edu-grades-grade-id
@@ -3725,13 +3291,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-subject-edu-subjects
 
 ### Requirement Link
@@ -3783,13 +3342,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-subject-edu-subjects
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-subject-edu-subjects-subject-id
@@ -3845,13 +3397,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-subject-edu-subjects-subject-id-clone
 
 ### Requirement Link
@@ -3903,13 +3448,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-subject-edu-subjects-subject-id-clone
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-public
@@ -3965,13 +3503,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-class-edu-classes
 
 ### Requirement Link
@@ -4023,13 +3554,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-class-edu-classes
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-stats
@@ -4085,13 +3609,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-class-edu-classes-class-id
 
 ### Requirement Link
@@ -4143,13 +3660,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-class-edu-classes-class-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-batch
@@ -4205,13 +3715,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-class-edu-classes-class-id-students
 
 ### Requirement Link
@@ -4263,13 +3766,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-class-edu-classes-class-id-students
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-class-id-students-export
@@ -4325,13 +3821,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-class-edu-classes-class-id-students-batch-remove
 
 ### Requirement Link
@@ -4383,13 +3872,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-class-edu-classes-class-id-students-batch-remove
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-edu-classes-class-id-students-student-id
@@ -4445,13 +3927,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-other-edu-people-brief
 
 ### Requirement Link
@@ -4503,13 +3978,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-other-edu-people-brief
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-request-edu-class-requests
@@ -4565,13 +4033,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-class-request-edu-class-requests-mine
 
 ### Requirement Link
@@ -4623,13 +4084,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-class-request-edu-class-requests-mine
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-class-request-edu-class-requests-req-id-review
@@ -4685,13 +4139,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-class-request-edu-class-requests-req-id
 
 ### Requirement Link
@@ -4743,13 +4190,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-class-request-edu-class-requests-req-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-teaching-edu-teaching-matrix
@@ -4805,13 +4245,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-teacher-teaching-edu-teaching-assignments
 
 ### Requirement Link
@@ -4863,13 +4296,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-teacher-teaching-edu-teaching-assignments
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-teacher-teaching-edu-teaching-assignments-asg-id
@@ -4925,13 +4351,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-graph
 
 ### Requirement Link
@@ -4983,13 +4402,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-graph
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-tree
@@ -5045,13 +4457,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge
 
 ### Requirement Link
@@ -5103,13 +4508,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-list
@@ -5165,13 +4563,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-stats
 
 ### Requirement Link
@@ -5223,13 +4614,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-stats
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-template
@@ -5285,13 +4669,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-export
 
 ### Requirement Link
@@ -5343,13 +4720,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-export
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-mastery-overview
@@ -5405,13 +4775,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-search
 
 ### Requirement Link
@@ -5463,13 +4826,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-search
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-rag-status
@@ -5525,13 +4881,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-kp-id
 
 ### Requirement Link
@@ -5583,13 +4932,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-kp-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-kp-id-attachments
@@ -5645,13 +4987,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-kp-id-attachments-att-id
 
 ### Requirement Link
@@ -5703,13 +5038,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-kp-id-attachments-att-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-batch
@@ -5765,13 +5093,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-import
 
 ### Requirement Link
@@ -5823,13 +5144,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-import
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-reindex
@@ -5885,13 +5199,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-purge-generic
 
 ### Requirement Link
@@ -5943,13 +5250,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-purge-generic
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-diagnosis-targets
@@ -6005,13 +5305,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions
 
 ### Requirement Link
@@ -6063,13 +5356,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-diagnosis-sessions
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id
@@ -6125,13 +5411,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-next
 
 ### Requirement Link
@@ -6183,13 +5462,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-next
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-answers
@@ -6245,13 +5517,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-summary
 
 ### Requirement Link
@@ -6303,13 +5568,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-diagnosis-sessions-session-id-summary
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-kp-id-prerequisites
@@ -6365,13 +5623,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-kp-id-dependents
 
 ### Requirement Link
@@ -6423,13 +5674,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-kp-id-dependents
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-kp-id-prerequisites-prerequisite-id
@@ -6485,13 +5729,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-knowledge-edu-knowledge-ai-generate
 
 ### Requirement Link
@@ -6543,13 +5780,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-knowledge-edu-knowledge-ai-generate
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-knowledge-edu-knowledge-ai-enrich
@@ -6605,13 +5835,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-questions
 
 ### Requirement Link
@@ -6663,13 +5886,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-questions
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-stats
@@ -6725,13 +5941,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-batch-create
 
 ### Requirement Link
@@ -6783,13 +5992,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-questions-batch-create
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-batch
@@ -6845,13 +6047,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-template
 
 ### Requirement Link
@@ -6903,13 +6098,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-questions-template
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-q-id
@@ -6965,13 +6153,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-q-id-status
 
 ### Requirement Link
@@ -7023,13 +6204,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-questions-q-id-status
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-q-id-duplicates
@@ -7085,13 +6259,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-import
 
 ### Requirement Link
@@ -7143,13 +6310,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-questions-import
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-export
@@ -7205,13 +6365,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers
 
 ### Requirement Link
@@ -7263,13 +6416,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-stats
@@ -7325,13 +6471,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-batch
 
 ### Requirement Link
@@ -7383,13 +6522,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-batch
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id
@@ -7445,13 +6577,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-archive
 
 ### Requirement Link
@@ -7503,13 +6628,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-archive
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-copy
@@ -7565,13 +6683,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-share
 
 ### Requirement Link
@@ -7623,13 +6734,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-share
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-export
@@ -7685,13 +6789,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-ai-variants
 
 ### Requirement Link
@@ -7743,13 +6840,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-questions-ai-variants
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-questions-ai-enrich
@@ -7805,13 +6895,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-questions-ai-quality
 
 ### Requirement Link
@@ -7863,13 +6946,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-questions-ai-quality
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-ai-analyze
@@ -7925,13 +7001,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-ai-recommend
 
 ### Requirement Link
@@ -7983,13 +7052,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-ai-recommend
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-standards
@@ -8045,13 +7107,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-standards-options
 
 ### Requirement Link
@@ -8103,13 +7158,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-standards-options
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-standards-std-id
@@ -8165,13 +7213,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-standards-std-id-duplicate
 
 ### Requirement Link
@@ -8223,13 +7264,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-standards-std-id-duplicate
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-standards-generate-missing
@@ -8285,13 +7319,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-standards-seed
 
 ### Requirement Link
@@ -8343,13 +7370,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-standards-seed
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-standards-std-id-reset
@@ -8405,13 +7425,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-compose-regenerate
 
 ### Requirement Link
@@ -8463,13 +7476,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-compose-regenerate
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-compose-preview
@@ -8525,13 +7531,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-compose-ai
 
 ### Requirement Link
@@ -8583,13 +7582,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-compose-ai
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-compose-save
@@ -8645,13 +7637,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-preview
 
 ### Requirement Link
@@ -8703,13 +7688,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-preview
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-items
@@ -8765,13 +7743,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-items-item-id-regenerate
 
 ### Requirement Link
@@ -8823,13 +7794,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-items-item-id-regenerate
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-items-item-id
@@ -8885,13 +7849,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-sections-rename
 
 ### Requirement Link
@@ -8943,13 +7900,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-sections-rename
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-restructure
@@ -9005,13 +7955,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-versions
 
 ### Requirement Link
@@ -9063,13 +8006,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-versions
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-versions-version
@@ -9125,13 +8061,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-versions-version-diff
 
 ### Requirement Link
@@ -9183,13 +8112,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-versions-version-diff
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-versions-version-restore
@@ -9245,13 +8167,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-library-list
 
 ### Requirement Link
@@ -9303,13 +8218,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-library-list
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-favorite
@@ -9365,13 +8273,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-share-scope
 
 ### Requirement Link
@@ -9423,13 +8324,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-share-scope
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-share-info
@@ -9485,13 +8379,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-review
 
 ### Requirement Link
@@ -9543,13 +8430,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-review
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-export-docx
@@ -9605,13 +8485,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-export-pdf
 
 ### Requirement Link
@@ -9663,13 +8536,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-export-pdf
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-export-answer-sheet
@@ -9725,13 +8591,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-paper-id-export-html
 
 ### Requirement Link
@@ -9783,13 +8642,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-paper-id-export-html
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-paper-id-export-jobs
@@ -9845,13 +8697,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-export-jobs-job-id
 
 ### Requirement Link
@@ -9903,13 +8748,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-export-jobs-job-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-export-jobs-job-id-file
@@ -9965,13 +8803,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-compose-ai-async
 
 ### Requirement Link
@@ -10023,13 +8854,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-compose-ai-async
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-question-question-papers-compose-jobs-job-id
@@ -10085,13 +8909,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-question-question-papers-compose-jobs-job-id-cancel
 
 ### Requirement Link
@@ -10143,13 +8960,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-question-question-papers-compose-jobs-job-id-cancel
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks
@@ -10205,13 +9015,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-task-task-tasks-stats
 
 ### Requirement Link
@@ -10263,13 +9066,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-task-task-tasks-stats
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-batch
@@ -10325,13 +9121,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-task-task-tasks-task-id
 
 ### Requirement Link
@@ -10383,13 +9172,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-task-task-tasks-task-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-task-id-submissions
@@ -10445,13 +9227,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-task-task-my-tasks
 
 ### Requirement Link
@@ -10503,13 +9278,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-task-task-my-tasks
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-task-id-paper
@@ -10565,13 +9333,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-task-task-tasks-task-id-submit
 
 ### Requirement Link
@@ -10623,13 +9384,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-task-task-tasks-task-id-submit
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-task-id-heartbeat
@@ -10685,13 +9439,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-task-task-submissions-submission-id
 
 ### Requirement Link
@@ -10743,13 +9490,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-task-task-submissions-submission-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-my-scores
@@ -10805,13 +9545,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-task-task-tasks-task-id-pending-students
 
 ### Requirement Link
@@ -10863,13 +9596,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-task-task-tasks-task-id-pending-students
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-task-task-tasks-task-id-urge
@@ -10925,13 +9651,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-grading-grading-pending
 
 ### Requirement Link
@@ -10983,13 +9702,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-grading-grading-pending
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-submissions
@@ -11045,13 +9757,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-grading-grading-stats
 
 ### Requirement Link
@@ -11103,13 +9808,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-grading-grading-stats
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-submissions-submission-id
@@ -11165,13 +9863,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-grading-grading-submissions-submission-id-grade
 
 ### Requirement Link
@@ -11223,13 +9914,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-grading-grading-submissions-submission-id-grade
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-submissions-submission-id-reject
@@ -11285,13 +9969,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-grading-grading-submissions-submission-id-publish
 
 ### Requirement Link
@@ -11343,13 +10020,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-grading-grading-submissions-submission-id-publish
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-batch-grade
@@ -11405,13 +10075,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-grading-grading-batch-publish
 
 ### Requirement Link
@@ -11463,13 +10126,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-grading-grading-batch-publish
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-unpublish
@@ -11525,13 +10181,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-grading-grading-tasks-task-id-report
 
 ### Requirement Link
@@ -11583,13 +10232,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-grading-grading-tasks-task-id-report
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-grading-grading-tasks-task-id-ai-comment
@@ -11645,13 +10287,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-notes
 
 ### Requirement Link
@@ -11703,13 +10338,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-notes
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-notes-shared
@@ -11765,13 +10393,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-notes-note-id
 
 ### Requirement Link
@@ -11823,13 +10444,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-notes-note-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-notes-note-id-share
@@ -11885,13 +10499,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-notes-note-id-organize
 
 ### Requirement Link
@@ -11943,13 +10550,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-notes-note-id-organize
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-notes-note-id-export
@@ -12005,13 +10605,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-wrong-questions
 
 ### Requirement Link
@@ -12063,13 +10656,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-wrong-questions
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-wrong-questions-wid
@@ -12125,13 +10711,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-wrong-questions-wid-analyze
 
 ### Requirement Link
@@ -12183,13 +10762,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-wrong-questions-wid-analyze
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-wrong-questions-wid-redo
@@ -12245,13 +10817,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-wrong-questions-export
 
 ### Requirement Link
@@ -12303,13 +10868,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-wrong-questions-export
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-review-plans
@@ -12365,13 +10923,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-review-plans-plan-id-complete
 
 ### Requirement Link
@@ -12423,13 +10974,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-review-plans-plan-id-complete
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-review-mastery
@@ -12485,13 +11029,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-review-plan
 
 ### Requirement Link
@@ -12543,13 +11080,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-review-plan
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-practice
@@ -12605,13 +11135,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-practice-history
 
 ### Requirement Link
@@ -12663,13 +11186,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-practice-history
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-practice-task-id
@@ -12725,13 +11241,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-favorites
 
 ### Requirement Link
@@ -12783,13 +11292,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-favorites
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-favorites-fav-id
@@ -12845,13 +11347,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-favorites-by-question-question-id
 
 ### Requirement Link
@@ -12903,13 +11398,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-favorites-by-question-question-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-favorites-check-batch
@@ -12965,13 +11453,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-favorites-check-question-id
 
 ### Requirement Link
@@ -13023,13 +11504,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-favorites-check-question-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-favorites-practice
@@ -13085,13 +11559,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-wrong-questions-wid-variant
 
 ### Requirement Link
@@ -13143,13 +11610,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-wrong-questions-wid-variant
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-custom-paper
@@ -13205,13 +11665,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-goals
 
 ### Requirement Link
@@ -13263,13 +11716,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-goals
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-goals-goal-id
@@ -13325,13 +11771,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-goals-goal-id-checkin
 
 ### Requirement Link
@@ -13383,13 +11822,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-goals-goal-id-checkin
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-learning-learning-path-recommend
@@ -13445,13 +11877,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-learning-learning-flashcards
 
 ### Requirement Link
@@ -13503,13 +11928,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-learning-learning-flashcards
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-list
@@ -13565,13 +11983,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-status
 
 ### Requirement Link
@@ -13623,13 +12034,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-ai-agent-agent-status
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-chat
@@ -13685,13 +12089,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-chat-stream
 
 ### Requirement Link
@@ -13743,13 +12140,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-ai-agent-agent-chat-stream
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-question-generator
@@ -13805,13 +12195,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-paper-composer
 
 ### Requirement Link
@@ -13863,13 +12246,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-ai-agent-agent-paper-composer
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-grading
@@ -13925,13 +12301,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-study-planner
 
 ### Requirement Link
@@ -13983,13 +12352,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-ai-agent-agent-study-planner
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-tutor
@@ -14045,13 +12407,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-note-organizer
 
 ### Requirement Link
@@ -14103,13 +12458,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-ai-agent-agent-note-organizer
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-jobs
@@ -14165,13 +12513,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-ai-agent-agent-jobs-job-id
 
 ### Requirement Link
@@ -14223,13 +12564,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-ai-agent-agent-jobs-job-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-ai-agent-agent-logs
@@ -14285,13 +12619,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-report-report-student-overview
 
 ### Requirement Link
@@ -14343,13 +12670,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-report-report-student-overview
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-student-score-trend
@@ -14405,13 +12725,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-report-report-student-knowledge-radar
 
 ### Requirement Link
@@ -14463,13 +12776,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-report-report-student-knowledge-radar
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-student-wrong-analysis
@@ -14525,13 +12831,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-report-report-student-learning-suggestion
 
 ### Requirement Link
@@ -14583,13 +12882,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-report-report-student-learning-suggestion
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-teacher-class-overview
@@ -14645,13 +12937,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-report-report-teacher-student-comparison
 
 ### Requirement Link
@@ -14703,13 +12988,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-report-report-teacher-student-comparison
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-teacher-student-detail
@@ -14765,13 +13043,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-report-report-teacher-knowledge-effect
 
 ### Requirement Link
@@ -14823,13 +13094,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-report-report-teacher-knowledge-effect
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-teacher-class-weak-points
@@ -14885,13 +13149,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-report-report-admin-overview
 
 ### Requirement Link
@@ -14943,13 +13200,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-report-report-admin-overview
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-admin-grade-comparison
@@ -15005,13 +13255,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-report-report-admin-subject-comparison
 
 ### Requirement Link
@@ -15063,13 +13306,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-report-report-admin-subject-comparison
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-report-report-admin-system-runtime
@@ -15125,13 +13361,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-report-report-export-excel
 
 ### Requirement Link
@@ -15183,13 +13412,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-report-report-export-excel
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-log-logs-login
@@ -15245,13 +13467,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-log-logs-operation
 
 ### Requirement Link
@@ -15303,13 +13518,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-log-logs-operation
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-log-logs-error
@@ -15365,13 +13573,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-log-logs-export
 
 ### Requirement Link
@@ -15423,13 +13624,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-log-logs-export
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-job-jobs-handlers
@@ -15485,13 +13679,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-job-jobs
 
 ### Requirement Link
@@ -15543,13 +13730,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-job-jobs
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-job-jobs-job-id
@@ -15605,13 +13785,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-job-jobs-job-id-toggle
 
 ### Requirement Link
@@ -15663,13 +13836,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-job-jobs-job-id-toggle
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-job-jobs-job-id-run
@@ -15725,13 +13891,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-job-jobs-status
 
 ### Requirement Link
@@ -15783,13 +13942,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-job-jobs-status
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-job-jobs-job-id-executions
@@ -15845,13 +13997,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-attachment-attachments-public-upload
 
 ### Requirement Link
@@ -15903,13 +14048,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-attachment-attachments-public-upload
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-attachment-attachments-upload
@@ -15965,13 +14103,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-attachment-attachments-batch
 
 ### Requirement Link
@@ -16023,13 +14154,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-attachment-attachments-batch
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-attachment-attachments
@@ -16085,13 +14209,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-attachment-attachments-att-id-preview
 
 ### Requirement Link
@@ -16143,13 +14260,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-attachment-attachments-att-id-preview
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-attachment-attachments-att-id-download
@@ -16205,13 +14315,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-attachment-attachments-att-id-bind
 
 ### Requirement Link
@@ -16263,13 +14366,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-attachment-attachments-att-id-bind
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-attachment-attachments-att-id
@@ -16325,13 +14421,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-plans
 
 ### Requirement Link
@@ -16383,13 +14472,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-lesson-lesson-plans
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-plans-stats
@@ -16445,13 +14527,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-plans-plan-id
 
 ### Requirement Link
@@ -16503,13 +14578,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-lesson-lesson-plans-plan-id
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-plans-plan-id-copy
@@ -16565,13 +14633,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-plans-plan-id-share
 
 ### Requirement Link
@@ -16623,13 +14684,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-lesson-lesson-plans-plan-id-share
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-plans-batch
@@ -16685,13 +14739,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-plans-plan-id-attachments
 
 ### Requirement Link
@@ -16743,13 +14790,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-lesson-lesson-plans-plan-id-attachments
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-plans-plan-id-attachments-att-id
@@ -16805,13 +14845,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-ai-generate
 
 ### Requirement Link
@@ -16863,13 +14896,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-lesson-lesson-ai-generate
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-ai-jobs-job-id
@@ -16925,13 +14951,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-ai-jobs-job-id-cancel
 
 ### Requirement Link
@@ -16983,13 +15002,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-lesson-lesson-ai-jobs-job-id-cancel
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-ai-jobs
@@ -17045,13 +15057,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-ai-jobs-job-id-save
 
 ### Requirement Link
@@ -17103,13 +15108,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-lesson-lesson-ai-jobs-job-id-save
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-lesson-lesson-ai-jobs-job-id-export
@@ -17165,13 +15163,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-lesson-lesson-ai-options
 
 ### Requirement Link
@@ -17223,13 +15214,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-lesson-lesson-ai-options
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
-
 
 
 ## FUNC-health-health
@@ -17285,13 +15269,6 @@
 - 证据摘要: OpenAPI + source code path mapping
 
 
-
-
-
-
-
-
-
 ## FUNC-ready-ready
 
 ### Requirement Link
@@ -17343,12 +15320,6 @@
 - 缺失源码/配置: none
 - 下一步可执行检索: read controller/service code for FUNC-ready-ready
 - 证据摘要: OpenAPI + source code path mapping
-
-
-
-
-
-
 
 
 ## FUNC-jobs-clean-expired-exams
