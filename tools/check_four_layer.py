@@ -44,6 +44,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 # 复用发布链路校验器里已经打磨过的「读镜像指纹」逻辑：
 # 它有 ① BUILD_INFO ② OCI label 三级回退，重复实现只会多一份漂移源。
 from check_release_consistency import (  # noqa: E402
+    commits_missing_from_image,
     image_embedded_commit,
     image_embedded_version,
     sh,
@@ -217,7 +218,25 @@ def layer_server(version):
                 r.update(status=BAD,
                          note=f"服务器 {info['version']} ≠ 期望 {version}")
             elif info.get("commit") and info["commit"] != git("rev-parse", "HEAD")[0]:
-                r.update(status=BAD, note="版本号相同但 commit 不同（未走发版流程）")
+                # commit 不同**不一定是漂移**：`docs/DELIVERY_RULES.md` 第 1 条
+                # 明确「仅文档/记录类提交」不需要重建镜像 —— 镜像继续对应最近一次
+                # 运行时代码提交。所以这里必须区分两种情况：
+                #   ① 差异全在**不进镜像**的路径（docs/、tools/、*.md）
+                #      → 镜像字节未变，服务器是对的，判 OK（附说明）；
+                #   ② 差异含**会进镜像**的路径（backend/app/、frontend/、VERSION…）
+                #      → 服务器真的落后了，判 DRIFT。
+                # 早先这里不分情况一律判 DRIFT，于是每发一笔文档记录就要被
+                # 告知「未走发版流程」—— 而规则恰恰允许文档提交不发版。
+                head = git("rev-parse", "HEAD")[0]
+                affecting, files = commits_missing_from_image(info["commit"], head)
+                if affecting:
+                    r.update(status=BAD,
+                             note=f"版本号相同但 commit 不同且差异影响镜像内容："
+                                  f"{files[:3]}{'...' if len(files) > 3 else ''}")
+                else:
+                    r.update(status=OK,
+                             note=f"容器 BUILD_INFO 与本地一致（镜像出自 {info['commit'][:7]}，"
+                                  f"HEAD {head[:7]} 之后只有不影响镜像内容的改动）")
             else:
                 r.update(status=OK, note="容器 BUILD_INFO 与本地一致")
             return r
