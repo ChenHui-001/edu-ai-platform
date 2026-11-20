@@ -129,6 +129,24 @@ python E:\project\management\deploy_scripts\sync_math_taxonomy.py --check-only -
 python E:\project\management\deploy_scripts\sync_math_taxonomy.py --target both --prune-stale
 ```
 
+## 七、固定验收账号
+
+三个长期固定、密码不变的私有账号（管理员 / 教师 / 学生），用于日常使用与测试。
+
+- 账号定义：[`tools/ensure_acceptance_accounts.py`](../tools/ensure_acceptance_accounts.py)（唯一真源）
+- 完整说明（何时用、怎么执行、口令来源、安全边界）：[`ACCEPTANCE_ACCOUNTS.md`](ACCEPTANCE_ACCOUNTS.md)
+- 口令**不入仓库**：本地存在仓库外的受限文件里，服务器侧是
+  `/opt/edu-ai-platform/.acceptance_password`（0600 root:root）
+
+换环境（迁库 / 重建库）后账号会丢 —— 跑一次脚本即可重新拉齐：
+
+```bash
+docker exec edu-platform sh -c \
+  'cd /app && python /tmp/ensure_acceptance_accounts.py --password-file /tmp/acceptance_password'
+```
+
+脚本幂等，重复执行只会重置口令与补齐关联，不会重复建号。
+
 页面入口 `/admin/taxonomy-sync` 只记录页面发起的同步；脚本发起的不会出现在页面历史里。
 细节见 [`../deploy_scripts/SYNC_MATH_TAXONOMY.md`](../../deploy_scripts/SYNC_MATH_TAXONOMY.md)
 （该文件在仓库外，随运维目录保存）。

@@ -11,7 +11,7 @@
 <!-- status:auto:begin -->
 | 项 | 实测值 | 口径 |
 |---|---:|---|
-| 版本 | 2.5.49 | `VERSION` 文件 |
+| 版本 | 2.5.50 | `VERSION` 文件 |
 | 接口操作数 | 339 | `app.openapi()` 的 path×method |
 | 数据表数 | 63 | `Base.metadata.tables` |
 | 后端用例 | 145 | `pytest backend/qa_*_suite.py --collect-only` 合计 |

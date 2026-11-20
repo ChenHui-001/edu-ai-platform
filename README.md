@@ -143,6 +143,7 @@ npm run dev
 > - 生产环境请设置 `SEED_DEMO_DATA=false`：空库不会创建 teacher1/stu731 等已知口令演示账号，只保留 admin 与基础数据。
 > - 早期修复记录见 [docs/archive/](docs/archive/)（历史证据，不代表当前状态）。
 > - 交付规则：每次运行时代码提交后必须同步 Docker Hub（版本标签 + latest + sha），见 [docs/DELIVERY_RULES.md](docs/DELIVERY_RULES.md)。
+> - 长期固定的验收账号（管理员 / 教师 / 学生，口令不变）见 [docs/ACCEPTANCE_ACCOUNTS.md](docs/ACCEPTANCE_ACCOUNTS.md)。
 
 ---
 

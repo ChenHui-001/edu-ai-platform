@@ -1,10 +1,17 @@
-# 2026-11-20 修复与发布记录（2.5.49）
+# 2026-11-20 修复与发布记录
+
+> 本日两轮发布：
+> - **2.5.49** —— M6 流程引擎 + 阶段 0 镜像瘦身（下文「一」～「四」）
+> - **2.5.50** —— 固定验收账号（下文「六」）
+>
+> 当前线上版本见 [`STATUS.md`](STATUS.md)。本文只记历史，不作「当前版本」声明。
 
 ## 本轮目标
 
 1. 完成 M6 流程引擎 + 待办页「转办 / 催办 / 超时 / 催交考试」（M1–M6 本体落地）。
 2. 阶段 0 镜像瘦身（不换栈，只减体积）。
 3. 提交并推送，保持「本地 == origin/master == 镜像 BUILD_INFO == 服务器容器」四位一体。
+4. 建立三个长期固定、口令不变的验收账号（管理员 / 教师 / 学生）。
 
 ## 一、M6 流程引擎（功能）
 
@@ -79,7 +86,7 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 2.5.49 |
+| 本轮发布版本 | `2.5.49`（历史发布） |
 | commit | `ae76330a3130128db2ff98192d9cc396c043e81c` |
 | 镜像 | `ghcr.io/chenhui-001/edu-ai-platform:2.5.49`（CI 多架构 amd64）+ `nanpo/edu-ai-platform:2.5.49` |
 | digest | `sha256:bc7e3cd260077cbce138b86995e812334efe5f0bcbf6df5d8c0c0e07e4b8ba1a`（ghcr 与 Docker Hub **逐字节一致**） |
@@ -127,3 +134,87 @@
 - **阶段 0 遗留**：ONNX 模型 90MB + onnxruntime 78MB 仍在镜像里；
   要彻底去掉必须换 embedding 后端（已实测 MiniMax `/v1/embeddings` 可用，
   参数名 `texts`、返回 `vectors`，**非 OpenAI 协议**），建议与阶段 1 的 pgvector 一起做。
+
+---
+
+## 六、固定验收账号（2.5.50）
+
+### 目标
+
+三个**长期固定、口令不变**的私有账号（管理员 / 教师 / 学生），用于日常使用与测试。
+
+### 为什么要有脚本，而不是手工建号
+
+账号是**数据**，不是代码。换环境（阶段 1 迁 PostgreSQL、开发机重建库）后账号会丢；
+手工重建最容易漏绑角色 / 班级 / 授课关系，症状是「能登录但页面上什么都看不到」；
+口令写在代码里会泄露，写在文档里又容易和实际不符。
+
+所以把「账号该长什么样」固化成脚本：
+
+- **新增** `tools/ensure_acceptance_accounts.py`（唯一真源，`ACCOUNTS` 列表定义三账号）
+- **新增** `docs/ACCEPTANCE_ACCOUNTS.md`（何时用、怎么执行、口令来源、安全边界）
+- **改动** `docs/OPERATIONS.md`（新增「固定验收账号」一节）、`README.md`（加一行指引）
+
+### 脚本做的四件事
+
+1. **幂等**：可反复执行。已存在的账号只重置口令，不重复建。
+2. **建全关联**：角色 + 班级 + 授课关系一次对齐。教师绑「一年级(1)班」的「数学」
+   授课关系，学生绑同一个班 —— 这是教师能看到学生的前提。
+3. **环境就绪**：先跑 `init_roles` / `init_grades_subjects`（都是幂等、只增不删），
+   所以全新库 / 迁库后也能一键就绪，不依赖 `SEED_DEMO_DATA` 开关。
+4. **重置锁定**：`must_change_password=False`、`locked_until=None`、
+   `login_fail_count=0`。前两个保证「口令固定」这个用途成立
+   （否则每次登录都被拦去改密），第三个避免测试输错一次就锁 15 分钟。
+
+口令来源优先级：`--password-file` → `ACCEPTANCE_PASSWORD_FILE` → `ACCEPTANCE_PASSWORD`。
+**刻意不内置默认口令** —— 拿不到口令就报错退出。脚本只重置哈希，**不回显**明文。
+
+### 过程中修掉的两个真实缺陷
+
+1. **脚本按自身位置推算后端根目录** → 被 `docker cp` 进容器跑时路径指错，
+   报 `ModuleNotFoundError: No module named 'app.core'`。
+   改为**按「哪个目录下真的存在 `app/core/database.py`」判定**，并把容器内 `/app` 加入候选。
+2. **`init_db.init_grades_subjects` 受 `SEED_BASE_DATA` 开关控制** ——
+   生产该开关为 `false`（空基线），学科表不播种。
+   脚本因此**不依赖既有学科**：缺学科时按本班 `grade_id` 自建
+   （`edu_subject` 唯一约束是 `(grade_id, name)`，`grade_id` 非空）。
+
+### 生产验证（SSH 进容器内实测）
+
+三个账号在生产库已就位，口令与本地保管文件**逐字节匹配**：
+
+| 账号 | pwd_match | status | identity | must_change | locked | 角色 | 权限点 | 班级 | 授课关系 |
+|---|---|---|---|---|---|---|---:|---|---|
+| `owner_admin` | True | active | sys_admin | False | None | `sys_admin` | 65 | — | — |
+| `owner_teacher` | True | active | teacher | False | None | `teacher` | 28 | 一年级(1)班 | 有（数学） |
+| `owner_student` | True | active | student | False | None | `student` | 16 | 一年级(1)班 | — |
+
+真实 HTTP 登录（走完整图形验证码流程）三个账号均 `HTTP 200`、拿到 access token。
+角色边界正确，不是「都能登入但权限一样」：
+
+| 接口 | owner_admin | owner_teacher | owner_student |
+|---|---|---|---|
+| `/auth/profile` | 200 | 200 | 200 |
+| `/edu/classes` | 200，23 个班 | 200，1 个班 | 200，1 个班 |
+| `/question/questions` | 200，3093 题 | 200，2520 题 | **403** |
+| `/question/papers` | 200，3 套 | 200，0 套 | **403** |
+| `/task/tasks`（布置作业） | 200 | 200 | **403** |
+| `/task/my/tasks`（我的作业） | 200 | 200 | 200 |
+| `/system/users`（用户管理） | 200，224 人 | **403** | **403** |
+
+### 发布信息
+
+| 项 | 值 |
+|---|---|
+| 本轮发布版本 | `2.5.50`（历史发布） |
+| 新增文件 | `tools/ensure_acceptance_accounts.py`、`docs/ACCEPTANCE_ACCOUNTS.md` |
+| 后端运行时代码 | **无变化** —— `tools/` 与 `docs/` 均被 `.dockerignore` 排除，不进镜像 |
+| 镜像 | 需重建：`VERSION` 会被 `COPY` 进镜像并烧进 `/app/BUILD_INFO`，故版本号变化即镜像内容变化 |
+| 口令文件（生产） | `/opt/edu-ai-platform/.acceptance_password`（0600 root:root） |
+| 口令文件（本机） | 仓库外 `E:\project\management\PRIVATE_ACCOUNTS_PASSWORD_2026-11-20.txt` |
+
+> **为何本轮仍要重建镜像**：`tools/` 与 `docs/` 不进镜像，**后端运行时代码逐字节未变**；
+> 但 `VERSION` 会被 `Dockerfile` 的 `COPY VERSION ./VERSION` 带进镜像，
+> 并由 `RUN printf` 写进 `/app/BUILD_INFO`。版本号一变，镜像字节就变 ——
+> 按 `docs/DELIVERY_RULES.md` 第 1 条，凡改变镜像内容的提交都必须重建并同步。
+> 重建后四位一体（本地 / `origin/master` / 镜像 / 服务器）统一指向同一个 commit。
